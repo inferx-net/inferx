@@ -39,22 +39,34 @@ from threading import Thread
 
 import logging
 import sys
+import multiprocessing
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 
-logger = logging.getLogger('gunicorn.error')
-sys.stdout = sys.stderr = logger.handlers[0].stream
+# logger = logging.getLogger('gunicorn.error')
+# sys.stdout = sys.stderr = logger.handlers[0].stream
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "supersecret")
 
+def configure_logging():
+    if "gunicorn" in multiprocessing.current_process().name.lower():
+        logger = logging.getLogger('gunicorn.error')
+        if logger.handlers:
+            sys.stdout = sys.stderr = logger.handlers[0].stream
+            app.logger.info("Redirecting stdout/stderr to Gunicorn logger.")
+    else:
+        app.logger.info("Running standalone Flask — no stdout/stderr redirection.")
 
-KEYCLOAK_URL = os.getenv('KEYCLOAK_URL', "http://192.168.0.22:81/authn")
+configure_logging()
+
+
+KEYCLOAK_URL = os.getenv('KEYCLOAK_URL', "http://192.168.0.22:1260/authn")
 KEYCLOAK_REALM_NAME = os.getenv('KEYCLOAK_REALM_NAME', "inferx")
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', "infer_client")
-KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', "SJvfmGFViBNHsLfhkto4eRE0PnPhpyft")
+KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', "M2Dse5531tdtyipZdGizLEeoOVgziQRX")
 
 server_metadata_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/.well-known/openid-configuration"
 
@@ -675,18 +687,18 @@ def GetFunc():
     name = request.args.get("name")
 
     func = getfunc(tenant, namespace, name)
+    print("func ", func)
     
     sample = func["func"]["object"]["spec"]["sample_query"]
     map = sample["body"]
     apiType = sample["apiType"]
+    isAdmin = func["isAdmin"]
 
     version = func["func"]["object"]["spec"]["version"]
     fails = GetFailLogs(tenant, namespace, name, version)
 
     # Convert Python dictionary to pretty JSON string
     funcspec = json.dumps(func["func"]["object"]["spec"], indent=4)
-    funcspec = funcspec.replace("\n", "<br>")
-    funcspec = funcspec.replace("    ", "&emsp;")
 
     return render_template(
         "func.html",
@@ -698,6 +710,7 @@ def GetFunc():
         funcspec=funcspec,
         apiType=apiType,
         map=map,
+        isAdmin=isAdmin,
         path=sample["path"]
     )
 

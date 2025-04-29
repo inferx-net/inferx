@@ -103,6 +103,44 @@
 </table>
 
 
+
+{% if fails %}
+<h2>Failures</h2>
+<table style="width:100%">
+    <tr>
+        <th>tenant</th>
+        <th>namespace</th>
+        <th>model name</th>
+        <th>revision</th>
+        <th>id</th>
+        <th>exit info</th>
+        <th>state</th>
+    </tr>
+    {% for fail in fails %}
+    <tr>
+        <td>{{ fail["tenant"] }}</td>
+        <td>{{ fail["namespace"] }}</td>
+        <td>{{ fail["fpname"] }}</td>
+        <td>{{ fail["fprevision"] }}</td>
+        <td>{{ fail["id"] }}</td>
+        <td>{{ fail["exit_info"] }}</td>
+        <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
+                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+
+<h2>Func</h2>
+{% if isAdmin %}
+<button id="updateSpec" onclick="updateSpec()">Update Spec</button>
+{% endif %}
+<br />
+<br />
+
+<textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
+
 <script>
     const tenant = {{ tenant | tojson }};
     const namespace = {{ namespace | tojson }};
@@ -110,6 +148,42 @@
     const apiType = {{ apiType | tojson }};
     const map = {{ map | tojson }};
     const path = {{ path | tojson }};
+    const funcconfig = {{ func | tojson }};
+
+    async function updateSpec() {
+        const debugDiv = document.getElementById('debug');
+        const spec = document.getElementById('spec').value;
+        try {
+            funcconfig.func.object.spec = JSON.parse(spec);
+
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            const schema = window.location.protocol;
+
+            url = schema + "//" + hostname + ":" + port + "/proxy/object/";
+            const body = {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(funcconfig.func)
+            };
+
+            const response = await fetch(url, body);
+            const text = await response.text();
+            if (response.status == '200') {
+                alert("Update Function Spec successfully! " + text);
+            } else {
+                alert("Update Function Spec fail with error " + text);
+            }
+            debugDiv.innerHTML += " " + response.status;
+            debugDiv.innerHTML += " " + text;
+        } catch (err) {
+            alert("Update Function Spec fail with error: " + err);
+            debugDiv.innerHTML += 'Update Function Spec fail with error:' + err + "\n\n";
+        }
+    }
 
     async function cancel() {
         if (abortController) {
@@ -347,44 +421,6 @@
     }
 </script>
 
-
-
-{% if fails %}
-<h2>Failures</h2>
-<table style="width:100%">
-    <tr>
-        <th>tenant</th>
-        <th>namespace</th>
-        <th>model name</th>
-        <th>revision</th>
-        <th>id</th>
-        <th>exit info</th>
-        <th>state</th>
-    </tr>
-    {% for fail in fails %}
-    <tr>
-        <td>{{ fail["tenant"] }}</td>
-        <td>{{ fail["namespace"] }}</td>
-        <td>{{ fail["fpname"] }}</td>
-        <td>{{ fail["fprevision"] }}</td>
-        <td>{{ fail["id"] }}</td>
-        <td>{{ fail["exit_info"] }}</td>
-        <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
-                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
-    </tr>
-    {% endfor %}
-</table>
-{% endif %}
-
-
-<h2>Func</h2>
-<table style="width:100%">
-    <tr>
-        {% autoescape false %}
-        <td>{{ funcspec }}</td>
-        {% endautoescape %}
-    </tr>
-</table>
 
 
 {{ log | safe }}

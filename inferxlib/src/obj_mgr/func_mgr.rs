@@ -120,7 +120,6 @@ pub struct FuncSpec {
     pub commands: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub mounts: Vec<Mount>,
-    #[serde(default)]
     pub endpoint: HttpEndpoint,
     #[serde(default)]
     pub version: i64,
@@ -128,16 +127,14 @@ pub struct FuncSpec {
     #[serde(default)]
     pub entrypoint: Vec<String>,
 
-    #[serde(default)]
     pub resources: Resources,
 
-    #[serde(default, rename = "standby")]
+    #[serde(rename = "standby")]
     pub standby: Standby,
 
-    #[serde(default)]
     pub probe: HttpEndpoint,
 
-    #[serde(default, rename = "sample_query")]
+    #[serde(rename = "sample_query")]
     pub sampleCall: SampleCall,
 }
 
