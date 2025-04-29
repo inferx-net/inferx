@@ -134,11 +134,10 @@
 
 <h2>Func</h2>
 {% if isAdmin %}
-<button id="updateSpec" onclick="updateSpec()">Update Spec</button>
+<button id="updateSpec" onclick="updateSpec()">Update Model</button>
+<button id="deleteSpec" onclick="deleteFunc()">Delete Model</button>
 {% endif %}
 <br />
-<br />
-
 <textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
 
 <script>
@@ -173,16 +172,52 @@
             const response = await fetch(url, body);
             const text = await response.text();
             if (response.status == '200') {
-                alert("Update Function Spec successfully! " + text);
+                alert("Update Model Spec successfully! ");
             } else {
-                alert("Update Function Spec fail with error " + text);
+                alert("Update Model Spec fail with error " + text);
             }
             debugDiv.innerHTML += " " + response.status;
             debugDiv.innerHTML += " " + text;
         } catch (err) {
-            alert("Update Function Spec fail with error: " + err);
-            debugDiv.innerHTML += 'Update Function Spec fail with error:' + err + "\n\n";
+            alert("Update Model Spec fail with error: " + err);
+            debugDiv.innerHTML += 'Update Model Spec fail with error:' + err + "\n\n";
         }
+    }
+
+    async function deleteFunc() {
+        if (confirm("Are you sure to delete the Model " + namespace + "/" + name)) {
+            const debugDiv = document.getElementById('debug');
+            try {
+                const hostname = window.location.hostname;
+                const port = window.location.port;
+                const schema = window.location.protocol;
+
+                url = schema + "//" + hostname + ":" + port + "/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
+                const body = {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                const response = await fetch(url, body);
+                const text = await response.text();
+                if (response.status == '200') {
+                    alert("Delete Model successfully! ");
+                    window.location.assign("/listfunc");
+                } else {
+                    alert("Delete Model fail with error " + text);
+                }
+                debugDiv.innerHTML += " " + response.status;
+                debugDiv.innerHTML += " " + text;
+
+            } catch (err) {
+                alert("Delete Model fail with error: " + err);
+                debugDiv.innerHTML += 'Delete Model fail with error:' + err + "\n\n";
+            }
+        }
+
     }
 
     async function cancel() {

@@ -132,6 +132,7 @@ pub struct FuncSpec {
     #[serde(rename = "standby")]
     pub standby: Standby,
 
+    #[serde(default)]
     pub probe: HttpEndpoint,
 
     #[serde(rename = "sample_query")]
