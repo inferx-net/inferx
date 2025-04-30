@@ -224,8 +224,9 @@ def getapkkeys():
 @require_login
 def apikeys():
     apikeys = getapkkeys()
+    tenants = listtenants()
     return render_template(
-        "apikey.html", apikeys=apikeys
+        "apikey.html", apikeys=apikeys, tenants=tenants
     )
 
 @app.route('/generate_apikeys', methods=['GET'])
@@ -233,6 +234,7 @@ def apikeys():
 def generate_apikeys():
     apikeys = getapkkeys()
     return apikeys
+
 
 @app.route('/apikeys', methods=['PUT'])
 @require_login
@@ -331,6 +333,29 @@ def getnode(name: str):
 
     return func
 
+def listtenants():
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/objects/tenant/system/system/".format(apihostaddr)
+    resp = requests.get(url, headers=headers)
+    tenants = json.loads(resp.content)
+
+    return tenants
+
+def listnamespaces():
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/objects/namespace///".format(apihostaddr)
+    resp = requests.get(url, headers=headers)
+    namespaces = json.loads(resp.content)
+
+    return namespaces
 
 def listpods(tenant: str, namespace: str, funcname: str):
     access_token = session.get('access_token', '')
@@ -472,6 +497,25 @@ def text2img():
     headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
     return Response(resp.iter_content(1024000), resp.status_code, headers)
 
+@app.route('/generate_tenants', methods=['GET'])
+@require_login
+def generate_tenants():
+    tenants = listtenants()
+    print("tenants ", tenants)
+    return tenants
+
+@app.route('/generate_namespaces', methods=['GET'])
+@require_login
+def generate_namespaces():
+    namespaces = listnamespaces()
+    print("namespaces ", namespaces)
+    return namespaces
+
+@app.route('/generate_funcs', methods=['GET'])
+@require_login
+def generate_funcs():
+    funcs = listfuncs("", "")
+    return funcs
 
 @app.route('/generate', methods=['POST'])
 @not_require_login
@@ -578,6 +622,7 @@ def proxy(path):
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"
 
+    print("proxy path ", path)
     try:
         resp = requests.request(
             method=request.method,
@@ -586,18 +631,60 @@ def proxy(path):
             data=request.get_data(),
             cookies=request.cookies,
             allow_redirects=False,
+            timeout=60,
             stream=True
         )
     except requests.exceptions.RequestException as e:
         return Response(f"Error connecting to backend server: {e}", status=502)
     
     # Exclude hop-by-hop headers as per RFC 2616 section 13.5.1
-    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+    excluded_headers = ['content-encoding', 'transfer-encoding', 'connection']
     headers = [(name, value) for name, value in resp.raw.headers.items() if name.lower() not in excluded_headers]
     
+    print("response ", resp.status_code, path)
+
     # Create a Flask response object with the backend server's response
     response = Response(stream_response(resp), resp.status_code, headers)
     return response
+
+@app.route('/proxy1/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
+@require_login
+def proxy1(path):
+    access_token = session.get('access_token', '')
+    headers = {key: value for key, value in request.headers if key.lower() != 'host'}
+    if access_token != "":
+        headers["Authorization"] = f'Bearer {access_token}'
+    
+    # Construct the full URL for the backend request
+    url = f"{apihostaddr}/{path}"
+
+    print("proxy path ", path)
+    try:
+        resp = requests.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            params=request.args,
+            data=request.get_data(),
+            cookies=request.cookies,
+            allow_redirects=False,
+            timeout=60,
+            stream=False
+        )
+    except requests.exceptions.RequestException as e:
+        print("error ....")
+        return Response(f"Error connecting to backend server: {e}", status=502, mimetype='text/plain')
+    
+    print("response ", resp.status_code, path, resp.content)
+
+    response = Response(resp.content, resp.status_code)
+    # for name, value in resp.headers.items():
+    #     if name.lower() not in ['content-encoding', 'transfer-encoding', 'connection']:
+    #         response.headers[name] = value
+
+    return response
+    
+
 
 @app.route("/intro")
 def md():

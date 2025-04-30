@@ -59,7 +59,7 @@ services:
       - '2380:2380'
   inferx:
     image: inferx/inferx_one:v0.1.0
-    restart: on-failure
+    restart: always
     container_name: inferx_one
     privileged: true
     user: root
@@ -79,6 +79,8 @@ services:
       keycloak:
         condition: service_started
       spdk:
+        condition: service_started
+      secret_db:
         condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

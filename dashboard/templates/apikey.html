@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Apikey</h2>
+
 <style>
     table,
     th,
@@ -9,10 +9,13 @@
         border: 1px solid black;
     }
 </style>
+
+<hr>
+<h2>Apikey</h2>
 <table style="width:100%" id="items-table">
     <thead>
         <tr>
-            <th>Select</th>
+            <th style="width: 150px;">Select</th>
             <th>Name</th>
             <th>Username</th>
             <th>Apikey</th>
@@ -25,23 +28,122 @@
 </table>
 
 <form id="delete-form">
-    <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Selected</button>
+    <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Apikeys</button>
 </form>
-
 
 <h2>Add Apikey</h2>
 <form id=" add-form">
         <input type="text" id="apikey_name" placeholder="Enter apikey name" required>
         <button type="submit" onclick="create_apikey()">Add Apikey Name</button>
 </form>
+
+<hr>
+
+<h1>Models</h1>
+<table style="width:100%" id="models-table">
+    <thead>
+        <tr>
+            <th style="width: 150px;">Select</th>
+            <th>Tenant</th>
+            <th>Namespace</th>
+            <th>Name</th>
+        </tr>
+    </thead>
+
+    <tbody>
+
+    </tbody>
+</table>
+
+<form id="delete-models-form">
+    <button id="delete-models-button" type="submit" onclick="delete_funcs()"">Delete Namespaces</button>
+</form>
+
+<h2>Create model</h2>
+<form id=" add-models-form">
+        Namespace
+        <select id="namespace_dropdown">
+            <option disabled selected>Select a namespace</option>
+        </select>
+        Model name
+        <input type="text" id="model_name" placeholder="Enter model name" required>
+        <br>
+        <textarea id="model_spec" rows="10" cols="120" placeholder="Enter model Spec" required></textarea>
+        <br>
+        <button type="submit" onclick="create_func()">Create model</button>
+</form>
+
+<hr>
+
+<h1>Namespaces</h1>
+<table style="width:100%" id="namespaces-table">
+    <thead>
+        <tr>
+            <th style="width: 150px;">Select</th>
+            <th>Tenant</th>
+            <th>Name</th>
+        </tr>
+    </thead>
+
+    <tbody>
+
+    </tbody>
+</table>
+
+<form id="delete-namespace-form">
+    <button id="delete-namespace-button" type="submit" onclick="delete_namespaces()"">Delete Namespaces</button>
+</form>
+
+<h2>Add Namespace</h2>
+
+<form id=" add-namespace-form">
+        Tenant
+        <select id="tenant_dropdown" required>
+            <option disabled selected>Select a tenant</option>
+        </select>
+        <br>
+        Namespace name
+        <input type="text" id="namespace_name" placeholder="Enter Namespace name" required>
+        <br>
+        <button type="submit" onclick="create_namespace()">Create Namespace</button>
+</form>
+
+<hr>
+<h2>Tenants</h2>
+<table style="width:100%" id="tenants-table">
+    <thead>
+        <tr>
+            <th style="width: 150px;">Select</th>
+            <th>Name</th>
+        </tr>
+    </thead>
+
+    <tbody>
+
+    </tbody>
+</table>
+
+<form id="delete-tenant-form">
+    <button id="delete-tenant-button" type="submit" onclick="delete_tenants()"">Delete Tenants</button>
+</form>
+
+<h2>Add Tenant</h2>
+<form id=" add-tenant-form">
+        Tenant name
+        <input type="text" id="tenant_name" placeholder="Enter Tenant name" required>
+        <br>
+        <button type="submit" onclick="create_tenant()">Create Tenant</button>
+</form>
+
+<hr>
 <!-- <textarea id="output" rows="20" cols="120"></textarea> -->
 <script>
     async function fetchItems() {
-        const response = await fetch('/generate_apikeys');
-        const items = await response.json();
-        const tbody = document.querySelector('#items-table tbody');
-        tbody.innerHTML = '';
-        items.forEach(key => {
+        const apikeys_resp = await fetch('/generate_apikeys');
+        const apikeys = await apikeys_resp.json();
+        const apikey_tbody = document.querySelector('#items-table tbody');
+        apikey_tbody.innerHTML = '';
+        apikeys.forEach(key => {
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><input type="checkbox" data-id="${key.apikey}"></td>
@@ -49,10 +151,294 @@
                 <td>${key.username}</td>
                 <td>${key.apikey}</td>
             `;
-            tbody.appendChild(row);
+            apikey_tbody.appendChild(row);
+        });
+
+        const tenant_dropdown = document.getElementById("tenant_dropdown");
+        const namespace_dropdown = document.getElementById("namespace_dropdown");
+
+        const funcs_resp = await fetch('/generate_funcs');
+        const funcs = await funcs_resp.json();
+        const funcs_tbody = document.querySelector('#models-table tbody');
+        funcs_tbody.innerHTML = '';
+        funcs.forEach(key => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><input type="checkbox" data-id="${key.func.tenant}/${key.func.namespace}/${key.func.name}"></td>
+                <td>${key.func.tenant}</td>
+                <td>${key.func.namespace}</td>
+                <td>${key.func.name}</td>
+            `;
+            funcs_tbody.appendChild(row);
+        });
+
+        const namespaces_resp = await fetch('/generate_namespaces');
+        const namespaces = await namespaces_resp.json();
+        const namespaces_tbody = document.querySelector('#namespaces-table tbody');
+        namespaces_tbody.innerHTML = '';
+        namespaces.forEach(key => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><input type="checkbox" data-id="${key.tenant}/system/${key.name}"></td>
+                <td>${key.tenant}</td>
+                <td>${key.name}</td>
+            `;
+            namespaces_tbody.appendChild(row);
+
+            const option = document.createElement("option");
+            option.value = key.tenant + "/" + key.name;
+            option.textContent = key.tenant + "/" + key.name;
+            namespace_dropdown.appendChild(option);
+        });
+
+        const tenants_resp = await fetch('/generate_tenants');
+        const tenants = await tenants_resp.json();
+        const tenants_tbody = document.querySelector('#tenants-table tbody');
+        tenants_tbody.innerHTML = '';
+        tenants.forEach(key => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td><input type="checkbox" data-id="system/system/${key.name}"></td>
+                <td>${key.name}</td>
+            `;
+            tenants_tbody.appendChild(row);
+
+            const option = document.createElement("option");
+            option.value = key.name;
+            option.textContent = key.name;
+            tenant_dropdown.appendChild(option);
         });
     }
 
+    async function create_func() {
+        var access_token = "{{ session['token'] }}";
+        const namespace_dropdown = document.getElementById("namespace_dropdown");
+        const isSelected = namespace_dropdown.selectedIndex !== -1;
+        if (!isSelected) {
+            alert("need choose a namespace");
+            return
+        }
+
+        const namespacekey = namespace_dropdown.value;
+
+        const parts = namespacekey.split("/");
+        const tenant = parts[0];     // "tenant"
+        const namespace = parts[1];  // "namespace"
+
+        const modelname = document.getElementById("model_name").value.trim();
+        if (!modelname) {
+            alert("need valid model name");
+            return
+        }
+
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const schema = window.location.protocol;
+
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+
+        const model_spec = document.getElementById('model_spec').value.trim();
+        if (!model_spec) {
+            alert("need valid model spec");
+            return
+        }
+
+        try {
+            const options = {
+                method: 'PUT',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "type": "function",
+                    "tenant": tenant,
+                    "namespace": namespace,
+                    "name": modelname,
+                    "object": {
+                        "spec": JSON.parse(model_spec)
+                    }
+                })
+            };
+
+            const response = await fetch(url, options);
+            alert("fetch stats 1");
+            const text = await response.text();
+            alert("fetch stats 2");
+            if (response.status == '200') {
+                alert("Create Model successfully! " + text);
+            } else {
+                alert("Create Model fail with error" + text);
+            }
+            // nameInput.value = '';
+            // fetchItems();
+        } catch (error) {
+            // always get to error here but create func successfully
+            // todo: debug this.
+            // alert("get error " + error);
+
+        }
+    }
+
+    async function delete_funcs() {
+        var access_token = "{{ session['token'] }}";
+        try {
+            const checkboxes = document.querySelectorAll('#models-table tbody input[type="checkbox"]:checked');
+            const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
+            if (keys.length > 0) {
+                await Promise.all(keys.map(key => {
+                    fetch('proxy/object/function/' + key + "/", {
+                        method: 'DELETE'
+                    });
+                }));
+            }
+        } catch (error) {
+            alert("get error " + error);
+        }
+    }
+
+    async function create_namespace() {
+        const tenant_dropdown = document.getElementById("tenant_dropdown");
+        const isSelected = tenant_dropdown.selectedIndex !== -1;
+        if (!isSelected) {
+            alert("need choose a tenant");
+            return
+        }
+
+        const tenant = tenant_dropdown.value;
+        if (tenant == "Select a tenant") {
+            alert("need choose a tenant");
+            return
+        }
+
+        const namespacename = document.getElementById("namespace_name").value.trim();
+        if (!namespacename) {
+            alert("need valid namespace name");
+            return
+        }
+
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const schema = window.location.protocol;
+
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+        // url = "http://192.168.0.22:1250/proxy/object/";
+
+        try {
+            const options = {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "type": "namespace",
+                    "tenant": tenant,
+                    "namespace": "system",
+                    "name": namespacename,
+                    "object": {
+                        "spec": {},
+                        "status": {
+                            "disable": false
+                        }
+                    }
+                })
+            };
+
+            const apikeys_resp = await fetch(url, options);
+            const text = await apikeys_resp.text();
+
+            if (apikeys_resp.status === 200) {
+                alert("Create Namespace successfully! ");
+            } else {
+                alert("Create Namespace fail with error" + text);
+            }
+        } catch (error) {
+            // always get to error here but create func successfully
+            // todo: debug this.
+            // alert("Create Namespace get error " + error);
+        }
+    }
+
+    async function delete_namespaces() {
+        try {
+            const checkboxes = document.querySelectorAll('#namespaces-table tbody input[type="checkbox"]:checked');
+            const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
+            if (keys.length > 0) {
+                await Promise.all(keys.map(key => {
+                    fetch('proxy/object/namespace/' + key + "/", {
+                        method: 'DELETE'
+                    });
+                }));
+            }
+        } catch (error) {
+            alert("get error " + error);
+        }
+    }
+
+    async function create_tenant() {
+        const tenant_name = document.getElementById("tenant_name").value.trim();
+        if (!tenant_name) {
+            alert("need valid namespace name");
+            return
+        }
+
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const schema = window.location.protocol;
+
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+        // url = "http://192.168.0.22:1250/proxy/object/";
+
+        try {
+            const options = {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "type": "tenant",
+                    "tenant": "system",
+                    "namespace": "system",
+                    "name": tenant_name,
+                    "object": {
+                        "spec": {},
+                        "status": {
+                            "disable": false
+                        }
+                    }
+                })
+            };
+
+            const apikeys_resp = await fetch(url, options);
+            const text = await apikeys_resp.text();
+
+            if (apikeys_resp.status === 200) {
+                alert("Create Tenant successfully! ");
+            } else {
+                alert("Create Tenant fail with error" + text);
+            }
+        } catch (error) {
+            // always get to error here but create func successfully
+            // todo: debug this.
+            // alert("Create Namespace get error " + error);
+        }
+    }
+
+    async function delete_tenants() {
+        try {
+            const checkboxes = document.querySelectorAll('#tenants-table tbody input[type="checkbox"]:checked');
+            const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
+            if (keys.length > 0) {
+                await Promise.all(keys.map(key => {
+                    fetch('proxy/object/tenant/' + key + "/", {
+                        method: 'DELETE'
+                    });
+                }));
+            }
+        } catch (error) {
+            alert("get error " + error);
+        }
+    }
 
     async function create_apikey() {
         var access_token = "{{ session['token'] }}";
