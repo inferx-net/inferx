@@ -209,7 +209,7 @@ def logout():
         f"id_token_hint={id_token}"
     )
 
-def getapkkeys():
+def getapikeys():
     access_token = session.get('token')['access_token']
     # Include the access token in the Authorization header
     headers = {'Authorization': f'Bearer {access_token}'}
@@ -220,19 +220,18 @@ def getapkkeys():
 
     return apikeys
 
-@app.route('/apikeys')
+@app.route('/admin')
 @require_login
 def apikeys():
-    apikeys = getapkkeys()
-    tenants = listtenants()
+    apikeys = getapikeys()
     return render_template(
-        "apikey.html", apikeys=apikeys, tenants=tenants
+        "admin.html", apikeys=apikeys
     )
 
 @app.route('/generate_apikeys', methods=['GET'])
 @require_login
 def generate_apikeys():
-    apikeys = getapkkeys()
+    apikeys = getapikeys()
     return apikeys
 
 

@@ -8,134 +8,186 @@
     td {
         border: 1px solid black;
     }
+
+    .tab {
+        overflow: hidden;
+        border-bottom: 1px solid #ccc;
+    }
+
+    .tab button {
+        background-color: inherit;
+        float: left;
+        border: none;
+        outline: none;
+        padding: 10px 16px;
+        cursor: pointer;
+    }
+
+    .tab button.active {
+        background-color: #ccc;
+    }
+
+    .tabcontent {
+        display: none;
+        padding: 10px;
+        border-top: none;
+    }
+
+    .tabcontent.active {
+        display: block;
+    }
 </style>
 
-<hr>
-<h2>Apikey</h2>
-<table style="width:100%" id="items-table">
-    <thead>
-        <tr>
-            <th style="width: 150px;">Select</th>
-            <th>Name</th>
-            <th>Username</th>
-            <th>Apikey</th>
-        </tr>
-    </thead>
+<div class="tab">
+    <button class="tablinks" onclick="openTab(event, 'Models')" style="font-size: 25px;">Models</button>
+    <button class="tablinks" onclick="openTab(event, 'Namespaces')" style="font-size: 25px;">Namespaces</button>
+    <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
+    <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
+</div>
 
-    <tbody>
+<div id="Apikeys" class="tabcontent">
+    <table style="width:100%" id="items-table">
+        <thead>
+            <tr>
+                <th style="width: 150px;">Select</th>
+                <th>Name</th>
+                <th>Username</th>
+                <th>Apikey</th>
+            </tr>
+        </thead>
 
-    </tbody>
-</table>
+        <tbody>
 
-<form id="delete-form">
-    <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Apikeys</button>
-</form>
+        </tbody>
+    </table>
 
-<h2>Add Apikey</h2>
-<form id=" add-form">
-        <input type="text" id="apikey_name" placeholder="Enter apikey name" required>
-        <button type="submit" onclick="create_apikey()">Add Apikey Name</button>
-</form>
+    <form id="delete-form">
+        <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Apikeys</button>
+    </form>
 
-<hr>
+    <h2>Add Apikey</h2>
+    <form id=" add-form">
+            <input type="text" id="apikey_name" placeholder="Enter apikey name" required>
+            <button type="submit" onclick="create_apikey()">Add Apikey Name</button>
+    </form>
+</div>
 
-<h1>Models</h1>
-<table style="width:100%" id="models-table">
-    <thead>
-        <tr>
-            <th style="width: 150px;">Select</th>
-            <th>Tenant</th>
-            <th>Namespace</th>
-            <th>Name</th>
-        </tr>
-    </thead>
+<div id="Models" class="tabcontent">
+    <table style="width:100%" id="models-table">
+        <thead>
+            <tr>
+                <th style="width: 150px;">Select</th>
+                <th>Tenant</th>
+                <th>Namespace</th>
+                <th>Name</th>
+            </tr>
+        </thead>
 
-    <tbody>
+        <tbody>
 
-    </tbody>
-</table>
+        </tbody>
+    </table>
 
-<form id="delete-models-form">
-    <button id="delete-models-button" type="submit" onclick="delete_funcs()"">Delete Namespaces</button>
-</form>
+    <form id="delete-models-form">
+        <button id="delete-models-button" type="submit" onclick="delete_funcs()"">Delete Namespaces</button>
+    </form>
+    
+    <h2>Add model</h2>
+    <form id=" add-models-form">
+            Namespace
+            <select id="namespace_dropdown">
+                <option disabled selected>Select a namespace</option>
+            </select>
+            Model name
+            <input type="text" id="model_name" placeholder="Enter model name" required>
+            <br>
+            <textarea id="model_spec" rows="30" cols="120" placeholder="Enter model Spec" required></textarea>
+            <br>
+            <button type="submit" onclick="create_func()">Add model</button>
+    </form>
+</div>
 
-<h2>Create model</h2>
-<form id=" add-models-form">
-        Namespace
-        <select id="namespace_dropdown">
-            <option disabled selected>Select a namespace</option>
-        </select>
-        Model name
-        <input type="text" id="model_name" placeholder="Enter model name" required>
-        <br>
-        <textarea id="model_spec" rows="10" cols="120" placeholder="Enter model Spec" required></textarea>
-        <br>
-        <button type="submit" onclick="create_func()">Create model</button>
-</form>
+<div id="Namespaces" class="tabcontent">
+    <table style="width:100%" id="namespaces-table">
+        <thead>
+            <tr>
+                <th style="width: 150px;">Select</th>
+                <th>Tenant</th>
+                <th>Name</th>
+            </tr>
+        </thead>
 
-<hr>
+        <tbody>
 
-<h1>Namespaces</h1>
-<table style="width:100%" id="namespaces-table">
-    <thead>
-        <tr>
-            <th style="width: 150px;">Select</th>
-            <th>Tenant</th>
-            <th>Name</th>
-        </tr>
-    </thead>
+        </tbody>
+    </table>
 
-    <tbody>
+    <form id="delete-namespace-form">
+        <button id="delete-namespace-button" type="submit" onclick="delete_namespaces()"">Delete Namespaces</button>
+    </form>
+    
+    <h2>Add Namespace</h2>
+    
+    <form id=" add-namespace-form">
+            Tenant
+            <select id="tenant_dropdown" required>
+                <option disabled selected>Select a tenant</option>
+            </select>
+            <br>
+            <br>
+            <input type="text" id="namespace_name" placeholder="Enter Namespace name" required>
+            <button type="submit" onclick="create_namespace()">Create Namespace</button>
+    </form>
+</div>
 
-    </tbody>
-</table>
+<div id="Tenants" class="tabcontent">
+    <table style="width:100%" id="tenants-table">
+        <thead>
+            <tr>
+                <th style="width: 150px;">Select</th>
+                <th>Name</th>
+            </tr>
+        </thead>
 
-<form id="delete-namespace-form">
-    <button id="delete-namespace-button" type="submit" onclick="delete_namespaces()"">Delete Namespaces</button>
-</form>
+        <tbody>
 
-<h2>Add Namespace</h2>
+        </tbody>
+    </table>
 
-<form id=" add-namespace-form">
-        Tenant
-        <select id="tenant_dropdown" required>
-            <option disabled selected>Select a tenant</option>
-        </select>
-        <br>
-        Namespace name
-        <input type="text" id="namespace_name" placeholder="Enter Namespace name" required>
-        <br>
-        <button type="submit" onclick="create_namespace()">Create Namespace</button>
-</form>
+    <form id="delete-tenant-form">
+        <button id="delete-tenant-button" type="submit" onclick="delete_tenants()"">Delete Tenants</button>
+    </form>
+    
+    <h2>Add Tenant</h2>
+    <form id=" add-tenant-form">
+            <input type="text" id="tenant_name" placeholder="Enter Tenant name" required>
+            <button type="submit" onclick="create_tenant()">Create Tenant</button>
+    </form>
+</div>
 
-<hr>
-<h2>Tenants</h2>
-<table style="width:100%" id="tenants-table">
-    <thead>
-        <tr>
-            <th style="width: 150px;">Select</th>
-            <th>Name</th>
-        </tr>
-    </thead>
+<script>
+    function openTab(evt, tabName) {
+        const tabcontent = document.getElementsByClassName("tabcontent");
+        for (let i = 0; i < tabcontent.length; i++) {
+            tabcontent[i].classList.remove("active");
+        }
 
-    <tbody>
+        const tablinks = document.getElementsByClassName("tablinks");
+        for (let i = 0; i < tablinks.length; i++) {
+            tablinks[i].classList.remove("active");
+        }
 
-    </tbody>
-</table>
+        document.getElementById(tabName).classList.add("active");
+        evt.currentTarget.classList.add("active");
+    }
 
-<form id="delete-tenant-form">
-    <button id="delete-tenant-button" type="submit" onclick="delete_tenants()"">Delete Tenants</button>
-</form>
+    window.onload = function () {
+        // Simulate click on the first tab button
+        openTab({ currentTarget: document.querySelector('.tablinks') }, 'Models');
+    };
+</script>
 
-<h2>Add Tenant</h2>
-<form id=" add-tenant-form">
-        Tenant name
-        <input type="text" id="tenant_name" placeholder="Enter Tenant name" required>
-        <br>
-        <button type="submit" onclick="create_tenant()">Create Tenant</button>
-</form>
 
-<hr>
 <!-- <textarea id="output" rows="20" cols="120"></textarea> -->
 <script>
     async function fetchItems() {
