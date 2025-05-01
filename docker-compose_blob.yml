@@ -58,7 +58,7 @@ services:
       - '2379:2379'
       - '2380:2380'
   inferx:
-    image: inferx/inferx_one:v0.1.0
+    image: inferx/inferx_one:${Version}
     restart: always
     container_name: inferx_one
     privileged: true
@@ -101,7 +101,7 @@ services:
       - ./onenode
       - /opt/inferx/config/node3.json
   dashboard:
-    image: inferx/inferx_dashboard:v0.1.0
+    image: inferx/inferx_dashboard:${Version}
     restart: on-failure
     container_name: inferx_dashboard
     network_mode: "host"
@@ -118,6 +118,7 @@ services:
     depends_on:
       - db
       - etcd
+      - keycloak
     volumes:
       - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:
