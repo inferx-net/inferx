@@ -677,7 +677,7 @@ def proxy1(path):
     
     print("response ", resp.status_code, path, resp.content)
 
-    response = Response(resp.content, resp.status_code)
+    response = Response(resp.content, resp.status_code, mimetype='text/plain')
     # for name, value in resp.headers.items():
     #     if name.lower() not in ['content-encoding', 'transfer-encoding', 'connection']:
     #         response.headers[name] = value

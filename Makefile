@@ -68,11 +68,12 @@ run:
 
 runblob:
 	-sudo pkill -9 inferx
-	@echo "LOCAL_IP=$$(hostname -I | awk '{print $$1}' | xargs)" > .env
+	@echo "LOCAL_IP=$$(hostname -I | tr ' ' '\n' | grep -v '^172\.' | head -n 1 | xargs)" > .env
 	sudo docker compose -f docker-compose_blob.yml  build
 	- sudo rm -f /opt/inferx/log/inferx.log
 	- sudo rm -f /opt/inferx/log/onenode.log
 	sudo docker compose -f docker-compose_blob.yml up -d --remove-orphans
+	cat .env
 	rm .env
 
 stop:

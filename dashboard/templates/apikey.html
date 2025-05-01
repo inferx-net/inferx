@@ -261,10 +261,8 @@
                 })
             };
 
-            const response = await fetch(url, options);
-            alert("fetch stats 1");
+            const response = await fetch("/proxy/object/", options);
             const text = await response.text();
-            alert("fetch stats 2");
             if (response.status == '200') {
                 alert("Create Model successfully! " + text);
             } else {
@@ -344,7 +342,7 @@
                 })
             };
 
-            const apikeys_resp = await fetch(url, options);
+            const apikeys_resp = await fetch("/proxy/object/", options);
             const text = await apikeys_resp.text();
 
             if (apikeys_resp.status === 200) {
@@ -409,10 +407,10 @@
                 })
             };
 
-            const apikeys_resp = await fetch(url, options);
-            const text = await apikeys_resp.text();
+            const resp = await fetch("/proxy/object/", options);
+            const text = await resp.text();
 
-            if (apikeys_resp.status === 200) {
+            if (resp.status === 200) {
                 alert("Create Tenant successfully! ");
             } else {
                 alert("Create Tenant fail with error" + text);
