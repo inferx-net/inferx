@@ -217,9 +217,23 @@
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><input type="checkbox" data-id="${key.func.tenant}/${key.func.namespace}/${key.func.name}"></td>
-                <td>${key.func.tenant}</td>
-                <td>${key.func.namespace}</td>
-                <td>${key.func.name}</td>
+                <td>
+                    <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
+                        ${key.func.tenant}
+                    </a>
+                </td>
+                <td>
+                    <a
+                        href="{{ hosturl }}listfunc?tenant=${key.func.tenant}&&namespace=${key.func.namespace}">
+                        ${key.func.namespace}
+                    </a>
+                </td>
+                <td>
+                    <a
+                        href="{{ hosturl }}func?tenant=${key.func.tenant}&&namespace=${key.func.namespace}&&name=${key.func.name}">
+                        ${key.func.name}
+                    </a>
+                </td>
             `;
             funcs_tbody.appendChild(row);
         });
@@ -232,8 +246,17 @@
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><input type="checkbox" data-id="${key.tenant}/system/${key.name}"></td>
-                <td>${key.tenant}</td>
-                <td>${key.name}</td>
+                <td>
+                    <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
+                        ${key.tenant}
+                    </a>
+                </td>
+                <td>
+                    <a
+                        href="{{ hosturl }}listfunc?tenant=${key.tenant}&&namespace=${key.name}">
+                        ${key.name}
+                    </a>
+                </td>
             `;
             namespaces_tbody.appendChild(row);
 
@@ -251,7 +274,12 @@
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><input type="checkbox" data-id="system/system/${key.name}"></td>
-                <td>${key.name}</td>
+                <td>
+                    <a
+                        href="{{ hosturl }}listfunc?tenant=${key.name}">
+                        ${key.name}
+                    </a>
+                </td>
             `;
             tenants_tbody.appendChild(row);
 

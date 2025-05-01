@@ -223,9 +223,8 @@ def getapikeys():
 @app.route('/admin')
 @require_login
 def apikeys():
-    apikeys = getapikeys()
     return render_template(
-        "admin.html", apikeys=apikeys
+        "admin.html"
     )
 
 @app.route('/generate_apikeys', methods=['GET'])
