@@ -46,7 +46,7 @@ spec:
           resources:
             limits:
               nvidia.com/gpu: 1  # or `all` if all GPUs are needed and supported
-          command: ["./onenode", "/opt/inferx/config/node1.json"]
+          command: ["./onenode", "/opt/inferx/config/node.json"]
       volumes:
         - name: docker-sock
           hostPath:
