@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inferx-dashboard
+  labels:
+    app: inferx-dashboard
+spec:
+  hostNetwork: true
+  containers:
+    - name: inferx-dashboard
+      image: inferx/inferx_dashboard:v0.1.1
+      env:
+        - name: KEYCLOAK_URL
+          value: "http://192.168.0.22:31260/authn"
+        - name: KEYCLOAK_REALM_NAME
+          value: "inferx"
+        - name: KEYCLOAK_CLIENT_ID
+          value: "infer_client"
+        - name: KEYCLOAK_CLIENT_SECRET
+          value: "M2Dse5531tdtyipZdGizLEeoOVgziQRX"
+      volumeMounts:
+        - name: cert-volume
+          mountPath: /etc/letsencrypt/
+      livenessProbe:
+        httpGet:
+          path: /listnode
+          port: 1250
+        initialDelaySeconds: 10
+        periodSeconds: 10
+  volumes:
+    - name: cert-volume
+      hostPath:
+        path: /etc/letsencrypt/

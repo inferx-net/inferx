@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inferx-one
+  labels:
+    app: inferx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inferx
+  template:
+    metadata:
+      labels:
+        app: inferx
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: inferx-one
+          image: inferx/inferx_one:v0.1.1
+          resources:
+            requests:
+              memory: "20Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "20Gi"       # HugePages request
+            limits:
+              memory: "20Gi"              # Regular memory limit
+              hugepages-2Mi: "20Gi"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-sock
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+            - mountPath: /opt/inferx/
+              name: opt-inferx
+            - mountPath: /etc/letsencrypt/
+              name: letsencrypt
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            - mountPath: /var/lib/docker/
+              name: docker-lib
+          resources:
+            limits:
+              nvidia.com/gpu: 1  # or `all` if all GPUs are needed and supported
+          command: ["./onenode", "/opt/inferx/config/node1.json"]
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: letsencrypt
+          hostPath:
+            path: /etc/letsencrypt/
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: docker-lib
+          hostPath:
+            path: /var/lib/docker/
