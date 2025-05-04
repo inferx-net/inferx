@@ -3,22 +3,27 @@ kind: Deployment
 metadata:
   name: inferx-one
   labels:
-    app: inferx
+    app: inferx-one
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: inferx
+      app: inferx-one
   template:
     metadata:
       labels:
-        app: inferx
+        app: inferx-one
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # hostNetwork: true
+      # dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: inferx-one
           image: inferx/inferx_one:v0.1.1
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
           resources:
             requests:
               memory: "20Gi"              # Regular memory request (RAM)
@@ -69,3 +74,17 @@ spec:
         - name: docker-lib
           hostPath:
             path: /var/lib/docker/
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inferx-one
+spec:
+  type: NodePort
+  selector:
+    app: inferx-one
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+      nodePort: 31500  

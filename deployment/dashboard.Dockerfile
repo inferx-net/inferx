@@ -8,6 +8,7 @@ RUN apt-get -y update
 RUN apt-get install -y libpq-dev gcc
 RUN apt-get install -y bash
 RUN apt-get install -y nginx
+RUN apt-get install -y curl
 
 COPY requirements.txt requirements.txt
 RUN pip3 install -r requirements.txt
