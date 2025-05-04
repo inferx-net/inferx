@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spdk
+  labels:
+    app: spdk
+spec:
+  selector:
+    matchLabels:
+      app: spdk
+  template:
+    metadata:
+      labels:
+        app: spdk
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: spdk
+          image: inferx/spdk-container2:v0.1.0
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          env:
+            - name: HUGEMEM
+              value: "64000"
+          volumeMounts:
+            - name: hugepages
+              mountPath: /dev/hugepages
+            - name: lib-modules
+              mountPath: /lib/modules
+            - name: opt-inferx
+              mountPath: /opt/inferx
+            - name: run-udev
+              mountPath: /run/udev
+      volumes:
+        - name: hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+      restartPolicy: Always
+      tolerations:
+        - operator: "Exists"  # Allow on tainted nodes

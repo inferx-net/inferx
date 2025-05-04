@@ -1,11 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
   name: inferx-one
   labels:
     app: inferx-one
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: inferx-one
@@ -14,8 +13,17 @@ spec:
       labels:
         app: inferx-one
     spec:
-      # hostNetwork: true
-      # dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox
+          command:
+            [
+              "sh", "-c",
+              "until nc -z etcd.default.svc.cluster.local 2379 && \
+                     nc -z keycloak.default.svc.cluster.local 8080; do \
+                  echo 'Waiting for dependencies...'; sleep 3; \
+               done"
+            ]
       containers:
         - name: inferx-one
           image: inferx/inferx_one:v0.1.1
@@ -100,6 +108,7 @@ spec:
         - name: docker-lib
           hostPath:
             path: /var/lib/docker/
+      restartPolicy: Always
 ---
 apiVersion: v1
 kind: Service
