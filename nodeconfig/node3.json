@@ -18,7 +18,7 @@
     "tsotSocketPath": "/opt/inferx/sockets/tsot-socket",
     "tsotGwSocketPath": "/opt/inferx/sockets_host/tsot-socket",
     "runService": true,
-    "auditdbAddr": "postgresql://audit_user:123456@localhost:30542/auditdb",
+    "auditdbAddr": "postgresql://audit_user:123456@localhost:5432/auditdb",
     "resources": {
         "CPU": 30000,
         "Mem": 400000,
@@ -38,7 +38,7 @@
         "cert": "/etc/letsencrypt/live/inferx.net/fullchain.pem",
         "key": "/etc/letsencrypt/live/inferx.net/privkey.pem"
     },
-    "secretStoreAddr": "postgresql://secret:123456@localhost:30541/secretdb",
+    "secretStoreAddr": "postgresql://secret:123456@localhost:5431/secretdb",
     "keycloakconfig": {
         "url": "http://localhost:31260/authn",
         "realm": "inferx"

@@ -9,7 +9,7 @@ services:
       - POSTGRES_DB=secretdb
       - PGDATA=/data/postgres
     ports:
-      - '30541:5432'
+      - '5431:5432'
     volumes:
       - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres_secret:/data/postgres
@@ -23,7 +23,7 @@ services:
       - POSTGRES_DB=auditdb
       - PGDATA=/data/postgres
     ports:
-      - '30542:5432'
+      - '5432:5432'
     volumes:
       - /opt/inferx/config/create_table.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres:/data/postgres

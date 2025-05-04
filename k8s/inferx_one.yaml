@@ -19,6 +19,12 @@ spec:
       containers:
         - name: inferx-one
           image: inferx/inferx_one:v0.1.1
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
           env:
           - name: POD_IP
             valueFrom:
@@ -27,19 +33,21 @@ spec:
           resources:
             requests:
               memory: "20Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "20Gi"       # HugePages request
+              hugepages-2Mi: "40Gi"       # HugePages request
             limits:
               memory: "20Gi"              # Regular memory limit
-              hugepages-2Mi: "20Gi"
-          securityContext:
-            privileged: true
+              hugepages-2Mi: "40Gi"
+              nvidia.com/gpu: 2  # or `all` if all GPUs are needed and supported
           volumeMounts:
+            - mountPath: /dev/vfio
+              name: dev-vfio
             - mountPath: /var/run/docker.sock
               name: docker-sock
             - mountPath: /run/udev
               name: run-udev
             - mountPath: /dev/hugepages
               name: dev-hugepages
+              mountPropagation: Bidirectional
             - mountPath: /opt/inferx/
               name: opt-inferx
             - mountPath: /etc/letsencrypt/
@@ -48,11 +56,29 @@ spec:
               name: docker-runtime
             - mountPath: /var/lib/docker/
               name: docker-lib
-          resources:
-            limits:
-              nvidia.com/gpu: 1  # or `all` if all GPUs are needed and supported
+            - mountPath: /sys/bus/pci/devices
+              name: pci-devices
+              readOnly: false
+            - mountPath: /sys/class/uio
+              name: uio
+              readOnly: false
+            - mountPath: /sys/kernel/mm/hugepages
+              name: hugepages-sys
+              readOnly: false
           command: ["./onenode", "/opt/inferx/config/node.json"]
       volumes:
+        - name: dev-vfio
+          hostPath:
+            path: /dev/vfio
+        - name: pci-devices
+          hostPath:
+            path: /sys/bus/pci/devices
+        - name: uio
+          hostPath:
+            path: /sys/class/uio
+        - name: hugepages-sys
+          hostPath:
+            path: /sys/kernel/mm/hugepages
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock

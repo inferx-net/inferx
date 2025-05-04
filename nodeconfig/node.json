@@ -28,10 +28,10 @@
         "MaxContextPerGPU": 1
     },
     "snapshotDir": "/opt/inferx/snapshot",
-    "enableBlobStore": false,
+    "enableBlobStore": true,
     "sharemem": {
         "size": 20,
-        "hugepage": true
+    "hugepage": true
     },
     "tlsconfig": {
         "enable": false,
