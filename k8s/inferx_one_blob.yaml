@@ -39,6 +39,13 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
+          resources:
+            requests:
+              memory: "60Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "60Gi"       # HugePages request
+            limits:
+              memory: "60Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "60Gi" 
           volumeMounts:
             - mountPath: /dev/vfio
               name: dev-vfio
@@ -66,7 +73,7 @@ spec:
             - mountPath: /sys/kernel/mm/hugepages
               name: hugepages-sys
               readOnly: false
-          command: ["./onenode", "/opt/inferx/config/node.json"]
+          command: ["./onenode", "/opt/inferx/config/node_blob.json"]
       volumes:
         - name: dev-vfio
           hostPath:
