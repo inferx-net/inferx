@@ -31,7 +31,7 @@
     "enableBlobStore": false,
     "sharemem": {
         "size": 20,
-    "hugepage": true
+        "hugepage": true
     },
     "tlsconfig": {
         "enable": false,

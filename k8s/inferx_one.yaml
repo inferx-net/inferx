@@ -38,14 +38,13 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
-          resources:
-            requests:
-              memory: "20Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "40Gi"       # HugePages request
-            limits:
-              memory: "20Gi"              # Regular memory limit
-              hugepages-2Mi: "40Gi"
-              nvidia.com/gpu: 2  # or `all` if all GPUs are needed and supported
+          # resources:
+          #   requests:
+          #     memory: "30Gi"              # Regular memory request (RAM)
+          #     hugepages-2Mi: "60Gi"       # HugePages request
+          #   limits:
+          #     memory: "30Gi"              # Regular memory limit
+          #     hugepages-2Mi: "60Gi" 
           volumeMounts:
             - mountPath: /dev/vfio
               name: dev-vfio
