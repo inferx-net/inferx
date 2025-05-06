@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeagent
+  labels:
+    app: nodeagent
+spec:
+  selector:
+    matchLabels:
+      app: nodeagent
+  template:
+    metadata:
+      labels:
+        app: nodeagent
+    spec:
+      hostPID: true
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox
+          command:
+            [
+              "sh", "-c",
+              "until nc -z etcd.default.svc.cluster.local 2379 && \
+                     nc -z keycloak.default.svc.cluster.local 8080; do \
+                  echo 'Waiting for dependencies...'; sleep 3; \
+               done"
+            ]
+      containers:
+        - name: nodeagent
+          image: inferx/inferx_one:v0.1.1
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: RUN_SERVICE
+            value: "NodeAgent"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          volumeMounts:
+            - mountPath: /dev/vfio
+              name: dev-vfio
+            - mountPath: /var/run/docker.sock
+              name: docker-sock
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+              mountPropagation: Bidirectional
+            - mountPath: /opt/inferx/
+              name: opt-inferx
+            - mountPath: /etc/letsencrypt/
+              name: letsencrypt
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            - mountPath: /var/lib/docker/
+              name: docker-lib
+            - mountPath: /sys/bus/pci/devices
+              name: pci-devices
+              readOnly: false
+            - mountPath: /sys/class/uio
+              name: uio
+              readOnly: false
+            - mountPath: /sys/kernel/mm/hugepages
+              name: hugepages-sys
+              readOnly: false
+          command: ["./onenode", "/opt/inferx/config/node.json"]
+      volumes:
+        - name: dev-vfio
+          hostPath:
+            path: /dev/vfio
+        - name: pci-devices
+          hostPath:
+            path: /sys/bus/pci/devices
+        - name: uio
+          hostPath:
+            path: /sys/class/uio
+        - name: hugepages-sys
+          hostPath:
+            path: /sys/kernel/mm/hugepages
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: letsencrypt
+          hostPath:
+            path: /etc/letsencrypt/
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: docker-lib
+          hostPath:
+            path: /var/lib/docker/
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nodeagent
+spec:
+  type: NodePort
+  selector:
+    app: nodeagent
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+      nodePort: 31501  

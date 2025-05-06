@@ -17,7 +17,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: inferx-one
+                name: nodeagent
                 port:
                   number: 4000
           - path: /authn/

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: statesvc
+  labels:
+    app: statesvc
+spec:
+  selector:
+    matchLabels:
+      app: statesvc
+  template:
+    metadata:
+      labels:
+        app: statesvc
+    spec:
+      hostPID: true
+      containers:
+        - name: statesvc
+          image: inferx/inferx_one:v0.1.1
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP          
+          - name: RUN_SERVICE
+            value: "StateSvc"
+          volumeMounts:
+            - mountPath: /opt/inferx/
+              name: opt-inferx
+          command: ["./onenode", "/opt/inferx/config/node.json"]
+      volumes:
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/       
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: statesvc
+spec:
+  type: NodePort
+  selector:
+    app: statesvc
+  ports:
+    - name: http
+      port: 1237
+      targetPort: 1237
