@@ -22,7 +22,6 @@
     "resources": {
         "CPU": 30000,
         "Mem": 400000,
-        "GPUType": "A4000",
         "GPUs": "Auto",
         "ContextOverhead": 450,
         "MaxContextPerGPU": 1
