@@ -109,7 +109,7 @@ services:
     container_name: inferx_dashboard
     network_mode: "host"
     environment:
-      - KEYCLOAK_URL=http://${LOCAL_IP}:31260/authn
+      - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
       - KEYCLOAK_REALM_NAME=inferx
       - KEYCLOAK_CLIENT_ID=infer_client
       - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
@@ -146,7 +146,7 @@ services:
     networks:
       - keycloak-network
     ports:
-      - '31260:8080'
+      - '1260:8080'
     environment:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin

@@ -40,7 +40,7 @@
     },
     "secretStoreAddr": "postgresql://secret:123456@localhost:5431/secretdb",
     "keycloakconfig": {
-        "url": "http://192.168.0.22:31260/authn",
+        "url": "http://localhost:1260/authn",
         "realm": "inferx"
     }
 }
