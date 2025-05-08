@@ -287,6 +287,7 @@ def listfuncs(tenant: str, namespace: str):
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/functions/{}/{}/".format(apihostaddr, tenant, namespace)
     resp = requests.get(url, headers=headers)
+    print("content*************** ", resp.content)
     funcs = json.loads(resp.content)  
 
     return funcs
