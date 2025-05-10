@@ -17,6 +17,7 @@ spec:
       containers:
         - name: scheduler
           image: inferx/inferx_one:v0.1.1
+          imagePullPolicy: IfNotPresent
           env:
           - name: POD_IP
             valueFrom:

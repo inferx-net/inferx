@@ -17,6 +17,7 @@ spec:
       containers:
         - name: inferx-dashboard
           image: inferx/inferx_dashboard:v0.1.1
+          imagePullPolicy: IfNotPresent
           env:
             - name: KEYCLOAK_URL
               value: "http://192.168.0.22:31260/authn"

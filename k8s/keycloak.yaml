@@ -15,6 +15,7 @@ spec:
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:latest
+          imagePullPolicy: IfNotPresent
           args: ["start-dev", "--verbose"]
           env:
             - name: KEYCLOAK_ADMIN

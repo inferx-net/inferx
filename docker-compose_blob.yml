@@ -68,6 +68,8 @@ services:
     environment:
       - POD_IP=${LOCAL_IP}
       - RUN_SERVICE=All
+      - ALLOC_MEMORY=120Gi
+      - ALLOC_MEMORY_2M=60Gi
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]

@@ -13,11 +13,14 @@ spec:
       labels:
         app: spdk
     spec:
+      nodeSelector:
+        inferx_nodeType: inferx_blob   
       hostNetwork: true
       hostPID: true
       containers:
         - name: spdk
           image: inferx/spdk-container2:v0.1.0
+          imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
             runAsUser: 0

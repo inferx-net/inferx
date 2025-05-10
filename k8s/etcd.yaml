@@ -17,6 +17,7 @@ spec:
       containers:
         - name: etcd
           image: quay.io/coreos/etcd:v3.5.13
+          imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: etcd-data
               mountPath: /opt/inferx/data/etcd

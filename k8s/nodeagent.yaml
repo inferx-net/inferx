@@ -30,6 +30,7 @@ spec:
       containers:
         - name: nodeagent
           image: inferx/inferx_one:v0.1.1
+          imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
             capabilities:
@@ -169,6 +170,7 @@ spec:
       containers:
         - name: nodeagent
           image: inferx/inferx_one:v0.1.1
+          imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
             capabilities:
@@ -188,31 +190,27 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: spec.nodeName
-          - name: MEMORY_REQUEST
+          - name: ALLOC_MEMORY
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: requests.memory                
-          - name: MEMORY_2M_REQUEST
+          - name: ALLOC_MEMORY_2M
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: requests.hugepages-2Mi                
           resources:
             requests:
-              memory: "30Gi"              # Regular memory request (RAM)
+              memory: "25Gi"              # Regular memory request (RAM)
             limits:
-              memory: "30Gi"              # Regular memory request (RAM)
+              memory: "25Gi"              # Regular memory request (RAM)
+              nvidia.com/gpu: 1
           volumeMounts:
-            - mountPath: /dev/vfio
-              name: dev-vfio
             - mountPath: /var/run/docker.sock
               name: docker-sock
             - mountPath: /run/udev
               name: run-udev
-            - mountPath: /dev/hugepages
-              name: dev-hugepages
-              mountPropagation: Bidirectional
             - mountPath: /opt/inferx/
               name: opt-inferx
             - mountPath: /etc/letsencrypt/
@@ -221,29 +219,8 @@ spec:
               name: docker-runtime
             - mountPath: /var/lib/docker/
               name: docker-lib
-            - mountPath: /sys/bus/pci/devices
-              name: pci-devices
-              readOnly: false
-            - mountPath: /sys/class/uio
-              name: uio
-              readOnly: false
-            - mountPath: /sys/kernel/mm/hugepages
-              name: hugepages-sys
-              readOnly: false
           command: ["./onenode", "/opt/inferx/config/node.json"]
       volumes:
-        - name: dev-vfio
-          hostPath:
-            path: /dev/vfio
-        - name: pci-devices
-          hostPath:
-            path: /sys/bus/pci/devices
-        - name: uio
-          hostPath:
-            path: /sys/class/uio
-        - name: hugepages-sys
-          hostPath:
-            path: /sys/kernel/mm/hugepages
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock

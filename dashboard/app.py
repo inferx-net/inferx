@@ -287,7 +287,6 @@ def listfuncs(tenant: str, namespace: str):
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/functions/{}/{}/".format(apihostaddr, tenant, namespace)
     resp = requests.get(url, headers=headers)
-    print("content*************** ", resp.content)
     funcs = json.loads(resp.content)  
 
     return funcs
@@ -621,7 +620,6 @@ def proxy(path):
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"
 
-    print("proxy path ", path)
     try:
         resp = requests.request(
             method=request.method,
@@ -640,8 +638,6 @@ def proxy(path):
     excluded_headers = ['content-encoding', 'transfer-encoding', 'connection']
     headers = [(name, value) for name, value in resp.raw.headers.items() if name.lower() not in excluded_headers]
     
-    print("response ", resp.status_code, path)
-
     # Create a Flask response object with the backend server's response
     response = Response(stream_response(resp), resp.status_code, headers)
     return response
@@ -657,7 +653,6 @@ def proxy1(path):
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"
 
-    print("proxy path ", path)
     try:
         resp = requests.request(
             method=request.method,
@@ -674,8 +669,6 @@ def proxy1(path):
         print("error ....")
         return Response(f"Error connecting to backend server: {e}", status=502, mimetype='text/plain')
     
-    print("response ", resp.status_code, path, resp.content)
-
     response = Response(resp.content, resp.status_code, mimetype='text/plain')
     # for name, value in resp.headers.items():
     #     if name.lower() not in ['content-encoding', 'transfer-encoding', 'connection']:
@@ -773,7 +766,6 @@ def GetFunc():
     name = request.args.get("name")
 
     func = getfunc(tenant, namespace, name)
-    print("func ", func)
     
     sample = func["func"]["object"]["spec"]["sample_query"]
     map = sample["body"]
