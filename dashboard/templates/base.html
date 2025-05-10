@@ -44,13 +44,13 @@
         <a href="{{ hosturl }}listpod"> Pods </a>
         <a href="{{ hosturl }}listsnapshot"> Snapshots </a>
         <a href="{{ hosturl }}listnode"> Nodes </a>
-        <a href="{{ hosturl }}apikeys" id="apikey"> Apikeys </a>
+        <a href="{{ hosturl }}admin" id="admin"> Admin </a>
     </nav>
     <script>
         const link = document.querySelector('#login_logout');
-        const apikey = document.querySelector('#apikey');
+        const admin = document.querySelector('#admin');
         if (location.protocol == 'https:') {
-            apikey.style.display = 'none';
+            admin.style.display = 'none';
             link.style.display = 'none';
         } else {
             const usernam = "{{ session['username'] }}";

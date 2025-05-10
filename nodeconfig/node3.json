@@ -1,0 +1,46 @@
+{
+    "nodeName": "node2",
+    "etcdAddrs": [
+        "http://localhost:2379"
+    ],
+    "hostIpCidr": "192.168.0.0/16",
+    "podMgrPort": 1233,
+    "tsotCniPort": 1234,
+    "tsotSvcPort": 1235,
+    "qletStateSvcPort": 1236,
+    "statSvcPort": 1237,
+    "schedulerPort": 1238,
+    "gatewayPort": 4000,
+    "cidr": "10.1.2.0/8",
+    "stateSvcAddrs": [
+        "http://localhost:1237"
+    ],
+    "tsotSocketPath": "/opt/inferx/sockets/tsot-socket",
+    "tsotGwSocketPath": "/opt/inferx/sockets_host/tsot-socket",
+    "runService": true,
+    "auditdbAddr": "postgresql://audit_user:123456@localhost:5432/auditdb",
+    "resources": {
+        "CPU": 30000,
+        "Mem": 400000,
+        "GPUType": "A4000",
+        "GPUs": "Auto",
+        "ContextOverhead": 440,
+        "MaxContextPerGPU": 1
+    },
+    "snapshotDir": "/opt/inferx/snapshot",
+    "enableBlobStore": true,
+    "sharemem": {
+        "size": 36,
+        "hugepage": true
+    },
+    "tlsconfig": {
+        "enable": false,
+        "cert": "/etc/letsencrypt/live/inferx.net/fullchain.pem",
+        "key": "/etc/letsencrypt/live/inferx.net/privkey.pem"
+    },
+    "secretStoreAddr": "postgresql://secret:123456@localhost:5431/secretdb",
+    "keycloakconfig": {
+        "url": "http://localhost:1260/authn",
+        "realm": "inferx"
+    }
+}

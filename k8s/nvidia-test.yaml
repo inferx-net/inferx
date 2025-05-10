@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nvidia-test
+spec:
+  containers:
+  - name: cuda-container
+    image: nvidia/cuda:12.2.0-devel-ubuntu20.04
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "infinity"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+  nodeSelector:
+    kubernetes.io/hostname: brad-ms-7d46

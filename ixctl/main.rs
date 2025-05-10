@@ -107,7 +107,7 @@ fn GetCred() -> Authorization {
 async fn AuthN() -> String {
     let keycloakUrl = match std::env::var("KEYCLOAK_URL") {
         Ok(s) => s,
-        Err(_) => "http://localhost:1260/authn".to_owned(),
+        Err(_) => "http://localhost:31260/authn".to_owned(),
     };
 
     println!("keycloakUrl is {}", &keycloakUrl);

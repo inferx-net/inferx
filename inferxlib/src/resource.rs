@@ -25,7 +25,7 @@ pub const MAX_GPU_COUNT: usize = 8;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 
-pub struct GPUType(String);
+pub struct GPUType(pub String);
 
 impl Default for GPUType {
     fn default() -> Self {
@@ -36,6 +36,10 @@ impl Default for GPUType {
 impl GPUType {
     pub fn Any() -> Self {
         return Self("Any".to_string());
+    }
+
+    pub fn Unknown() -> Self {
+        return Self("Unknown".to_string());
     }
 
     pub fn CanAlloc(&self, req: &Self) -> bool {
@@ -130,16 +134,21 @@ impl Default for GPUSet {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ResourceConfig {
-    #[serde(rename = "CPU", default)]
-    pub cpu: u64, // 1/1000 CPU cores
     #[serde(rename = "Mem", default)]
-    pub memory: u64, // MB memory
-    #[serde(rename = "GPUType", default)]
-    pub gpuType: GPUType,
+    pub allocMemory: u64, // MB memory
+    #[serde(rename = "CacheMemory", default)]
+    pub cacheMemory: u64,
+    #[serde(rename = "Enable2MBPage", default)]
+    pub enable2MBPage: bool,
+    #[serde(rename = "EnableBlob", default)]
+    pub enableBlob: bool,
+    #[serde(rename = "BlobBuffer", default)]
+    pub blobBuffer: u64,
     #[serde(rename = "GPUs", default)]
     pub gpus: GPUSet,
-    #[serde(rename = "vRam", default)]
-    pub vRam: u64, // MB vRam per GPU
+
+    #[serde(rename = "CPU", default)]
+    pub cpu: u64, // 1/1000 CPU cores
 
     #[serde(rename = "ContextOverhead")]
     pub contextOverhead: u64, // MB vRam per GPU
@@ -372,14 +381,21 @@ impl NodeResources {
             && self.gpuType.CanAlloc(&req.gpu.type_)
             && self.gpus.CanAlloc(&req.gpu);
 
-        // if !canAlloc {
-        //     let cpu = self.cpu >= req.cpu;
-        //     let memory = self.memory >= req.memory;
-        //     let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-        //     let gpus = self.gpus.CanAlloc(&req.gpu);
+        if !canAlloc {
+            let cpu = self.cpu >= req.cpu;
+            let memory = self.memory >= req.memory;
+            let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
+            let gpus = self.gpus.CanAlloc(&req.gpu);
 
-        //     error!("CanAlloc fail cpu:{cpu} memory:{memory}, gpuType:{gpuType}, gpus:{gpus}");
-        // }
+            if !memory {
+                error!(
+                    "self.memory is {} required memory is {}",
+                    self.memory, req.memory
+                );
+            }
+
+            error!("CanAlloc fail cpu:{cpu} memory:{memory}, gpuType:{gpuType}, gpus:{gpus}");
+        }
 
         return canAlloc;
     }
