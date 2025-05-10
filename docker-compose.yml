@@ -55,8 +55,11 @@ services:
     network_mode: "host"
     environment:
       - POD_IP=${LOCAL_IP}
-      - RUN_SERVICE=All
-      - ALLOC_MEMORY=25Gi
+      - ALLOC_MEMORY=40Gi
+      - CACHE_MEMORY=20Gi
+      - ENABLE_2MB_PAGE=false
+      - ENALBE_BLOB=false
+      - BLOB_BUFF=4Gi
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]

@@ -134,14 +134,21 @@ impl Default for GPUSet {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ResourceConfig {
-    #[serde(rename = "CPU", default)]
-    pub cpu: u64, // 1/1000 CPU cores
     #[serde(rename = "Mem", default)]
-    pub memory: u64, // MB memory
-    #[serde(rename = "Mem_2MB", default)]
-    pub memory2MB: u64, // MB memory
+    pub allocMemory: u64, // MB memory
+    #[serde(rename = "CacheMemory", default)]
+    pub cacheMemory: u64,
+    #[serde(rename = "Enable2MBPage", default)]
+    pub enable2MBPage: bool,
+    #[serde(rename = "EnableBlob", default)]
+    pub enableBlob: bool,
+    #[serde(rename = "BlobBuffer", default)]
+    pub blobBuffer: u64,
     #[serde(rename = "GPUs", default)]
     pub gpus: GPUSet,
+
+    #[serde(rename = "CPU", default)]
+    pub cpu: u64, // 1/1000 CPU cores
 
     #[serde(rename = "ContextOverhead")]
     pub contextOverhead: u64, // MB vRam per GPU
@@ -374,14 +381,21 @@ impl NodeResources {
             && self.gpuType.CanAlloc(&req.gpu.type_)
             && self.gpus.CanAlloc(&req.gpu);
 
-        // if !canAlloc {
-        //     let cpu = self.cpu >= req.cpu;
-        //     let memory = self.memory >= req.memory;
-        //     let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-        //     let gpus = self.gpus.CanAlloc(&req.gpu);
+        if !canAlloc {
+            let cpu = self.cpu >= req.cpu;
+            let memory = self.memory >= req.memory;
+            let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
+            let gpus = self.gpus.CanAlloc(&req.gpu);
 
-        //     error!("CanAlloc fail cpu:{cpu} memory:{memory}, gpuType:{gpuType}, gpus:{gpus}");
-        // }
+            if !memory {
+                error!(
+                    "self.memory is {} required memory is {}",
+                    self.memory, req.memory
+                );
+            }
+
+            error!("CanAlloc fail cpu:{cpu} memory:{memory}, gpuType:{gpuType}, gpus:{gpus}");
+        }
 
         return canAlloc;
     }
