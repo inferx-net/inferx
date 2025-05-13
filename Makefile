@@ -1,5 +1,6 @@
 ARCH := ${shell uname -m}
 VERSION := v0.1.1
+NODE_NAME=${shell hostname}
 
 all: ctl dash spdk runmodel
 
@@ -59,6 +60,7 @@ run:
 	-sudo pkill -9 inferx
 	@echo "LOCAL_IP=$$(hostname -I | awk '{print $$1}' | xargs)" > .env
 	@echo "Version=$(VERSION)" >> .env
+	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	sudo docker compose -f docker-compose.yml  build
 	- sudo rm -f /opt/inferx/log/inferx.log
 	- sudo rm -f /opt/inferx/log/onenode.log
@@ -69,6 +71,7 @@ runblob:
 	-sudo pkill -9 inferx
 	@echo "LOCAL_IP=$$(hostname -I | tr ' ' '\n' | grep -v '^172\.' | head -n 1 | xargs)" > .env
 	@echo "Version=$(VERSION)" >> .env
+	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	sudo docker compose -f docker-compose_blob.yml  build
 	- sudo rm -f /opt/inferx/log/inferx.log
 	- sudo rm -f /opt/inferx/log/onenode.log

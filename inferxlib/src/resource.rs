@@ -165,6 +165,15 @@ impl ResourceConfig {
 
         return self.maxContextPerGPU;
     }
+
+    pub fn AllocableMem(&self) -> u64 {
+        let mut memory = self.allocMemory - self.cacheMemory;
+        if self.enableBlob {
+            memory -= self.blobBuffer;
+        }
+
+        return memory;
+    }
 }
 
 impl GPUResourceMap {
@@ -326,6 +335,8 @@ pub struct NodeResources {
     pub cpu: u64, // 1/1000 CPU cores
     #[serde(rename = "Mem", default)]
     pub memory: u64, // MB memory
+    #[serde(rename = "CacheMem", default)]
+    pub cacheMemory: u64,
     #[serde(rename = "GPUType", default)]
     pub gpuType: GPUType,
     #[serde(rename = "GPUs", default)]
@@ -339,6 +350,7 @@ impl NodeResources {
         nodename: &str,
         cpu: u64,
         memory: u64,
+        cacheMemory: u64,
         gpuType: GPUType,
         gpus: GPUResourceMap,
         maxContextPerGpu: u64,
@@ -347,6 +359,7 @@ impl NodeResources {
             nodename: nodename.to_owned(),
             cpu: cpu,
             memory: memory,
+            cacheMemory: cacheMemory,
             gpuType: gpuType.clone(),
             gpus: gpus,
             maxContextCnt: maxContextPerGpu,
@@ -358,6 +371,7 @@ impl NodeResources {
             nodename: self.nodename.clone(),
             cpu: self.cpu,
             memory: self.memory,
+            cacheMemory: self.cacheMemory,
             gpuType: self.gpuType.clone(),
             gpus: self.gpus.clone(),
             maxContextCnt: self.maxContextCnt,
@@ -369,6 +383,7 @@ impl NodeResources {
             nodename: "".to_owned(),
             cpu: 0,
             memory: 0,
+            cacheMemory: 0,
             gpuType: self.gpuType.clone(),
             gpus: self.gpus.clone(),
             maxContextCnt: self.maxContextCnt,
@@ -378,12 +393,14 @@ impl NodeResources {
     pub fn CanAlloc(&self, req: &Resources) -> bool {
         let canAlloc = self.cpu >= req.cpu
             && self.memory >= req.memory
+            && self.cacheMemory >= req.cacheMemory
             && self.gpuType.CanAlloc(&req.gpu.type_)
             && self.gpus.CanAlloc(&req.gpu);
 
         if !canAlloc {
             let cpu = self.cpu >= req.cpu;
             let memory = self.memory >= req.memory;
+            let cacheMemory = self.cacheMemory >= req.cacheMemory;
             let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
             let gpus = self.gpus.CanAlloc(&req.gpu);
 
@@ -394,7 +411,7 @@ impl NodeResources {
                 );
             }
 
-            error!("CanAlloc fail cpu:{cpu} memory:{memory}, gpuType:{gpuType}, gpus:{gpus}");
+            error!("CanAlloc fail cpu:{cpu} memory:{memory}, cacheMemory:{cacheMemory}, gpuType:{gpuType}, gpus:{gpus}");
         }
 
         return canAlloc;
@@ -404,6 +421,7 @@ impl NodeResources {
         // error!("NodeResources sub \n curr is {:?} \n sub {:?}", self, other);
         // self.cpu -= other.cpu;
         self.memory -= other.memory;
+        self.cacheMemory -= other.cacheMemory;
         self.gpus.Sub(&other.gpus);
 
         return Ok(());
@@ -415,6 +433,7 @@ impl NodeResources {
             nodename: self.nodename.clone(),
             cpu: resource.cpu,
             memory: resource.memory,
+            cacheMemory: resource.cacheMemory,
             gpuType: self.gpuType.clone(),
             gpus: GPUResourceMap::default(),
             maxContextCnt: self.maxContextCnt,
@@ -423,8 +442,12 @@ impl NodeResources {
 
     pub fn Alloc(&mut self, req: &Resources) -> Result<NodeResources> {
         if !self.CanAlloc(req) {
+            error!(
+                "NodeResources::alloc fail available {:#?} require {:#?}",
+                self, req
+            );
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "NodeResources::alloc fail type doesn't match available {:?} require {:?}",
+                "NodeResources::alloc fail available {:?} require {:?}",
                 self, req
             )));
         }
@@ -432,12 +455,14 @@ impl NodeResources {
         // we don't allc/free cpu resource, assume there are enough cpu resource
         // self.cpu -= req.cpu;
         self.memory -= req.memory;
+        self.cacheMemory -= req.cacheMemory;
         let gpus = self.gpus.Alloc(&req.gpu)?;
 
         return Ok(NodeResources {
             nodename: self.nodename.clone(),
             cpu: req.cpu,
             memory: req.memory,
+            cacheMemory: req.cacheMemory,
             gpuType: self.gpuType.clone(),
             gpus: gpus,
             maxContextCnt: self.maxContextCnt,
@@ -449,6 +474,7 @@ impl NodeResources {
         self.gpus.Add(&free.gpus);
         // self.cpu += free.cpu;
         self.memory += free.memory;
+        self.cacheMemory += free.cacheMemory;
 
         return Ok(());
     }
@@ -464,6 +490,8 @@ pub struct Resources {
     pub cpu: u64, // 1/1000 CPU cores
     #[serde(rename = "Mem")]
     pub memory: u64, // MB memory
+    #[serde(default, rename = "CacheMem")]
+    pub cacheMemory: u64,
     #[serde(rename = "GPU")]
     pub gpu: GPUResource,
 }
@@ -473,6 +501,7 @@ impl Default for Resources {
         Self {
             cpu: 0,
             memory: 0,
+            cacheMemory: 0,
             gpu: GPUResource::default(),
         }
     }
@@ -493,6 +522,7 @@ impl Resources {
         return Self {
             cpu: 0,
             memory: 0,
+            cacheMemory: 0,
             gpu: self.gpu.clone(),
         };
     }
@@ -500,6 +530,7 @@ impl Resources {
     pub fn Sub(&mut self, other: &Self) {
         self.cpu -= other.cpu;
         self.memory -= other.memory;
+        self.cacheMemory -= other.cacheMemory;
         self.gpu.Sub(&other.gpu);
     }
 }
@@ -666,6 +697,12 @@ pub struct Standby {
 impl Standby {
     pub fn GpuMemKeepalive(&self, blobStoreEnable: bool) -> StandbyType {
         return self.gpuMem.StandbyType(blobStoreEnable);
+    }
+
+    pub fn Needblob(&self) -> bool {
+        return self.gpuMem == StandbyType::Blob
+            || self.pageableMem == StandbyType::Blob
+            || self.pinndMem == StandbyType::Blob;
     }
 }
 

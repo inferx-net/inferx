@@ -54,8 +54,10 @@ services:
     cpus: 10
     network_mode: "host"
     environment:
+      - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
       - ALLOC_MEMORY=40Gi
+      - ALLOC_CPU=24
       - CACHE_MEMORY=20Gi
       - ENABLE_2MB_PAGE=false
       - ENALBE_BLOB=false

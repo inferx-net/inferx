@@ -159,7 +159,8 @@ impl FuncPod {
     }
 
     pub fn ResumeRestore(&mut self, resources: &NodeResources) -> Result<()> {
-        return self.object.spec.allocResources.Add(resources);
+        self.object.spec.allocResources = resources.clone();
+        return Ok(());
     }
 
     pub fn MemHibernateDone(&mut self) -> Result<()> {
@@ -175,6 +176,7 @@ impl FuncPod {
             nodename: self.object.spec.nodename.clone(),
             cpu: 0,
             memory: 0,
+            cacheMemory: 0,
             gpuType: GPUType::Any(),
             gpus: gpuResources,
             maxContextCnt: 0,

@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::data_obj::*;
+use crate::resource;
 use crate::resource::*;
 
 pub const FUNCPOD_TYPE: &str = "funcpod_type.qservice.io";
@@ -146,32 +147,12 @@ fn PromptDefault() -> String {
 impl FuncSpec {
     pub const HIBERNATE_CONTAINER_MEM_OVERHEAD: u64 = 500; // 500 * 1024 * 1024; 500 MB
 
-    pub fn RestoreResource(&self, blobStoreEnable: bool) -> Resources {
-        match self.standby.GpuMemKeepalive(blobStoreEnable) {
-            StandbyType::Mem => {
-                return Resources {
-                    memory: self.resources.memory,
-                    ..Default::default()
-                };
-            }
-            _ => {
-                return Resources {
-                    memory: Self::HIBERNATE_CONTAINER_MEM_OVERHEAD,
-                    ..Default::default()
-                };
-            }
-        }
-    }
-
     pub fn SnapshotResource(&self) -> Resources {
         return self.resources.clone();
     }
 
-    pub fn ResumeResource(&self, blobStoreEnable: bool) -> Resources {
-        let restoreResource = self.RestoreResource(blobStoreEnable);
-        let mut req = self.resources.clone();
-        req.Sub(&restoreResource);
-        return req;
+    pub fn AllResources(&self) -> Resources {
+        return self.resources.clone();
     }
 }
 
