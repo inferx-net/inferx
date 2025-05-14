@@ -146,111 +146,124 @@ spec:
             path: /var/lib/docker/
       restartPolicy: Always
 ---
-# apiVersion: apps/v1
-# kind: DaemonSet
-# metadata:
-#   name: nodeagent-file
-#   labels:
-#     app: nodeagent
-# spec:
-#   selector:
-#     matchLabels:
-#       app: nodeagent
-#   template:
-#     metadata:
-#       labels:
-#         app: nodeagent
-#     spec:
-#       nodeSelector:
-#         inferx_nodeType: inferx_file      
-#       hostPID: true
-#       initContainers:
-#         - name: wait-for-dependencies
-#           image: busybox
-#           command:
-#             [
-#               "sh", "-c",
-#               "until nc -z etcd.default.svc.cluster.local 2379 && \
-#                      nc -z keycloak.default.svc.cluster.local 8080; do \
-#                   echo 'Waiting for dependencies...'; sleep 3; \
-#                done"
-#             ]
-#       containers:
-#         - name: nodeagent
-#           image: inferx/inferx_one:v0.1.1
-#           imagePullPolicy: IfNotPresent
-#           securityContext:
-#             privileged: true
-#             capabilities:
-#               add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
-#             runAsUser: 0
-#             runAsGroup: 0
-#           env:
-#           - name: STATESVC_ADDR
-#             value: "http://statesvc:1237"
-#           - name: RUN_SERVICE
-#             value: "NodeAgent"
-#           - name: POD_IP
-#             valueFrom:
-#               fieldRef:
-#                 fieldPath: status.podIP
-#           - name: NODE_NAME
-#             valueFrom:
-#               fieldRef:
-#                 fieldPath: spec.nodeName
-#           - name: ALLOC_MEMORY
-#             valueFrom:
-#               resourceFieldRef:
-#                 containerName: nodeagent
-#                 resource: requests.memory                
-#           - name: ALLOC_MEMORY_2M
-#             valueFrom:
-#               resourceFieldRef:
-#                 containerName: nodeagent
-#                 resource: requests.hugepages-2Mi                
-#           resources:
-#             requests:
-#               memory: "25Gi"              # Regular memory request (RAM)
-#             limits:
-#               memory: "25Gi"              # Regular memory request (RAM)
-#               nvidia.com/gpu: 1
-#           volumeMounts:
-#             - mountPath: /var/run/docker.sock
-#               name: docker-sock
-#             - mountPath: /run/udev
-#               name: run-udev
-#             - mountPath: /opt/inferx/
-#               name: opt-inferx
-#             - mountPath: /etc/letsencrypt/
-#               name: letsencrypt
-#             - mountPath: /var/run/docker/runtime-runc/moby/
-#               name: docker-runtime
-#             - mountPath: /var/lib/docker/
-#               name: docker-lib
-#           command: ["./onenode", "/opt/inferx/config/node.json"]
-#       volumes:
-#         - name: docker-sock
-#           hostPath:
-#             path: /var/run/docker.sock
-#         - name: run-udev
-#           hostPath:
-#             path: /run/udev
-#         - name: dev-hugepages
-#           hostPath:
-#             path: /dev/hugepages
-#         - name: opt-inferx
-#           hostPath:
-#             path: /opt/inferx/
-#         - name: letsencrypt
-#           hostPath:
-#             path: /etc/letsencrypt/
-#         - name: docker-runtime
-#           hostPath:
-#             path: /var/run/docker/runtime-runc/moby/
-#         - name: docker-lib
-#           hostPath:
-#             path: /var/lib/docker/
-#       restartPolicy: Always
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeagent-file
+  labels:
+    app: nodeagent
+spec:
+  selector:
+    matchLabels:
+      app: nodeagent
+  template:
+    metadata:
+      labels:
+        app: nodeagent
+    spec:
+      nodeSelector:
+        inferx_nodeType: inferx_file      
+      hostPID: true
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox
+          command:
+            [
+              "sh", "-c",
+              "until nc -z etcd.default.svc.cluster.local 2379 && \
+                     nc -z keycloak.default.svc.cluster.local 8080; do \
+                  echo 'Waiting for dependencies...'; sleep 3; \
+               done"
+            ]
+      containers:
+        - name: nodeagent
+          image: inferx/inferx_one:v0.1.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: RUN_SERVICE
+            value: "NodeAgent"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: requests.memory                
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: requests.hugepages-2Mi   
+          - name: CACHE_MEMORY
+            value: "20Gi"
+          - name: ENABLE_2MB_PAGE
+            value: "false"              
+          - name: ALLOC_CPU
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: requests.cpu                            
+          - name: ENALBE_BLOB
+            value: "false"                     
+          resources:
+            requests:
+              cpu: "20"
+              memory: "40Gi"              # Regular memory request (RAM)
+            limits:
+              cpu: "20"
+              memory: "40Gi"              # Regular memory request (RAM)
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-sock
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /opt/inferx/
+              name: opt-inferx
+            - mountPath: /etc/letsencrypt/
+              name: letsencrypt
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            - mountPath: /var/lib/docker/
+              name: docker-lib
+          command: ["./onenode", "/opt/inferx/config/node.json"]
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: letsencrypt
+          hostPath:
+            path: /etc/letsencrypt/
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: docker-lib
+          hostPath:
+            path: /var/lib/docker/
+      restartPolicy: Always
 ---
 apiVersion: v1
 kind: Service
