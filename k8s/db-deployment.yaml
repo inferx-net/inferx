@@ -23,6 +23,8 @@ spec:
       labels:
         app: db
     spec:
+      nodeSelector:
+        inferx_storage: data      
       containers:
         - name: postgres
           image: postgres:14.5

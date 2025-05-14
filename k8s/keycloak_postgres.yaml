@@ -23,6 +23,8 @@ spec:
       labels:
         app: keycloak-postgres
     spec:
+      nodeSelector:
+        inferx_storage: data      
       containers:
         - name: postgres
           image: postgres:14.5

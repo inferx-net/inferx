@@ -90,3 +90,20 @@ rundash:
 
 stopdash:
 	sudo docker stop inferx_dashboard
+
+runkblob:
+	sudo kubectl apply -f k8s/spdk.yaml
+	sudo kubectl apply -f k8s/etcd.yaml
+	sudo kubectl apply -f k8s/secretdb.yaml
+	sudo kubectl apply -f k8s/db-deployment.yaml
+	sudo kubectl apply -f k8s/keycloak_postgres.yaml
+	sudo kubectl apply -f k8s/keycloak.yaml
+	sudo kubectl apply -f k8s/statesvc.yaml
+	sudo kubectl apply -f k8s/scheduler.yaml
+	sudo kubectl apply -f k8s/nodeagent.yaml
+	sudo kubectl apply -f k8s/dashboard.yaml
+	sudo kubectl apply -f k8s/ingress.yaml
+
+stopnodeagent:
+	sudo kubectl delete DaemonSet nodeagent-blob
+	sudo kubectl delete DaemonSet nodeagent-file
