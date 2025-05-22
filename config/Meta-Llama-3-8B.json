@@ -5,7 +5,7 @@
     "name": "Meta-Llama-3-8B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.6.2",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "meta-llama/Meta-Llama-3-8B",

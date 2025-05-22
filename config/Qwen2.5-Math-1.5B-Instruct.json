@@ -5,14 +5,14 @@
     "name": "Qwen2.5-Math-1.5B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.6.2",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Math-1.5B-Instruct"
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 20000,
+                "Mem": 24000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
@@ -23,6 +23,10 @@
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
                 ]
             ],
             "mounts": [

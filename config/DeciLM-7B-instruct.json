@@ -5,7 +5,7 @@
     "name": "DeciLM-7B-instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.6.2",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "Deci/DeciLM-7B-instruct",

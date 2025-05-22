@@ -5,7 +5,7 @@
     "name": "Qwen-VL-Chat",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.6.2",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "Qwen/Qwen-VL-Chat",

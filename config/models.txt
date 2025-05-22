@@ -185,9 +185,6 @@ export IFERX_PASSWORD="test"
 /opt/inferx/bin/ixctl create deepseek-llm-7b-chat.json
 /opt/inferx/bin/ixctl create deepseek-llm-7b-chat_2gpu.json
 
-/opt/inferx/bin/ixctl update deepseek-llm-7b-chat.json
-/opt/inferx/bin/ixctl update deepseek-llm-7b-chat_2gpu.json
-
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-8B.json
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Qwen-1.5B.json
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Qwen-7B.json
