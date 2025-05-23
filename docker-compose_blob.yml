@@ -121,7 +121,7 @@ services:
       - KEYCLOAK_CLIENT_ID=infer_client
       - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/listnode" ]
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
       interval: 10s
       timeout: 10s
       retries: 3

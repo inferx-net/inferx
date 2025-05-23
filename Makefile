@@ -86,7 +86,8 @@ stopblob:
 	sudo docker compose -f docker-compose_blob.yml down
 
 rundash:
-	sudo docker run --net=host --name inferx_dashboard -v /etc/letsencrypt/:/etc/letsencrypt/ --rm  inferx/inferx_dashboard:$(VERSION)
+	sudo docker run --net=host --name inferx_dashboard --env "KEYCLOAK_URL=http://192.168.0.22:1260/authn" \
+	-v /etc/letsencrypt/:/etc/letsencrypt/ --rm  inferx/inferx_dashboard:$(VERSION)
 
 stopdash:
 	sudo docker stop inferx_dashboard

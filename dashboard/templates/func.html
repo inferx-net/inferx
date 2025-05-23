@@ -159,7 +159,7 @@
             const port = window.location.port;
             const schema = window.location.protocol;
 
-            url = schema + "//" + hostname + ":" + port + "/proxy/object/";
+            url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/";
             const body = {
                 method: 'POST',
                 headers: {
@@ -192,7 +192,7 @@
                 const port = window.location.port;
                 const schema = window.location.protocol;
 
-                url = schema + "//" + hostname + ":" + port + "/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
+                url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
                 const body = {
                     method: 'DELETE',
                     headers: {
@@ -267,7 +267,7 @@
             abortController = new AbortController();
             const { signal } = abortController;
 
-            url = schema + "//" + hostname + ":" + port + "/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
+            url = schema + "//" + hostname + ":" + port + "/demo/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
             map["prompt"] = prompt;
             const options = {
                 method: 'POST',
