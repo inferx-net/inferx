@@ -890,9 +890,9 @@ def run_http():
 
 if __name__ == "__main__":
     if tls:
-        http_thread = Thread(target=run_http)
-        http_thread.start()
-        app.run(host="0.0.0.0", port=1239, ssl_context=('/etc/letsencrypt/live/inferx.net/fullchain.pem', '/etc/letsencrypt/live/inferx.net/privkey.pem'))
+        # http_thread = Thread(target=run_http)
+        # http_thread.start()
+        app.run(host="0.0.0.0", port=1290, debug=True, ssl_context=('/etc/letsencrypt/live/inferx.net/fullchain.pem', '/etc/letsencrypt/live/inferx.net/privkey.pem'))
         # app.run(host="0.0.0.0", port=1239, ssl_context=('/etc/letsencrypt/live/quarksoft.io/fullchain.pem', '/etc/letsencrypt/live/quarksoft.io/privkey.pem'))
     else:
         app.run(host='0.0.0.0', port=1250, debug=True)

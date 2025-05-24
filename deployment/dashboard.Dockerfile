@@ -18,3 +18,5 @@ COPY . .
 COPY nginx.conf /etc/nginx/sites-available/default
 
 CMD service nginx start && gunicorn -w 4 -b 0.0.0.0:1250 app:app
+# CMD service nginx start && python3 ./app.py
+# CMD python3 ./app.py
