@@ -1,5 +1,5 @@
 # docker build -t vllm-openai-upgraded .
-FROM vllm/vllm-openai:v0.6.2
+FROM vllm/vllm-openai:v0.7.3
 WORKDIR /
 # Upgrade the transformers library
 RUN apt-get -y update

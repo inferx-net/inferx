@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  labels:
+    app: scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scheduler
+  template:
+    metadata:
+      labels:
+        app: scheduler
+    spec:
+      hostPID: true
+      containers:
+        - name: scheduler
+          image: inferx/inferx_one:v0.1.1
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP          
+          - name: RUN_SERVICE
+            value: "Scheduler"
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          volumeMounts:
+            - mountPath: /opt/inferx/
+              name: opt-inferx
+          command: ["./onenode", "/opt/inferx/config/node.json"]
+      volumes:
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/       
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler
+spec:
+  type: NodePort
+  selector:
+    app: scheduler
+  ports:
+    - name: http
+      port: 1238
+      targetPort: 1238

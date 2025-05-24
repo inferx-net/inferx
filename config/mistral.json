@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "mistral",
     "spec": {
-        "image": "vllm/vllm-openai:v0.6.2",
+        "image": "vllm/vllm-openai:v0.7.3",
         "commands": [
             "--model",
             "mistralai/Mistral-7B-v0.1",

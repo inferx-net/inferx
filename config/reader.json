@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "reader-lm",
     "spec": {
-        "image": "vllm/vllm-openai:v0.6.2",
+        "image": "vllm/vllm-openai:v0.7.3",
         "commands": [
             "--model",
             "jinaai/reader-lm-1.5b",

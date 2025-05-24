@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::*;
 use crate::data_obj::{DataObject, DataObjectMgr};
-use crate::resource::Standby;
+use crate::resource::{GPUResource, Resources, Standby, StandbyType};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SnapshotInfo {
@@ -14,6 +14,8 @@ pub struct SnapshotInfo {
     pub gpuMemSizes: BTreeMap<i32, u64>,
     pub standby: Standby,
 }
+
+pub const ONE_GB: u64 = 1 << 30;
 
 impl SnapshotInfo {
     pub fn SnapshotStandyInfo(&self) -> SnapshotStandyInfo {
@@ -26,6 +28,37 @@ impl SnapshotInfo {
             gpu: gpu,
             pinned: self.hostMemSize,
         };
+    }
+
+    pub fn StandyCacheMemory(&self) -> u64 {
+        let mut cacheMemory = 0;
+        if self.standby.gpuMem == StandbyType::Mem {
+            for (_, size) in &self.gpuMemSizes {
+                cacheMemory += (*size + ONE_GB - 1) / ONE_GB * 1024;
+            }
+        }
+
+        if self.standby.pinndMem == StandbyType::Mem {
+            cacheMemory += (self.hostMemSize + ONE_GB - 1) / ONE_GB * 1024;
+        }
+
+        return cacheMemory;
+    }
+
+    pub fn ReadyCacheMemory(&self) -> u64 {
+        // the cudahostmemory will be keep in cache memory when in ready state
+        let cacheMemory = (self.hostMemSize + ONE_GB - 1) / ONE_GB * 1024;
+        return cacheMemory;
+    }
+
+    pub fn StandbyMemory(&self) -> u64 {
+        let mut memory = 0;
+
+        if self.standby.pageableMem == StandbyType::Mem {
+            memory += self.processCheckpointSize;
+        }
+
+        return memory;
     }
 }
 
@@ -66,6 +99,21 @@ pub struct ContainerSnapshot {
     pub state: SnapshotState,
     pub meta: SnapshotMeta,
     pub info: SnapshotInfo,
+}
+
+impl ContainerSnapshot {
+    pub fn StandbyResource(&self) -> Resources {
+        return Resources {
+            cpu: 0,
+            memory: self.info.StandbyMemory(),
+            cacheMemory: self.info.StandyCacheMemory(),
+            gpu: GPUResource::default(),
+        };
+    }
+
+    pub fn ReadyCacheMemory(&self) -> u64 {
+        return self.info.ReadyCacheMemory();
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, PartialEq, Eq)]

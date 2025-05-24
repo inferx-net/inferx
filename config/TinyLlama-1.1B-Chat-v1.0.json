@@ -5,7 +5,7 @@
     "name": "TinyLlama-1.1B-Chat-v1.0",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.4.2",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -15,17 +15,21 @@
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 18000,
+                "Mem": 24000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 4500
+                    "vRam": 4800
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
                 ]
             ],
             "mounts": [

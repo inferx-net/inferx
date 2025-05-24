@@ -46,13 +46,22 @@ services:
       - '2379:2379'
       - '2380:2380'
   inferx:
-    image: inferx/inferx_one:v0.1.0
-    restart: on-failure
+    image: inferx/inferx_one:${Version}
+    restart: always
     container_name: inferx_one
     privileged: true
     user: root
     cpus: 10
     network_mode: "host"
+    environment:
+      - NODE_NAME=${HOSTNAME}
+      - POD_IP=${LOCAL_IP}
+      - ALLOC_MEMORY=40Gi
+      - ALLOC_CPU=24
+      - CACHE_MEMORY=20Gi
+      - ENABLE_2MB_PAGE=false
+      - ENALBE_BLOB=false
+      - BLOB_BUFF=4Gi
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
@@ -65,6 +74,8 @@ services:
       etcd:
         condition: service_started
       keycloak:
+        condition: service_started
+      secret_db:
         condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -85,23 +96,24 @@ services:
       - ./onenode
       - /opt/inferx/config/node1.json
   dashboard:
-    image: inferx/inferx_dashboard:v0.1.0
+    image: inferx/inferx_dashboard:${Version}
     restart: on-failure
     container_name: inferx_dashboard
     network_mode: "host"
     environment:
-      - KEYCLOAK_URL=http://${LOCAL_IP}:81/authn
+      - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
       - KEYCLOAK_REALM_NAME=inferx
       - KEYCLOAK_CLIENT_ID=infer_client
       - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/listnode" ]
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
       interval: 10s
       timeout: 10s
       retries: 3
     depends_on:
       - db
       - etcd
+      - keycloak
     volumes:
       - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:

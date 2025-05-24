@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "models--Qwen--Qwen2.5-7B",
     "spec": {
-        "image": "vllm/vllm-openai:v0.6.2",
+        "image": "vllm/vllm-openai:v0.7.3",
         "commands": [
             "--model",
             "Qwen/Qwen2.5-7B",

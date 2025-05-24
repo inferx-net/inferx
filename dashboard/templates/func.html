@@ -103,6 +103,43 @@
 </table>
 
 
+
+{% if fails %}
+<h2>Failures</h2>
+<table style="width:100%">
+    <tr>
+        <th>tenant</th>
+        <th>namespace</th>
+        <th>model name</th>
+        <th>revision</th>
+        <th>id</th>
+        <th>exit info</th>
+        <th>state</th>
+    </tr>
+    {% for fail in fails %}
+    <tr>
+        <td>{{ fail["tenant"] }}</td>
+        <td>{{ fail["namespace"] }}</td>
+        <td>{{ fail["fpname"] }}</td>
+        <td>{{ fail["fprevision"] }}</td>
+        <td>{{ fail["id"] }}</td>
+        <td>{{ fail["exit_info"] }}</td>
+        <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
+                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+
+<h2>Func</h2>
+{% if isAdmin %}
+<button id="updateSpec" onclick="updateSpec()">Update Model</button>
+<button id="deleteSpec" onclick="deleteFunc()">Delete Model</button>
+{% endif %}
+<br />
+<textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
+
 <script>
     const tenant = {{ tenant | tojson }};
     const namespace = {{ namespace | tojson }};
@@ -110,6 +147,78 @@
     const apiType = {{ apiType | tojson }};
     const map = {{ map | tojson }};
     const path = {{ path | tojson }};
+    const funcconfig = {{ func | tojson }};
+
+    async function updateSpec() {
+        const debugDiv = document.getElementById('debug');
+        const spec = document.getElementById('spec').value;
+        try {
+            funcconfig.func.object.spec = JSON.parse(spec);
+
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            const schema = window.location.protocol;
+
+            url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/";
+            const body = {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(funcconfig.func)
+            };
+
+            const response = await fetch(url, body);
+            const text = await response.text();
+            if (response.status == '200') {
+                alert("Update Model Spec successfully! ");
+            } else {
+                alert("Update Model Spec fail with error " + text);
+            }
+            debugDiv.innerHTML += " " + response.status;
+            debugDiv.innerHTML += " " + text;
+        } catch (err) {
+            alert("Update Model Spec fail with error: " + err);
+            debugDiv.innerHTML += 'Update Model Spec fail with error:' + err + "\n\n";
+        }
+    }
+
+    async function deleteFunc() {
+        if (confirm("Are you sure to delete the Model " + namespace + "/" + name)) {
+            const debugDiv = document.getElementById('debug');
+            try {
+                const hostname = window.location.hostname;
+                const port = window.location.port;
+                const schema = window.location.protocol;
+
+                url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
+                const body = {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                const response = await fetch(url, body);
+                const text = await response.text();
+                if (response.status == '200') {
+                    alert("Delete Model successfully! ");
+                    window.location.assign("/listfunc");
+                } else {
+                    alert("Delete Model fail with error " + text);
+                }
+                debugDiv.innerHTML += " " + response.status;
+                debugDiv.innerHTML += " " + text;
+
+            } catch (err) {
+                alert("Delete Model fail with error: " + err);
+                debugDiv.innerHTML += 'Delete Model fail with error:' + err + "\n\n";
+            }
+        }
+
+    }
 
     async function cancel() {
         if (abortController) {
@@ -158,9 +267,9 @@
             abortController = new AbortController();
             const { signal } = abortController;
 
-            url = schema + "//" + hostname + ":" + port + "/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
+            url = schema + "//" + hostname + ":" + port + "/demo/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
             map["prompt"] = prompt;
-            const body = {
+            const options = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -170,7 +279,7 @@
                 signal
             };
 
-            const response = await fetch(url, body);
+            const response = await fetch(url, options);
             processImage.style = "display:none;"
             buttonTxt.style = "";
 
@@ -184,53 +293,51 @@
             startDiv.innerHTML = "Start Latency: " + restore + ' ms ' + '<br>';
             ttftDiv.innerHTML = "Time To First Token: " + ttft + ' ms ' + '<br>';
 
-            if (response.ok == false) {
-                outputDiv.innerHTML = response.content;
+            if (!response.ok) {
+                const errorText = await response.text();
+                outputDiv.innerHTML = errorText;
                 button.disabled = false;
-                return
+                cancelBtn.disabled = true;
+                return;
             }
             const reader = response.body.getReader();
             const decoder = new TextDecoder('utf-8');
-            let done = false;
             let tokenCount = 0;
             const startTime = Date.now();
 
-            while (!done) {
-                const { value, done: doneReading } = await reader.read();
-                done = doneReading;
-                const chunkValue = decoder.decode(value, { stream: true });
-                const lines = chunkValue.split('\n').filter(line => line.trim() !== '');
-                // debugDiv.innerHTML += "lines:" + lines + "\n\n";;
+            let buffer = "";
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
 
-                let left = "";
+                buffer += decoder.decode(value, { stream: true });
+                let lines = buffer.split('\n');
+                buffer = lines.pop(); // retain partial line
                 for (const line of lines) {
-                    if (line.trim() === 'data: [DONE]') {
-                        done = true;
-                        break;
+                    const trimmed = line.trim();
+                    if (trimmed === '' || !trimmed.startsWith('data:')) continue;
+
+                    const jsonPart = trimmed.replace(/^data:\s*/, '');
+
+                    if (jsonPart === '[DONE]') {
+                        button.disabled = false;
+                        cancelBtn.disabled = true;
+                        return;
                     }
 
-                    if (true) {
-                        left += line;
-                        const jsonStr = left.replace(/^data: /, '');
-                        left = ""
-                        // debugDiv.innerHTML += jsonStr + "\n\n";
-                        try {
-                            const parsed = JSON.parse(jsonStr);
-                            const content = parsed.choices?.[0]?.text;
-                            // debugDiv.innerHTML += "parse:" + JSON.stringify(content) + "\n\n";
-                            if (content) {
-                                outputDiv.innerHTML += content;
-                                tokenCount += 1;
-                                const elapsed = (Date.now() - startTime) / 1000;
-                                tpsDiv.innerHTML = "TPS: " + (tokenCount / elapsed).toFixed(0) + "     Tokens: " + tokenCount;
-                                // tpsDisplay.textContent = (tokenCount / elapsed).toFixed(2);
-                            }
-                        } catch (err) {
-                            // some line is splitted by "\n"
-                            left = jsonStr
-                            debugDiv.innerHTML += jsonStr + "\n\n";
-                            debugDiv.innerHTML += 'Error parsing JSON:' + err + "\n\n";
+                    try {
+                        const parsed = JSON.parse(jsonPart);
+                        const content = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.text ?? '';
+                        if (content) {
+                            outputDiv.innerHTML += content;
+                            tokenCount++;
+                            const elapsed = (Date.now() - startTime) / 1000;
+                            tpsDiv.innerHTML = "TPS: " + (tokenCount / elapsed).toFixed(0) + "     Tokens: " + tokenCount;
                         }
+                    } catch (err) {
+                        console.warn('JSON parse error:', err, 'on line:', jsonPart);
+                        // optionally accumulate broken line into buffer for next round
+                        buffer = jsonPart + buffer;
                     }
                 }
             }
@@ -347,44 +454,6 @@
     }
 </script>
 
-
-
-{% if fails %}
-<h2>Failures</h2>
-<table style="width:100%">
-    <tr>
-        <th>tenant</th>
-        <th>namespace</th>
-        <th>model name</th>
-        <th>revision</th>
-        <th>id</th>
-        <th>exit info</th>
-        <th>state</th>
-    </tr>
-    {% for fail in fails %}
-    <tr>
-        <td>{{ fail["tenant"] }}</td>
-        <td>{{ fail["namespace"] }}</td>
-        <td>{{ fail["fpname"] }}</td>
-        <td>{{ fail["fprevision"] }}</td>
-        <td>{{ fail["id"] }}</td>
-        <td>{{ fail["exit_info"] }}</td>
-        <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
-                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
-    </tr>
-    {% endfor %}
-</table>
-{% endif %}
-
-
-<h2>Func</h2>
-<table style="width:100%">
-    <tr>
-        {% autoescape false %}
-        <td>{{ funcspec }}</td>
-        {% endautoescape %}
-    </tr>
-</table>
 
 
 {{ log | safe }}

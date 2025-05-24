@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inferx-dashboard
+  labels:
+    app: inferx-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inferx-dashboard
+  template:
+    metadata:
+      labels:
+        app: inferx-dashboard
+    spec:
+      containers:
+        - name: inferx-dashboard
+          image: inferx/inferx_dashboard:v0.1.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KEYCLOAK_URL
+              value: "http://192.168.0.22:31260/authn"
+            - name: KEYCLOAK_REALM_NAME
+              value: "inferx"
+            - name: KEYCLOAK_CLIENT_ID
+              value: "infer_client"
+            - name: KEYCLOAK_CLIENT_SECRET
+              value: "M2Dse5531tdtyipZdGizLEeoOVgziQRX"
+            - name: INFERX_APIGW_ADDR
+              value: "http://nodeagent:4000"
+          volumeMounts:
+            - name: cert-volume
+              mountPath: /etc/letsencrypt/
+          livenessProbe:
+            httpGet:
+              path: /intro?name=home.md
+              port: 1250
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: cert-volume
+          hostPath:
+            path: /etc/letsencrypt/
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inferx-dashboard
+spec:
+  type: NodePort
+  selector:
+    app: inferx-dashboard
+  ports:
+    - name: http
+      port: 1250
+      targetPort: 1250
+      nodePort: 31250  

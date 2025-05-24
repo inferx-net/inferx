@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      nodeSelector:
+        inferx_storage: data      
+      containers:
+        - name: postgres
+          image: postgres:14.5
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: audit_user
+            - name: POSTGRES_PASSWORD
+              value: "123456"
+            - name: POSTGRES_DB
+              value: auditdb
+            - name: PGDATA
+              value: /data/postgres
+          volumeMounts:
+            - name: db-data
+              mountPath: /data/postgres
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/db.sql
+      volumes:
+        - name: db-data
+          hostPath:
+            path: /opt/inferx/data/postgres
+            type: DirectoryOrCreate
+        - name: init-sql
+          hostPath:
+            path: /opt/inferx/config/create_table.sql
+            type: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30542
+  type: NodePort

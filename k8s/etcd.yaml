@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: etcd
+  labels:
+    app: etcd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: etcd
+  template:
+    metadata:
+      labels:
+        app: etcd
+    spec:
+      nodeSelector:
+        inferx_storage: data      
+      containers:
+        - name: etcd
+          image: quay.io/coreos/etcd:v3.5.13
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /opt/inferx/data/etcd
+          command: [ "etcd" ]
+          args:
+            - "--name=etcd-00"
+            - "--data-dir=/opt/inferx/data/etcd"
+            - "--advertise-client-urls=http://etcd-00:2379"
+            - "--listen-client-urls=http://0.0.0.0:2379"
+            - "--initial-advertise-peer-urls=http://etcd-00:2380"
+            - "--listen-peer-urls=http://0.0.0.0:2380"
+            - "--initial-cluster=etcd-00=http://etcd-00:2380"
+      volumes:
+        - name: etcd-data
+          hostPath:
+            path: /opt/inferx/data/etcd
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd
+spec:
+  selector:
+    app: etcd
+  ports:
+    - port: 2379
+      targetPort: 2379
