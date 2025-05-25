@@ -2,7 +2,7 @@ export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://localhost:4000"
 export IFERX_APIKEY="83cc7434-0cce-4219-9a51-3f345f0f9a9e"
 
-export IFERX_SECRET="M2Dse5531tdtyipZdGizLEeoOVgziQRX"
+export IFERX_SECRET="TIrgxMVJmPlt0mBLxSNcVxJ5ySGSvKGJ"
 export IFERX_USERNAME="testuser1"
 export IFERX_PASSWORD="test"
 

@@ -15,11 +15,11 @@
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 24000,
+                "Mem": 28000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 9000
+                    "vRam": 10000
                 }
             },
             "envs": [

@@ -18,7 +18,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 6000
+                    "vRam": 7000
                 }
             },
             "envs": [

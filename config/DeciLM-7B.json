@@ -21,13 +21,17 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13000
+                    "vRam": 13800
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
                 ]
             ],
             "mounts": [
