@@ -55,7 +55,7 @@ impl SnapshotInfo {
         let mut memory = 0;
 
         if self.standby.pageableMem == StandbyType::Mem {
-            memory += self.processCheckpointSize;
+            memory += (self.processCheckpointSize + ONE_GB - 1) / ONE_GB * 1024; 
         }
 
         return memory;
