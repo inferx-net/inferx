@@ -72,11 +72,8 @@ pub struct SampleCall {
     pub apiType: ApiType,
     pub path: String,
     pub prompt: String,
-    // name
-    // max_tokens
-    // tempature
-    // stream
-    // image
+    #[serde(default)]
+    pub imageUrl: String,
     pub body: BTreeMap<String, String>,
 }
 
@@ -91,6 +88,7 @@ impl Default for SampleCall {
         return Self {
             apiType: ApiType::OpenAI,
             path: "/v1/completions".to_owned(),
+            imageUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
             body: map,
         };
@@ -103,8 +101,8 @@ pub enum ApiType {
     OpenAI,
     #[serde(rename = "standard")]
     Standard,
-    #[serde(rename = "llava")]
-    Llava,
+    #[serde(rename = "image2text")]
+    Image2Text,
     #[serde(rename = "text2img")]
     Text2Image,
 }

@@ -42,6 +42,7 @@ export IFERX_PASSWORD="test"
 /opt/inferx/bin/ixctl create Qwen2.5-Math-7B-Instruct.json
 /opt/inferx/bin/ixctl create Qwen2.5-Math-7B.json
 /opt/inferx/bin/ixctl create Qwen2.5-7B-Instruct-1M.json
+/opt/inferx/bin/ixctl create Qwen2-VL-7B-Instruct.json
 
 
 

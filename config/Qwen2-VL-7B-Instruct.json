@@ -1,21 +1,19 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "llava-hf",
-    "name": "llava-1.5-7b-hf",
+    "namespace": "Qwen",
+    "name": "Qwen2-VL-7B-Instruct",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
-                "llava-hf/llava-1.5-7b-hf",
+                "Qwen/Qwen2-VL-7B-Instruct",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
-                "1024",
-                "--tensor-parallel-size=2",
-                "--chat-template",
-                "{% for message in messages %}{{ message.role | upper }}: {{ message.content }}{% if message.role == 'user' and message.image %}<image>{% endif %}{% endfor %}ASSISTANT:"
+                "10000",
+                "--tensor-parallel-size=2"
             ],
             "resources": {
                 "CPU": 20000,
@@ -23,7 +21,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 14800
+                    "vRam": 13800
                 }
             },
             "envs": [
@@ -51,9 +49,9 @@
                 "apiType": "image2text",
                 "prompt": "What is in this image?",
                 "path": "v1/chat/completions",
-                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "imageUrl": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
                 "body": {
-                    "model": "llava-hf/llava-1.5-7b-hf",
+                    "model": "Qwen/Qwen2-VL-7B-Instruct",
                     "max_tokens": "200",
                     "temperature": "0"
                 }
