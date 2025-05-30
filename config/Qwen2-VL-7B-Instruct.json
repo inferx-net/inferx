@@ -49,7 +49,7 @@
                 "apiType": "image2text",
                 "prompt": "What is in this image?",
                 "path": "v1/chat/completions",
-                "imageUrl": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+                "imageUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Cat_2.9mb.jpg",
                 "body": {
                     "model": "Qwen/Qwen2-VL-7B-Instruct",
                     "max_tokens": "200",

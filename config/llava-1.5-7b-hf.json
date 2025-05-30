@@ -51,7 +51,7 @@
                 "apiType": "image2text",
                 "prompt": "What is in this image?",
                 "path": "v1/chat/completions",
-                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "imageUrl": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
                 "body": {
                     "model": "llava-hf/llava-1.5-7b-hf",
                     "max_tokens": "200",

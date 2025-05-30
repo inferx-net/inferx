@@ -43,7 +43,10 @@
 
 {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
 <h1>Image</h1>
-<textarea id="image" rows="2" cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["imageUrl"] }}</textarea>
+<textarea id="imageUrlInput" rows="1"
+    cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["imageUrl"] }}</textarea>
+<button onclick="loadImage()">Preview</button>
+<img id="preview" src="" alt="Image will appear here" style="max-width: 600px; display: none;">
 {% else %}
 <h1 style="display:none;">Image</h1>
 <textarea id="image" rows="2" cols="120" style="display:none;"></textarea>
@@ -148,6 +151,19 @@
     const path = {{ path | tojson }};
     const funcconfig = {{ func | tojson }};
 
+    function loadImage() {
+        const url = document.getElementById("imageUrlInput").value;
+        const img = document.getElementById("preview");
+
+        if (url.endsWith(".jpg") || url.endsWith(".jpeg")) {
+            img.src = url;
+            img.style.display = "block";
+        } else {
+            alert("Please enter a valid JPEG image URL ending with .jpg or .jpeg");
+            img.style.display = "none";
+        }
+    }
+
     async function updateSpec() {
         const debugDiv = document.getElementById('debug');
         const spec = document.getElementById('spec').value;
@@ -240,7 +256,7 @@
         const debugDiv = document.getElementById('debug');
         const tpsDiv = document.getElementById('tpsDiv');
         const prompt = document.getElementById('prompt').value;
-        const image = document.getElementById('image').value;
+        const image = document.getElementById('imageUrlInput').value;
 
         cancelBtn.addEventListener('click', () => {
             if (abortController) {
