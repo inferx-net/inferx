@@ -100,6 +100,7 @@ services:
       - /etc/letsencrypt/:/etc/letsencrypt/
       - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/
       - /var/lib/docker/:/var/lib/docker/
+      - /home/brad/mnt:/home/brad/mnt
     deploy:
       resources:
         reservations:
