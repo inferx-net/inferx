@@ -13,7 +13,6 @@
                 "--trust-remote-code",
                 "--max-model-len",
                 "1024",
-                "--tensor-parallel-size=2",
                 "--chat-template",
                 "{% for message in messages %}{{ message.role | upper }}: {{ message.content }}{% if message.role == 'user' and message.image %}<image>{% endif %}{% endfor %}ASSISTANT:"
             ],
@@ -22,14 +21,14 @@
                 "Mem": 50000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 2,
-                    "vRam": 14800
+                    "Count": 1,
+                    "vRam": 30000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",

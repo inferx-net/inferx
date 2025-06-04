@@ -1,27 +1,29 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "mistralai",
-    "name": "Mistral-7B-v0.1",
+    "namespace": "llava-hf",
+    "name": "llava-1.5-7b-hf_2gpu",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
-                "mistralai/Mistral-7B-v0.1",
+                "llava-hf/llava-1.5-7b-hf",
                 "--disable-custom-all-reduce",
-                "--gpu-memory-utilization",
-                "0.99",
+                "--trust-remote-code",
                 "--max-model-len",
-                "200"
+                "1024",
+                "--tensor-parallel-size=2",
+                "--chat-template",
+                "{% for message in messages %}{{ message.role | upper }}: {{ message.content }}{% if message.role == 'user' and message.image %}<image>{% endif %}{% endfor %}ASSISTANT:"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 28000,
+                "Mem": 50000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 20000
+                    "Count": 2,
+                    "vRam": 14800
                 }
             },
             "envs": [
@@ -32,14 +34,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "HF_HUB_OFFLINE",
-                    "1"
-                ],
-                [
-                    "TRANSFORMERS_OFFLINE",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -54,19 +48,19 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
-                "prompt": "Who won the world series in 2020?",
-                "path": "v1/completions",
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
                 "body": {
-                    "model": "mistralai/Mistral-7B-v0.1",
-                    "max_tokens": "180",
-                    "temperature": "0",
-                    "stream": "true"
+                    "model": "llava-hf/llava-1.5-7b-hf",
+                    "max_tokens": "200",
+                    "temperature": "0"
                 }
             },
             "standby": {
                 "gpu": "Blob",
-                "pageable": "Blob",
+                "pageable": "File",
                 "pinned": "Blob"
             }
         }

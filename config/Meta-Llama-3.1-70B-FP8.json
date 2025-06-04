@@ -1,27 +1,27 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "mistralai",
-    "name": "Mistral-7B-v0.1",
+    "namespace": "RedHatAI",
+    "name": "meta-llama-3-70b-int8",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
-                "mistralai/Mistral-7B-v0.1",
+                "RedHatAI/Meta-Llama-3.1-70B-FP8",
                 "--disable-custom-all-reduce",
-                "--gpu-memory-utilization",
-                "0.99",
+                "--trust-remote-code",
                 "--max-model-len",
-                "200"
+                "2000",
+                "--tensor-parallel-size=2"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 28000,
+                "Mem": 100000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 20000
+                    "Count": 2,
+                    "vRam": 46000
                 }
             },
             "envs": [
@@ -32,14 +32,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "HF_HUB_OFFLINE",
-                    "1"
-                ],
-                [
-                    "TRANSFORMERS_OFFLINE",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -55,18 +47,18 @@
             },
             "sample_query": {
                 "apiType": "openai",
-                "prompt": "Who won the world series in 2020?",
+                "prompt": "San Francisco is a",
                 "path": "v1/completions",
                 "body": {
-                    "model": "mistralai/Mistral-7B-v0.1",
-                    "max_tokens": "180",
+                    "model": "RedHatAI/Meta-Llama-3.1-70B-FP8",
+                    "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"
                 }
             },
             "standby": {
                 "gpu": "Blob",
-                "pageable": "Blob",
+                "pageable": "File",
                 "pinned": "Blob"
             }
         }

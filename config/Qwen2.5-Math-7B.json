@@ -17,7 +17,7 @@
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 50000,
+                "Mem": 60000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
@@ -27,7 +27,7 @@
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",

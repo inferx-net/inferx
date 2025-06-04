@@ -1,27 +1,28 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "mistralai",
-    "name": "Mistral-7B-v0.1",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-14B-Instruct-1M",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
-                "mistralai/Mistral-7B-v0.1",
+                "Qwen/Qwen2.5-14B-Instruct-1M",
                 "--disable-custom-all-reduce",
+                "--trust-remote-code",
                 "--gpu-memory-utilization",
-                "0.99",
+                "0.95",
                 "--max-model-len",
-                "200"
+                "2000"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 28000,
+                "Mem": 80000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 20000
+                    "vRam": 34000
                 }
             },
             "envs": [
@@ -32,14 +33,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "HF_HUB_OFFLINE",
-                    "1"
-                ],
-                [
-                    "TRANSFORMERS_OFFLINE",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -55,11 +48,11 @@
             },
             "sample_query": {
                 "apiType": "openai",
-                "prompt": "Who won the world series in 2020?",
+                "prompt": "write a quick sort algorithm.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "mistralai/Mistral-7B-v0.1",
-                    "max_tokens": "180",
+                    "model": "Qwen/Qwen2.5-14B-Instruct-1M",
+                    "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"
                 }

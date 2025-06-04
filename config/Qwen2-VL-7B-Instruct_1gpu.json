@@ -20,13 +20,13 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 45000
+                    "vRam": 25000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",
@@ -57,7 +57,7 @@
             },
             "standby": {
                 "gpu": "Blob",
-                "pageable": "Blob",
+                "pageable": "File",
                 "pinned": "Blob"
             }
         }
