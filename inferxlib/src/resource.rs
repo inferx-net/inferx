@@ -398,11 +398,11 @@ impl NodeResources {
             && self.gpus.CanAlloc(&req.gpu);
 
         if !canAlloc {
-            let cpu = self.cpu >= req.cpu;
+            let _cpu = self.cpu >= req.cpu;
             let memory = self.memory >= req.memory;
-            let cacheMemory = self.cacheMemory >= req.cacheMemory;
-            let gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-            let gpus = self.gpus.CanAlloc(&req.gpu);
+            let _cacheMemory = self.cacheMemory >= req.cacheMemory;
+            let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
+            let _gpus = self.gpus.CanAlloc(&req.gpu);
 
             if !memory {
                 error!(
@@ -411,7 +411,7 @@ impl NodeResources {
                 );
             }
 
-            error!("CanAlloc fail cpu:{cpu} memory:{memory}, cacheMemory:{cacheMemory}, gpuType:{gpuType}, gpus:{gpus}");
+            // error!("CanAlloc fail cpu:{cpu} memory:{memory}, cacheMemory:{cacheMemory}, gpuType:{gpuType}, gpus:{gpus}");
         }
 
         return canAlloc;
