@@ -222,8 +222,10 @@ export IFERX_PASSWORD="test"
 
 #######################################################
 /opt/inferx/bin/ixctl create llava-hf_namespace.json
-/opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
-/opt/inferx/bin/ixctl create llava-1.5-7b-hf_2gpu.json
+# /opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
+# /opt/inferx/bin/ixctl create llava-1.5-7b-hf_2gpu.json
+/opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf.json
+/opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf_2gpu.json
 
 /opt/inferx/bin/ixctl delete function public llava-hf llava-1.5-7b-hf
 /opt/inferx/bin/ixctl delete function public llava-hf llava-1.5-7b-hf_2gpu
