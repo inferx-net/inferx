@@ -1,6 +1,6 @@
 export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://localhost:4000"
-# export IFERX_APIKEY="83cc7434-0cce-4219-9a51-3f345f0f9a9e"
+export IFERX_APIKEY="fbe45190-106c-42c9-85d3-dad7eb83ca50"
 
 export IFERX_SECRET="M2Dse5531tdtyipZdGizLEeoOVgziQRX"
 export IFERX_USERNAME="testuser1"
@@ -226,8 +226,8 @@ export IFERX_PASSWORD="test"
 
 #######################################################
 /opt/inferx/bin/ixctl create llava-hf_namespace.json
-# /opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
-# /opt/inferx/bin/ixctl create llava-1.5-7b-hf_2gpu.json
+/opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
+/opt/inferx/bin/ixctl create llava-1.5-7b-hf_2gpu.json
 /opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf.json
 /opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf_2gpu.json
 

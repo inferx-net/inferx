@@ -15,6 +15,7 @@
     <tr>
         <th>namespace</th>
         <th>model name</th>
+        <th>type</th>
         <th>standby gpu</th>
         <th>standby pageable</th>
         <th>standby pinned memory</th>
@@ -28,6 +29,13 @@
     <tr>
         <td>{{ namespace }}</td>
         <td>{{ name }}</td>
+        <td>{
+            {% if func['func']['object']["spec"]["sample_query"]["apiType"] == "openai" %}
+            text2text
+            {% else %}
+            {{ func['func']['object']["spec"]["sample_query"]["apiType"] }}
+            {% endif %}
+        </td>
         <td>{{ func['func']['object']["spec"]["standby"]["gpu"] }}</td>
         <td>{{ func['func']['object']["spec"]["standby"]["pageable"] }}</td>
         <td>{{ func['func']['object']["spec"]["standby"]["pinned"] }}</td>
