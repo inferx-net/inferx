@@ -44,7 +44,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Seattle is a",
                 "path": "v1/completions",
                 "body": {

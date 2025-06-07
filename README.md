@@ -4,7 +4,7 @@ InferX is an advanced serverless inference platform engineered for ultra-fast, e
 
 With InferX, you can:
 
-✅ **Ultra Fast cold start** – Cold start GPU-based inference in under 2 seconds for large models (12B+).
+✅ **Ultra Fast cold start** – Cold start GPU-based inference in under 2 seconds for large models (22+B, demo with mistralai/Codestral-22B-v0.1 in RTX A6000), under 3 seconds for 32+B models (demo with Qwen/QwQ-32B in 2 x RTX A6000)
 
 ✅ **GPU Slicing** – Allocate only a fraction of a GPU (e.g., 1/3 GPU) per model to efficiently run multiple workloads in parallel.
 

@@ -44,7 +44,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Here is a recipe for vegan banana bread:",
                 "path": "v1/completions",
                 "body": {

@@ -45,7 +45,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "How to explain Internet for a medieval knight?",
                 "path": "v1/completions",
                 "body": {

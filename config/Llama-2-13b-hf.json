@@ -47,7 +47,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "def print_hello_world():",
                 "path": "v1/completions",
                 "body": {

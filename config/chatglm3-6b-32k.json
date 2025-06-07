@@ -47,7 +47,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Give me a short introduction to large language model.",
                 "path": "v1/completions",
                 "body": {

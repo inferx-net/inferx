@@ -41,7 +41,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Hey how are you doing?\n\nI'm doing great.\n\nI",
                 "path": "v1/completions",
                 "body": {

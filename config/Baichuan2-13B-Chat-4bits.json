@@ -45,7 +45,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "解释一下'温故而知新'",
                 "path": "v1/completions",
                 "body": {

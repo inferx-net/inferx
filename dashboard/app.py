@@ -679,7 +679,8 @@ def proxy1(path):
 
 @app.route("/demo/intro")
 def md():
-    name = request.args.get("name")
+    # name = request.args.get("name")
+    name = 'home.md'
     md_content = read_markdown_file("doc/"+name)
     return render_template(
         "markdown.html", md_content=md_content

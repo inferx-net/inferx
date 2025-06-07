@@ -202,6 +202,7 @@ export IFERX_PASSWORD="test"
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Qwen-1.5B.json
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Qwen-7B.json
 /opt/inferx/bin/ixctl create deepseek-math-7b-instruct.json
+/opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-70B-AWQ.json
 
 /opt/inferx/bin/ixctl create deepseek-r1-distill-qwen-32b.json
 

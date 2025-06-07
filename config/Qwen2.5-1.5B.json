@@ -44,7 +44,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
                 "path": "v1/completions",
                 "body": {

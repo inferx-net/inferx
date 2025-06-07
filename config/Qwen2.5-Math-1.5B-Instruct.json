@@ -41,7 +41,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
                 "path": "v1/completions",
                 "body": {

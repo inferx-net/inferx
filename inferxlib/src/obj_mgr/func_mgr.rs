@@ -86,7 +86,7 @@ impl Default for SampleCall {
         map.insert("stream".to_owned(), "true".to_owned());
 
         return Self {
-            apiType: ApiType::OpenAI,
+            apiType: ApiType::Text2Text,
             path: "/v1/completions".to_owned(),
             imageUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
@@ -97,8 +97,8 @@ impl Default for SampleCall {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
-    #[serde(rename = "openai")]
-    OpenAI,
+    #[serde(rename = "text2text")]
+    Text2Text,
     #[serde(rename = "standard")]
     Standard,
     #[serde(rename = "image2text")]
@@ -109,7 +109,7 @@ pub enum ApiType {
 
 impl Default for ApiType {
     fn default() -> Self {
-        return Self::OpenAI;
+        return Self::Text2Text;
     }
 }
 

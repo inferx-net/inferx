@@ -54,7 +54,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Who won the world series in 2020?",
                 "path": "v1/completions",
                 "body": {
