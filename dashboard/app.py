@@ -94,7 +94,6 @@ keycloak = oauth.register(
 tls = False
 
 apihostaddr = os.getenv('INFERX_APIGW_ADDR', "http://localhost:4000")
-# apihostaddr = "https://quarksoft.io:4000"
 
 def is_token_expired():
     # Check if token exists and has expiration time

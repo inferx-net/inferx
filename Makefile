@@ -25,7 +25,6 @@ pushdash:
 runmodel:
 	mkdir -p ./target/runmodel
 	cp ./script/run_model.py ./target/runmodel
-	cp ./script/run_llava.py ./target/runmodel
 	cp ./script/run_stablediffusion.py ./target/runmodel
 	cp ./deployment/vllm-opai.Dockerfile ./target/runmodel/Dockerfile
 	-sudo docker image rm vllm-openai-upgraded:$(VERSION)

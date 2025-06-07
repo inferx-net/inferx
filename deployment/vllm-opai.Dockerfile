@@ -12,6 +12,5 @@ RUN pip install diffusers --upgrade
 RUN pip install invisible_watermark accelerate 
 
 COPY run_model.py /usr/lib/run_model.py
-COPY run_llava.py /usr/lib/run_llava.py
 COPY run_stablediffusion.py /usr/lib/run_stablediffusion.py
 

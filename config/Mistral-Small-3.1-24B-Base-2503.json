@@ -1,0 +1,67 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "mistralai",
+    "name": "Mistral-Small-3.1-24B-Base-2503",
+    "object": {
+        "spec": {
+            "image": "vllm-openai-upgraded:v0.1.1",
+            "commands": [
+                "--model",
+                "/root/.cache/huggingface/hub/Mistral-Small-3.1-24B-Base-2503",
+                "--served-model-name=mistralai/Mistral-Small-3.1-24B-Base-2503",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--max-model-len",
+                "10000",
+                "--tensor-parallel-size=2"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 50000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 2,
+                    "vRam": 32000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Cat_2.9mb.jpg",
+                "body": {
+                    "model": "mistralai/Mistral-Small-3.1-24B-Base-2503",
+                    "max_tokens": "200",
+                    "temperature": "0"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

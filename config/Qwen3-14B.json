@@ -1,0 +1,75 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Qwen3-14B",
+    "object": {
+        "spec": {
+            "image": "vllm-openai-upgraded:v0.1.1",
+            "commands": [
+                "--model",
+                "Qwen/Qwen3-14B",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--gpu-memory-utilization",
+                "0.95",
+                "--max-model-len",
+                "2000"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 80000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 40000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "HF_HUB_OFFLINE",
+                    "1"
+                ],
+                [
+                    "TRANSFORMERS_OFFLINE",
+                    "1"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "openai",
+                "prompt": "write a quick sort algorithm.",
+                "path": "v1/completions",
+                "body": {
+                    "model": "Qwen/Qwen3-14B",
+                    "max_tokens": "1000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

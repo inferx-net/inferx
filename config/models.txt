@@ -44,7 +44,10 @@ export IFERX_PASSWORD="test"
 /opt/inferx/bin/ixctl create Qwen2.5-7B-Instruct-1M.json
 /opt/inferx/bin/ixctl create Qwen2-VL-7B-Instruct.json
 /opt/inferx/bin/ixctl create Qwen2-VL-7B-Instruct_1gpu.json
+/opt/inferx/bin/ixctl create Qwen2.5-VL-32B-Instruct-AWQ_1gpu.json
 /opt/inferx/bin/ixctl create QwQ-32B.json
+/opt/inferx/bin/ixctl create Qwen3-14B.json
+
 
 /opt/inferx/bin/ixctl create Qwen2.5-14B-Instruct-1M.json
 
@@ -72,6 +75,7 @@ export IFERX_PASSWORD="test"
 #######################################################
 /opt/inferx/bin/ixctl create mistralai_namespace.json
 /opt/inferx/bin/ixctl create Mistral-7B-v0.1_2gpu.json
+# /opt/inferx/bin/ixctl create Mistral-Small-3.1-24B-Base-2503.json
 
 /opt/inferx/bin/ixctl create Mistral-7B-v0.1.json
 /opt/inferx/bin/ixctl create Codestral-22B-v0.1.json
