@@ -200,6 +200,7 @@ impl GPUResourceMap {
                 Some(alloc) => {
                     alloc.slotCnt += resource.slotCnt;
                     alloc.contextCnt += resource.contextCnt;
+                    alloc.ncclCnt += resource.ncclCnt;
                 }
             }
         }
@@ -219,6 +220,7 @@ impl GPUResourceMap {
                 Some(cnt) => {
                     cnt.slotCnt -= resource.slotCnt;
                     cnt.contextCnt -= resource.contextCnt;
+                    cnt.ncclCnt -= resource.ncclCnt;
                 }
             }
         }
@@ -231,13 +233,12 @@ impl GPUResourceMap {
     }
 
     pub fn Alloc(&mut self, usage: &GPUResource) -> Result<Self> {
-        if !self.CanAlloc(usage) {
+        let gpus = self.CanAlloc(usage);
+        if gpus.is_none() {
             return Err(Error::SchedulerNoEnoughResource(format!("")));
         }
 
-        let mut v = self.GenArr();
-        v.sort();
-        v.reverse();
+        let gpus = gpus.unwrap();
 
         let mut map = BTreeMap::new();
 
@@ -250,30 +251,32 @@ impl GPUResourceMap {
             });
         }
 
+        let ncclCnt = if count == 1 { 0 } else { 1 };
+
         let slotCnt = self.ReqSlotCnt(usage.vRam);
 
-        for i in 0..v.len() {
-            if v[i].0 >= slotCnt {
-                match self.map.get_mut(&v[i].1) {
-                    None => unreachable!(),
-                    Some(resource) => {
-                        resource.contextCnt -= 1;
-                        resource.slotCnt -= slotCnt;
-                    }
+        for gpu in gpus {
+            match self.map.get_mut(&gpu) {
+                None => unreachable!(),
+                Some(resource) => {
+                    resource.contextCnt -= 1;
+                    resource.slotCnt -= slotCnt;
+                    resource.ncclCnt -= ncclCnt;
                 }
+            }
 
-                map.insert(
-                    v[i].1,
-                    GPUAlloc {
-                        contextCnt: 1,
-                        slotCnt: slotCnt,
-                    },
-                );
-                count -= 1;
+            map.insert(
+                gpu,
+                GPUAlloc {
+                    contextCnt: 1,
+                    slotCnt: slotCnt,
+                    ncclCnt: ncclCnt,
+                },
+            );
+            count -= 1;
 
-                if count == 0 {
-                    break;
-                }
+            if count == 0 {
+                break;
             }
         }
 
@@ -284,21 +287,33 @@ impl GPUResourceMap {
         });
     }
 
-    pub fn CanAlloc(&self, usage: &GPUResource) -> bool {
+    pub fn CanAlloc(&self, usage: &GPUResource) -> Option<Vec<i32>> {
         let mut cnt = usage.gpuCount;
         if cnt == 0 {
-            return true;
+            return Some(Vec::new());
         }
 
+        let mut gpus = Vec::new();
+
+        let ncclCnt = if cnt < 2 { 0 } else { 1 };
+
+        error!("CanAlloc the map is {:#?} req {:#?}", &self.map, usage);
+
         let reqSlotCnt = self.ReqSlotCnt(usage.vRam);
-        for (_pGpuId, resource) in &self.map {
+        for (&pGpuId, resource) in &self.map {
             if resource.contextCnt == 0 {
                 continue;
             }
+
+            if resource.ncclCnt < ncclCnt {
+                continue;
+            }
+
             if resource.slotCnt >= reqSlotCnt {
                 cnt -= 1;
+                gpus.push(pGpuId);
                 if cnt == 0 {
-                    return true;
+                    return Some(gpus);
                 }
             }
         }
@@ -308,7 +323,7 @@ impl GPUResourceMap {
         //     reqSlotCnt, &self.map
         // );
 
-        return false;
+        return None;
     }
 
     // 0: SlotCnt 1: phyGpuId
@@ -395,23 +410,23 @@ impl NodeResources {
             && self.memory >= req.memory
             && self.cacheMemory >= req.cacheMemory
             && self.gpuType.CanAlloc(&req.gpu.type_)
-            && self.gpus.CanAlloc(&req.gpu);
+            && self.gpus.CanAlloc(&req.gpu).is_some();
 
-        if !canAlloc {
+        if false && !canAlloc {
             let _cpu = self.cpu >= req.cpu;
-            let memory = self.memory >= req.memory;
+            let _memory = self.memory >= req.memory;
             let _cacheMemory = self.cacheMemory >= req.cacheMemory;
             let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-            let _gpus = self.gpus.CanAlloc(&req.gpu);
+            let _gpus = self.gpus.CanAlloc(&req.gpu).is_some();
 
-            if !memory {
+            if !_memory {
                 error!(
                     "self.memory is {} required memory is {}",
                     self.memory, req.memory
                 );
             }
 
-            // error!("CanAlloc fail cpu:{cpu} memory:{memory}, cacheMemory:{cacheMemory}, gpuType:{gpuType}, gpus:{gpus}");
+            error!("CanAlloc fail cpu:{_cpu} memory:{_memory}, cacheMemory:{_cacheMemory}, gpuType:{_gpuType}, gpus:{_gpus}");
         }
 
         return canAlloc;
@@ -664,11 +679,22 @@ impl GPUResourceInfo {
             slotSize: self.slotSize,
         };
 
+        let mut gpuCnt = 0;
+
+        for i in 0..self.map.len() {
+            if self.map[i] > 0 {
+                gpuCnt += 1;
+            }
+        }
+
+        let ncclCnt = if gpuCnt > 1 { 1 } else { 0 };
+
         for i in 0..self.map.len() {
             if self.map[i] > 0 {
                 let gpuResource = GPUAlloc {
                     contextCnt: 1,
                     slotCnt: self.map[i],
+                    ncclCnt: ncclCnt,
                 };
                 map.map.insert(i as i32, gpuResource);
             }
@@ -682,6 +708,7 @@ impl GPUResourceInfo {
 pub struct GPUAlloc {
     pub contextCnt: u64,
     pub slotCnt: u32,
+    pub ncclCnt: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

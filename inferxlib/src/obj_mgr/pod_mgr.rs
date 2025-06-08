@@ -82,6 +82,7 @@ pub struct FuncPodSpec {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ExitInfo {
     None,
+    RuntimePanic(String),
     Success(String),
     Error(String),
 }

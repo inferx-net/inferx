@@ -40,7 +40,7 @@
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],
-            "endpoint": {
+            "endpoint": {TRANSFORMERS_OFFLINE
                 "port": 8000,
                 "schema": "Http",
                 "probe": "/health"
@@ -49,7 +49,7 @@
                 "apiType": "image2text",
                 "prompt": "What is in this image?",
                 "path": "v1/chat/completions",
-                "imageUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Cat_2.9mb.jpg",
+                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
                 "body": {
                     "model": "Qwen/Qwen2-VL-7B-Instruct",
                     "max_tokens": "200",
