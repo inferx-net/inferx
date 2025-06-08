@@ -297,8 +297,6 @@ impl GPUResourceMap {
 
         let ncclCnt = if cnt < 2 { 0 } else { 1 };
 
-        error!("CanAlloc the map is {:#?} req {:#?}", &self.map, usage);
-
         let reqSlotCnt = self.ReqSlotCnt(usage.vRam);
         for (&pGpuId, resource) in &self.map {
             if resource.contextCnt == 0 {
