@@ -232,8 +232,8 @@ impl GPUResourceMap {
         return slotCnt as u32;
     }
 
-    pub fn Alloc(&mut self, usage: &GPUResource) -> Result<Self> {
-        let gpus = self.CanAlloc(usage);
+    pub fn Alloc(&mut self, usage: &GPUResource, createSnapshot: bool) -> Result<Self> {
+        let gpus = self.CanAlloc(usage, createSnapshot);
         if gpus.is_none() {
             return Err(Error::SchedulerNoEnoughResource(format!("")));
         }
@@ -251,7 +251,14 @@ impl GPUResourceMap {
             });
         }
 
-        let ncclCnt = if count == 1 { 0 } else { 1 };
+        let ncclCnt = if createSnapshot {
+            // for create snapshot, it always take whole GPU
+            1
+        } else if count == 1 {
+            0
+        } else {
+            1
+        };
 
         let slotCnt = self.ReqSlotCnt(usage.vRam);
 
@@ -287,7 +294,7 @@ impl GPUResourceMap {
         });
     }
 
-    pub fn CanAlloc(&self, usage: &GPUResource) -> Option<Vec<i32>> {
+    pub fn CanAlloc(&self, usage: &GPUResource, createSnapshot: bool) -> Option<Vec<i32>> {
         let mut cnt = usage.gpuCount;
         if cnt == 0 {
             return Some(Vec::new());
@@ -295,7 +302,13 @@ impl GPUResourceMap {
 
         let mut gpus = Vec::new();
 
-        let ncclCnt = if cnt < 2 { 0 } else { 1 };
+        let ncclCnt = if createSnapshot {
+            1
+        } else if cnt < 2 {
+            0
+        } else {
+            1
+        };
 
         let reqSlotCnt = self.ReqSlotCnt(usage.vRam);
         for (&pGpuId, resource) in &self.map {
@@ -403,19 +416,19 @@ impl NodeResources {
         };
     }
 
-    pub fn CanAlloc(&self, req: &Resources) -> bool {
+    pub fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> bool {
         let canAlloc = self.cpu >= req.cpu
             && self.memory >= req.memory
             && self.cacheMemory >= req.cacheMemory
             && self.gpuType.CanAlloc(&req.gpu.type_)
-            && self.gpus.CanAlloc(&req.gpu).is_some();
+            && self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
 
         if false && !canAlloc {
             let _cpu = self.cpu >= req.cpu;
             let _memory = self.memory >= req.memory;
             let _cacheMemory = self.cacheMemory >= req.cacheMemory;
             let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-            let _gpus = self.gpus.CanAlloc(&req.gpu).is_some();
+            let _gpus = self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
 
             if !_memory {
                 error!(
@@ -453,8 +466,8 @@ impl NodeResources {
         };
     }
 
-    pub fn Alloc(&mut self, req: &Resources) -> Result<NodeResources> {
-        if !self.CanAlloc(req) {
+    pub fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
+        if !self.CanAlloc(req, createSnapshot) {
             error!(
                 "NodeResources::alloc fail available {:#?} require {:#?}",
                 self, req
@@ -469,7 +482,7 @@ impl NodeResources {
         // self.cpu -= req.cpu;
         self.memory -= req.memory;
         self.cacheMemory -= req.cacheMemory;
-        let gpus = self.gpus.Alloc(&req.gpu)?;
+        let gpus = self.gpus.Alloc(&req.gpu, createSnapshot)?;
 
         return Ok(NodeResources {
             nodename: self.nodename.clone(),
@@ -552,18 +565,6 @@ impl Resources {
 pub struct NodeResourcesStatus {
     pub total: NodeResources,
     pub available: NodeResources,
-}
-
-impl NodeResourcesStatus {
-    // Returns true if the node has the available resources to run the task.
-    pub fn IsAvailable(&self, req: &Resources) -> bool {
-        return self.available.CanAlloc(req);
-    }
-
-    // Returns true if the node's total resources are enough to run the task.
-    pub fn IsFeasible(&self, req: &Resources) -> bool {
-        return self.total.CanAlloc(req);
-    }
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -714,7 +715,7 @@ pub struct Standby {
     #[serde(default, rename = "gpu")]
     pub gpuMem: StandbyType,
     #[serde(default, rename = "pageable")]
-    pub pageableMem: StandbyType,
+    pageableMem: StandbyType,
     #[serde(default, rename = "pinned")]
     pub pinndMem: StandbyType,
 }
@@ -728,6 +729,13 @@ impl Standby {
         return self.gpuMem == StandbyType::Blob
             || self.pageableMem == StandbyType::Blob
             || self.pinndMem == StandbyType::Blob;
+    }
+
+    pub fn PageableMem(&self) -> StandbyType {
+        if self.pageableMem == StandbyType::Blob {
+            return StandbyType::File;
+        }
+        return self.pageableMem;
     }
 }
 
