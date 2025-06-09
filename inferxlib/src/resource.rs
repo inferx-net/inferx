@@ -732,9 +732,9 @@ impl Standby {
     }
 
     pub fn PageableMem(&self) -> StandbyType {
-        if self.pageableMem == StandbyType::Blob {
-            return StandbyType::File;
-        }
+        // if self.pageableMem == StandbyType::Blob {
+        //     return StandbyType::File;
+        // }
         return self.pageableMem;
     }
 }
