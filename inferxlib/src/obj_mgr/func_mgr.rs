@@ -145,12 +145,16 @@ fn PromptDefault() -> String {
 impl FuncSpec {
     pub const HIBERNATE_CONTAINER_MEM_OVERHEAD: u64 = 500; // 500 * 1024 * 1024; 500 MB
 
-    pub fn SnapshotResource(&self) -> Resources {
-        return self.resources.clone();
+    pub fn SnapshotResource(&self, contextCnt: u64) -> Resources {
+        let mut resource = self.resources.clone();
+        resource.gpu.contextCount = contextCnt;
+        return resource;
     }
 
-    pub fn AllResources(&self) -> Resources {
-        return self.resources.clone();
+    pub fn RunningResource(&self) -> Resources {
+        let mut resource = self.resources.clone();
+        resource.gpu.contextCount = 1;
+        return resource;
     }
 }
 

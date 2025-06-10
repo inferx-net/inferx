@@ -89,6 +89,8 @@ pub struct GPUResource {
     pub gpuCount: u64,
     #[serde(rename = "vRam")]
     pub vRam: u64,
+    #[serde(default)]
+    pub contextCount: u64,
 }
 
 impl GPUResource {
@@ -266,16 +268,16 @@ impl GPUResourceMap {
             match self.map.get_mut(&gpu) {
                 None => unreachable!(),
                 Some(resource) => {
-                    resource.contextCnt -= 1;
                     resource.slotCnt -= slotCnt;
                     resource.ncclCnt -= ncclCnt;
+                    resource.contextCnt -= usage.contextCount;
                 }
             }
 
             map.insert(
                 gpu,
                 GPUAlloc {
-                    contextCnt: 1,
+                    contextCnt: usage.contextCount,
                     slotCnt: slotCnt,
                     ncclCnt: ncclCnt,
                 },
@@ -312,7 +314,7 @@ impl GPUResourceMap {
 
         let reqSlotCnt = self.ReqSlotCnt(usage.vRam);
         for (&pGpuId, resource) in &self.map {
-            if resource.contextCnt == 0 {
+            if resource.contextCnt < usage.contextCount {
                 continue;
             }
 
