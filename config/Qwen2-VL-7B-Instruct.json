@@ -40,7 +40,7 @@
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],
-            "endpoint": {TRANSFORMERS_OFFLINE
+            "endpoint": {
                 "port": 8000,
                 "schema": "Http",
                 "probe": "/health"

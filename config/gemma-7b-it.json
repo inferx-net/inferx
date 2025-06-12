@@ -1,23 +1,20 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "deepseek-ai",
-    "name": "deepseek-llm-7b-chat",
+    "namespace": "google",
+    "name": "gemma-7b-it",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
-                "/root/.cache/huggingface/git/deepseek-llm-7b-chat",
-                "--served-model-name",
-                "deepseek-ai/deepseek-llm-7b-chat",
+                "google/gemma-7b-it",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
-                "--enforce-eager",
                 "--gpu-memory-utilization",
                 " 0.99",
                 "--max-model-len",
-                "200"
+                "2000"
             ],
             "resources": {
                 "CPU": 20000,
@@ -25,7 +22,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 16600
+                    "vRam": 20000
                 }
             },
             "envs": [
@@ -54,7 +51,7 @@
                 "prompt": "what is the integral of x^2 from 0 to 2?\nPlease reason step by step, and put your final answer within \\boxed{}.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "deepseek-ai/deepseek-llm-7b-chat",
+                    "model": "google/gemma-7b-it",
                     "max_tokens": "80",
                     "temperature": "0",
                     "stream": "true"
