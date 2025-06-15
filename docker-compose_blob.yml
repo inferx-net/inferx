@@ -68,6 +68,7 @@ services:
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
+      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
       - RUN_SERVICE=All
       - ALLOC_CPU=24
       - ALLOC_MEMORY=180Gi

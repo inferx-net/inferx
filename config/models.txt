@@ -1,6 +1,6 @@
 export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://localhost:4000"
-export IFERX_APIKEY="fbe45190-106c-42c9-85d3-dad7eb83ca50"
+export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 
 export IFERX_SECRET="M2Dse5531tdtyipZdGizLEeoOVgziQRX"
 export IFERX_USERNAME="testuser1"
@@ -43,11 +43,13 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl create Qwen2.5-Math-7B.json
 /opt/inferx/bin/ixctl create Qwen2.5-7B-Instruct-1M.json
 /opt/inferx/bin/ixctl create Qwen2-VL-7B-Instruct.json
+
 /opt/inferx/bin/ixctl create Qwen2-VL-7B-Instruct_1gpu.json
 /opt/inferx/bin/ixctl create Qwen2.5-VL-32B-Instruct-AWQ_1gpu.json
 /opt/inferx/bin/ixctl create QwQ-32B.json
 /opt/inferx/bin/ixctl create Qwen3-14B.json
 /opt/inferx/bin/ixctl create Qwen2.5-14B-Instruct-1M.json
+
 
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Math-1.5B-Instruct
