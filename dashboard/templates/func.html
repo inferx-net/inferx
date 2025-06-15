@@ -15,6 +15,7 @@
     <tr>
         <th>namespace</th>
         <th>model name</th>
+        <th>type</th>
         <th>standby gpu</th>
         <th>standby pageable</th>
         <th>standby pinned memory</th>
@@ -28,6 +29,13 @@
     <tr>
         <td>{{ namespace }}</td>
         <td>{{ name }}</td>
+        <td>
+            {% if func['func']['object']["spec"]["sample_query"]["apiType"] == "openai" %}
+            text2text
+            {% else %}
+            {{ func['func']['object']["spec"]["sample_query"]["apiType"] }}
+            {% endif %}
+        </td>
         <td>{{ func['func']['object']["spec"]["standby"]["gpu"] }}</td>
         <td>{{ func['func']['object']["spec"]["standby"]["pageable"] }}</td>
         <td>{{ func['func']['object']["spec"]["standby"]["pinned"] }}</td>
@@ -41,13 +49,15 @@
 </table>
 
 
-{% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "llava" %}
+{% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
 <h1>Image</h1>
-<textarea id="image" rows="2"
-    cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["body"]["image"] }}</textarea>
+<textarea id="imageUrlInput" rows="1"
+    cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["imageUrl"] }}</textarea>
+<button onclick="loadImage()">Preview</button>
+<img id="preview" src="" alt="Image will appear here" style="max-width: 600px; display: none;">
 {% else %}
 <h1 style="display:none;">Image</h1>
-<textarea id="image" rows="2" cols="120" style="display:none;"></textarea>
+<textarea id="imageUrlInput" rows="2" cols="120" style="display:none;"></textarea>
 {% endif %}
 <h1>Prompt</h1>
 
@@ -149,6 +159,19 @@
     const path = {{ path | tojson }};
     const funcconfig = {{ func | tojson }};
 
+    function loadImage() {
+        const url = document.getElementById("imageUrlInput").value;
+        const img = document.getElementById("preview");
+
+        if (url.endsWith(".jpg") || url.endsWith(".jpeg")) {
+            img.src = url;
+            img.style.display = "block";
+        } else {
+            alert("Please enter a valid JPEG image URL ending with .jpg or .jpeg");
+            img.style.display = "none";
+        }
+    }
+
     async function updateSpec() {
         const debugDiv = document.getElementById('debug');
         const spec = document.getElementById('spec').value;
@@ -241,7 +264,7 @@
         const debugDiv = document.getElementById('debug');
         const tpsDiv = document.getElementById('tpsDiv');
         const prompt = document.getElementById('prompt').value;
-        const image = document.getElementById('image').value;
+        const image = document.getElementById('imageUrlInput').value;
 
         cancelBtn.addEventListener('click', () => {
             if (abortController) {
@@ -268,16 +291,47 @@
             const { signal } = abortController;
 
             url = schema + "//" + hostname + ":" + port + "/demo/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
-            map["prompt"] = prompt;
-            const options = {
+
+            let body;
+            if (apiType != "image2text") {
+                map["prompt"] = prompt;
+                body = JSON.stringify(map);
+            } else {
+                const requestData = {
+                    model: map["model"],
+                    messages: [
+                        {
+                            role: "user",
+                            content: [
+                                { type: "text", text: prompt },
+                                {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: image
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens: map["max_tokens"],
+                    temperature: map["temperature"],
+                    stream: true
+                };
+                body = JSON.stringify(requestData);
+            }
+
+            debugDiv.innerHTML += JSON.stringify(map, null, 2);
+
+            let options = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(map),
+                body: body,
                 signal
             };
+
 
             const response = await fetch(url, options);
             processImage.style = "display:none;"
@@ -286,7 +340,6 @@
             const restore = response.headers.get("tcpconn_latency_header");
             const ttft = response.headers.get("ttft_latency_header");
             const contentType = response.headers.get("content-type");
-            debugDiv.innerHTML = apiType;
 
             const startDiv = document.getElementById('startDiv');
             const ttftDiv = document.getElementById('ttftDiv');
@@ -315,6 +368,7 @@
                 buffer = lines.pop(); // retain partial line
                 for (const line of lines) {
                     const trimmed = line.trim();
+
                     if (trimmed === '' || !trimmed.startsWith('data:')) continue;
 
                     const jsonPart = trimmed.replace(/^data:\s*/, '');

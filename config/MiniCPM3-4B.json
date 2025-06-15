@@ -41,7 +41,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "推荐5个北京的景点。",
                 "path": "v1/completions",
                 "body": {

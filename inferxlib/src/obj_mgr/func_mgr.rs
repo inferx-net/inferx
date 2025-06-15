@@ -72,11 +72,8 @@ pub struct SampleCall {
     pub apiType: ApiType,
     pub path: String,
     pub prompt: String,
-    // name
-    // max_tokens
-    // tempature
-    // stream
-    // image
+    #[serde(default)]
+    pub imageUrl: String,
     pub body: BTreeMap<String, String>,
 }
 
@@ -89,8 +86,9 @@ impl Default for SampleCall {
         map.insert("stream".to_owned(), "true".to_owned());
 
         return Self {
-            apiType: ApiType::OpenAI,
+            apiType: ApiType::Text2Text,
             path: "/v1/completions".to_owned(),
+            imageUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
             body: map,
         };
@@ -99,19 +97,19 @@ impl Default for SampleCall {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
-    #[serde(rename = "openai")]
-    OpenAI,
+    #[serde(rename = "text2text")]
+    Text2Text,
     #[serde(rename = "standard")]
     Standard,
-    #[serde(rename = "llava")]
-    Llava,
+    #[serde(rename = "image2text")]
+    Image2Text,
     #[serde(rename = "text2img")]
     Text2Image,
 }
 
 impl Default for ApiType {
     fn default() -> Self {
-        return Self::OpenAI;
+        return Self::Text2Text;
     }
 }
 
@@ -147,12 +145,16 @@ fn PromptDefault() -> String {
 impl FuncSpec {
     pub const HIBERNATE_CONTAINER_MEM_OVERHEAD: u64 = 500; // 500 * 1024 * 1024; 500 MB
 
-    pub fn SnapshotResource(&self) -> Resources {
-        return self.resources.clone();
+    pub fn SnapshotResource(&self, contextCnt: u64) -> Resources {
+        let mut resource = self.resources.clone();
+        resource.gpu.contextCount = contextCnt;
+        return resource;
     }
 
-    pub fn AllResources(&self) -> Resources {
-        return self.resources.clone();
+    pub fn RunningResource(&self) -> Resources {
+        let mut resource = self.resources.clone();
+        resource.gpu.contextCount = 1;
+        return resource;
     }
 }
 

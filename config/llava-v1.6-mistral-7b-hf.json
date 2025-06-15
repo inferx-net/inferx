@@ -1,0 +1,68 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "llava-hf",
+    "name": "llava-v1.6-mistral-7b-hf",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.7.3",
+            "commands": [
+                "--model",
+                "/root/.cache/huggingface/hub/llava-v1.6-mistral-7b-hf",
+                "--disable-custom-all-reduce",
+                "--served-model-name=llava-hf/llava-v1.6-mistral-7b-hf",
+                "--trust-remote-code",
+                "--max-model-len",
+                "4096",
+                "--chat-template",
+                "{% for message in messages %}{{ message.role | upper }}: {{ message.content }}{% if message.role == 'user' and message.image %}<image>{% endif %}{% endfor %}ASSISTANT:"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 50000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 30000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "body": {
+                    "model": "llava-hf/llava-v1.6-mistral-7b-hf",
+                    "max_tokens": "200",
+                    "temperature": "0"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "File",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

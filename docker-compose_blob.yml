@@ -68,6 +68,7 @@ services:
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
+      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
       - RUN_SERVICE=All
       - ALLOC_CPU=24
       - ALLOC_MEMORY=180Gi
@@ -75,6 +76,8 @@ services:
       - ENABLE_2MB_PAGE=true
       - ENALBE_BLOB=true
       - BLOB_BUFF=4Gi
+      - PEER_LOAD=true
+      - CONTEXT_COUNT=2
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
@@ -100,6 +103,7 @@ services:
       - /etc/letsencrypt/:/etc/letsencrypt/
       - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/
       - /var/lib/docker/:/var/lib/docker/
+      - /home/brad/mnt:/home/brad/mnt
     deploy:
       resources:
         reservations:

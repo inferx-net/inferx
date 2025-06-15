@@ -5,26 +5,34 @@
     "name": "llava-1.5-7b-hf",
     "object": {
         "spec": {
-            "image": "vllm-openai-upgraded:v0.1.0",
-            "entrypoint": [
-                "/usr/bin/python3"
-            ],
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
-                "/usr/lib/run_llava.py"
+                "--model",
+                "llava-hf/llava-1.5-7b-hf",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--max-model-len",
+                "1024",
+                "--chat-template",
+                "{% for message in messages %}{{ message.role | upper }}: {{ message.content }}{% if message.role == 'user' and message.image %}<image>{% endif %}{% endfor %}ASSISTANT:"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 12000,
+                "Mem": 50000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 14000
+                    "vRam": 30000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
                 ]
             ],
             "mounts": [
@@ -39,11 +47,14 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "llava",
-                "prompt": "What is shown in this image?",
-                "path": "v1/completions",
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
                 "body": {
-                    "image": "https://www.ilankelman.org/stopsigns/australia.jpg"
+                    "model": "llava-hf/llava-1.5-7b-hf",
+                    "max_tokens": "200",
+                    "temperature": "0"
                 }
             },
             "standby": {

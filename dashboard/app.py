@@ -94,7 +94,6 @@ keycloak = oauth.register(
 tls = False
 
 apihostaddr = os.getenv('INFERX_APIGW_ADDR', "http://localhost:4000")
-# apihostaddr = "https://quarksoft.io:4000"
 
 def is_token_expired():
     # Check if token exists and has expiration time
@@ -680,7 +679,8 @@ def proxy1(path):
 
 @app.route("/demo/intro")
 def md():
-    name = request.args.get("name")
+    # name = request.args.get("name")
+    name = 'home.md'
     md_content = read_markdown_file("doc/"+name)
     return render_template(
         "markdown.html", md_content=md_content

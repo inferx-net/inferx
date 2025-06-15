@@ -179,11 +179,15 @@
 
         document.getElementById(tabName).classList.add("active");
         evt.currentTarget.classList.add("active");
+
+        localStorage.setItem('currentTab', tabName);
     }
 
     window.onload = function () {
-        // Simulate click on the first tab button
-        openTab({ currentTarget: document.querySelector('.tablinks') }, 'Models');
+        var savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
+        var fakeEvent = { currentTarget: document.querySelector(`button[onclick*="'${savedTab}'"]`) };
+        // Simulate click on the savedTab tab button
+        openTab(fakeEvent, savedTab);
     };
 </script>
 
@@ -191,7 +195,7 @@
 <!-- <textarea id="output" rows="20" cols="120"></textarea> -->
 <script>
     async function fetchItems() {
-        const apikeys_resp = await fetch('/generate_apikeys');
+        const apikeys_resp = await fetch('/demo/generate_apikeys');
         const apikeys = await apikeys_resp.json();
         const apikey_tbody = document.querySelector('#items-table tbody');
         apikey_tbody.innerHTML = '';
@@ -209,7 +213,7 @@
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
 
-        const funcs_resp = await fetch('/generate_funcs');
+        const funcs_resp = await fetch('/demo/generate_funcs');
         const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
         funcs_tbody.innerHTML = '';
@@ -238,7 +242,7 @@
             funcs_tbody.appendChild(row);
         });
 
-        const namespaces_resp = await fetch('/generate_namespaces');
+        const namespaces_resp = await fetch('/demo/generate_namespaces');
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
@@ -266,7 +270,7 @@
             namespace_dropdown.appendChild(option);
         });
 
-        const tenants_resp = await fetch('/generate_tenants');
+        const tenants_resp = await fetch('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
@@ -315,7 +319,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
 
         const model_spec = document.getElementById('model_spec').value.trim();
         if (!model_spec) {
@@ -341,7 +345,7 @@
                 })
             };
 
-            const response = await fetch("/proxy/object/", options);
+            const response = await fetch("/demo/proxy/object/", options);
             const text = await response.text();
             if (response.status == '200') {
                 alert("Create Model successfully! " + text);
@@ -365,7 +369,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('proxy/object/function/' + key + "/", {
+                    fetch('/demo/proxy/object/function/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -399,7 +403,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
         // url = "http://192.168.0.22:1250/proxy/object/";
 
         try {
@@ -422,7 +426,7 @@
                 })
             };
 
-            const apikeys_resp = await fetch("/proxy/object/", options);
+            const apikeys_resp = await fetch("/demo/proxy/object/", options);
             const text = await apikeys_resp.text();
 
             if (apikeys_resp.status === 200) {
@@ -443,7 +447,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('proxy/object/namespace/' + key + "/", {
+                    fetch('/demo/proxy/object/namespace/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -464,7 +468,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
         // url = "http://192.168.0.22:1250/proxy/object/";
 
         try {
@@ -487,7 +491,7 @@
                 })
             };
 
-            const resp = await fetch("/proxy/object/", options);
+            const resp = await fetch("/demo/proxy/object/", options);
             const text = await resp.text();
 
             if (resp.status === 200) {
@@ -508,7 +512,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('proxy/object/tenant/' + key + "/", {
+                    fetch('/demo/proxy/object/tenant/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -529,8 +533,7 @@
                     method: 'PUT',
                     headers: {
                         'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + access_token
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
                         "apikey": "",
@@ -539,8 +542,7 @@
                         "keyname": keyname
                     })
                 };
-                // await fetch('http://192.168.0.22/apikey/', body);
-                await fetch('/apikeys', body);
+                await fetch("/demo/apikeys", body);
                 nameInput.value = '';
                 fetchItems();
             }
@@ -560,7 +562,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('apikeys', {
+                    fetch("/demo/apikeys", {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

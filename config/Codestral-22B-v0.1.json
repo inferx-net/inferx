@@ -1,0 +1,68 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "mistralai",
+    "name": "Codestral-22B-v0.1",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.7.3",
+            "commands": [
+                "--model",
+                "/root/.cache/huggingface/hub/models--mistralai--Codestral-22B-v0.1",
+                "--served-model-name",
+                "mistralai/Codestral-22B-v0.1",
+                "--disable-custom-all-reduce",
+                "--gpu-memory-utilization",
+                "0.99",
+                "--max-model-len",
+                "200"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 80000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 46000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "I like traveling by train because",
+                "path": "v1/completions",
+                "body": {
+                    "model": "mistralai/Codestral-22B-v0.1",
+                    "max_tokens": "180",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

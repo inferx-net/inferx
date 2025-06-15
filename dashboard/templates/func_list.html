@@ -16,6 +16,7 @@
         <th rowspan="2">tenant</th>
         <th rowspan="2">namespace</th>
         <th rowspan="2">model name</th>
+        <th rowspan="2">type</th>
         <th rowspan="2">gpu count</th>
         <th rowspan="2">vram (GB)</th>
         <th rowspan="2">cpu</th>
@@ -44,6 +45,13 @@
                 href="{{ hosturl }}func?tenant={{ func['func']['tenant'] }}&&namespace={{ func['func']['namespace'] }}&&name={{ func['func']['name'] }}">{{
                 func['func']['name'] }}
             </a></td>
+        <td>
+            {% if func['func']['object']["spec"]["sample_query"]["apiType"] == "openai" %}
+            text2text
+            {% else %}
+            {{ func['func']['object']["spec"]["sample_query"]["apiType"] }}
+            {% endif %}
+        </td>
         <td>{{ func['func']['object']["spec"]["resources"]["GPU"]["Count"] }}</td>
         <td>{{ func['func']['object']["spec"]["resources"]["GPU"]["vRam"]/1000 }}</td>
         <td>{{ func['func']['object']["spec"]["resources"]["CPU"]/1000 }}</td>

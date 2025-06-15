@@ -43,7 +43,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "What is the capital of USA?",
                 "path": "v1/completions",
                 "body": {

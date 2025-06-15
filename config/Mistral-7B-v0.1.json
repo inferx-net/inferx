@@ -9,7 +9,6 @@
             "commands": [
                 "--model",
                 "mistralai/Mistral-7B-v0.1",
-                "--enforce-eager",
                 "--disable-custom-all-reduce",
                 "--gpu-memory-utilization",
                 "0.99",
@@ -18,17 +17,29 @@
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 30000,
+                "Mem": 28000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 14800
+                    "vRam": 20000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "HF_HUB_OFFLINE",
+                    "1"
+                ],
+                [
+                    "TRANSFORMERS_OFFLINE",
+                    "1"
                 ]
             ],
             "mounts": [
@@ -43,8 +54,8 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
-                "prompt": "I like traveling by train because",
+                "apiType": "text2text",
+                "prompt": "Who won the world series in 2020?",
                 "path": "v1/completions",
                 "body": {
                     "model": "mistralai/Mistral-7B-v0.1",

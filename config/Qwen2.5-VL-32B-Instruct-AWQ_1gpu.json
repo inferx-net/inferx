@@ -1,0 +1,65 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-VL-32B-Instruct-AWQ_1gpu",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.7.3",
+            "commands": [
+                "--model",
+                "Qwen/Qwen2.5-VL-32B-Instruct-AWQ",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--max-model-len",
+                "10000"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 50000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 35000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "body": {
+                    "model": "Qwen/Qwen2.5-VL-32B-Instruct-AWQ",
+                    "max_tokens": "200",
+                    "temperature": "0"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "File",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

@@ -1,0 +1,75 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "google",
+    "name": "gemma-3-4b-it",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.8.4",
+            "commands": [
+                "--model",
+                "google/gemma-3-4b-it",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--gpu-memory-utilization",
+                " 0.99",
+                "--max-model-len",
+                "2000"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 40000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 14000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "HF_HUB_OFFLINE",
+                    "1"
+                ],
+                [
+                    "TRANSFORMERS_OFFLINE",
+                    "1"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "body": {
+                    "model": "google/gemma-3-4b-it",
+                    "max_tokens": "200",
+                    "temperature": "0"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

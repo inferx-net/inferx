@@ -1,0 +1,66 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "deepseek-ai",
+    "name": "deepseek-coder-33b-instruct",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.7.3",
+            "commands": [
+                "--model",
+                "deepseek-ai/deepseek-coder-33b-instruct",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--max-model-len",
+                "10000",
+                "--tensor-parallel-size=2"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 80000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 2,
+                    "vRam": 46000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/home/brad/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "write a quick sort algorithm in rust",
+                "path": "v1/completions",
+                "body": {
+                    "model": "deepseek-ai/deepseek-coder-33b-instruct",
+                    "max_tokens": "2000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            }
+        }
+    }
+}

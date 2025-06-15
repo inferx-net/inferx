@@ -17,7 +17,7 @@
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 50000,
+                "Mem": 60000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
@@ -27,7 +27,7 @@
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",
@@ -46,7 +46,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
                 "path": "v1/completions",
                 "body": {

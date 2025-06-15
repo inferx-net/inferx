@@ -18,7 +18,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 6000
+                    "vRam": 7000
                 }
             },
             "envs": [
@@ -43,7 +43,7 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "openai",
+                "apiType": "text2text",
                 "prompt": "write a quick sort algorithm.",
                 "path": "v1/completions",
                 "body": {
