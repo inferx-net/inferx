@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "EXAONE-3.0-7.8B-Instruct",
     "spec": {
-        "image": "vllm/vllm-openai:v0.7.3",
+        "image": "vllm/vllm-openai:v0.8.4",
         "commands": [
             "--model",
             "LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct",

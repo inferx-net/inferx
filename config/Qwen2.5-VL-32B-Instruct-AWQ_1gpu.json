@@ -5,7 +5,7 @@
     "name": "Qwen2.5-VL-32B-Instruct-AWQ_1gpu",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-VL-32B-Instruct-AWQ",

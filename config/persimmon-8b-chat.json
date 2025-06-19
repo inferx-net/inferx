@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "persimmon-8b-chat",
     "spec": {
-        "image": "vllm/vllm-openai:v0.7.3",
+        "image": "vllm/vllm-openai:v0.8.4",
         "commands": [
             "--model",
             "adept/persimmon-8b-chat",

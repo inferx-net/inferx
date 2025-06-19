@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "TinyLlama-1.1B-Chat-v1.0_2gpu",
     "spec": {
-        "image": "vllm/vllm-openai:v0.7.3",
+        "image": "vllm/vllm-openai:v0.8.4",
         "commands": [
             "--model",
             "meta-llama/Llama-Guard-3-8B-INT8",

@@ -5,7 +5,7 @@
     "name": "dolly-v2-12b",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "databricks/dolly-v2-12b",

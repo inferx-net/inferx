@@ -5,7 +5,7 @@
     "name": "gpt-j-6b",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "EleutherAI/gpt-j-6b",

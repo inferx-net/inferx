@@ -5,7 +5,7 @@
     "name": "mamba-1.4b-hf",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "state-spaces/mamba-1.4b-hf",

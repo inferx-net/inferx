@@ -5,7 +5,7 @@
     "name": "Phi-3-mini-4k-instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "microsoft/Phi-3-mini-4k-instruct",

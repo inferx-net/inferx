@@ -5,7 +5,7 @@
     "name": "TinyLlama-1.1B-Chat-v1.0",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.8.4",
             "commands": [
                 "--model",
                 "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -55,9 +55,9 @@
                 }
             },
             "standby": {
-                "gpu": "File",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Mem",
+                "pageable": "Mem",
+                "pinned": "Mem"
             }
         }
     }
