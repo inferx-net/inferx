@@ -5,7 +5,7 @@
     "name": "stablelm-3b-4e1t",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "stabilityai/stablelm-3b-4e1t",

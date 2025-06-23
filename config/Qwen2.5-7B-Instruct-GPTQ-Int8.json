@@ -10,7 +10,7 @@
                 "--model",
                 "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8",
                 "--gpu-memory-utilization",
-                "0.99",
+                "0.95",
                 "--max-model-len",
                 "500"
             ],

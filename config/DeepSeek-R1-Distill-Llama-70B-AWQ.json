@@ -5,7 +5,7 @@
     "name": "DeepSeek-R1-Distill-Llama-70B-AWQ",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Valdemardi/DeepSeek-R1-Distill-Llama-70B-AWQ",

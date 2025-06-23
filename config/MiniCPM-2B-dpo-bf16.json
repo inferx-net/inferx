@@ -5,7 +5,7 @@
     "name": "MiniCPM-2B-dpo-bf16",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "openbmb/MiniCPM-2B-dpo-bf16",

@@ -5,7 +5,7 @@
     "name": "TinyLlama-1.1B-Chat-v1.0",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
