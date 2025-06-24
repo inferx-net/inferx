@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Pods</h2>
+<h2 style="text-align: center;">Pods</h2>
 
 <style>
     table,
@@ -10,25 +10,25 @@
         border: 1px solid black;
     }
 </style>
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
-        <th rowspan="2">tenant</th>
-        <th rowspan="2">namespace</th>
-        <th rowspan="2">pod name</th>
-        <th rowspan="2">state</th>
-        <th rowspan="2">Node name</th>
-        <th rowspan="2">Req Gpu Count </th>
-        <th rowspan="2">Req Gpu vRam </th>
+        <th rowspan="2">Tenant</th>
+        <th rowspan="2">Namespace</th>
+        <th rowspan="2">Pod Name</th>
+        <th rowspan="2">State</th>
+        <th rowspan="2">Node Name</th>
+        <th rowspan="2">Req. GPU Count </th>
+        <th rowspan="2">Req. GPU vRam </th>
         <th rowspan="2">Type</th>
-        <th colspan="3">Standby</th>
-        <th rowspan="2">allocated GPU vRam (MB)</th>
-        <th rowspan="2">allocated GPU Slots</th>
+        <th colspan="3">Standby (In Megabytes)</th>
+        <th rowspan="2">Allocated GPU vRam (MB)</th>
+        <th rowspan="2">Allocated GPU Slots</th>
     </tr>
 
     <tr>
-        <th>gpu</th>
-        <th>pageable</th>
-        <th>pinned</th>
+        <th>GPU</th>
+        <th>Pageable</th>
+        <th>Pinned</th>
 
     </tr>
     {% for pod in pods %}
@@ -49,16 +49,44 @@
         <td>{{ pod["object"]["spec"]["create_type"] }}</td>
         <td>
             {{ pod["object"]["spec"]["standby"]["gpu"] }} :
-            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["gpu"]// (1024 *1024)}} MB
+            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["gpu"]// (1024 *1024)}} 
         </td>
         <td>{{ pod["object"]["spec"]["standby"]["pageable"] }} :
-            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["pageable"]// (1024 *1024)}} MB
+            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["pageable"]// (1024 *1024)}} 
         </td>
         <td>{{ pod["object"]["spec"]["standby"]["pinned"] }} :
-            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["pinned"]// (1024 *1024)}} MB
+            {{ pod["object"]["spec"]["snapshotStandbyInfo"]["pinned"]// (1024 *1024)}} 
         </td>
         <td>{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</td>
-        <td>{{ pod["object"]["spec"]["allocResources"]["GPUs"]["map"] }}</td>
+        <td>
+            {% set gpu_map = pod["object"]["spec"]["allocResources"]["GPUs"]["map"] %}
+
+            {% if gpu_map %}
+            <table>
+                <thead>
+                <tr>
+                    <th>GPU ID</th>
+                    <th>Context Count</th>
+                    <th>Slot Count</th>
+                    <th>NCCL Count</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for gpu_id, gpu_data in gpu_map.items() %}
+                <tr>
+                    <td>{{ gpu_id }}</td>
+                    <td>{{ gpu_data.contextCnt }}</td>
+                    <td>{{ gpu_data.slotCnt }}</td>
+                    <td>{{ gpu_data.ncclCnt }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <!-- No GPUs to display -->
+            <div></div>
+            {% endif %}
+        </td>
     </tr>
     {% endfor %}
 </table>
