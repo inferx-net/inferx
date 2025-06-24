@@ -114,27 +114,27 @@ services:
     command:
       - ./onenode
       - /opt/inferx/config/node3.json
-  dashboard:
-    image: inferx/inferx_dashboard:${Version}
-    restart: on-failure
-    container_name: inferx_dashboard
-    network_mode: "host"
-    environment:
-      - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
-      - KEYCLOAK_REALM_NAME=inferx
-      - KEYCLOAK_CLIENT_ID=infer_client
-      - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-    depends_on:
-      - db
-      - etcd
-      - keycloak
-    volumes:
-      - /etc/letsencrypt/:/etc/letsencrypt/
+  # dashboard:
+  #   image: inferx/inferx_dashboard:${Version}
+  #   restart: on-failure
+  #   container_name: inferx_dashboard
+  #   network_mode: "host"
+  #   environment:
+  #     - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
+  #     - KEYCLOAK_REALM_NAME=inferx
+  #     - KEYCLOAK_CLIENT_ID=infer_client
+  #     - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
+  #   healthcheck:
+  #     test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
+  #     interval: 10s
+  #     timeout: 10s
+  #     retries: 3
+  #   depends_on:
+  #     - db
+  #     - etcd
+  #     - keycloak
+  #   volumes:
+  #     - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:
     image: postgres:14.5
 
