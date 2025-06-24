@@ -5,7 +5,7 @@
     "name": "Baichuan2-13B-Chat-4bits",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "baichuan-inc/Baichuan2-13B-Chat-4bits",

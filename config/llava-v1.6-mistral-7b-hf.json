@@ -5,7 +5,7 @@
     "name": "llava-v1.6-mistral-7b-hf",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "/root/.cache/huggingface/hub/llava-v1.6-mistral-7b-hf",

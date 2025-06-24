@@ -5,7 +5,7 @@
     "name": "Qwen2.5-Math-7B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Math-7B",

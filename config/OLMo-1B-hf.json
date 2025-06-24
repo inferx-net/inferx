@@ -5,7 +5,7 @@
     "name": "OLMo-1B-hf",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.8.4",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "allenai/OLMo-1B-hf",
