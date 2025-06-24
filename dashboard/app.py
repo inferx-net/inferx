@@ -29,7 +29,8 @@ from flask import (
     render_template_string,
     request,
     Response,
-    send_from_directory
+    send_from_directory,
+    Blueprint
 )
 
 from authlib.integrations.flask_client import OAuth
@@ -44,12 +45,14 @@ import multiprocessing
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
-
 # logger = logging.getLogger('gunicorn.error')
 # sys.stdout = sys.stderr = logger.handlers[0].stream
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "supersecret")
+
+#Create a Blueprint with a common prefix
+prefix_bp = Blueprint('prefix', __name__, url_prefix='/demo')
 
 def configure_logging():
     if "gunicorn" in multiprocessing.current_process().name.lower():
@@ -154,7 +157,7 @@ def require_login(func):
         return func(*args, **kwargs)
     return wrapper
 
-@app.route('/demo/login')
+@prefix_bp.route('/login')
 def login():
     nonce = generate_token(20)
     session['keycloak_nonce'] = nonce
@@ -165,7 +168,7 @@ def login():
         nonce=nonce  # Pass nonce to Keycloak
     )
 
-@app.route('/demo/auth/callback')
+@prefix_bp.route('auth/callback')
 def auth_callback():
     try:
         # Retrieve token and validate nonce
@@ -190,7 +193,7 @@ def auth_callback():
     except Exception as e:
         return f"Authentication failed: {str(e)}", 403
 
-@app.route('/demo/logout')
+@prefix_bp.route('/logout')
 def logout():
     # Keycloak logout endpoint
     end_session_endpoint = (
@@ -219,21 +222,21 @@ def getapikeys():
 
     return apikeys
 
-@app.route('/demo/admin')
+@prefix_bp.route('/admin')
 @require_login
 def apikeys():
     return render_template(
         "admin.html"
     )
 
-@app.route('/demo/generate_apikeys', methods=['GET'])
+@prefix_bp.route('/generate_apikeys', methods=['GET'])
 @require_login
 def generate_apikeys():
     apikeys = getapikeys()
     return apikeys
 
 
-@app.route('/demo/apikeys', methods=['PUT'])
+@prefix_bp.route('/apikeys', methods=['PUT'])
 @require_login
 def create_apikey():
     access_token = session.get('access_token', '')
@@ -246,7 +249,7 @@ def create_apikey():
     resp = requests.put(url, headers=headers, json=req)
     return resp
 
-@app.route('/demo/apikeys', methods=['DELETE'])
+@prefix_bp.route('/apikeys', methods=['DELETE'])
 @require_login
 def delete_apikey():
     access_token = session.get('access_token', '')
@@ -451,7 +454,7 @@ def getrest(tenant: str, namespace: str, name: str):
     return resp
 
 
-@app.route('/demo/text2img', methods=['POST'])
+@prefix_bp.route('/text2img', methods=['POST'])
 @not_require_login
 def text2img():
     access_token = session.get('access_token', '')
@@ -494,27 +497,27 @@ def text2img():
     headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
     return Response(resp.iter_content(1024000), resp.status_code, headers)
 
-@app.route('/demo/generate_tenants', methods=['GET'])
+@prefix_bp.route('/generate_tenants', methods=['GET'])
 @require_login
 def generate_tenants():
     tenants = listtenants()
     print("tenants ", tenants)
     return tenants
 
-@app.route('/demo/generate_namespaces', methods=['GET'])
+@prefix_bp.route('/generate_namespaces', methods=['GET'])
 @require_login
 def generate_namespaces():
     namespaces = listnamespaces()
     print("namespaces ", namespaces)
     return namespaces
 
-@app.route('/demo/generate_funcs', methods=['GET'])
+@prefix_bp.route('/generate_funcs', methods=['GET'])
 @require_login
 def generate_funcs():
     funcs = listfuncs("", "")
     return funcs
 
-@app.route('/demo/generate', methods=['POST'])
+@prefix_bp.route('/generate', methods=['POST'])
 @not_require_login
 def generate():
     access_token = session.get('access_token', '')
@@ -608,7 +611,7 @@ def stream_response(response):
     finally:
         response.close()
 
-@app.route('/demo/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
+@prefix_bp.route('/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @not_require_login
 def proxy(path):
     access_token = session.get('access_token', '')
@@ -641,7 +644,7 @@ def proxy(path):
     response = Response(stream_response(resp), resp.status_code, headers)
     return response
 
-@app.route('/demo/proxy1/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
+@prefix_bp.route('/proxy1/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @require_login
 def proxy1(path):
     access_token = session.get('access_token', '')
@@ -677,7 +680,7 @@ def proxy1(path):
     
 
 
-@app.route("/demo/intro")
+@prefix_bp.route("/intro")
 def md():
     # name = request.args.get("name")
     name = 'home.md'
@@ -686,12 +689,12 @@ def md():
         "markdown.html", md_content=md_content
     )
 
-@app.route('/demo/doc/<path:filename>')
+@prefix_bp.route('/doc/<path:filename>')
 def route_build_files(filename):
     root_dir = os.path.dirname(os.getcwd()) + "/doc"
     return send_from_directory(root_dir, filename)
 
-@app.route("/demo/funclog")
+@prefix_bp.route("/funclog")
 def funclog():
     namespace = request.args.get("namespace")
     funcId = request.args.get("funcId")
@@ -703,8 +706,8 @@ def funclog():
     )
 
 
-@app.route("/demo/")
-@app.route("/demo/listfunc")
+@prefix_bp.route("/")
+@prefix_bp.route("/listfunc")
 @not_require_login
 def ListFunc():
     tenant = request.args.get("tenant")
@@ -741,7 +744,7 @@ def ListFunc():
     return render_template("func_list.html", funcs=funcs, summary=summary)
 
 
-@app.route("/demo/listsnapshot")
+@prefix_bp.route("/listsnapshot")
 @not_require_login
 def ListSnapshot():
     tenant = request.args.get("tenant")
@@ -758,7 +761,7 @@ def ListSnapshot():
     return render_template("snapshot_list.html", snapshots=snapshots)
 
 
-@app.route("/demo/func", methods=("GET", "POST"))
+@prefix_bp.route("/func", methods=("GET", "POST"))
 @not_require_login
 def GetFunc():
     tenant = request.args.get("tenant")
@@ -794,7 +797,7 @@ def GetFunc():
 
 
 # @app.route("/demo/")
-@app.route("/demo/listnode")
+@prefix_bp.route("/listnode")
 @not_require_login
 def ListNode():
     nodes = listnodes()
@@ -809,7 +812,7 @@ def ListNode():
     return render_template("node_list.html", nodes=nodes)
 
 
-@app.route("/demo/node")
+@prefix_bp.route("/node")
 @not_require_login
 def GetNode():
     name = request.args.get("name")
@@ -822,7 +825,7 @@ def GetNode():
     return render_template("node.html", name=name, node=nodestr)
 
 
-@app.route("/demo/listpod")
+@prefix_bp.route("/listpod")
 @not_require_login
 def ListPod():
     tenant = request.args.get("tenant")
@@ -839,7 +842,7 @@ def ListPod():
     return render_template("pod_list.html", pods=pods)
 
 
-@app.route("/demo/pod")
+@prefix_bp.route("/pod")
 @not_require_login
 def GetPod():
     tenant = request.args.get("tenant")
@@ -863,7 +866,7 @@ def GetPod():
     )
 
 
-@app.route("/demo/failpod")
+@prefix_bp.route("/failpod")
 @not_require_login
 def GetFailPod():
     tenant = request.args.get("tenant")
@@ -883,6 +886,9 @@ def GetFailPod():
         audits=audits,
         log=log,
     )
+
+#activate the BluePrint
+app.register_blueprint(prefix_bp)
 
 def run_http():
     app.run(host='0.0.0.0', port=1250, debug=True)
