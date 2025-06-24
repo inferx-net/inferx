@@ -1,6 +1,7 @@
 export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://localhost:4000"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
+export IFERX_APIKEY="bb1d47d5-f681-4f6d-9ba4-f932c17741ef"
 
 export IFERX_SECRET="M2Dse5531tdtyipZdGizLEeoOVgziQRX"
 export IFERX_USERNAME="testuser1"
@@ -60,8 +61,7 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl delete function public Qwen 	Qwen2.5-Coder-14B-Instruct-GPTQ-Int8
 /opt/inferx/bin/ixctl delete function public Qwen 	Qwen2-VL-7B-Instruct_1gpu
 /opt/inferx/bin/ixctl delete function public Qwen   Qwen2.5-Coder-3B
-
-
+/opt/inferx/bin/ixctl delete function public Qwen Qwen2-VL-7B-Instruct_1gpu
 #######################################################
 /opt/inferx/bin/ixctl create THUDM_namespace.json
 /opt/inferx/bin/ixctl create chatglm3-6b.json
@@ -195,7 +195,7 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl create deepseek-ai_namespace.json
 
-/opt/inferx/bin/ixctl create deepseek-llm-7b-chat.json
+#/opt/inferx/bin/ixctl create deepseek-llm-7b-chat.json
 /opt/inferx/bin/ixctl create deepseek-llm-7b-chat_2gpu.json
 
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-8B.json
@@ -228,14 +228,14 @@ google/gemma-7b-it
 
 #######################################################
 /opt/inferx/bin/ixctl create llava-hf_namespace.json
-/opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
+#/opt/inferx/bin/ixctl create llava-1.5-7b-hf.json
 /opt/inferx/bin/ixctl create llava-1.5-7b-hf_2gpu.json
-/opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf.json
+#/opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf.json
 /opt/inferx/bin/ixctl create llava-v1.6-mistral-7b-hf_2gpu.json
 
 /opt/inferx/bin/ixctl delete function public llava-hf llava-1.5-7b-hf
 /opt/inferx/bin/ixctl delete function public llava-hf llava-1.5-7b-hf_2gpu
-
+/opt/inferx/bin/ixctl delete function public llava-hf llava-v1.6-mistral-7b-hf_2gpu
 #######################################################
 /opt/inferx/bin/ixctl create bigcode_namespace.json
 /opt/inferx/bin/ixctl create starcoder2-3b.json
@@ -251,13 +251,15 @@ google/gemma-7b-it
 
 #######################################################
 /opt/inferx/bin/ixctl create google_namespace.json
+/opt/inferx/bin/ixctl create gemma-3-4b-it.json
+
 /opt/inferx/bin/ixctl create gemma-7b-it.json
 
 #######################################################
 /opt/inferx/bin/ixctl create meta-llama_namespace.json
-/opt/inferx/bin/ixctl create Llama-3.2-3B-Instruct.json
 /opt/inferx/bin/ixctl create Llama-3.2-3B-Instruct_2gpu.json
 /opt/inferx/bin/ixctl create Llama-2-13b-hf.json
+/opt/inferx/bin/ixctl create Llama-3.2-3B-Instruct.json
 
 /opt/inferx/bin/ixctl update Llama-3.2-3B-Instruct.json
 /opt/inferx/bin/ixctl update Llama-3.2-3B-Instruct_2gpu.json

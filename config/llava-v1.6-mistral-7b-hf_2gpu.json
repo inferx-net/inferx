@@ -5,7 +5,7 @@
     "name": "llava-v1.6-mistral-7b-hf_2gpu",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "/root/.cache/huggingface/hub/llava-v1.6-mistral-7b-hf",
@@ -24,7 +24,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 14800
+                    "vRam": 14200
                 }
             },
             "envs": [

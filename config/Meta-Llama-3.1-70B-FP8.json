@@ -5,7 +5,7 @@
     "name": "meta-llama-3-70b-int8",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "RedHatAI/Meta-Llama-3.1-70B-FP8",

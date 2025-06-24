@@ -4,7 +4,7 @@
     "namespace": "ns1",
     "name": "gemma-7b",
     "spec": {
-        "image": "vllm/vllm-openai:v0.7.3",
+        "image": "vllm/vllm-openai:v0.9.0",
         "commands": [
             "--model",
             "google/gemma-7b",

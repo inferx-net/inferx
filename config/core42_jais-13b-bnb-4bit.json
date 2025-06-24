@@ -5,7 +5,7 @@
     "name": "core42_jais-13b-bnb-4bit",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "jwnder/core42_jais-13b-bnb-4bit",

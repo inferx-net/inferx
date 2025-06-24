@@ -5,7 +5,7 @@
     "name": "gpt4all-j",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "nomic-ai/gpt4all-j",

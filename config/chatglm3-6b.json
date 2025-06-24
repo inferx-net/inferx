@@ -5,7 +5,7 @@
     "name": "chatglm3-6b",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "THUDM/chatglm3-6b",

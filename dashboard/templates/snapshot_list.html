@@ -10,25 +10,52 @@
 </style>
 
 <h2>Snapshots</h2>
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;" border="1">
     <tr>
-        <th>Snapshot Id</th>
-        <th>nodename</th>
-        <th>state</th>
-        <th>gpu</th>
-        <th>pageable</th>
-        <th>pinned</th>
-        <th>docker image name</th>
-        <th>build id</th>
+        <th rowspan="2">Snapshot ID</th>
+        <th rowspan="2">Nodename</th>
+        <th rowspan="2">State</th>
+        <th colspan="2">GPU</th>
+        <th rowspan="2">Pageable (MB)</th>
+        <th rowspan="2">Pinned (MB)</th>
+        <th rowspan="2">Docker Image Name</th>
+        <th rowspan="2">Build ID</th>
     </tr>
+    <tr>
+        <th>ID</th>
+        <th>Memory Size (MB)</th>
+    </tr>
+
     {% for snapshot in snapshots %}
     <tr>
         <td>{{ snapshot["name"] }}</td>
         <td>{{ snapshot["object"]['nodename'] }}</td>
         <td>{{ snapshot["object"]['state'] }}</td>
-        <td>{{ snapshot["object"]['info']['gpuMemSizes'] }}</td>
-        <td>{{ snapshot["object"]['info']['processCheckpointSize'] // (1024*1024) }} MB</td>
-        <td>{{ snapshot["object"]['info']['hostMemSize'] // (1024*1024) }} MB </td>
+
+        <!-- GPU ID list -->
+        <td style="padding: 0;">
+            <table style="width: 100%; border-collapse: collapse;">
+                {% for gpu_id in snapshot["object"]['info']['gpuMemSizes'].keys() %}
+                <tr>
+                    <td style="border: 1px solid black;">{{ gpu_id }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </td>
+
+        <!-- GPU Mem Size list -->
+        <td style="padding: 0;">
+            <table style="width: 100%; border-collapse: collapse;">
+                {% for mem_size in snapshot["object"]['info']['gpuMemSizes'].values() %}
+                <tr>
+                    <td style="border: 1px solid black;">{{ mem_size // 1000000 }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </td>
+
+        <td>{{ snapshot["object"]['info']['processCheckpointSize'] // (1024*1024) }}</td>
+        <td>{{ snapshot["object"]['info']['hostMemSize'] // (1024*1024) }}</td>
         <td>{{ snapshot["object"]['meta']['imagename'] }}</td>
         <td>{{ snapshot["object"]['meta']['buildId'] }}</td>
     </tr>

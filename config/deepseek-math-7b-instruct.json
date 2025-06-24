@@ -5,7 +5,7 @@
     "name": "deepseek-math-7b-instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "/root/.cache/huggingface/git/deepseek-math-7b-instruct",

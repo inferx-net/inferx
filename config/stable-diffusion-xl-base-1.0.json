@@ -5,7 +5,7 @@
     "name": "stable-diffusion-xl-base-1.0",
     "object": {
         "spec": {
-            "image": "vllm-openai-upgraded:v0.1.0",
+            "image": "vllm-openai-upgraded:v0.1.1",
             "entrypoint": [
                 "/usr/bin/python3"
             ],
