@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.1
+VERSION := v0.1.2
 NODE_NAME=${shell hostname}
 
 all: ctl dash spdk runmodel
