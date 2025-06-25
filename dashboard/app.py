@@ -855,6 +855,8 @@ def GetPod():
     log = readpodlog(tenant, namespace, funcname, version, id)
 
     audits = getpodaudit(tenant, namespace, funcname, version, id)
+
+    funcs = listfuncs(tenant, namespace)
     return render_template(
         "pod.html",
         tenant=tenant,
@@ -862,6 +864,7 @@ def GetPod():
         podname=podname,
         audits=audits,
         log=log,
+        funcs = funcs,
     )
 
 

@@ -2,7 +2,7 @@
 
 {% block content %}
 
-<h2>funcpod</h2>
+<h2 style="text-align: center;">Funcpod</h2>
 
 <style>
     table,
@@ -11,25 +11,37 @@
         border: 1px solid black;
     }
 </style>
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
-        <th>tenant</th>
-        <th>namespace</th>
-        <th>podname</th>
+        <th>Tenant</th>
+        <th>Namespace</th>
+        <th>Podname</th>
+        <th>Model</th>
     </tr>
     <tr>
         <td>{{ tenant }}</td>
         <td>{{ namespace }}</td>
         <td>{{ podname }}</td>
+        <td>
+            {% if funcs %}
+                {% for func in funcs %}
+                    <a href="{{ hosturl }}func?tenant={{ func['func']['tenant'] }}&namespace={{ func['func']['namespace'] }}&name={{ func['func']['name'] }}">
+                        {{ func['func']['name'] }}
+                    </a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            {% else %}
+                N/A
+            {% endif %}
+        </td>
     </tr>
 </table>
 
 {% if audits %}
-<h2>state</h2>
-<table style="width:100%">
+<h2 style="text-align: center;">State</h2>
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
-        <th>state</th>
-        <th>time</th>
+        <th>State</th>
+        <th>Time</th>
     </tr>
     {% for audit in audits %}
     <tr>
@@ -39,7 +51,7 @@
     {% endfor %}
 </table>
 {% endif %}
-<h2>log</h2>
+<h2 style="text-align: center;">Log</h2>
 <table style="width:100%">
     <tr>
         {% autoescape false %}
