@@ -12,7 +12,9 @@
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
-                "2000",
+                "1000",
+                "--gpu-memory-utilization",
+                "0.85",
                 "--tensor-parallel-size=2"
             ],
             "resources": {
@@ -21,7 +23,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13000
+                    "vRam": 14200
                 }
             },
             "envs": [
