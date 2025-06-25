@@ -23,15 +23,10 @@
         <td>{{ namespace }}</td>
         <td>{{ podname }}</td>
         <td>
-            {% if funcs %}
-                {% for func in funcs %}
-                    <a href="{{ hosturl }}func?tenant={{ func['func']['tenant'] }}&namespace={{ func['func']['namespace'] }}&name={{ func['func']['name'] }}">
-                        {{ func['func']['name'] }}
-                    </a>{% if not loop.last %}, {% endif %}
-                {% endfor %}
-            {% else %}
-                N/A
-            {% endif %}
+            <a href="{{ hosturl }}func?tenant={{ tenant }}&namespace={{ namespace }}&name={{ funcname }}">
+                       {{ funcname }}
+            </a>
+
         </td>
     </tr>
 </table>

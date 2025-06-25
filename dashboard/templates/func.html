@@ -115,6 +115,7 @@
         <th>State</th>
         <th>Required Resource</th>
         <th>Allocated Resource</th>
+        <th>GPU</th>
         <!-- <th>funcpod </th> -->
     </tr>
     {% for pod in func["pods"] %}
@@ -130,36 +131,64 @@
         .req-resource-cell {
             padding: 0;
             border: none !important;
+            vertical-align: top;
+            height: 100%;
         }
 
         .sliced-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr); /* two equal columns */
-            grid-auto-rows: min-content;
-            width: 100%;
-            height: 100%;
-            /* black lines on internal borders only */
-            border-left: 1px solid black;
-            border-top: 1px solid black;
+            grid-template-columns: auto auto;
+            grid-template-rows: repeat(7, 1fr);
+            height: 100%;        /* fill entire td height */
+            align-items: stretch; /* stretch each row fully */
         }
 
         .sliced-grid > div {
-            border-right: 1px solid black;
-            border-bottom: 1px solid black;
-            padding: 6px 8px;
-            background: white;
-            font-size: 90%;
+            padding: 4px 6px;
             box-sizing: border-box;
+            border-bottom: 1px solid black;
+            display: flex;
+            align-items: center; /* center content vertically inside stretched div */
+            height: 100%;        /* stretch div to fill grid row height */
         }
 
+
         .sliced-grid > div.key {
-            font-weight: 700;
-            background: #fff;
+            font-weight: 600;
+            text-align: right;
+            padding-right: 8px;
+            border-right: 1px solid black;
         }
 
         .sliced-grid > div.value {
             font-weight: 400;
+            text-align: left;
+            padding-left: 8px;
         }
+
+        .sliced-grid > div:last-child,
+        .sliced-grid > div:nth-last-child(2) {
+            border-bottom: none;
+        }
+
+        /* Remove any global rule removing bottom border from last items */
+        .sliced-grid > div:last-child,
+        .sliced-grid > div:nth-last-child(2) {
+            border-bottom: none; /* or remove this rule entirely */
+        }
+
+        /* Add bottom border only inside these specific columns */
+        .alloc-resource-cell .sliced-grid > div:last-child,
+        .alloc-resource-cell .sliced-grid > div:nth-last-child(2),
+        .gpu-resource-cell .sliced-grid > div:last-child,
+        .gpu-resource-cell .sliced-grid > div:nth-last-child(2) {
+            border-bottom: 1px solid black !important;
+        }
+
+        tr {
+            height: 100%; /* Allow full height stretching */
+        }
+
         </style>
 
         <td class="req-resource-cell">
@@ -187,71 +216,39 @@
         </div>
         </td>
 
-        <td>
-        <table style="border-collapse: collapse; width: 100%; font-size: inherit;">
-            <tbody>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">Nodename</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">CPU</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["CPU"] }}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">Mem</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["Mem"] }}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">CacheMem</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["CacheMem"] }}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">GPUType</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["GPUType"] }}</td>
-            </tr>
-            <!-- GPUs subtable -->
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;" colspan="2">
-                <table style="border-collapse: collapse; width: 100%; font-size: inherit;">
-                    <thead>
-                    <tr>
-                        <th style="border: 1px solid #000000; padding: 4px;">GPUs Property</th>
-                        <th style="border: 1px solid #000000; padding: 4px;">Value</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <tr>
-                        <td style="border: 1px solid #000000; padding: 4px;">vRam</td>
-                        <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</td>
-                    </tr>
-                    <tr>
-                        <td style="border: 1px solid #000000; padding: 4px;">slotSize</td>
-                        <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["slotSize"] }}</td>
-                    </tr>
-                    <tr>
-                        <td style="border: 1px solid #000000; padding: 4px;">totalSlotCnt</td>
-                        <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["totalSlotCnt"] }}</td>
-                    </tr>
-                    <!-- For nested map object, you may want to serialize or iterate -->
-                    <tr>
-                        <td style="border: 1px solid #000000; padding: 4px;">map (GPU 0)</td>
-                        <td style="border: 1px solid #000000; padding: 4px;">
-                        ContextCnt: {{ pod["object"]["spec"]["allocResources"]["GPUs"]["map"]["0"]["contextCnt"] }}<br>
-                        SlotCnt: {{ pod["object"]["spec"]["allocResources"]["GPUs"]["map"]["0"]["slotCnt"] }}<br>
-                        NcclCnt: {{ pod["object"]["spec"]["allocResources"]["GPUs"]["map"]["0"]["ncclCnt"] }}
-                        </td>
-                    </tr>
-                    </tbody>
-                </table>
-                </td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000000; padding: 4px;">MaxContextPerGPU</td>
-                <td style="border: 1px solid #000000; padding: 4px;">{{ pod["object"]["spec"]["allocResources"]["MaxContextPerGPU"] }}</td>
-            </tr>
-            </tbody>
-        </table>
+        <td class = "alloc-resource-cell">
+        <div class="sliced-grid">
+            <div class="key">Node Name</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</div>
+
+            <div class="key">CPU</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["CPU"] }}</div>
+
+            <div class="key">Memory</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["Mem"] }}</div>
+
+            <div class="key">Cache Memory</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["CacheMem"] }}</div>
+        </div>
+        </td>
+
+        <td class = "gpu-resource-cell">
+        <div class="sliced-grid">
+            <div class="key">GPU Type</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUType"] }}</div>
+
+            <div class="key">vRam</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</div>
+
+            <div class="key">Slot Size</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["slotSize"] }}</div>
+
+            <div class="key">Total Slot Count</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["totalSlotCnt"] }}</div>
+
+            <div class="key">Max Context Per GPU</div>
+            <div class="value">{{ pod["object"]["spec"]["allocResources"]["MaxContextPerGPU"] }}</div>
+        </div>
         </td>
 
     </tr>

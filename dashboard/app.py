@@ -862,6 +862,7 @@ def GetPod():
         tenant=tenant,
         namespace=namespace,
         podname=podname,
+        funcname=funcname,
         audits=audits,
         log=log,
         funcs = funcs,
