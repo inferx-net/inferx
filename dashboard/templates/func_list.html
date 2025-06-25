@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Models</h2>
+<h2 style="text-align: center;">Models</h2>
 
 <style>
     table,
@@ -11,25 +11,25 @@
     }
 </style>
 
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
-        <th rowspan="2">tenant</th>
-        <th rowspan="2">namespace</th>
-        <th rowspan="2">model name</th>
-        <th rowspan="2">type</th>
-        <th rowspan="2">gpu count</th>
-        <th rowspan="2">vram (GB)</th>
-        <th rowspan="2">cpu</th>
-        <th rowspan="2">memory (GB)</th>
-        <th colspan="3">standby</th>
-        <th rowspan=" 2">state</th>
-        <th rowspan="2">snapshot nodes</th>
-        <th rowspan="2">revision</th>
+        <th rowspan="2">Tenant</th>
+        <th rowspan="2">Namespace</th>
+        <th rowspan="2">Model Name</th>
+        <th rowspan="2">Type</th>
+        <th rowspan="2">GPU Count</th>
+        <th rowspan="2">vRam (GB)</th>
+        <th rowspan="2">CPU</th>
+        <th rowspan="2">Memory (GB)</th>
+        <th colspan="3">Standby</th>
+        <th rowspan=" 2">State</th>
+        <th rowspan="2">Snapshot Nodes</th>
+        <th rowspan="2">Revision</th>
     </tr>
     <tr>
-        <th>gpu</th>
-        <th>pageable</th>
-        <th>pinned</th>
+        <th>GPU</th>
+        <th>Pageable</th>
+        <th>Pinned</th>
 
     </tr>
     {% for func in funcs %}
@@ -68,48 +68,30 @@
 
 </table>
 
-<h2>Summary</h2>
-<table width="500">
+<h2 style="text-align: center;">Summary</h2>
+
+<table style="width: 500px; margin: auto; text-align: center; border-collapse: collapse;">
     <tr>
-        <td colspan="1" width="200">
-            <h3>Model Count</h3>
-        </td>
-        <td colspan="1" width="200">
-            <h3>{{ summary["model_count"] }}</h3>
-        </td>
+        <td width="200"><h3>Model Count</h3></td>
+        <td width="200"><h3>{{ summary["model_count"] }}</h3></td>
     </tr>
     <tr>
-        <td colspan="1">
-            <h3>Required GPU Count</h3>
-        </td>
-        <td colspan="1">
-            <h3>{{ summary["gpucount"] }}</h3>
-        </td>
+        <td><h3>Required GPU Count</h3></td>
+        <td><h3>{{ summary["gpucount"] }}</h3></td>
     </tr>
     <tr>
-        <td colspan="1">
-            <h3>Required VRAM (GB)</h3>
-        </td>
-        <td colspan="1">
-            <h3>{{ summary["vram"] / 1000 }} GB</h3>
-        </td>
+        <td><h3>Required VRAM (GB)</h3></td>
+        <td><h3>{{ summary["vram"] / 1000 }} GB</h3></td>
     </tr>
     <tr>
-        <td colspan="1">
-            <h3>Required CPU Cores</h3>
-        </td>
-        <td colspan="1">
-            <h3>{{ summary["cpu"] / 1000 }}</h3>
-        </td>
+        <td><h3>Required CPU Cores</h3></td>
+        <td><h3>{{ summary["cpu"] / 1000 }}</h3></td>
     </tr>
     <tr>
-        <td colspan="1">
-            <h3>Required Memory (GB)</h3>
-        </td>
-        <td colspan="1">
-            <h3>{{ summary["memory"] / 1000 }} GB</h3>
-        </td>
+        <td><h3>Required Memory (GB)</h3></td>
+        <td><h3>{{ summary["memory"] / 1000 }} GB</h3></td>
     </tr>
 </table>
+
 {{ hosturl }}
 {% endblock %}

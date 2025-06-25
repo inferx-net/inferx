@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Nodes</h2>
+<h2 style="text-align: center;">Nodes</h2>
 <style>
     table,
     th,
@@ -9,7 +9,7 @@
         border: 1px solid black;
     }
 </style>
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
         <th>Nodename</th>
         <th>IP Address</th>
@@ -31,7 +31,27 @@
         <td>{{ node['object']['resources']['Mem'] // 1000 }}</td>
         <td>{{ node['object']['resources']['MaxContextPerGPU'] }}</td>
         <td>{{ node['object']['blobStoreEnable'] }}</td>
-        <td>{{ node['object']['resources']['GPUs'] }}</td>
+        {% set gpus = node['object']['resources']['GPUs'] %}
+        <td>
+            <div>vRam: {{ gpus.vRam }}</div>
+            <div>slotSize: {{ gpus.slotSize }}</div>
+            <div>totalSlotCnt: {{ gpus.totalSlotCnt }}</div>
+
+            <table style="width: 100%; margin-top: 5px; border-collapse: collapse;" border="1">
+                {% for gpu_id, gpu_info in gpus.map.items() %}
+                <tr>
+                    <td style="width: 20%; padding: 4px;" rowspan="3">{{ gpu_id }}</td>
+                    <td style="padding: 4px;">contextCnt: {{ gpu_info.contextCnt }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">slotCnt: {{ gpu_info.slotCnt }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 4px;">ncclCnt: {{ gpu_info.ncclCnt }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </td>
         {% endautoescape %}
     </tr>
     {% endfor %}

@@ -803,14 +803,13 @@ def ListNode():
     nodes = listnodes()
 
     for node in nodes:
-        gpus = json.dumps(node['object']['resources']['GPUs'], indent=4)
-        gpus = gpus.replace("\n", "<br>")
-        gpus = gpus.replace("    ", "&emsp;")
-        node['object']['resources']['GPUs'] = gpus
+        gpus_obj = node['object']['resources']['GPUs']
 
+        #Preformmated string for display
+        gpus_pretty = json.dumps(gpus_obj, indent=4).replace("\n", "<br>").replace("    ", "&emsp;")
+        node['object']['resources']['GPUs_str'] = gpus_pretty  #store separately
 
     return render_template("node_list.html", nodes=nodes)
-
 
 @prefix_bp.route("/node")
 @not_require_login
