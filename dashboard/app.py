@@ -855,13 +855,17 @@ def GetPod():
     log = readpodlog(tenant, namespace, funcname, version, id)
 
     audits = getpodaudit(tenant, namespace, funcname, version, id)
+
+    funcs = listfuncs(tenant, namespace)
     return render_template(
         "pod.html",
         tenant=tenant,
         namespace=namespace,
         podname=podname,
+        funcname=funcname,
         audits=audits,
         log=log,
+        funcs = funcs,
     )
 
 
