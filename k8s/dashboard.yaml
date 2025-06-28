@@ -16,11 +16,11 @@ spec:
     spec:
       containers:
         - name: inferx-dashboard
-          image: inferx/inferx_dashboard:v0.1.1
+          image: inferx/inferx_dashboard:v0.1.2
           imagePullPolicy: IfNotPresent
           env:
             - name: KEYCLOAK_URL
-              value: "http://192.168.0.22:31260/authn"
+              value: "http://192.168.0.44:31260/authn"
             - name: KEYCLOAK_REALM_NAME
               value: "inferx"
             - name: KEYCLOAK_CLIENT_ID
@@ -34,7 +34,7 @@ spec:
               mountPath: /etc/letsencrypt/
           livenessProbe:
             httpGet:
-              path: /intro?name=home.md
+              path: /demo/intro?name=home.md
               port: 1250
             initialDelaySeconds: 10
             periodSeconds: 10

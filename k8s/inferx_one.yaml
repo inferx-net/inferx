@@ -27,7 +27,7 @@ spec:
             ]
       containers:
         - name: inferx-one
-          image: inferx/inferx_one:v0.1.1
+          image: inferx/inferx_one:v0.1.2
           securityContext:
             privileged: true
             capabilities:

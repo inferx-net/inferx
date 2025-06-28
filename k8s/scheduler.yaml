@@ -5,7 +5,7 @@ metadata:
   labels:
     app: scheduler
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: scheduler
@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: scheduler
-          image: inferx/inferx_one:v0.1.1
+          image: inferx/inferx_one:v0.1.2
           imagePullPolicy: IfNotPresent
           env:
           - name: POD_IP
