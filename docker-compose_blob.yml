@@ -59,11 +59,11 @@ services:
       - '2380:2380'
   inferx:
     image: inferx/inferx_one:${Version}
+    shm_size: '2gb'
     restart: always
     container_name: inferx_one
     privileged: true
     user: root
-    cpus: 10
     network_mode: "host"
     environment:
       - NODE_NAME=${HOSTNAME}
@@ -77,7 +77,7 @@ services:
       - ENALBE_BLOB=true
       - BLOB_BUFF=4Gi
       - PEER_LOAD=true
-      - CONTEXT_COUNT=2
+      - CONTEXT_COUNT=1
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
@@ -96,14 +96,19 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # - /opt/inferx/bin:/opt/inferx/bin
+      - /opt/inferx/config:/opt/inferx/config
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /opt/inferx/cache:/opt/inferx/cache
+      - /opt/inferx/snapshot:/opt/inferx/snapshot
+      - /opt/inferx/work:/opt/inferx/work
+      # - /opt/inferx/:/opt/inferx/
+      - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
-      - /opt/inferx/:/opt/inferx/
       - /etc/letsencrypt/:/etc/letsencrypt/
-      - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/
-      - /var/lib/docker/:/var/lib/docker/
-      - /home/brad/mnt:/home/brad/mnt
+      # - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/ 
     deploy:
       resources:
         reservations:
@@ -112,7 +117,6 @@ services:
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
     command:
-      - ./onenode
       - /opt/inferx/config/node3.json
   dashboard:
     image: inferx/inferx_dashboard:${Version}

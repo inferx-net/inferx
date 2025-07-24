@@ -20,6 +20,8 @@ spec:
           image: inferx/inferx_one:v0.1.2
           imagePullPolicy: IfNotPresent
           env:
+          - name: CACHE_MEMORY
+            value: "80Gi"          
           - name: POD_IP
             valueFrom:
               fieldRef:
