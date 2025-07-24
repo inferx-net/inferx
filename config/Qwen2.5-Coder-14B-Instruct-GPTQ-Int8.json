@@ -5,7 +5,7 @@
     "name": "Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.7.3",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
@@ -21,7 +21,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 14200
+                    "vRam": 13800
                 }
             },
             "envs": [
@@ -36,7 +36,7 @@
             ],
             "mounts": [
                 {
-                    "hostpath": "/home/brad/cache",
+                    "hostpath": "/opt/inferx/cache",
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],

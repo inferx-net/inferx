@@ -30,11 +30,19 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "HF_HUB_OFFLINE",
+                    "1"
+                ],
+                [
+                    "TRANSFORMERS_OFFLINE",
+                    "1"
                 ]
             ],
             "mounts": [
                 {
-                    "hostpath": "/home/brad/cache",
+                    "hostpath": "/opt/inferx/cache",
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],
