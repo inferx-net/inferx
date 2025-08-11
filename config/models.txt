@@ -3,6 +3,7 @@ export INFX_GATEWAY_URL="http://localhost:31501"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 export IFERX_APIKEY="bb1d47d5-f681-4f6d-9ba4-f932c17741ef"
 
+
 export IFERX_SECRET="M2Dse5531tdtyipZdGizLEeoOVgziQRX"
 export IFERX_USERNAME="testuser1"
 export IFERX_PASSWORD="test"
@@ -33,7 +34,10 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-1.5B-Instruct.json
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-3B.json
+/opt/inferx/bin/ixctl create Qwen2.5-1.5B.json
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-7B-Instruct.json
+
+/opt/inferx/bin/ixctl create Qwen2.5-7B-Instruct-1M.json
 
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-14B-Instruct-GPTQ-Int8.json
 /opt/inferx/bin/ixctl create Qwen2.5-7B-Instruct-GPTQ-Int8.json
@@ -55,13 +59,17 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Math-1.5B-Instruct
+/opt/inferx/bin/ixctl delete function public Qwen   Qwen2.5-Coder-3B
+/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
+
+/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-7B-Instruct-1M
+
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-7B-Instruct-GPTQ-Int8
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-7B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
 
 /opt/inferx/bin/ixctl delete function public Qwen 	Qwen2.5-Coder-14B-Instruct-GPTQ-Int8
 /opt/inferx/bin/ixctl delete function public Qwen 	Qwen2-VL-7B-Instruct_1gpu
-/opt/inferx/bin/ixctl delete function public Qwen   Qwen2.5-Coder-3B
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2-VL-7B-Instruct_1gpu
 #######################################################
 /opt/inferx/bin/ixctl create THUDM_namespace.json

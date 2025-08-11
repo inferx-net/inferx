@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.2
+VERSION := v0.1.3
 NODE_NAME=${shell hostname}
 
 all: ctl dash spdk runmodel
@@ -91,8 +91,9 @@ rundash:
 stopdash:
 	sudo docker stop inferx_dashboard
 
+
 runkblob:
-	sudo kubectl apply -f k8s/spdk.yaml
+	# sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/secretdb.yaml
 	sudo kubectl apply -f k8s/db-deployment.yaml
