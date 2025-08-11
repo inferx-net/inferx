@@ -29,7 +29,7 @@ spec:
             ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.2
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -58,7 +58,7 @@ spec:
                 containerName: nodeagent
                 resource: requests.memory                
           - name: CACHE_MEMORY
-            value: "50Gi"
+            value: "55Gi"
           - name: ENABLE_2MB_PAGE
             value: "true"
           - name: ALLOC_MEMORY_2M
@@ -186,7 +186,7 @@ spec:
             ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.6
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -220,7 +220,7 @@ spec:
                 containerName: nodeagent
                 resource: requests.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "80Gi"
+            value: "90Gi"
           - name: ENABLE_2MB_PAGE
             value: "false"              
           - name: ALLOC_CPU
@@ -241,8 +241,20 @@ spec:
           volumeMounts:
             - mountPath: /run/udev
               name: run-udev
-            - mountPath: /opt/inferx/
-              name: opt-inferx
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
             - mountPath: /etc/letsencrypt/
               name: letsencrypt
             - mountPath: /var/run/docker/runtime-runc/moby/
@@ -262,6 +274,24 @@ spec:
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
         - name: letsencrypt
           hostPath:
             path: /etc/letsencrypt/

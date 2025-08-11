@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: scheduler
-          image: inferx/inferx_one:v0.1.2
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           env:
           - name: CACHE_MEMORY
@@ -31,13 +31,13 @@ spec:
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
           volumeMounts:
-            - mountPath: /opt/inferx/
-              name: opt-inferx
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
           command: ["./onenode", "/opt/inferx/config/node.json"]
       volumes:
-        - name: opt-inferx
+        - name: opt-inferx-log
           hostPath:
-            path: /opt/inferx/       
+            path: /opt/inferx/log      
 ---
 apiVersion: v1
 kind: Service
