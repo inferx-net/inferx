@@ -29,7 +29,7 @@ spec:
             ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.1
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -46,6 +46,8 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
+          - name: INFERX_ADMIN_APIKEY
+            value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: NODE_NAME
             valueFrom:
               fieldRef:
@@ -56,7 +58,7 @@ spec:
                 containerName: nodeagent
                 resource: requests.memory                
           - name: CACHE_MEMORY
-            value: "50Gi"
+            value: "55Gi"
           - name: ENABLE_2MB_PAGE
             value: "true"
           - name: ALLOC_MEMORY_2M
@@ -76,21 +78,23 @@ spec:
           resources:
             requests:
               cpu: "20"               
-              memory: "120Gi"              # Regular memory request (RAM)
+              memory: "180Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "60Gi"       # HugePages request
             limits:
               cpu: "20"               
-              memory: "120Gi"              # Regular memory request (RAM)
+              memory: "180Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "60Gi" 
           volumeMounts:
             - mountPath: /dev/vfio
               name: dev-vfio
-            - mountPath: /var/run/docker.sock
-              name: docker-sock
             - mountPath: /run/udev
               name: run-udev
+              mountPropagation: Bidirectional
             - mountPath: /dev/hugepages
               name: dev-hugepages
+              mountPropagation: Bidirectional
+            - name: shm
+              mountPath: /dev/shm
               mountPropagation: Bidirectional
             - mountPath: /opt/inferx/
               name: opt-inferx
@@ -98,8 +102,6 @@ spec:
               name: letsencrypt
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
-            - mountPath: /var/lib/docker/
-              name: docker-lib
             - mountPath: /sys/bus/pci/devices
               name: pci-devices
               readOnly: false
@@ -109,7 +111,11 @@ spec:
             - mountPath: /sys/kernel/mm/hugepages
               name: hugepages-sys
               readOnly: false
-          command: ["./onenode", "/opt/inferx/config/node.json"]
+            - mountPath: /home/brad/mnt
+              name: docker-mnt            
+            - name: dind
+              mountPath: /var/lib/docker
+              mountPropagation: Bidirectional
       volumes:
         - name: dev-vfio
           hostPath:
@@ -123,15 +129,15 @@ spec:
         - name: hugepages-sys
           hostPath:
             path: /sys/kernel/mm/hugepages
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
         - name: run-udev
           hostPath:
             path: /run/udev
         - name: dev-hugepages
           hostPath:
             path: /dev/hugepages
+        - name: shm
+          hostPath:
+            path: /dev/shm
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
@@ -141,9 +147,12 @@ spec:
         - name: docker-runtime
           hostPath:
             path: /var/run/docker/runtime-runc/moby/
-        - name: docker-lib
+        - name: docker-mnt
           hostPath:
-            path: /var/lib/docker/
+            path: /home/brad/mnt
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
       restartPolicy: Always
 ---
 apiVersion: apps/v1
@@ -177,7 +186,7 @@ spec:
             ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.1
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -194,6 +203,8 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
+          - name: INFERX_ADMIN_APIKEY
+            value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: NODE_NAME
             valueFrom:
               fieldRef:
@@ -209,7 +220,7 @@ spec:
                 containerName: nodeagent
                 resource: requests.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "20Gi"
+            value: "90Gi"
           - name: ENABLE_2MB_PAGE
             value: "false"              
           - name: ALLOC_CPU
@@ -222,29 +233,38 @@ spec:
           resources:
             requests:
               cpu: "20"
-              memory: "40Gi"              # Regular memory request (RAM)
+              memory: "180Gi"              # Regular memory request (RAM)
             limits:
               cpu: "20"
-              memory: "40Gi"              # Regular memory request (RAM)
+              memory: "180Gi"              # Regular memory request (RAM)
               nvidia.com/gpu: 1
           volumeMounts:
-            - mountPath: /var/run/docker.sock
-              name: docker-sock
             - mountPath: /run/udev
               name: run-udev
-            - mountPath: /opt/inferx/
-              name: opt-inferx
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
             - mountPath: /etc/letsencrypt/
               name: letsencrypt
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
-            - mountPath: /var/lib/docker/
-              name: docker-lib
-          command: ["./onenode", "/opt/inferx/config/node.json"]
+            - mountPath: /home/brad/mnt
+              name: docker-mnt
+            - name: dind
+              mountPath: /var/lib/docker
+              mountPropagation: Bidirectional
       volumes:
-        - name: docker-sock
-          hostPath:
-            path: /var/run/docker.sock
         - name: run-udev
           hostPath:
             path: /run/udev
@@ -254,15 +274,36 @@ spec:
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
         - name: letsencrypt
           hostPath:
             path: /etc/letsencrypt/
         - name: docker-runtime
           hostPath:
             path: /var/run/docker/runtime-runc/moby/
-        - name: docker-lib
+        - name: docker-mnt
           hostPath:
-            path: /var/lib/docker/
+            path: /home/brad/mnt
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
       restartPolicy: Always
 ---
 apiVersion: v1

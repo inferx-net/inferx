@@ -5,7 +5,7 @@ metadata:
   labels:
     app: statesvc
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: statesvc
@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: statesvc
-          image: inferx/inferx_one:v0.1.1
+          image: inferx/inferx_one:v0.1.3
           imagePullPolicy: IfNotPresent
           env:
           - name: POD_IP
@@ -29,13 +29,13 @@ spec:
           - name: CACHE_MEMORY
             value: 20Gi
           volumeMounts:
-            - mountPath: /opt/inferx/
-              name: opt-inferx
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
           command: ["./onenode", "/opt/inferx/config/node.json"]
       volumes:
-        - name: opt-inferx
+        - name: opt-inferx-log
           hostPath:
-            path: /opt/inferx/       
+            path: /opt/inferx/log      
 ---
 apiVersion: v1
 kind: Service

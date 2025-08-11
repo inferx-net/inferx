@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: docker-cli
+  labels:
+    app: docker-cli
+spec:
+  containers:
+    - name: docker
+      image: docker:24.0-cli
+      command: ["sleep", "infinity"]
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        - name: host-root
+          mountPath: /host
+  volumes:
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
+        type: Socket
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory
+  restartPolicy: Never

@@ -1,27 +1,25 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "baichuan-inc",
-    "name": "Baichuan2-7B-Chat",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-Coder-0.5B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "baichuan-inc/Baichuan2-7B-Chat",
+                "Qwen/Qwen2.5-Coder-0.5B",
                 "--disable-custom-all-reduce",
-                "--trust-remote-code",
                 "--max-model-len",
-                "1200",
-                "--tensor-parallel-size=2"
+                "2000"
             ],
             "resources": {
-                "CPU": 20000,
-                "Mem": 60000,
+                "CPU": 12000,
+                "Mem": 24000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 2,
-                    "vRam": 13800
+                    "Count": 1,
+                    "vRam": 8000
                 }
             },
             "envs": [
@@ -47,10 +45,10 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "Give me a short introduction to large language model.",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
                 "path": "v1/completions",
                 "body": {
-                    "model": "baichuan-inc/Baichuan2-7B-Chat",
+                    "model": "Qwen/Qwen2.5-Coder-0.5B",
                     "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"

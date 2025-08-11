@@ -40,7 +40,7 @@
             ],
             "mounts": [
                 {
-                    "hostpath": "/home/brad/cache",
+                    "hostpath": "/opt/inferx/cache",
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],

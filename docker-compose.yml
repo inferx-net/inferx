@@ -51,15 +51,15 @@ services:
     container_name: inferx_one
     privileged: true
     user: root
-    cpus: 10
+    cpus: 20
     network_mode: "host"
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
       - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
-      - ALLOC_MEMORY=40Gi
+      - ALLOC_MEMORY=80Gi
       - ALLOC_CPU=24
-      - CACHE_MEMORY=20Gi
+      - CACHE_MEMORY=40Gi
       - ENABLE_2MB_PAGE=false
       - ENALBE_BLOB=false
       - BLOB_BUFF=4Gi
@@ -79,13 +79,14 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
       - /opt/inferx/:/opt/inferx/
+      - /opt/inferx/cache:/opt/inferx/cache
       - /etc/letsencrypt/:/etc/letsencrypt/
+      - /opt/inferx/dind:/var/lib/docker
       - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/
-      - /var/lib/docker/:/var/lib/docker/
+      # - /var/lib/docker/:/var/lib/docker/
     deploy:
       resources:
         reservations:
@@ -94,7 +95,6 @@ services:
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
     command:
-      - ./onenode
       - /opt/inferx/config/node1.json
   dashboard:
     image: inferx/inferx_dashboard:${Version}

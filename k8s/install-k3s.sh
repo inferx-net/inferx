@@ -4,7 +4,7 @@ set -e
 
 ### 2. Install K3s using Docker runtime
 echo "[+] Installing K3s with Docker as container runtime..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker --node-external-ip=192.168.0.22" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker --node-external-ip=192.168.0.44" sh -
 
 echo "[+] Waiting for K3s to be ready..."
 sleep 10
@@ -23,7 +23,7 @@ helm repo update
 
 ### 5. Deploy NVIDIA GPU Operator with Docker runtime
 echo "[+] Installing NVIDIA GPU Operator..."
-export KUBECONFIG=/etc/rancher/k3s/k3s.yam
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 chmod 555 /etc/rancher/k3s/k3s.yaml
 helm install --wait gpu-operator \
   nvidia/gpu-operator \

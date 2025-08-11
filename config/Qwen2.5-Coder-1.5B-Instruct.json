@@ -33,7 +33,7 @@
             ],
             "mounts": [
                 {
-                    "hostpath": "/home/brad/cache",
+                    "hostpath": "/opt/inferx/cache",
                     "mountpath": "/root/.cache/huggingface"
                 }
             ],
@@ -54,9 +54,9 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "Mem"
             }
         }
     }
