@@ -4,7 +4,7 @@ set -e
 
 ### 2. Install K3s using Docker runtime
 echo "[+] Installing K3s with Docker as container runtime..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker --node-external-ip=192.168.0.44" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker" sh -
 
 echo "[+] Waiting for K3s to be ready..."
 sleep 10
@@ -33,3 +33,6 @@ helm install --wait gpu-operator \
   --set toolkit.enabled=true
 
 echo "[✓] K3s with Docker runtime and NVIDIA GPU Operator installed successfully."
+
+#kubectl apply  -f https://github.com/NVIDIA/k8s-device-plugin/releases/download/v0.17.3/nvidia-device-plugin.yml
+#kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml

@@ -79,13 +79,18 @@ services:
       secret_db:
         condition: service_started
     volumes:
+      # - /opt/inferx/bin:/opt/inferx/bin
+      - /opt/inferx/config:/opt/inferx/config
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /opt/inferx/cache:/opt/inferx/cache
+      - /opt/inferx/snapshot:/opt/inferx/snapshot
+      - /opt/inferx/work:/opt/inferx/work
+      # - /opt/inferx/:/opt/inferx/
+      - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
-      - /opt/inferx/:/opt/inferx/
-      - /opt/inferx/cache:/opt/inferx/cache
       - /etc/letsencrypt/:/etc/letsencrypt/
-      - /opt/inferx/dind:/var/lib/docker
-      - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/
       # - /var/lib/docker/:/var/lib/docker/
     deploy:
       resources:
