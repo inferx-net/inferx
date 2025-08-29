@@ -425,7 +425,7 @@ impl NodeResources {
             && self.gpuType.CanAlloc(&req.gpu.type_)
             && self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
 
-        if false && !canAlloc {
+        if !canAlloc {
             let _cpu = self.cpu >= req.cpu;
             let _memory = self.memory >= req.memory;
             let _cacheMemory = self.cacheMemory >= req.cacheMemory;
@@ -471,8 +471,8 @@ impl NodeResources {
     pub fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
         if !self.CanAlloc(req, createSnapshot) {
             error!(
-                "NodeResources::alloc fail available {:#?} require {:#?}",
-                self, req
+                "NodeResources::alloc fail available {:#?} require {:#?} for createSnapshot {}",
+                self, req, createSnapshot
             );
             return Err(Error::SchedulerNoEnoughResource(format!(
                 "NodeResources::alloc fail available {:?} require {:?}",

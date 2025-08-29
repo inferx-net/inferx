@@ -32,11 +32,11 @@ impl SnapshotInfo {
 
     pub fn StandyCacheMemory(&self) -> u64 {
         let mut cacheMemory = 0;
-        if self.standby.gpuMem == StandbyType::Mem {
-            for (_, size) in &self.gpuMemSizes {
-                cacheMemory += (*size + ONE_GB - 1) / ONE_GB * 1024;
-            }
-        }
+        // if self.standby.gpuMem == StandbyType::Mem {
+        //     for (_, size) in &self.gpuMemSizes {
+        //         cacheMemory += (*size + ONE_GB - 1) / ONE_GB * 1024;
+        //     }
+        // }
 
         if self.standby.pinndMem == StandbyType::Mem {
             cacheMemory += (self.hostMemSize + ONE_GB - 1) / ONE_GB * 1024;
