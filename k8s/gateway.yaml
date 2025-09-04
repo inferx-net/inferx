@@ -1,33 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: statesvc
+  name: gateway
   labels:
-    app: statesvc
+    app: gateway
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: statesvc
+      app: gateway
   template:
     metadata:
       labels:
-        app: statesvc
+        app: gateway
     spec:
       hostPID: true
       containers:
-        - name: statesvc
+        - name: gateway
           image: inferx/inferx_one:v0.1.4
           imagePullPolicy: IfNotPresent
           env:
+          - name: CACHE_MEMORY
+            value: "80Gi"          
           - name: POD_IP
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP          
           - name: RUN_SERVICE
-            value: "StateSvc"
-          - name: CACHE_MEMORY
-            value: 20Gi
+            value: "Gateway"
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log
@@ -40,12 +42,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: statesvc
+  name: gateway
 spec:
   type: NodePort
   selector:
-    app: statesvc
+    app: gateway
   ports:
     - name: http
-      port: 1237
-      targetPort: 1237
+      port: 4000
+      targetPort: 4000
+      nodePort: 31501  
+

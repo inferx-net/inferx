@@ -65,12 +65,7 @@ spec:
           - name: CACHE_MEMORY
             value: "55Gi"
           - name: ENABLE_2MB_PAGE
-            value: "true"
-          - name: ALLOC_MEMORY_2M
-            valueFrom:
-              resourceFieldRef:
-                containerName: nodeagent
-                resource: requests.hugepages-2Mi                
+            value: "true"             
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
@@ -80,6 +75,8 @@ spec:
             value: "true"
           - name: BLOB_BUFF
             value: "4Gi"
+          - name: GPU_MAP
+            value: "0,1"
           resources:
             requests:
               cpu: "20"               
@@ -95,7 +92,7 @@ spec:
               name: run-udev
             - mountPath: /dev/hugepages
               name: dev-hugepages
-            - name: shm
+            - name: dshm
               mountPath: /dev/shm
             # - mountPath: /opt/inferx/
             #   name: opt-inferx
@@ -129,6 +126,10 @@ spec:
         - name: shm
           hostPath:
             path: /dev/shm
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
@@ -320,17 +321,3 @@ spec:
           hostPath:
             path: /opt/inferx/dind
       restartPolicy: Always
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nodeagent
-spec:
-  type: NodePort
-  selector:
-    app: nodeagent
-  ports:
-    - name: http
-      port: 4000
-      targetPort: 4000
-      nodePort: 31501  
