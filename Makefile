@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.3
+VERSION := v0.1.4
 NODE_NAME=${shell hostname}
 
 all: ctl dash spdk runmodel
@@ -100,11 +100,18 @@ runkblob:
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
 	sudo kubectl apply -f k8s/statesvc.yaml
+	sudo kubectl apply -f k8s/gateway.yaml
 	sudo kubectl apply -f k8s/scheduler.yaml
 	sudo kubectl apply -f k8s/nodeagent.yaml
 	sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
 
-stopnodeagent:
+runna:
+	sudo rm /opt/inferx/log/*.log
+	sudo kubectl apply -f k8s/nodeagent.yaml
+stopna:
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
+restartgw:
+	sudo kubectl delete deployment gateway
+	sudo kubectl apply -f k8s/gateway.yaml

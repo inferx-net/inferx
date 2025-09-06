@@ -17,11 +17,9 @@ spec:
       hostPID: true
       containers:
         - name: scheduler
-          image: inferx/inferx_one:v0.1.4
+          image: inferx/inferx_platform:v0.1.4
           imagePullPolicy: IfNotPresent
           env:
-          - name: CACHE_MEMORY
-            value: "80Gi"          
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -33,7 +31,7 @@ spec:
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log
-          command: ["./onenode", "/opt/inferx/config/node.json"]
+          command: ["./svc", "/opt/inferx/config/node.json"]
       volumes:
         - name: opt-inferx-log
           hostPath:

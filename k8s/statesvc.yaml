@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: statesvc
-          image: inferx/inferx_one:v0.1.4
+          image: inferx/inferx_platform:v0.1.4
           imagePullPolicy: IfNotPresent
           env:
           - name: POD_IP
@@ -26,12 +26,10 @@ spec:
                 fieldPath: status.podIP          
           - name: RUN_SERVICE
             value: "StateSvc"
-          - name: CACHE_MEMORY
-            value: 20Gi
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log
-          command: ["./onenode", "/opt/inferx/config/node.json"]
+          command: ["./svc", "/opt/inferx/config/node.json"]
       volumes:
         - name: opt-inferx-log
           hostPath:

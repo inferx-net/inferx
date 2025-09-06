@@ -29,7 +29,7 @@ spec:
             ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.4
+          image: inferx/inferx_na:v0.1.4
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
