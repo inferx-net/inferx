@@ -5,11 +5,10 @@
     "name": "Qwen2.5-Coder-7B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",

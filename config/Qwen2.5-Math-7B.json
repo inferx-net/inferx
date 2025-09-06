@@ -5,11 +5,10 @@
     "name": "Qwen2.5-Math-7B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Math-7B",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",
@@ -17,7 +16,7 @@
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 60000,
+                "Mem": 40000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,

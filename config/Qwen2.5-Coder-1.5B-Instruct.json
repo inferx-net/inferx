@@ -54,9 +54,9 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "Mem"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             }
         }
     }
