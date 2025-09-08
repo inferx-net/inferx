@@ -23,9 +23,6 @@ use crate::obj_mgr::pod_mgr::{FuncPod, PodState};
 use super::resource::*;
 use crate::common::*;
 
-lazy_static::lazy_static! {
-    static ref IDLE_POD_SEQNUM: AtomicU64 = AtomicU64::new(0);
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodeSystemInfo {
@@ -282,7 +279,7 @@ pub type ReturnId = u64;
 #[derive(Debug, Clone, Copy)]
 pub enum WorkerPodState {
     Init,
-    Working,        // leased by one gateway
+    Working(i64),   // leased by one gateway, GatewayId
     Idle(ReturnId), // no one leasing the worker, inner is return SeqId,
 }
 
@@ -295,73 +292,6 @@ impl WorkerPodState {
     }
 }
 
-#[derive(Debug)]
-pub struct WorkerPodInner {
-    pub pod: FuncPod,
-    pub workerState: Mutex<WorkerPodState>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkerPod(Arc<WorkerPodInner>);
-
-impl WorkerPod {
-    pub fn State(&self) -> WorkerPodState {
-        return *self.workerState.lock().unwrap();
-    }
-
-    pub fn SetState(&self, state: WorkerPodState) {
-        *self.workerState.lock().unwrap() = state;
-    }
-
-    pub fn SetIdle(&self) -> u64 {
-        let returnId = IDLE_POD_SEQNUM.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.workerState.lock().unwrap() = WorkerPodState::Idle(returnId);
-        return returnId;
-    }
-
-    pub fn SetWorking(&self) -> u64 {
-        let returnId;
-        match *self.workerState.lock().unwrap() {
-            WorkerPodState::Working => {
-                unreachable!("WorkerPod::SetWorking");
-            }
-            WorkerPodState::Init => {
-                returnId = 0;
-            }
-            WorkerPodState::Idle(id) => {
-                returnId = id;
-            }
-        }
-        *self.workerState.lock().unwrap() = WorkerPodState::Working;
-        return returnId;
-    }
-}
-
-impl Deref for WorkerPod {
-    type Target = Arc<WorkerPodInner>;
-
-    fn deref(&self) -> &Arc<WorkerPodInner> {
-        &self.0
-    }
-}
-
-impl From<FuncPod> for WorkerPod {
-    fn from(item: FuncPod) -> Self {
-        let inner = WorkerPodInner {
-            pod: item,
-            workerState: Mutex::new(WorkerPodState::Init),
-        };
-        let ret: WorkerPod = Self(Arc::new(inner));
-
-        if ret.pod.object.status.state == PodState::Ready
-            || ret.pod.object.status.state == PodState::Standby
-        {
-            ret.SetIdle();
-        }
-
-        return ret;
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PodCondition {
