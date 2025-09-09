@@ -26,6 +26,8 @@ spec:
                 fieldPath: status.podIP          
           - name: RUN_SERVICE
             value: "StateSvc"
+          - name: STATESVC_PORT
+            value: "1237"
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log

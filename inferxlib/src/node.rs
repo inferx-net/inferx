@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Quark Container Authors
+// Copyright (c) 2025 InferX Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -186,7 +186,6 @@ pub struct NodeStatus {
     /// Conditions is an array of current observed node conditions.
     pub conditions: Vec<NodeCondition>,
 
-    // pub config: QletConfig,
     /// List of container images on this node
     pub images: Vec<ContainerImage>,
 

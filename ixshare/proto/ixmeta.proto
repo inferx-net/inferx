@@ -1,0 +1,172 @@
+/*
+Copyright 2025 InferX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+syntax = "proto3";
+package ixmeta;
+
+service IxMetaService {
+  rpc Version (VersionRequestMessage) returns (VersionResponseMessage) {}
+  rpc Get (GetRequestMessage) returns (GetResponseMessage) {}
+  rpc List (ListRequestMessage) returns (ListResponseMessage) {}
+  rpc Watch (WatchRequestMessage) returns (stream WEvent) {}
+  rpc Create(CreateRequestMessage) returns (CreateResponseMessage) {}
+  rpc Update(UpdateRequestMessage) returns (UpdateResponseMessage) {}
+  rpc Delete(DeleteRequestMessage) returns (DeleteResponseMessage) {}
+  rpc Uid(UidRequestMessage) returns (UidReponseMessage) {}
+}
+
+message UidRequestMessage {
+}
+
+message UidReponseMessage {
+    string error = 1;
+    int64 uid = 2;
+}
+
+message VersionRequestMessage {
+}
+
+
+message VersionResponseMessage {
+    string version = 1;
+}
+
+message KV {
+    string key = 1;
+    string val = 2;
+} 
+
+// use for Etcd storage, no revision 
+message Object {
+    string kind = 1;
+    string tenant = 2;
+    string namespace = 3;
+    string name = 4;
+
+    repeated KV labels = 5;
+    repeated KV annotations = 6;
+
+    string data = 7;
+}
+
+message Obj {
+    string kind = 1;
+    string tenant = 2;
+    string namespace = 3;
+    string name = 4;
+    int64 channelRev = 5;
+    int64 revision = 6;
+    repeated KV labels = 7;
+    repeated KV annotations = 8;
+    
+    string data = 9;
+}
+
+message ResponseHeader {
+    string error = 1;
+    uint64 server_id = 2;
+}
+
+message CreateRequestMessage {
+    Obj obj = 1;
+}
+
+message CreateResponseMessage {
+    string error = 1;
+    int64 revision = 2;
+}
+
+message GetRequestMessage {
+    string obj_type = 1;
+    string tenant = 2;
+    string namespace = 3;
+    string name = 4;
+    int64 revision = 5;
+}
+
+message GetResponseMessage {
+    string error = 1;
+    Obj obj = 2;
+}
+
+message DeleteRequestMessage {
+    string obj_type = 1;
+    string tenant = 2;
+    string namespace = 3;
+    string name = 4;
+    int64 expect_rev = 5;
+}
+
+message DeleteResponseMessage {
+    string error = 1;
+    int64 revision = 2;
+}
+
+message UpdateRequestMessage {
+    int64 expect_rev = 1;
+    Obj obj = 2;
+}
+
+message UpdateResponseMessage {
+    string error = 1;
+    int64 revision = 2;
+}
+
+message ListRequestMessage {
+    string obj_type = 1;
+    string tenant = 2;
+    string namespace = 3;
+    int64 revision = 4;
+    string label_selector = 5;
+    string field_selector = 6;
+}
+
+message ListResponseMessage {
+    string error = 1;
+    int64 revision = 2;
+    repeated Obj objs = 3;
+}
+
+message WatchRequestMessage {
+    string obj_type = 1;
+    string tenant = 2;
+    string namespace = 3;
+    int64 revision = 4;
+    string label_selector = 5;
+    string field_selector = 6;
+}
+
+message WEvent {
+    int64 event_type = 2;
+    Obj obj = 3;
+}
+
+
+message ReqWatchRequest {
+    string obj_type = 1;
+    string tenant = 2;
+    string namespace = 3;
+    string funcname = 4;
+    int64 fprevision = 5;
+  }
+  
+  message ReqEvent {
+    string value = 1;
+  }
+  
+  service ReqWatchingService {
+    rpc Watch (ReqWatchRequest) returns (stream ReqEvent) {}
+  }

@@ -28,6 +28,10 @@ spec:
             value: "Scheduler"
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
+          - name: ETCD_ADDRS
+            value: "http://localhost:2379"
+          - name: SCHEDULER_PORT
+            value: "1238"
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log

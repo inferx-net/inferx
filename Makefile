@@ -93,7 +93,8 @@ stopdash:
 
 
 runkblob:
-	# sudo kubectl apply -f k8s/spdk.yaml
+	sudo rm /opt/inferx/log/*.log
+	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/secretdb.yaml
 	sudo kubectl apply -f k8s/db-deployment.yaml
@@ -105,9 +106,39 @@ runkblob:
 	sudo kubectl apply -f k8s/nodeagent.yaml
 	sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
+stopall:
+	sudo kubectl delete all --all 
+
+runstatesvc:
+	sudo kubectl apply -f k8s/statesvc.yaml
+
+stopstatesvc:
+	sudo kubectl delete deployment statesvc
+
+rungateway:
+	sudo kubectl apply -f k8s/gateway.yaml
+
+stopgateway:
+	sudo kubectl delete deployment gateway
+
+runscheduler:
+	sudo kubectl apply -f k8s/scheduler.yaml
+
+stopscheduler:
+	sudo kubectl delete deployment scheduler
+
+runsvc:
+	sudo kubectl apply -f k8s/statesvc.yaml
+	sudo kubectl apply -f k8s/gateway.yaml
+	sudo kubectl apply -f k8s/scheduler.yaml
+
+stopsvc:
+	sudo kubectl delete deployment scheduler
+	sudo kubectl delete deployment gateway
+	sudo kubectl delete deployment statesvc
 
 runna:
-	sudo rm /opt/inferx/log/*.log
+	# sudo rm /opt/inferx/log/*.log
 	sudo kubectl apply -f k8s/nodeagent.yaml
 stopna:
 	sudo kubectl delete DaemonSet nodeagent-blob

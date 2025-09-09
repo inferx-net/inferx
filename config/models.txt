@@ -1,5 +1,6 @@
 export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://localhost:31501"
+export INFX_GATEWAY_URL="http://localhost:4000"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 export IFERX_APIKEY="bb1d47d5-f681-4f6d-9ba4-f932c17741ef"
 

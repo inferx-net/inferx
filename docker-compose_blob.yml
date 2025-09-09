@@ -96,7 +96,7 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      # - /opt/inferx/bin:/opt/inferx/bin
+      - /opt/inferx/bin:/opt/inferx/bin
       - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log

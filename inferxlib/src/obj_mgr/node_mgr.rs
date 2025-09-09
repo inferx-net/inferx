@@ -23,7 +23,7 @@ impl Node {
     pub const TENANT: &'static str = "system";
     pub const NAMESPACE: &'static str = "system";
 
-    pub fn QletUrl(&self) -> String {
+    pub fn NodeAgentUrl(&self) -> String {
         return format!("http://{}:{}", self.object.nodeIp, self.object.podMgrPort);
     }
 }
