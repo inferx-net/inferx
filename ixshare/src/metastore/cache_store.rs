@@ -84,27 +84,20 @@ impl CacheStore {
         rev: i64,
         channelRev: &ChannelRev,
     ) -> Result<Self> {
-        error!("CacheStore new 1");
         let storeClone = store.clone();
         let inner = CacheStoreInner::New(store, objType, channelRev);
-        error!("CacheStore new 2");
         let notify = inner.closeNotify.clone();
         let ret = Self(Arc::new(RwLock::new(inner)));
-        error!("CacheStore new 3");
         let prefixClone = objType.to_string();
 
         let watch = ret.clone();
         let ready = Arc::new(Notify::new());
         let readyClone = ready.clone();
-        error!("CacheStore new 4");
         match storeClone {
             None => (),
             Some(s) => {
-                error!("CacheStore new 5");
                 s.Register(watch, rev, prefixClone, readyClone, notify)?;
-                error!("CacheStore new 6");
                 ready.notified().await;
-                error!("CacheStore new 7");
             }
         }
 

@@ -27,10 +27,10 @@ use tokio::sync::Notify;
 use crate::common::*;
 use crate::etcd::etcd_client::EtcdClient;
 use crate::etcd::watch::{WatchReader, Watcher};
+use crate::ixmeta::*;
 use crate::metastore::cache_store::{BackendStore, CacheStore};
 use crate::metastore::obj::ToObject;
 use crate::metastore::selection_predicate::*;
-use crate::ixmeta::*;
 use inferxlib::data_obj::*;
 
 use super::watch::DataObjList;
@@ -398,7 +398,24 @@ impl EtcdStore {
 
 impl EtcdStore {
     pub async fn NewWithEndpoints(endpoints: &[String], pagingEnable: bool) -> Result<Self> {
-        let client = Client::connect(endpoints, None).await?;
+        use tokio::time::{sleep, Duration};
+
+        let mut client = Client::connect(endpoints, None).await?;
+
+        loop {
+            match client.status().await {
+                Ok(_tatus) => {
+                    break;
+                }
+                Err(e) => {
+                    error!("Failed to connect to etcd {:?}: {}", endpoints, e);
+                }
+            }
+
+            sleep(Duration::from_millis(1000)).await;
+            client = Client::connect(endpoints, None).await?;
+        }
+
         let inner = EtcdStoreInner {
             client: EtcdClient::New(client),
             pathPrefix: PATH_PREFIX.to_string(),
