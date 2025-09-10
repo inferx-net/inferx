@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 inferxlib = { path = "./inferxlib" }
+ixshare = { path = "./ixshare" }
 
 libc = "0.2.94"
 tokio = { version = "1.25", features = ["full"] }
@@ -59,3 +60,7 @@ features = [
 [[bin]]
 name = "ixctl"
 path = "ixctl/main.rs"
+
+[[bin]]
+name = "svc"
+path = "svc/svc_main.rs"

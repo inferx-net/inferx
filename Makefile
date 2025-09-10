@@ -1,8 +1,30 @@
 ARCH := ${shell uname -m}
 VERSION := v0.1.4
 NODE_NAME=${shell hostname}
+UBUNTU_VERSION :=$(shell lsb_release -sr)
 
 all: ctl dash spdk runmodel
+
+WATCHED_DIR := ixshare svc
+
+svc: $(shell find $(WATCHED_DIR) -type f)
+	cargo +stable build --bin svc
+	sudo cp -f onenode_logging_config.yaml /opt/inferx/config/
+	sudo cp -f inferx/nodeconfig/node*.json /opt/inferx/config/	
+
+svcdeploy: svc
+	- mkdir -p ./target/svc
+	-rm ./target/svc/* -rf
+	- mkdir -p ./target/svc/inferx/config
+	cp -f onenode_logging_config.yaml ./target/one 
+	cp ./target/debug/svc ./target/svc 
+	cp ./deployment/svc.Dockerfile ./target/svc/Dockerfile
+	cp nodeconfig/node*.json ./target/svc/inferx/config
+	cp ./deployment/svc-entrypoint.sh ./target/svc/svc-entrypoint.sh
+	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION) ./target/svc
+	sudo docker image prune -f
+	# sudo docker push inferx/inferx_platform:$(VERSION)
+
 
 ctl:	
 	cargo +stable build --bin ixctl --release
@@ -63,6 +85,7 @@ postgres:
 	cp ./deployment/postgres-entrypoint.sh ./target/postgres/postgres-entrypoint.sh
 	cp ./deployment/postgres.Dockerfile ./target/postgres/Dockerfile
 	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION) ./target/postgres
+	sudo docker image prune -f
 	# sudo docker push inferx/inferx_postgres:$(VERSION)
 
 run:
