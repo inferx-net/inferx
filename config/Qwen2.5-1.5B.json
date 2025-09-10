@@ -20,7 +20,8 @@
                     "Type": "Any",
                     "Count": 1,
                     "vRam": 8000
-                }
+                },
+                "parallel": 1
             },
             "envs": [
                 [

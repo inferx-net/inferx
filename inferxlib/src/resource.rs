@@ -512,6 +512,8 @@ impl NodeResources {
     }
 }
 
+pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Resources {
     #[serde(rename = "CPU")]
@@ -522,6 +524,12 @@ pub struct Resources {
     pub cacheMemory: u64,
     #[serde(rename = "GPU")]
     pub gpu: GPUResource,
+    #[serde(default = "default_parallel", rename = "parallel")]
+    pub parallel: usize,
+}
+
+fn default_parallel() -> usize {
+    DEFAULT_PARALLEL_LEVEL
 }
 
 impl Default for Resources {
@@ -531,6 +539,7 @@ impl Default for Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: GPUResource::default(),
+            parallel: DEFAULT_PARALLEL_LEVEL,
         }
     }
 }
@@ -544,6 +553,8 @@ impl Resources {
         if self.memory == 0 {
             self.memory = 500; // default 500 MB
         }
+
+        self.parallel = DEFAULT_PARALLEL_LEVEL;
     }
 
     pub fn GPUResource(&self) -> Self {
@@ -552,6 +563,7 @@ impl Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: self.gpu.clone(),
+            parallel: self.parallel,
         };
     }
 

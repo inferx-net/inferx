@@ -42,7 +42,6 @@ use super::func_agent_mgr::{FuncAgent, WorkerUpdate};
 use super::gw_obj_repo::SCHEDULER_URL;
 use super::http_gateway::GatewayId;
 
-pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
 pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
 pub const WORKER_PORT: u16 = 80;
@@ -310,7 +309,7 @@ impl FuncWorker {
         let resp = match self.LeaseWorker().await {
             Err(e) => {
                 error!("Lease worker fail with error {:?}", &e);
-                self.funcAgent.lock().unwrap().startingSlot -= DEFAULT_PARALLEL_LEVEL;
+                self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
                 self.SetState(FuncWorkerState::Init);
                 match &e {
                     Error::SchedulerErr(s) => {
@@ -362,7 +361,7 @@ impl FuncWorker {
         let hostipaddr = resp.hostipaddr;
         let hostport = resp.hostport as u16;
 
-        self.funcAgent.lock().unwrap().startingSlot -= DEFAULT_PARALLEL_LEVEL;
+        self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
 
         *self.id.lock().unwrap() = id;
         *self.ipAddr.lock().unwrap() = IpAddress(ipaddr);

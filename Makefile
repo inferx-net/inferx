@@ -93,7 +93,7 @@ stopdash:
 
 
 runkblob:
-	sudo rm /opt/inferx/log/*.log
+	-sudo rm /opt/inferx/log/*.log
 	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/secretdb.yaml

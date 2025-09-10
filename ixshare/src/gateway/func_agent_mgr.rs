@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Notify};
 
@@ -429,6 +430,15 @@ impl FuncAgent {
         return Ok(());
     }
 
+    pub fn ParallelLevel(&self) -> usize {
+        let mut level = self.lock().unwrap().func.object.spec.resources.parallel;
+        if level == 0 {
+            level = DEFAULT_PARALLEL_LEVEL;
+        }
+
+        return level;
+    }
+
     pub async fn NewWorker(&self) -> Result<()> {
         let keepaliveTime = 10; // 10 millisecond self.lock().unwrap().func.spec.keepalivePolicy.keepaliveTime;
 
@@ -450,14 +460,15 @@ impl FuncAgent {
             endpoint = inner.func.object.spec.endpoint.clone();
         }
 
-        self.lock().unwrap().startingSlot += DEFAULT_PARALLEL_LEVEL;
+        let parallelLevel = self.lock().unwrap().func.object.spec.resources.parallel;
+        self.lock().unwrap().startingSlot += self.ParallelLevel();
         match FuncWorker::New(
             &workderId,
             &tenant,
             &namespace,
             &funcname,
             fprevision,
-            DEFAULT_PARALLEL_LEVEL,
+            parallelLevel,
             keepaliveTime,
             endpoint,
             self,
