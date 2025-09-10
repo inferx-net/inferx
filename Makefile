@@ -51,9 +51,19 @@ pushspdk:
 	sudo docker push inferx/spdk-container:$(VERSION)
 	sudo docker tag inferx/spdk-container2:$(VERSION) inferx/spdk-container2:$(VERSION)
 	sudo docker push inferx/spdk-container2:$(VERSION)
+
 sql:
 	sudo cp ./dashboard/sql/create_table.sql /opt/inferx/config
 	sudo cp ./dashboard/sql/secret.sql /opt/inferx/config
+
+postgres:
+	-mkdir -p ./target/postgres
+	-rm ./target/postgres/* -rf
+	cp ./dashboard/sql/*.sql ./target/postgres
+	cp ./deployment/postgres-entrypoint.sh ./target/postgres/postgres-entrypoint.sh
+	cp ./deployment/postgres.Dockerfile ./target/postgres/Dockerfile
+	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION) ./target/postgres
+	# sudo docker push inferx/inferx_postgres:$(VERSION)
 
 run:
 	-sudo pkill -9 inferx
