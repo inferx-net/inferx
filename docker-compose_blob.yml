@@ -57,19 +57,50 @@ services:
     ports:
       - '2379:2379'
       - '2380:2380'
-  inferx:
-    image: inferx/inferx_one:${Version}
+  inferx_platform:
+    image: inferx/inferx_platform:${Version}
+    restart: always
+    container_name: inferx_platform
+    network_mode: "host"
+    environment:
+      - NODE_NAME=${HOSTNAME}
+      - POD_IP=${LOCAL_IP}
+      - RUN_SERVICE=All
+      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
+    pid: "host"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_started
+      etcd:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      spdk:
+        condition: service_started
+      secret_db:
+        condition: service_started
+    volumes:
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /etc/letsencrypt/:/etc/letsencrypt/
+    command:
+      - /opt/inferx/config/node3.json
+  inferx_runtime:
+    image: inferx/inferx_na:${Version}
     shm_size: '2gb'
     restart: always
-    container_name: inferx_one
+    container_name: inferx_na
     privileged: true
     user: root
     network_mode: "host"
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
-      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
-      - RUN_SERVICE=All
       - ALLOC_CPU=24
       - ALLOC_MEMORY=180Gi
       - CACHE_MEMORY=50Gi
@@ -78,12 +109,7 @@ services:
       - BLOB_BUFF=4Gi
       - PEER_LOAD=true
       - CONTEXT_COUNT=1
-    pid: "host"
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
-      interval: 10s
-      timeout: 10s
-      retries: 3
+    pid: "host" 
     depends_on:
       db:
         condition: service_started
@@ -108,7 +134,6 @@ services:
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
       - /etc/letsencrypt/:/etc/letsencrypt/
-      # - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/ 
     deploy:
       resources:
         reservations:
@@ -141,7 +166,6 @@ services:
       - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:
     image: postgres:14.5
-
     restart: unless-stopped
     container_name: keycloak_db
     environment:
