@@ -1,4 +1,4 @@
-// Copyright (c) 2025 InferX Authors /  
+// Copyright (c) 2025 InferX Authors /
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@ use axum::http::HeaderValue;
 use axum::response::Response;
 use axum::Json;
 use axum::{
-    body::Body, extract::Path, routing::delete, routing::get, routing::post, routing::put,
-    Extension, Router,
+    body::Body, extract::Path, routing::delete, routing::get, routing::head, routing::post,
+    routing::put, Extension, Router,
 };
 
 use hyper::header::CONTENT_TYPE;
@@ -46,12 +46,12 @@ use tokio::sync::mpsc;
 use crate::audit::{ReqAudit, SqlAudit, REQ_AUDIT_AGENT};
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
+use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
+use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
 use crate::node_config::NODE_CONFIG;
 use crate::peer_mgr::NA_CONFIG;
-use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
-use crate::ixmeta::ReqWatchRequest;
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
@@ -101,6 +101,8 @@ impl HttpGateway {
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route("/funccall/*rest", post(PostCall))
+            .route("/funccall/*rest", get(PostCall))
+            .route("/funccall/*rest", head(PostCall))
             .route("/prompt/", post(PostPrompt))
             .route(
                 "/sampleccall/:tenant/:namespace/:name/",
