@@ -258,7 +258,7 @@ impl Log {
 macro_rules! raw {
     // macth like arm for macro
     ($a:expr,$b:expr,$c:expr,$d:expr) => {{
-        crate::print::LOG.RawLog($a, $b, $c, $d);
+        $crate::print::LOG.RawLog($a, $b, $c, $d);
     }};
 }
 
@@ -266,7 +266,7 @@ macro_rules! raw {
 macro_rules! log {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.RawWrite(&format!("{}\n",&s));
+        $crate::print::LOG.RawWrite(&format!("{}\n",&s));
     });
 }
 
@@ -274,7 +274,7 @@ macro_rules! log {
 macro_rules! print {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.RawPrint("Print", &s);
+        $crate::print::LOG.RawPrint("Print", &s);
     });
 }
 
@@ -282,7 +282,7 @@ macro_rules! print {
 macro_rules! error {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.Print("ERROR", &s);
+        $crate::print::LOG.Print("ERROR", &s);
     });
 }
 
@@ -290,7 +290,7 @@ macro_rules! error {
 macro_rules! info {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.Print("INFO", &s);
+        $crate::print::LOG.Print("INFO", &s);
     });
 }
 
@@ -298,7 +298,7 @@ macro_rules! info {
 macro_rules! warn {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.Print("WARN", &s);
+        $crate::print::LOG.Print("WARN", &s);
     });
 }
 
@@ -306,6 +306,6 @@ macro_rules! warn {
 macro_rules! debug {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
-        crate::print::LOG.Print("DEBUG", &s);
+        $crate::print::LOG.Print("DEBUG", &s);
     });
 }

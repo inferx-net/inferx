@@ -31,6 +31,7 @@ lazy_static::lazy_static! {
     #[derive(Debug)]
     pub static ref NODE_CONFIG: NodeConfig = {
         let args : Vec<String> = std::env::args().collect();
+        error!("NODE_CONFIG args is {:?}", &args);
         let configfilePath = if args.len() == 1 {
             "/opt/inferx/config/node.json"
         } else {
