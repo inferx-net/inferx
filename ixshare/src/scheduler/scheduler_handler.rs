@@ -1698,73 +1698,73 @@ impl SchedulerHandler {
         return Ok(id);
     }
 
-    pub async fn HibernateWorker(
-        &self,
-        naUrl: &str,
-        tenant: &str,
-        namespace: &str,
-        funcname: &str,
-        fprevision: i64,
-        id: &str,
-    ) -> Result<()> {
-        let mut client =
-            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-                .await?;
+    // pub async fn HibernateWorker(
+    //     &self,
+    //     naUrl: &str,
+    //     tenant: &str,
+    //     namespace: &str,
+    //     funcname: &str,
+    //     fprevision: i64,
+    //     id: &str,
+    // ) -> Result<()> {
+    //     let mut client =
+    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
+    //             .await?;
 
-        let request = tonic::Request::new(na::HibernatePodReq {
-            tenant: tenant.to_owned(),
-            namespace: namespace.to_owned(),
-            funcname: funcname.to_owned(),
-            fprevision: fprevision,
-            id: id.to_owned(),
-            hibernate_type: 1,
-        });
-        let response = client.hibernate_pod(request).await?;
-        let resp = response.into_inner();
-        if resp.error.len() != 0 {
-            error!(
-                "Scheduler: Fail to Hibernate worker {} {} {} {}",
-                namespace, funcname, id, resp.error
-            );
-        }
+    //     let request = tonic::Request::new(na::HibernatePodReq {
+    //         tenant: tenant.to_owned(),
+    //         namespace: namespace.to_owned(),
+    //         funcname: funcname.to_owned(),
+    //         fprevision: fprevision,
+    //         id: id.to_owned(),
+    //         hibernate_type: 1,
+    //     });
+    //     let response = client.hibernate_pod(request).await?;
+    //     let resp = response.into_inner();
+    //     if resp.error.len() != 0 {
+    //         error!(
+    //             "Scheduler: Fail to Hibernate worker {} {} {} {}",
+    //             namespace, funcname, id, resp.error
+    //         );
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 
-    pub async fn WakeupWorker(
-        &self,
-        naUrl: &str,
-        tenant: &str,
-        namespace: &str,
-        funcname: &str,
-        fprevsion: i64,
-        id: &str,
-        allocResources: &NodeResources,
-    ) -> Result<()> {
-        let mut client =
-            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-                .await?;
+    // pub async fn WakeupWorker(
+    //     &self,
+    //     naUrl: &str,
+    //     tenant: &str,
+    //     namespace: &str,
+    //     funcname: &str,
+    //     fprevsion: i64,
+    //     id: &str,
+    //     allocResources: &NodeResources,
+    // ) -> Result<()> {
+    //     let mut client =
+    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
+    //             .await?;
 
-        let request = tonic::Request::new(na::WakeupPodReq {
-            tenant: tenant.to_owned(),
-            namespace: namespace.to_owned(),
-            funcname: funcname.to_owned(),
-            fprevision: fprevsion,
-            id: id.to_owned(),
-            hibernate_type: 1,
-            alloc_resources: serde_json::to_string(allocResources).unwrap(),
-        });
-        let response = client.wakeup_pod(request).await?;
-        let resp = response.into_inner();
-        if resp.error.len() != 0 {
-            error!(
-                "Scheduler: Fail to Wakeup worker {} {} {} {}",
-                namespace, funcname, id, resp.error
-            );
-        }
+    //     let request = tonic::Request::new(na::WakeupPodReq {
+    //         tenant: tenant.to_owned(),
+    //         namespace: namespace.to_owned(),
+    //         funcname: funcname.to_owned(),
+    //         fprevision: fprevsion,
+    //         id: id.to_owned(),
+    //         hibernate_type: 1,
+    //         alloc_resources: serde_json::to_string(allocResources).unwrap(),
+    //     });
+    //     let response = client.wakeup_pod(request).await?;
+    //     let resp = response.into_inner();
+    //     if resp.error.len() != 0 {
+    //         error!(
+    //             "Scheduler: Fail to Wakeup worker {} {} {} {}",
+    //             namespace, funcname, id, resp.error
+    //         );
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 
     pub async fn ResumeWorker(
         &self,

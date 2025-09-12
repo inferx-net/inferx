@@ -23,13 +23,9 @@ service SchedulerService {
 }
 
 service NodeAgentService {
-  rpc GetPod(GetPodReq) returns (GetPodResp) {}
-  rpc TerminatePod(TerminatePodReq) returns (TerminatePodResp) {}
-  rpc HibernatePod(HibernatePodReq) returns (HibernatePodResp) {}
-  rpc SnapshotPod(SnapshotPodReq) returns (SnapshotPodResp) {}
-  rpc WakeupPod(WakeupPodReq) returns (WakeupPodResp) {}
-  rpc ResumePod(ResumePodReq) returns (ResumePodResp) {}
   rpc CreateFuncPod(CreateFuncPodReq) returns (CreateFuncPodResp) {}
+  rpc TerminatePod(TerminatePodReq) returns (TerminatePodResp) {}
+  rpc ResumePod(ResumePodReq) returns (ResumePodResp) {}
   rpc ReadPodLog(ReadPodLogReq) returns (ReadPodLogResp) {}
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
 }

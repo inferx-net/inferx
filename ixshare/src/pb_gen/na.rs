@@ -842,10 +842,10 @@ pub mod node_agent_service_client {
             self.inner = self.inner.accept_compressed(encoding);
             self
         }
-        pub async fn get_pod(
+        pub async fn create_func_pod(
             &mut self,
-            request: impl tonic::IntoRequest<super::GetPodReq>,
-        ) -> Result<tonic::Response<super::GetPodResp>, tonic::Status> {
+            request: impl tonic::IntoRequest<super::CreateFuncPodReq>,
+        ) -> Result<tonic::Response<super::CreateFuncPodResp>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -857,7 +857,7 @@ pub mod node_agent_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/GetPod",
+                "/na.NodeAgentService/CreateFuncPod",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
@@ -880,63 +880,6 @@ pub mod node_agent_service_client {
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
-        pub async fn hibernate_pod(
-            &mut self,
-            request: impl tonic::IntoRequest<super::HibernatePodReq>,
-        ) -> Result<tonic::Response<super::HibernatePodResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/HibernatePod",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
-        pub async fn snapshot_pod(
-            &mut self,
-            request: impl tonic::IntoRequest<super::SnapshotPodReq>,
-        ) -> Result<tonic::Response<super::SnapshotPodResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/SnapshotPod",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
-        pub async fn wakeup_pod(
-            &mut self,
-            request: impl tonic::IntoRequest<super::WakeupPodReq>,
-        ) -> Result<tonic::Response<super::WakeupPodResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/WakeupPod",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
         pub async fn resume_pod(
             &mut self,
             request: impl tonic::IntoRequest<super::ResumePodReq>,
@@ -953,25 +896,6 @@ pub mod node_agent_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/na.NodeAgentService/ResumePod",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
-        pub async fn create_func_pod(
-            &mut self,
-            request: impl tonic::IntoRequest<super::CreateFuncPodReq>,
-        ) -> Result<tonic::Response<super::CreateFuncPodResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/CreateFuncPod",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
@@ -1260,34 +1184,18 @@ pub mod node_agent_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with NodeAgentServiceServer.
     #[async_trait]
     pub trait NodeAgentService: Send + Sync + 'static {
-        async fn get_pod(
-            &self,
-            request: tonic::Request<super::GetPodReq>,
-        ) -> Result<tonic::Response<super::GetPodResp>, tonic::Status>;
-        async fn terminate_pod(
-            &self,
-            request: tonic::Request<super::TerminatePodReq>,
-        ) -> Result<tonic::Response<super::TerminatePodResp>, tonic::Status>;
-        async fn hibernate_pod(
-            &self,
-            request: tonic::Request<super::HibernatePodReq>,
-        ) -> Result<tonic::Response<super::HibernatePodResp>, tonic::Status>;
-        async fn snapshot_pod(
-            &self,
-            request: tonic::Request<super::SnapshotPodReq>,
-        ) -> Result<tonic::Response<super::SnapshotPodResp>, tonic::Status>;
-        async fn wakeup_pod(
-            &self,
-            request: tonic::Request<super::WakeupPodReq>,
-        ) -> Result<tonic::Response<super::WakeupPodResp>, tonic::Status>;
-        async fn resume_pod(
-            &self,
-            request: tonic::Request<super::ResumePodReq>,
-        ) -> Result<tonic::Response<super::ResumePodResp>, tonic::Status>;
         async fn create_func_pod(
             &self,
             request: tonic::Request<super::CreateFuncPodReq>,
         ) -> Result<tonic::Response<super::CreateFuncPodResp>, tonic::Status>;
+        async fn terminate_pod(
+            &self,
+            request: tonic::Request<super::TerminatePodReq>,
+        ) -> Result<tonic::Response<super::TerminatePodResp>, tonic::Status>;
+        async fn resume_pod(
+            &self,
+            request: tonic::Request<super::ResumePodReq>,
+        ) -> Result<tonic::Response<super::ResumePodResp>, tonic::Status>;
         async fn read_pod_log(
             &self,
             request: tonic::Request<super::ReadPodLogReq>,
@@ -1356,23 +1264,26 @@ pub mod node_agent_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/na.NodeAgentService/GetPod" => {
+                "/na.NodeAgentService/CreateFuncPod" => {
                     #[allow(non_camel_case_types)]
-                    struct GetPodSvc<T: NodeAgentService>(pub Arc<T>);
+                    struct CreateFuncPodSvc<T: NodeAgentService>(pub Arc<T>);
                     impl<
                         T: NodeAgentService,
-                    > tonic::server::UnaryService<super::GetPodReq> for GetPodSvc<T> {
-                        type Response = super::GetPodResp;
+                    > tonic::server::UnaryService<super::CreateFuncPodReq>
+                    for CreateFuncPodSvc<T> {
+                        type Response = super::CreateFuncPodResp;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::GetPodReq>,
+                            request: tonic::Request<super::CreateFuncPodReq>,
                         ) -> Self::Future {
                             let inner = self.0.clone();
-                            let fut = async move { (*inner).get_pod(request).await };
+                            let fut = async move {
+                                (*inner).create_func_pod(request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -1381,7 +1292,7 @@ pub mod node_agent_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let inner = inner.0;
-                        let method = GetPodSvc(inner);
+                        let method = CreateFuncPodSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -1433,124 +1344,6 @@ pub mod node_agent_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/na.NodeAgentService/HibernatePod" => {
-                    #[allow(non_camel_case_types)]
-                    struct HibernatePodSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::HibernatePodReq>
-                    for HibernatePodSvc<T> {
-                        type Response = super::HibernatePodResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::HibernatePodReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move {
-                                (*inner).hibernate_pod(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = HibernatePodSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/na.NodeAgentService/SnapshotPod" => {
-                    #[allow(non_camel_case_types)]
-                    struct SnapshotPodSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::SnapshotPodReq>
-                    for SnapshotPodSvc<T> {
-                        type Response = super::SnapshotPodResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::SnapshotPodReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move {
-                                (*inner).snapshot_pod(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = SnapshotPodSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/na.NodeAgentService/WakeupPod" => {
-                    #[allow(non_camel_case_types)]
-                    struct WakeupPodSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::WakeupPodReq>
-                    for WakeupPodSvc<T> {
-                        type Response = super::WakeupPodResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::WakeupPodReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move { (*inner).wakeup_pod(request).await };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = WakeupPodSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
                 "/na.NodeAgentService/ResumePod" => {
                     #[allow(non_camel_case_types)]
                     struct ResumePodSvc<T: NodeAgentService>(pub Arc<T>);
@@ -1578,46 +1371,6 @@ pub mod node_agent_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = ResumePodSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/na.NodeAgentService/CreateFuncPod" => {
-                    #[allow(non_camel_case_types)]
-                    struct CreateFuncPodSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::CreateFuncPodReq>
-                    for CreateFuncPodSvc<T> {
-                        type Response = super::CreateFuncPodResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::CreateFuncPodReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move {
-                                (*inner).create_func_pod(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = CreateFuncPodSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
