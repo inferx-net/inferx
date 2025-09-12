@@ -287,8 +287,8 @@ impl IxAgent {
         let clone = self.clone();
         tokio::spawn(async move {
             clone
-                .nodeClient
-                .Process(vec![clone.svcAddr.clone()], nodeListNotify.clone())
+                .snapshotClient
+                .Process(vec![clone.svcAddr.clone()], snapshotListNotify.clone())
                 .await
                 .unwrap();
         });
@@ -303,10 +303,14 @@ impl IxAgent {
         });
 
         let clone = self.clone();
+
+        // slow down node sync to make pod and snapshot ready before it to avoid create more snapshot pod
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         tokio::spawn(async move {
             clone
-                .snapshotClient
-                .Process(vec![clone.svcAddr.clone()], snapshotListNotify.clone())
+                .nodeClient
+                .Process(vec![clone.svcAddr.clone()], nodeListNotify.clone())
                 .await
                 .unwrap();
         });
