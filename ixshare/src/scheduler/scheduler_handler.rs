@@ -502,19 +502,20 @@ impl SchedulerHandler {
             &req.id,
         )?;
 
-        // if worker.State().IsIdle() {
-        //     error!(
-        //         "ProcessReturnWorkerReq fail the {} state {:?}",
-        //         worker.pod.PodKey(),
-        //         worker.State()
-        //     );
-        // }
+        if worker.State().IsIdle() {
+            error!(
+                "ProcessReturnWorkerReq fail the {} state {:?}",
+                worker.pod.PodKey(),
+                worker.State()
+            );
+        }
 
-        assert!(
-            !worker.State().IsIdle(),
-            "the state is {:?}",
-            worker.State()
-        );
+        // in case the gateway dead and recover and try to return an out of date pod
+        // assert!(
+        //     !worker.State().IsIdle(),
+        //     "the state is {:?}",
+        //     worker.State()
+        // );
         let returnId = worker.SetIdle();
         self.idlePods.insert(returnId, worker.pod.PodKey());
         let resp = na::ReturnWorkerResp {
@@ -881,7 +882,7 @@ impl SchedulerHandler {
                             self.ProcessLeaseWorkerReq(m, tx).await?;
                         }
                         WorkerHandlerMsg::ReturnWorker((m, tx)) => {
-                            self.ProcessReturnWorkerReq(m, tx).await?;
+                            self.ProcessReturnWorkerReq(m, tx).await.ok();
                         }
                         WorkerHandlerMsg::RefreshGateway(m) => {
                             self.ProcessRefreshGateway(m).await?;
@@ -904,7 +905,7 @@ impl SchedulerHandler {
         eventRx: &mut mpsc::Receiver<DeltaEvent>,
         msgRx: &mut mpsc::Receiver<WorkerHandlerMsg>,
     ) -> Result<()> {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(4000));
 
         loop {
             match self
@@ -1281,7 +1282,7 @@ impl SchedulerHandler {
         res.shuffle(&mut rng);
 
         let nodename = res[0].clone();
-        
+
         return Ok(nodename);
     }
 
@@ -1379,7 +1380,7 @@ impl SchedulerHandler {
                 nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
             }
 
-            let (_ipAddr, id) = self
+            let id = self
                 .StartWorker(
                     &nodeAgentUrl,
                     &function,
@@ -1448,7 +1449,7 @@ impl SchedulerHandler {
                 nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
             }
 
-            let (_ipAddr, id) = match self
+            let id = match self
                 .StartWorker(
                     &nodeAgentUrl,
                     &func,
@@ -1629,7 +1630,7 @@ impl SchedulerHandler {
         resourceQuota: &NodeResources,
         createType: na::CreatePodType,
         terminatePods: &Vec<WorkerPod>,
-    ) -> Result<(IpAddress, u64)> {
+    ) -> Result<u64> {
         let tenant = &func.tenant;
         let namespace = &func.namespace;
         let funcname = &func.name;
@@ -1679,18 +1680,22 @@ impl SchedulerHandler {
             terminate_pods: tps,
         });
 
-        let response = client.create_func_pod(request).await?;
-        let resp = response.into_inner();
+        // use another thread to start pod to avoid block main thread
+        let _handle = tokio::spawn(async move {
+            let response = match client.create_func_pod(request).await {
+                Err(e) => {
+                    error!("StartWorker create_func_pod fail with error {:?}", e);
+                    return;
+                }
+                Ok(r) => r,
+            };
+            let resp = response.into_inner();
+            if !resp.error.is_empty() {
+                error!("StartWorker fail with error {}", &resp.error);
+            }
+        });
 
-        if resp.error.is_empty() {
-            let addr = IpAddress(resp.ipaddress);
-            return Ok((addr, id));
-        }
-
-        return Err(Error::CommonError(format!(
-            "create pod fail with error {}",
-            resp.error
-        )));
+        return Ok(id);
     }
 
     pub async fn HibernateWorker(
