@@ -45,10 +45,42 @@ services:
     ports:
       - '2379:2379'
       - '2380:2380'
-  inferx:
-    image: inferx/inferx_one:${Version}
+  inferx_platform:
+    image: inferx/inferx_platform:${Version}
     restart: always
-    container_name: inferx_one
+    container_name: inferx_platform
+    cpus: 20
+    network_mode: "host"
+    environment:
+      - NODE_NAME=${HOSTNAME}
+      - POD_IP=${LOCAL_IP}
+      - RUN_SERVICE=All
+      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
+    pid: "host"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_started
+      etcd:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      secret_db:
+        condition: service_started
+    volumes:
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /etc/letsencrypt/:/etc/letsencrypt/
+    command:
+      - /opt/inferx/config/node1.json
+  inferx_runtime:
+    image: inferx/inferx_na:${Version}
+    restart: always
+    container_name: inferx_na
     privileged: true
     user: root
     cpus: 20
@@ -56,7 +88,6 @@ services:
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
-      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
       - ALLOC_MEMORY=80Gi
       - ALLOC_CPU=24
       - CACHE_MEMORY=40Gi
@@ -79,7 +110,7 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      # - /opt/inferx/bin:/opt/inferx/bin
+      - /opt/inferx/bin:/opt/inferx/bin
       - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log

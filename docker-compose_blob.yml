@@ -129,7 +129,6 @@ services:
       - /opt/inferx/cache:/opt/inferx/cache
       - /opt/inferx/snapshot:/opt/inferx/snapshot
       - /opt/inferx/work:/opt/inferx/work
-      # - /opt/inferx/:/opt/inferx/
       - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages

@@ -16,17 +16,17 @@ spec:
       nodeSelector:
         inferx_nodeType: inferx_blob      
       hostPID: true
-      initContainers:
-        - name: wait-for-dependencies
-          image: busybox
-          command:
-            [
-              "sh", "-c",
-              "until nc -z etcd.default.svc.cluster.local 2379 && \
-                     nc -z keycloak.default.svc.cluster.local 8080; do \
-                  echo 'Waiting for dependencies...'; sleep 3; \
-               done"
-            ]
+      # initContainers:
+      #   - name: wait-for-dependencies
+      #     image: busybox
+      #     command:
+      #       [
+      #         "sh", "-c",
+      #         "until nc -z etcd.default.svc.cluster.local 2379 && \
+      #                nc -z keycloak.default.svc.cluster.local 8080; do \
+      #             echo 'Waiting for dependencies...'; sleep 3; \
+      #          done"
+      #       ]
       containers:
         - name: nodeagent
           image: inferx/inferx_na:v0.1.4
@@ -84,7 +84,7 @@ spec:
               cpu: "20"               
               memory: "180Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "60Gi" 
-              nvidia.com/gpu: 1
+              # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
               name: run-udev
@@ -181,20 +181,20 @@ spec:
       nodeSelector:
         inferx_nodeType: inferx_file      
       hostPID: true
-      initContainers:
-        - name: wait-for-dependencies
-          image: busybox
-          command:
-            [
-              "sh", "-c",
-              "until nc -z etcd.default.svc.cluster.local 2379 && \
-                     nc -z keycloak.default.svc.cluster.local 8080; do \
-                  echo 'Waiting for dependencies...'; sleep 3; \
-               done"
-            ]
+      # initContainers:
+      #   - name: wait-for-dependencies
+      #     image: busybox
+      #     command:
+      #       [
+      #         "sh", "-c",
+      #         "until nc -z etcd.default.svc.cluster.local 2379 && \
+      #                nc -z keycloak.default.svc.cluster.local 8080; do \
+      #             echo 'Waiting for dependencies...'; sleep 3; \
+      #          done"
+      #       ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.4
+          image: inferx/inferx_na:v0.1.4
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true

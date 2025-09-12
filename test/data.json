@@ -1,0 +1,7 @@
+{
+  "max_tokens": 100,
+  "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+  "temperature": 0,
+  "stream": false,
+  "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?"
+}

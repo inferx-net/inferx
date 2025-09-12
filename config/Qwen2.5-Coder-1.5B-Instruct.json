@@ -18,8 +18,9 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 7000
-                }
+                    "vRam": 12000
+                },
+                "parallel": 10
             },
             "envs": [
                 [
