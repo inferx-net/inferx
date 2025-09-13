@@ -6,8 +6,26 @@ spec:
   tolerations:
     - key: "node.coreweave.cloud/reserved"
       operator: "Exists"
-      effect: "NoExecute"  
-  containers:
+      effect: "NoExecute" 
+  containers: 
+    - name: gpu-detector
+      image: nvidia/cuda:12.5.1-cudnn-devel-ubuntu20.04
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        privileged: false
+      resources:
+        limits:
+          nvidia.com/gpu: 2 # request 2 GPUs
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          mkdir -p /gpu-info
+          nvidia-smi --query-gpu=uuid --format=csv,noheader > /gpu-info/allocated_gpus.txt
+          # Keep alive until main container finishes
+          tail -f /dev/null
+      volumeMounts:
+        - name: gpu-info
+          mountPath: /gpu-info
     - name: debug
       image: inferx/inferx_one:v0.1.2
       imagePullPolicy: Always
@@ -39,37 +57,35 @@ spec:
           value: "4Gi"
       resources:
         limits:
-          nvidia.com/gpu: 8 # use all available GPUs
+          nvidia.com/gpu: 2 # use all available GPUs
           cpu: "20"
       volumeMounts:
+        - name: gpu-info
+          mountPath: /gpu-info  
         - name: run-udev
           mountPath: /run/udev
-          mountPropagation: Bidirectional
         - name: hugepages
           mountPath: /dev/hugepages
-          mountPropagation: Bidirectional
-        - name: shm
+        - name: dshm
           mountPath: /dev/shm
-          mountPropagation: Bidirectional
         - name: inferx-opt
           mountPath: /opt/inferx/
-          mountPropagation: Bidirectional
-        - name: cache
-          mountPath: /opt/inferx/cache/
-          mountPropagation: Bidirectional
+        - mountPath: /opt/inferx/cache   
+          name: model-storage
         - name: certs
           mountPath: /etc/letsencrypt/
-          mountPropagation: Bidirectional
         - name: dind
           mountPath: /var/lib/docker
-          mountPropagation: Bidirectional
         - name: runc
           mountPath: /var/run/docker/runtime-runc/moby/
-          mountPropagation: Bidirectional
         - name: host-root
           mountPath: /host
-          mountPropagation: Bidirectional
   volumes:
+    - name: gpu-info
+      emptyDir: {}  
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: modelstore
     - name: run-udev
       hostPath:
         path: /run/udev
@@ -79,6 +95,10 @@ spec:
     - name: shm
       hostPath:
         path: /dev/shm
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 60Gi
     - name: inferx-opt
       hostPath:
         path: /opt/inferx/
