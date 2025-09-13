@@ -38,8 +38,11 @@ static TOKEN_CACHE: OnceCell<TokenCache> = OnceCell::const_new();
 pub async fn GetTokenCache() -> &'static TokenCache {
     TOKEN_CACHE
         .get_or_init(|| async {
-            info!("GetTokenCache config {:?}", &NODE_CONFIG.keycloakconfig);
-            match TokenCache::New(&NODE_CONFIG.secretStoreAddr, &NODE_CONFIG.keycloakconfig).await {
+            info!(
+                "GetTokenCache config {:?} secretstore addr {}",
+                &NODE_CONFIG.keycloakconfig, &NA_CONFIG.secretStoreAddr
+            );
+            match TokenCache::New(&NA_CONFIG.secretStoreAddr, &NODE_CONFIG.keycloakconfig).await {
                 Err(e) => {
                     error!("GetTokenCache error {:?}", e);
                     panic!();

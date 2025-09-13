@@ -56,6 +56,10 @@ services:
       - POD_IP=${LOCAL_IP}
       - RUN_SERVICE=All
       - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
+      - ETCD_ADDR=http://localhost:2379
+      - STATESVC_ADDR=http://localhost:1237
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+      - SECRDB_ADDR=postgresql://secret:123456@localhost:5431/secretdb
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
@@ -75,8 +79,8 @@ services:
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log
       - /etc/letsencrypt/:/etc/letsencrypt/
-    command:
-      - /opt/inferx/config/node1.json
+    # command:
+    #   - /opt/inferx/config/node1.json
   inferx_runtime:
     image: inferx/inferx_na:${Version}
     restart: always
@@ -94,6 +98,9 @@ services:
       - ENABLE_2MB_PAGE=false
       - ENALBE_BLOB=false
       - BLOB_BUFF=4Gi
+      - ETCD_ADDR=http://localhost:2379
+      - STATESVC_ADDR=http://localhost:1237
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
@@ -130,8 +137,8 @@ services:
             - driver: nvidia
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
-    command:
-      - /opt/inferx/config/node1.json
+    # command:
+    #   - /opt/inferx/config/node1.json
   dashboard:
     image: inferx/inferx_dashboard:${Version}
     restart: on-failure

@@ -1,4 +1,4 @@
-// Copyright (c) 2025 InferX Authors /  
+// Copyright (c) 2025 InferX Authors /
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,14 +19,15 @@
 #![allow(deprecated)]
 
 #[macro_use]
-extern crate log;
-extern crate simple_logging;
+extern crate ixshare;
 
 extern crate rand;
 
+use std::io::Write;
 use std::sync::Arc;
 
 use ixshare::gateway::func_agent_mgr::GatewaySvc;
+use ixshare::peer_mgr::NA_CONFIG;
 use ixshare::print::LOG;
 use tokio::sync::Notify;
 
@@ -38,8 +39,17 @@ use ixshare::scheduler::scheduler::ExecSchedulerSvc;
 use ixshare::state_svc::state_svc::StateService;
 
 pub fn LogPanic(info: &str) {
-    std::fs::write("/opt/inferx/log/panic.log", info).expect("Unable to write file");
-    error!("{}:{}", LOG.ServiceName(), info);
+    // std::fs::write("/opt/inferx/log/panic.log", info).expect("Unable to write file");
+
+    error!("{}", info);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true) // create if it doesn’t exist
+        .append(true) // append instead of truncate
+        .open("/opt/inferx/log/panic.log")
+        .expect("Unable to write file");
+
+    file.write_all(info.as_bytes())
+        .expect("Unable to write file");
 }
 
 pub const RUN_SERVICE: &'static str = "RUN_SERVICE";
@@ -58,21 +68,17 @@ async fn main() -> Result<()> {
         let backtrace = backtrace::Backtrace::new();
         if let Some(s) = info.payload().downcast_ref::<&str>() {
             eprintln!("Panic message: {}", s);
-            error!("Panic message: {}", s);
             let info = format!("Panic message: {}", s);
             LogPanic(&info);
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
             eprintln!("Panic message: {}", s);
-            error!("Panic message: {}", s);
             let info = format!("Panic message: {}", s);
             LogPanic(&info);
         } else {
             eprintln!("Panic occurred but can't get the message.");
-            error!("Panic occurred but can't get the message.");
         }
-        error!("Panic occurred: {:?}", info);
         eprintln!("Panic occurred: {:?}", info);
-        error!("Backtrace:\n{:?}", backtrace);
+        eprintln!("Backtrace:\n{:?}", backtrace);
         let info = format!("Panic occurred: {:?}", info);
         LogPanic(&info);
         let info = format!("Backtrace:\n{:?}", backtrace);
@@ -81,12 +87,6 @@ async fn main() -> Result<()> {
             libc::exit(1);
         }
     }));
-
-    // log4rs::init_file(
-    //     "/opt/inferx/config/onenode_logging_config.yaml",
-    //     Default::default(),
-    // )
-    // .unwrap();
 
     error!(
         "Start inferx service ....xxx std::env::var(RUN_SERVICE) {:?}",
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
         },
     };
 
-    let Uid = UniqueId::New(&NODE_CONFIG.etcdAddrs).await?;
+    let Uid = UniqueId::New(&NA_CONFIG.etcdAddrs).await?;
     UID.set(Uid).unwrap();
 
     match runService {

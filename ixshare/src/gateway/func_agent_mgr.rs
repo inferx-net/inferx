@@ -24,7 +24,6 @@ use tokio::sync::{mpsc, Notify};
 use crate::audit::SqlAudit;
 use crate::common::*;
 use crate::gateway::scheduler_client::SchedulerClient;
-use crate::node_config::NODE_CONFIG;
 use crate::peer_mgr::NA_CONFIG;
 use crate::scheduler::scheduler_handler::GetClient;
 use inferxlib::obj_mgr::func_mgr::*;
@@ -46,7 +45,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
 
     let namespaceStore = NamespaceStore::New(&NA_CONFIG.etcdAddrs.to_vec()).await?;
 
-    let addr = NODE_CONFIG.auditdbAddr.clone();
+    let addr = NA_CONFIG.auditdbAddr.clone();
     if addr.len() == 0 {
         // auditdb is not enabled
         return Ok(());

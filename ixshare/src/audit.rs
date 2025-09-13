@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::common::*;
-use crate::node_config::NODE_CONFIG;
+use crate::peer_mgr::NA_CONFIG;
 
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgConnectOptions;
@@ -97,11 +97,11 @@ impl PodAuditAgent {
     }
 
     pub fn Enable() -> bool {
-        return NODE_CONFIG.auditdbAddr.len() > 0;
+        return NA_CONFIG.auditdbAddr.len() > 0;
     }
 
     pub async fn Process(&self, mut rx: mpsc::Receiver<PodAudit>) -> Result<()> {
-        let addr = NODE_CONFIG.auditdbAddr.clone();
+        let addr = NA_CONFIG.auditdbAddr.clone();
         if addr.len() == 0 {
             // auditdb is not enabled
             return Ok(());
@@ -199,11 +199,11 @@ impl ReqAuditAgent {
     }
 
     pub fn Enable() -> bool {
-        return NODE_CONFIG.auditdbAddr.len() > 0;
+        return NA_CONFIG.auditdbAddr.len() > 0;
     }
 
     pub async fn Process(&self, mut rx: mpsc::Receiver<ReqAudit>) -> Result<()> {
-        let addr = NODE_CONFIG.auditdbAddr.clone();
+        let addr = NA_CONFIG.auditdbAddr.clone();
         if addr.len() == 0 {
             // auditdb is not enabled
             return Ok(());

@@ -166,6 +166,11 @@ impl SchedulerConfig {
         assert!(config.etcdAddrs.len() > 0);
         assert!(config.stateSvcAddrs.len() > 0);
 
+        let etcdAddrs = match std::env::var("ETCD_ADDR") {
+            Ok(s) => vec![s],
+            Err(_) => config.etcdAddrs.clone(),
+        };
+
         let nodeIp = if config.nodeIp.len() == 0 {
             assert!(config.hostIpCidr.len() != 0);
             let nodeIp = GetLocalIp(&config.hostIpCidr).unwrap();
@@ -180,19 +185,21 @@ impl SchedulerConfig {
             config.schedulerPort
         };
 
-        error!("SchedulerConfig {:?}", nodeIp);
-
         let stateSvcAddrs = match std::env::var("STATESVC_ADDR") {
             Ok(s) => vec![s],
             Err(_) => config.stateSvcAddrs.clone(),
         };
 
-        return Self {
-            etcdAddrs: config.etcdAddrs.clone(),
+        let ret = Self {
+            etcdAddrs: etcdAddrs,
             stateSvcAddrs: stateSvcAddrs,
             nodeIp: nodeIp,
             schedulerPort: schedulerPort,
         };
+
+        error!("SchedulerConfig is {:#?}", &ret);
+
+        return ret;
     }
 }
 
@@ -205,18 +212,31 @@ pub struct StateSvcConfig {
 
 impl StateSvcConfig {
     pub fn New(config: &NodeConfig) -> Self {
-        assert!(config.etcdAddrs.len() > 0);
+        let etcdAddrs = match std::env::var("ETCD_ADDR") {
+            Ok(s) => vec![s],
+            Err(_) => config.etcdAddrs.clone(),
+        };
+
         let stateSvcPort = if config.stateSvcPort == 0 {
             DEFAULT_STATESVC_PORT
         } else {
             config.stateSvcPort
         };
 
-        return Self {
-            etcdAddresses: config.etcdAddrs.clone(),
-            stateSvcPort: stateSvcPort,
-            auditdbAddr: config.auditdbAddr.clone(),
+        let auditdbAddr = match std::env::var("AUDITDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.auditdbAddr.clone(),
         };
+
+        let ret = Self {
+            etcdAddresses: etcdAddrs,
+            stateSvcPort: stateSvcPort,
+            auditdbAddr: auditdbAddr,
+        };
+
+        error!("StateSvcConfig is {:#?}", &ret);
+
+        return ret;
     }
 }
 
@@ -272,6 +292,8 @@ pub struct NodeAgentConfig {
     pub memcache: ShareMem,
     pub tlsconfig: TLSConfig,
     pub inferxAdminApikey: String,
+    pub auditdbAddr: String,
+    pub secretStoreAddr: String,
 }
 
 impl NodeAgentConfig {
@@ -503,14 +525,28 @@ impl NodeAgentConfig {
             Err(_) => resources.maxContextPerGPU,
         };
 
-        info!("Nodeagent Config new {:#?}", &resources);
         let stateSvcAddrs = match std::env::var("STATESVC_ADDR") {
             Ok(s) => vec![s],
             Err(_) => config.stateSvcAddrs.clone(),
         };
 
-        return Self {
-            etcdAddrs: config.etcdAddrs.clone(),
+        let etcdAddrs = match std::env::var("ETCD_ADDR") {
+            Ok(s) => vec![s],
+            Err(_) => config.etcdAddrs.clone(),
+        };
+
+        let secretStoreAddr = match std::env::var("SECRDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.secretStoreAddr.clone(),
+        };
+
+        let auditdbAddr = match std::env::var("AUDITDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.auditdbAddr.clone(),
+        };
+
+        let ret = Self {
+            etcdAddrs: etcdAddrs,
             stateSvcAddrs: stateSvcAddrs,
             nodeName: nodeName,
             nodeIp: nodeIp,
@@ -530,7 +566,13 @@ impl NodeAgentConfig {
             memcache: config.sharemem.clone(),
             tlsconfig: config.tlsconfig.clone(),
             inferxAdminApikey: inferxAdminApikey,
+            auditdbAddr: auditdbAddr,
+            secretStoreAddr: secretStoreAddr,
         };
+
+        info!("Nodeagent Config  {:#?}", &ret);
+
+        return ret;
     }
 
     pub fn SetCidr(&self, cidr: &str) {
