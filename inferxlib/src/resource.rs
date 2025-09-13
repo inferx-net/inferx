@@ -134,6 +134,29 @@ impl Default for GPUSet {
     }
 }
 
+impl GPUSet {
+    pub fn FirstGpu(&self) -> i32 {
+        match self {
+            GPUSet::Auto => 0,
+            GPUSet::GPUSet(s) => {
+                error!("FirstGpu is {}", s.first().unwrap().clone());
+                return s.first().unwrap().clone() as i32;
+            }
+        }
+    }
+
+    pub fn V2P(&self, v: i32) -> i32 {
+        match self {
+            GPUSet::Auto => v,
+            GPUSet::GPUSet(s) => {
+                let arr: Vec<u8> = s.iter().cloned().collect();
+                assert!((v as usize) < arr.len());
+                return arr[v as usize] as i32;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ResourceConfig {
     #[serde(rename = "Mem", default)]
@@ -181,6 +204,14 @@ impl ResourceConfig {
 impl GPUResourceMap {
     pub fn Gpus(&self) -> Vec<i32> {
         let gpus = self.map.keys().cloned().collect();
+        return gpus;
+    }
+
+    pub fn PhyGpus(&self) -> Vec<i32> {
+        let mut gpus = Vec::new();
+        for i in 0..self.map.len() {
+            gpus.push(i as i32);
+        }
         return gpus;
     }
 
@@ -371,6 +402,7 @@ pub struct NodeResources {
     pub gpus: GPUResourceMap,
     #[serde(rename = "MaxContextPerGPU", default)]
     pub maxContextCnt: u64,
+
 }
 
 impl NodeResources {
@@ -585,7 +617,6 @@ pub struct NodeResourcesStatus {
 pub struct GPUResourceMap {
     // total slotCnt
     pub totalSlotCnt: u32,
-    // phyGpuId --> GPUResource
     pub map: BTreeMap<i32, GPUAlloc>,
     pub slotSize: u64,
 }

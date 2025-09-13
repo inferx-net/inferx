@@ -1372,7 +1372,10 @@ impl SchedulerHandler {
 
             {
                 let standbyResource = self.StandyResource(funcid, &nodename);
-                let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                let nodeStatus = match self.nodes.get_mut(&nodename) {
+                    None => return Ok(()), // the node information is not synced
+                    Some(ns) => ns,
+                };
 
                 allocResources =
                     nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcid, false)?;

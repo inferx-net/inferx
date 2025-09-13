@@ -474,13 +474,16 @@ impl NodeAgentConfig {
             Err(_) => resources.cpu,
         };
 
-        resources.gpus = match std::env::var("GPU_MAP") {
+        resources.gpus = match std::env::var("CUDA_VISIBLE_DEVICES") {
             Ok(s) => {
-                info!("get GPU map from env GPU_MAP: {}", &s);
+                info!("get GPU map from env CUDA_VISIBLE_DEVICES: {}", &s);
                 let gpuset = match ParseGpuString(&s) {
                     Ok(s) => s,
                     Err(_e) => {
-                        error!("fail to pass GPU_MAP {:?} fallback to all gpu", s);
+                        error!(
+                            "fail to pass CUDA_VISIBLE_DEVICES {:?} fallback to all gpu",
+                            s
+                        );
                         GPUSet::Auto
                     }
                 };

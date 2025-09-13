@@ -13,6 +13,7 @@ pub struct NodeSpec {
     pub cidr: String,
     pub resources: NodeResources,
     pub blobStoreEnable: bool,
+    pub CUDA_VISIBLE_DEVICES: String,
 }
 
 pub type Node = DataObject<NodeSpec>;
