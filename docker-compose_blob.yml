@@ -109,6 +109,7 @@ services:
       - BLOB_BUFF=4Gi
       - PEER_LOAD=true
       - CONTEXT_COUNT=1
+      # - CUDA_VISIBLE_DEVICES=0,1
     pid: "host" 
     depends_on:
       db:
@@ -122,7 +123,7 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      - /opt/inferx/bin:/opt/inferx/bin
+      # - /opt/inferx/bin:/opt/inferx/bin
       - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log

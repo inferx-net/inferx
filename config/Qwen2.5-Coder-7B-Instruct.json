@@ -15,8 +15,8 @@
                 "--tensor-parallel-size=2"
             ],
             "resources": {
-                "CPU": 20000,
-                "Mem": 60000,
+                "CPU": 12000,
+                "Mem": 40000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
@@ -56,9 +56,9 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "Mem"
             }
         }
     }

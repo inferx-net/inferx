@@ -110,8 +110,8 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      - /opt/inferx/bin:/opt/inferx/bin
-      - /opt/inferx/config:/opt/inferx/config
+      # - /opt/inferx/bin:/opt/inferx/bin
+      # - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log
       - /opt/inferx/cache:/opt/inferx/cache
@@ -155,7 +155,6 @@ services:
       - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:
     image: postgres:14.5
-
     restart: unless-stopped
     container_name: keycloak_db
     environment:

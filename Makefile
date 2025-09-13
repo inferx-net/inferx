@@ -109,8 +109,7 @@ runblob:
 	@echo "Version=$(VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	sudo docker compose -f docker-compose_blob.yml  build
-	- sudo rm -f /opt/inferx/log/inferx.log
-	- sudo rm -f /opt/inferx/log/onenode.log
+	- sudo rm -f /opt/inferx/log/*.log
 	sudo docker compose -f docker-compose_blob.yml up -d --remove-orphans
 	cat .env
 	rm .env
