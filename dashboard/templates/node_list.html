@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Nodes</h2>
+<h2 style="text-align: center;">Nodes</h2>
 <style>
     table,
     th,
@@ -9,7 +9,7 @@
         border: 1px solid black;
     }
 </style>
-<table style="width:100%">
+<table style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
         <th>Nodename</th>
         <th>IP Address</th>
@@ -31,7 +31,33 @@
         <td>{{ node['object']['resources']['Mem'] // 1000 }}</td>
         <td>{{ node['object']['resources']['MaxContextPerGPU'] }}</td>
         <td>{{ node['object']['blobStoreEnable'] }}</td>
-        <td>{{ node['object']['resources']['GPUs'] }}</td>
+        {% set gpus = node['object']['resources']['GPUs'] %}
+        <td style="padding: 0;">
+            <div>vRam: {{ gpus.vRam }}</div>
+            <div>slotSize: {{ gpus.slotSize }}</div>
+            <div>totalSlotCnt: {{ gpus.totalSlotCnt }}</div>
+
+            <table style="width: 100%; margin-top: 5px; border-collapse: collapse; border: none;">
+                <tr>
+                    <th style="border-bottom: 1px solid black; border-left: none; border-right: 1px solid black;">GPU ID</th>
+                    <th style="border-bottom: 1px solid black; border-right: 1px solid black;">contextCnt</th>
+                    <th style="border-bottom: 1px solid black; border-right: none;">slotCnt</th>
+                </tr>
+                {% for gpu_id, gpu_info in gpus.map.items() %}
+                <tr>
+                    <td style="border-left: none; border-bottom: {% if not loop.last %}1px solid black{% else %}none{% endif %}; border-right: 1px solid black;">
+                        {{ gpu_id }}
+                    </td>
+                    <td style="border-bottom: {% if not loop.last %}1px solid black{% else %}none{% endif %}; border-right: 1px solid black;">
+                        {{ gpu_info.contextCnt }}
+                    </td>
+                    <td style="border-bottom: {% if not loop.last %}1px solid black{% else %}none{% endif %}; border-right: none;">
+                        {{ gpu_info.slotCnt }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+        </td>
         {% endautoescape %}
     </tr>
     {% endfor %}
