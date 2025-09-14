@@ -57,19 +57,52 @@ services:
     ports:
       - '2379:2379'
       - '2380:2380'
-  inferx:
-    image: inferx/inferx_one:${Version}
+  inferx_platform:
+    image: inferx/inferx_platform:${Version}
+    restart: always
+    container_name: inferx_platform
+    network_mode: "host"
+    environment:
+      - NODE_NAME=${HOSTNAME}
+      - POD_IP=${LOCAL_IP}
+      - RUN_SERVICE=All
+      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
+      - ETCD_ADDR=http://localhost:2379
+      - STATESVC_ADDR=http://localhost:1237
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+      - SECRDB_ADDR=postgresql://secret:123456@localhost:5431/secretdb
+    pid: "host"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_started
+      etcd:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      spdk:
+        condition: service_started
+      secret_db:
+        condition: service_started
+    volumes:
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /etc/letsencrypt/:/etc/letsencrypt/
+  inferx_runtime:
+    image: inferx/inferx_na:${Version}
     shm_size: '2gb'
     restart: always
-    container_name: inferx_one
+    container_name: inferx_na
     privileged: true
     user: root
     network_mode: "host"
     environment:
       - NODE_NAME=${HOSTNAME}
       - POD_IP=${LOCAL_IP}
-      - INFERX_ADMIN_APIKEY=87831cdb-d07a-4dc1-9de0-fb232c9bf286
-      - RUN_SERVICE=All
       - ALLOC_CPU=24
       - ALLOC_MEMORY=180Gi
       - CACHE_MEMORY=50Gi
@@ -78,12 +111,11 @@ services:
       - BLOB_BUFF=4Gi
       - PEER_LOAD=true
       - CONTEXT_COUNT=1
-    pid: "host"
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
-      interval: 10s
-      timeout: 10s
-      retries: 3
+      # - CUDA_VISIBLE_DEVICES=0,1
+      - ETCD_ADDR=http://localhost:2379
+      - STATESVC_ADDR=http://localhost:1237
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+    pid: "host" 
     depends_on:
       db:
         condition: service_started
@@ -103,12 +135,10 @@ services:
       - /opt/inferx/cache:/opt/inferx/cache
       - /opt/inferx/snapshot:/opt/inferx/snapshot
       - /opt/inferx/work:/opt/inferx/work
-      # - /opt/inferx/:/opt/inferx/
       - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
       - /etc/letsencrypt/:/etc/letsencrypt/
-      # - /var/run/docker/runtime-runc/moby/:/var/run/docker/runtime-runc/moby/ 
     deploy:
       resources:
         reservations:
@@ -116,32 +146,29 @@ services:
             - driver: nvidia
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
-    command:
-      - /opt/inferx/config/node3.json
-  # dashboard:
-  #   image: inferx/inferx_dashboard:${Version}
-  #   restart: on-failure
-  #   container_name: inferx_dashboard
-  #   network_mode: "host"
-  #   environment:
-  #     - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
-  #     - KEYCLOAK_REALM_NAME=inferx
-  #     - KEYCLOAK_CLIENT_ID=infer_client
-  #     - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
-  #   healthcheck:
-  #     test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
-  #     interval: 10s
-  #     timeout: 10s
-  #     retries: 3
-  #   depends_on:
-  #     - db
-  #     - etcd
-  #     - keycloak
-  #   volumes:
-  #     - /etc/letsencrypt/:/etc/letsencrypt/
+  dashboard:
+    image: inferx/inferx_dashboard:${Version}
+    restart: on-failure
+    container_name: inferx_dashboard
+    network_mode: "host"
+    environment:
+      - KEYCLOAK_URL=http://${LOCAL_IP}:1260/authn
+      - KEYCLOAK_REALM_NAME=inferx
+      - KEYCLOAK_CLIENT_ID=infer_client
+      - KEYCLOAK_CLIENT_SECRET=M2Dse5531tdtyipZdGizLEeoOVgziQRX
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:1250/demo/listnode" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - db
+      - etcd
+      - keycloak
+    volumes:
+      - /etc/letsencrypt/:/etc/letsencrypt/
   keycloak-postgres:
     image: postgres:14.5
-
     restart: unless-stopped
     container_name: keycloak_db
     environment:

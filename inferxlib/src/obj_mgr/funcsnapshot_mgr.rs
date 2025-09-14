@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::*;
 use crate::data_obj::{DataObject, DataObjectMgr};
-use crate::resource::{GPUResource, Resources, Standby, StandbyType};
+use crate::resource::{GPUResource, Resources, Standby, StandbyType, DEFAULT_PARALLEL_LEVEL};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SnapshotInfo {
@@ -32,11 +32,11 @@ impl SnapshotInfo {
 
     pub fn StandyCacheMemory(&self) -> u64 {
         let mut cacheMemory = 0;
-        if self.standby.gpuMem == StandbyType::Mem {
-            for (_, size) in &self.gpuMemSizes {
-                cacheMemory += (*size + ONE_GB - 1) / ONE_GB * 1024;
-            }
-        }
+        // if self.standby.gpuMem == StandbyType::Mem {
+        //     for (_, size) in &self.gpuMemSizes {
+        //         cacheMemory += (*size + ONE_GB - 1) / ONE_GB * 1024;
+        //     }
+        // }
 
         if self.standby.pinndMem == StandbyType::Mem {
             cacheMemory += (self.hostMemSize + ONE_GB - 1) / ONE_GB * 1024;
@@ -108,6 +108,7 @@ impl ContainerSnapshot {
             memory: self.info.StandbyMemory(),
             cacheMemory: self.info.StandyCacheMemory(),
             gpu: GPUResource::default(),
+            parallel: DEFAULT_PARALLEL_LEVEL
         };
     }
 

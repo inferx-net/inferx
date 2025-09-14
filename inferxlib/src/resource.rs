@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Quark Container Authors
+// Copyright (c) 2025 InferX Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -134,6 +134,29 @@ impl Default for GPUSet {
     }
 }
 
+impl GPUSet {
+    pub fn FirstGpu(&self) -> i32 {
+        match self {
+            GPUSet::Auto => 0,
+            GPUSet::GPUSet(s) => {
+                error!("FirstGpu is {}", s.first().unwrap().clone());
+                return s.first().unwrap().clone() as i32;
+            }
+        }
+    }
+
+    pub fn V2P(&self, v: i32) -> i32 {
+        match self {
+            GPUSet::Auto => v,
+            GPUSet::GPUSet(s) => {
+                let arr: Vec<u8> = s.iter().cloned().collect();
+                assert!((v as usize) < arr.len());
+                return arr[v as usize] as i32;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ResourceConfig {
     #[serde(rename = "Mem", default)]
@@ -181,6 +204,14 @@ impl ResourceConfig {
 impl GPUResourceMap {
     pub fn Gpus(&self) -> Vec<i32> {
         let gpus = self.map.keys().cloned().collect();
+        return gpus;
+    }
+
+    pub fn PhyGpus(&self) -> Vec<i32> {
+        let mut gpus = Vec::new();
+        for i in 0..self.map.len() {
+            gpus.push(i as i32);
+        }
         return gpus;
     }
 
@@ -371,6 +402,7 @@ pub struct NodeResources {
     pub gpus: GPUResourceMap,
     #[serde(rename = "MaxContextPerGPU", default)]
     pub maxContextCnt: u64,
+
 }
 
 impl NodeResources {
@@ -425,7 +457,7 @@ impl NodeResources {
             && self.gpuType.CanAlloc(&req.gpu.type_)
             && self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
 
-        if false && !canAlloc {
+        if !canAlloc {
             let _cpu = self.cpu >= req.cpu;
             let _memory = self.memory >= req.memory;
             let _cacheMemory = self.cacheMemory >= req.cacheMemory;
@@ -471,8 +503,8 @@ impl NodeResources {
     pub fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
         if !self.CanAlloc(req, createSnapshot) {
             error!(
-                "NodeResources::alloc fail available {:#?} require {:#?}",
-                self, req
+                "NodeResources::alloc fail available {:#?} require {:#?} for createSnapshot {}",
+                self, req, createSnapshot
             );
             return Err(Error::SchedulerNoEnoughResource(format!(
                 "NodeResources::alloc fail available {:?} require {:?}",
@@ -512,6 +544,8 @@ impl NodeResources {
     }
 }
 
+pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Resources {
     #[serde(rename = "CPU")]
@@ -522,6 +556,12 @@ pub struct Resources {
     pub cacheMemory: u64,
     #[serde(rename = "GPU")]
     pub gpu: GPUResource,
+    #[serde(default = "default_parallel", rename = "parallel")]
+    pub parallel: usize,
+}
+
+fn default_parallel() -> usize {
+    DEFAULT_PARALLEL_LEVEL
 }
 
 impl Default for Resources {
@@ -531,6 +571,7 @@ impl Default for Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: GPUResource::default(),
+            parallel: DEFAULT_PARALLEL_LEVEL,
         }
     }
 }
@@ -544,6 +585,8 @@ impl Resources {
         if self.memory == 0 {
             self.memory = 500; // default 500 MB
         }
+
+        self.parallel = DEFAULT_PARALLEL_LEVEL;
     }
 
     pub fn GPUResource(&self) -> Self {
@@ -552,6 +595,7 @@ impl Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: self.gpu.clone(),
+            parallel: self.parallel,
         };
     }
 
@@ -573,7 +617,6 @@ pub struct NodeResourcesStatus {
 pub struct GPUResourceMap {
     // total slotCnt
     pub totalSlotCnt: u32,
-    // phyGpuId --> GPUResource
     pub map: BTreeMap<i32, GPUAlloc>,
     pub slotSize: u64,
 }

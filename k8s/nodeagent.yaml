@@ -16,20 +16,9 @@ spec:
       nodeSelector:
         inferx_nodeType: inferx_blob      
       hostPID: true
-      initContainers:
-        - name: wait-for-dependencies
-          image: busybox
-          command:
-            [
-              "sh", "-c",
-              "until nc -z etcd.default.svc.cluster.local 2379 && \
-                     nc -z keycloak.default.svc.cluster.local 8080; do \
-                  echo 'Waiting for dependencies...'; sleep 3; \
-               done"
-            ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.3
+          image: inferx/inferx_na:v0.1.4
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -46,12 +35,15 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
-          - name: INFERX_ADMIN_APIKEY
-            value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: NODE_NAME
             valueFrom:
               fieldRef:
                 fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: requests.hugepages-2Mi 
           - name: ALLOC_MEMORY
             valueFrom:
               resourceFieldRef:
@@ -60,12 +52,7 @@ spec:
           - name: CACHE_MEMORY
             value: "55Gi"
           - name: ENABLE_2MB_PAGE
-            value: "true"
-          - name: ALLOC_MEMORY_2M
-            valueFrom:
-              resourceFieldRef:
-                containerName: nodeagent
-                resource: requests.hugepages-2Mi                
+            value: "true"             
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
@@ -75,6 +62,8 @@ spec:
             value: "true"
           - name: BLOB_BUFF
             value: "4Gi"
+          - name: GPU_MAP
+            value: "0,1"
           resources:
             requests:
               cpu: "20"               
@@ -84,51 +73,37 @@ spec:
               cpu: "20"               
               memory: "180Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "60Gi" 
+              # nvidia.com/gpu: 1
           volumeMounts:
-            - mountPath: /dev/vfio
-              name: dev-vfio
             - mountPath: /run/udev
               name: run-udev
-              mountPropagation: Bidirectional
             - mountPath: /dev/hugepages
               name: dev-hugepages
-              mountPropagation: Bidirectional
-            - name: shm
+            - name: dshm
               mountPath: /dev/shm
-              mountPropagation: Bidirectional
-            - mountPath: /opt/inferx/
-              name: opt-inferx
-            - mountPath: /etc/letsencrypt/
-              name: letsencrypt
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            - mountPath: /opt/inferx/config
+              name: opt-inferx-config
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
-            - mountPath: /sys/bus/pci/devices
-              name: pci-devices
-              readOnly: false
-            - mountPath: /sys/class/uio
-              name: uio
-              readOnly: false
-            - mountPath: /sys/kernel/mm/hugepages
-              name: hugepages-sys
-              readOnly: false
-            - mountPath: /home/brad/mnt
-              name: docker-mnt            
+            # - mountPath: /home/brad/mnt
+            #   name: docker-mnt
             - name: dind
               mountPath: /var/lib/docker
-              mountPropagation: Bidirectional
       volumes:
-        - name: dev-vfio
-          hostPath:
-            path: /dev/vfio
-        - name: pci-devices
-          hostPath:
-            path: /sys/bus/pci/devices
-        - name: uio
-          hostPath:
-            path: /sys/class/uio
-        - name: hugepages-sys
-          hostPath:
-            path: /sys/kernel/mm/hugepages
         - name: run-udev
           hostPath:
             path: /run/udev
@@ -138,18 +113,37 @@ spec:
         - name: shm
           hostPath:
             path: /dev/shm
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
-        - name: letsencrypt
+        - name: opt-inferx-log
           hostPath:
-            path: /etc/letsencrypt/
+            path: /opt/inferx/log
+        - name: opt-inferx-config
+          hostPath:
+            path: /opt/inferx/config
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
         - name: docker-runtime
           hostPath:
             path: /var/run/docker/runtime-runc/moby/
-        - name: docker-mnt
-          hostPath:
-            path: /home/brad/mnt
         - name: dind
           hostPath:
             path: /opt/inferx/dind
@@ -173,20 +167,20 @@ spec:
       nodeSelector:
         inferx_nodeType: inferx_file      
       hostPID: true
-      initContainers:
-        - name: wait-for-dependencies
-          image: busybox
-          command:
-            [
-              "sh", "-c",
-              "until nc -z etcd.default.svc.cluster.local 2379 && \
-                     nc -z keycloak.default.svc.cluster.local 8080; do \
-                  echo 'Waiting for dependencies...'; sleep 3; \
-               done"
-            ]
+      # initContainers:
+      #   - name: wait-for-dependencies
+      #     image: busybox
+      #     command:
+      #       [
+      #         "sh", "-c",
+      #         "until nc -z etcd.default.svc.cluster.local 2379 && \
+      #                nc -z keycloak.default.svc.cluster.local 8080; do \
+      #             echo 'Waiting for dependencies...'; sleep 3; \
+      #          done"
+      #       ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_one:v0.1.3
+          image: inferx/inferx_na:v0.1.4
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -203,8 +197,6 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: status.podIP
-          - name: INFERX_ADMIN_APIKEY
-            value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: NODE_NAME
             valueFrom:
               fieldRef:
@@ -220,7 +212,7 @@ spec:
                 containerName: nodeagent
                 resource: requests.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "90Gi"
+            value: "50Gi"
           - name: ENABLE_2MB_PAGE
             value: "false"              
           - name: ALLOC_CPU
@@ -234,15 +226,23 @@ spec:
             requests:
               cpu: "20"
               memory: "180Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "60Gi" 
             limits:
               cpu: "20"
               memory: "180Gi"              # Regular memory request (RAM)
-              nvidia.com/gpu: 1
+              # hugepages-2Mi: "60Gi" 
+              # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
               name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+            - name: shm
+              mountPath: /dev/shm
             # - mountPath: /opt/inferx/
             #   name: opt-inferx
+            # - mountPath: /opt/inferx/config
+            #   name: opt-inferx-config
             # - mountPath: /opt/inferx/bin
             #   name: opt-inferx-bin
             - mountPath: /opt/inferx/work
@@ -255,15 +255,12 @@ spec:
               name: opt-inferx-cache
             - mountPath: /opt/inferx/snapshot
               name: opt-inferx-snapshot
-            - mountPath: /etc/letsencrypt/
-              name: letsencrypt
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
             - mountPath: /home/brad/mnt
               name: docker-mnt
             - name: dind
               mountPath: /var/lib/docker
-              mountPropagation: Bidirectional
       volumes:
         - name: run-udev
           hostPath:
@@ -271,12 +268,18 @@ spec:
         - name: dev-hugepages
           hostPath:
             path: /dev/hugepages
+        - name: shm
+          hostPath:
+            path: /dev/shm
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
         - name: opt-inferx-log
           hostPath:
             path: /opt/inferx/log
+        - name: opt-inferx-config
+          hostPath:
+            path: /opt/inferx/config
         - name: opt-inferx-work
           hostPath:
             path: /opt/inferx/work
@@ -292,9 +295,6 @@ spec:
         - name: opt-inferx-snapshot
           hostPath:
             path: /opt/inferx/snapshot
-        - name: letsencrypt
-          hostPath:
-            path: /etc/letsencrypt/
         - name: docker-runtime
           hostPath:
             path: /var/run/docker/runtime-runc/moby/
@@ -305,17 +305,3 @@ spec:
           hostPath:
             path: /opt/inferx/dind
       restartPolicy: Always
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nodeagent
-spec:
-  type: NodePort
-  selector:
-    app: nodeagent
-  ports:
-    - name: http
-      port: 4000
-      targetPort: 4000
-      nodePort: 31501  

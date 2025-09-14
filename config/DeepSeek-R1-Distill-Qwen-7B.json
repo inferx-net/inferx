@@ -11,7 +11,6 @@
                 "/root/.cache/huggingface/git/DeepSeek-R1-Distill-Qwen-7B",
                 "--served-model-name",
                 "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",

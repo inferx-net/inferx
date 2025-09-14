@@ -1,13 +1,40 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.3
+VERSION := v0.1.4
 NODE_NAME=${shell hostname}
+UBUNTU_VERSION :=$(shell lsb_release -sr)
 
 all: ctl dash spdk runmodel
 
+WATCHED_DIR := ixshare svc
+
+svc: $(shell find $(WATCHED_DIR) -type f)
+	cargo +stable build --bin svc
+	sudo cp -f onenode_logging_config.yaml /opt/inferx/config/
+	sudo cp -f nodeconfig/node*.json /opt/inferx/config/	
+
+svcdeploy: svc
+	- mkdir -p ./target/svc
+	-rm ./target/svc/* -rf
+	- mkdir -p ./target/svc/inferx/config
+	cp -f onenode_logging_config.yaml ./target/one 
+	cp ./target/debug/svc ./target/svc 
+	cp ./deployment/svc.Dockerfile ./target/svc/Dockerfile
+	cp nodeconfig/node*.json ./target/svc/inferx/config
+	cp ./deployment/svc-entrypoint.sh ./target/svc/svc-entrypoint.sh
+	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION) ./target/svc
+	sudo docker image prune -f
+	# sudo docker push inferx/inferx_platform:$(VERSION)
+
+pushsvc: svcdeploy
+	# sudo docker login -u inferx
+	sudo docker tag inferx/inferx_platform:$(VERSION) inferx/inferx_platform:$(VERSION)
+	sudo docker push inferx/inferx_platform:$(VERSION)
+
 ctl:	
-	cargo +stable build --bin ixctl --release
+	# the release version has build error
+	cargo +stable build --bin ixctl 
 	sudo cp -f ixctl_logging_config.yaml /opt/inferx/config/
-	sudo cp -f target/release/ixctl /opt/inferx/bin/
+	sudo cp -f target/debug/ixctl /opt/inferx/bin/
 
 dash:
 	mkdir -p ./target/dashboard
@@ -51,16 +78,26 @@ pushspdk:
 	sudo docker push inferx/spdk-container:$(VERSION)
 	sudo docker tag inferx/spdk-container2:$(VERSION) inferx/spdk-container2:$(VERSION)
 	sudo docker push inferx/spdk-container2:$(VERSION)
+
 sql:
 	sudo cp ./dashboard/sql/create_table.sql /opt/inferx/config
 	sudo cp ./dashboard/sql/secret.sql /opt/inferx/config
+
+postgres:
+	-mkdir -p ./target/postgres
+	-rm ./target/postgres/* -rf
+	cp ./dashboard/sql/*.sql ./target/postgres
+	cp ./deployment/postgres-entrypoint.sh ./target/postgres/postgres-entrypoint.sh
+	cp ./deployment/postgres.Dockerfile ./target/postgres/Dockerfile
+	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION) ./target/postgres
+	sudo docker image prune -f
+	# sudo docker push inferx/inferx_postgres:$(VERSION)
 
 run:
 	-sudo pkill -9 inferx
 	@echo "LOCAL_IP=$$(hostname -I | awk '{print $$1}' | xargs)" > .env
 	@echo "Version=$(VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
-	sudo docker compose -f docker-compose.yml  build
 	- sudo rm -f /opt/inferx/log/inferx.log
 	- sudo rm -f /opt/inferx/log/onenode.log
 	sudo docker compose -f docker-compose.yml up -d --remove-orphans
@@ -72,8 +109,7 @@ runblob:
 	@echo "Version=$(VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	sudo docker compose -f docker-compose_blob.yml  build
-	- sudo rm -f /opt/inferx/log/inferx.log
-	- sudo rm -f /opt/inferx/log/onenode.log
+	- sudo rm -f /opt/inferx/log/*.log
 	sudo docker compose -f docker-compose_blob.yml up -d --remove-orphans
 	cat .env
 	rm .env
@@ -93,18 +129,56 @@ stopdash:
 
 
 runkblob:
-	# sudo kubectl apply -f k8s/spdk.yaml
+	-sudo rm /opt/inferx/log/*.log
+	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/secretdb.yaml
 	sudo kubectl apply -f k8s/db-deployment.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
 	sudo kubectl apply -f k8s/statesvc.yaml
+	sudo kubectl apply -f k8s/gateway.yaml
 	sudo kubectl apply -f k8s/scheduler.yaml
 	sudo kubectl apply -f k8s/nodeagent.yaml
 	sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
+stopall:
+	sudo kubectl delete all --all 
 
-stopnodeagent:
+runstatesvc:
+	sudo kubectl apply -f k8s/statesvc.yaml
+
+stopstatesvc:
+	sudo kubectl delete deployment statesvc
+
+rungateway:
+	sudo kubectl apply -f k8s/gateway.yaml
+
+stopgateway:
+	sudo kubectl delete deployment gateway
+
+runscheduler:
+	sudo kubectl apply -f k8s/scheduler.yaml
+
+stopscheduler:
+	sudo kubectl delete deployment scheduler
+
+runsvc:
+	sudo kubectl apply -f k8s/statesvc.yaml
+	sudo kubectl apply -f k8s/gateway.yaml
+	sudo kubectl apply -f k8s/scheduler.yaml
+
+stopsvc:
+	-sudo kubectl delete deployment scheduler
+	-sudo kubectl delete deployment gateway
+	-sudo kubectl delete deployment statesvc
+
+runna:
+	# sudo rm /opt/inferx/log/*.log
+	sudo kubectl apply -f k8s/nodeagent.yaml
+stopna:
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
+restartgw:
+	sudo kubectl delete deployment gateway
+	sudo kubectl apply -f k8s/gateway.yaml

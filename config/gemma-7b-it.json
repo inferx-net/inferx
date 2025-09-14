@@ -14,15 +14,16 @@
                 "--gpu-memory-utilization",
                 " 0.99",
                 "--max-model-len",
-                "2000"
+                "2000",
+                "--tensor-parallel-size=2"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 60000,
+                "Mem": 40000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 20000
+                    "Count": 2,
+                    "vRam": 12000
                 }
             },
             "envs": [

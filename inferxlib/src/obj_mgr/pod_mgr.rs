@@ -1,4 +1,4 @@
-// Copyright (c) 2021 Quark Container Authors / 2014 The Kubernetes Authors
+// Copyright (c) 2025 InferX Authors / 2014 The Kubernetes Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -200,7 +200,7 @@ pub enum PodState {
     Ready,
     // a state preserved for use to draining requests
     Draining,
-    // a state qlet is killing the pod
+    // a state nodeagent is killing the pod
     Terminating,
     // a normal pod exit status when nodemgr request to terminate
     Terminated,

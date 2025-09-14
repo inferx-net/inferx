@@ -11,7 +11,6 @@
                 "/root/.cache/huggingface/git/DeepSeek-R1-Distill-Llama-8B",
                 "--served-model-name",
                 "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",

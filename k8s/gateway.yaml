@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    app: gateway
+spec: 
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      hostPID: true
+      containers:
+        - name: gateway
+          image: inferx/inferx_platform:v0.1.4
+          imagePullPolicy: IfNotPresent
+          livenessProbe:          # <-- Kubernetes keepalive check
+            httpGet:
+              path: /
+              port: 4000
+            initialDelaySeconds: 10   # wait before first probe
+            periodSeconds: 10         # ping every 10s
+            timeoutSeconds: 2         # fail if no response in 2s
+            failureThreshold: 3
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP          
+          - name: RUN_SERVICE
+            value: "Gateway"
+          - name: INFERX_ADMIN_APIKEY
+            value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
+          - name: AUDITDB_ADDR
+            value: "postgresql://audit_user:123456@db:5432/auditdb"
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: ETCD_ADDRS
+            value: "http://etcd:2379"
+          volumeMounts:
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+          command: ["./svc", "/opt/inferx/config/node.json"]
+      volumes:
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+      nodePort: 31501  
+

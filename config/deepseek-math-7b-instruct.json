@@ -11,7 +11,6 @@
                 "/root/.cache/huggingface/git/deepseek-math-7b-instruct",
                 "--served-model-name",
                 "deepseek-ai/deepseek-math-7b-instruct",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",

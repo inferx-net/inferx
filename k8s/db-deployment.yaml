@@ -27,7 +27,7 @@ spec:
         inferx_storage: data      
       containers:
         - name: postgres
-          image: postgres:14.5
+          image: inferx/inferx_postgres:v0.1.4
           imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_USER
@@ -38,20 +38,16 @@ spec:
               value: auditdb
             - name: PGDATA
               value: /data/postgres
+            - name: INIT_SQL
+              value: create_table.sql  
           volumeMounts:
             - name: db-data
               mountPath: /data/postgres
-            - name: init-sql
-              mountPath: /docker-entrypoint-initdb.d/db.sql
       volumes:
         - name: db-data
           hostPath:
             path: /opt/inferx/data/postgres
             type: DirectoryOrCreate
-        - name: init-sql
-          hostPath:
-            path: /opt/inferx/config/create_table.sql
-            type: File
 ---
 apiVersion: v1
 kind: Service
