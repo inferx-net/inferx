@@ -36,7 +36,7 @@ use crate::metastore::unique_id::UID;
 use crate::na::RemoveSnapshotReq;
 use crate::na::TerminatePodReq;
 use crate::peer_mgr::PeerMgr;
-use crate::peer_mgr::NA_CONFIG;
+use crate::scheduler::scheduler::SCHEDULER_CONFIG;
 use inferxlib::data_obj::DeltaEvent;
 use inferxlib::data_obj::EventType;
 use inferxlib::obj_mgr::func_mgr::*;
@@ -2145,7 +2145,7 @@ pub enum ListType {
 pub async fn GetClient() -> Result<CacherClient> {
     use rand::Rng;
 
-    let addrs = &NA_CONFIG.stateSvcAddrs;
+    let addrs = &SCHEDULER_CONFIG.stateSvcAddrs;
     let size = addrs.len();
     let offset: usize = rand::thread_rng().gen_range(0..size);
     for i in 0..size {

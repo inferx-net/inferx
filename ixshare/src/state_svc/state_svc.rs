@@ -25,6 +25,8 @@ use tonic::{Request, Response, Status};
 use super::IxAggrStore::IxAggrStore;
 use crate::common::*;
 use crate::etcd::etcd_store::EtcdStore;
+use crate::ixmeta;
+use crate::ixmeta::req_watching_service_server::ReqWatchingServiceServer;
 use crate::metastore::cache_store::CacheStore;
 use crate::metastore::informer::EventHandler;
 use crate::metastore::informer_factory::InformerFactory;
@@ -36,8 +38,6 @@ use crate::metastore::unique_id::Uid;
 use crate::node_config::StateSvcConfig;
 use crate::node_config::NODE_CONFIG;
 use crate::pgsql::listener::Listener;
-use crate::ixmeta;
-use crate::ixmeta::req_watching_service_server::ReqWatchingServiceServer;
 use crate::state_svc::statesvc_register::StateSvcRegister;
 use inferxlib::data_obj::*;
 use inferxlib::obj_mgr::func_mgr::FuncMgr;
@@ -650,16 +650,17 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
     use tonic::transport::Server;
 
     info!("StateService config {:#?}", *STATESVC_CONFIG);
-    let stateSvc =
-        StateSvc::New(&STATESVC_CONFIG.etcdAddresses, &STATESVC_CONFIG.auditdbAddr).await?;
+    let stateSvc = StateSvc::New(&STATESVC_CONFIG.etcdAddrs, &STATESVC_CONFIG.auditdbAddr).await?;
 
     let stateSvcRegister =
-        StateSvcRegister::New(&STATESVC_CONFIG.etcdAddresses, "ss", "0.0.0.0", 8890).await?;
+        StateSvcRegister::New(&STATESVC_CONFIG.etcdAddrs, "ss", "0.0.0.0", 8890).await?;
 
     let nodeagentAggrStore = IxAggrStore::New(&stateSvc.svcDir.ChannelRev()).await?;
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.NodeStore());
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.PodStore());
-    stateSvc.svcDir.AddCacher(nodeagentAggrStore.SnapshotStore());
+    stateSvc
+        .svcDir
+        .AddCacher(nodeagentAggrStore.SnapshotStore());
     let nodeagentAggrStoreFuture = nodeagentAggrStore.Process();
     let stateSvcAddr = format!("0.0.0.0:{}", STATESVC_CONFIG.stateSvcPort);
     let stateSvcFuture = Server::builder()

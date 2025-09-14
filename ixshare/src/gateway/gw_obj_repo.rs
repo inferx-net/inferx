@@ -28,7 +28,6 @@ use crate::metastore::informer_factory::InformerFactory;
 use crate::metastore::selection_predicate::ListOption;
 use crate::metastore::store::ThreadSafeStore;
 use crate::na;
-use crate::peer_mgr::NA_CONFIG;
 use inferxlib::data_obj::*;
 use inferxlib::obj_mgr::funcsnapshot_mgr::ContainerSnapshot;
 use inferxlib::obj_mgr::funcsnapshot_mgr::FuncSnapshot;
@@ -45,6 +44,7 @@ use inferxlib::obj_mgr::namespace_mgr::*;
 use inferxlib::obj_mgr::pod_mgr::PodMgr;
 
 use super::func_agent_mgr::FuncAgentMgr;
+use super::http_gateway::GATEWAY_CONFIG;
 
 lazy_static::lazy_static! {
     pub static ref SCHEDULER_URL : Mutex<Option<String>> = Mutex::new(None);
@@ -191,7 +191,7 @@ impl GwObjRepo {
     pub const LEASE_TTL: i64 = 1; // seconds
 
     pub async fn Process(&self) -> Result<()> {
-        let store = EtcdStore::NewWithEndpoints(&NA_CONFIG.etcdAddrs, false).await?;
+        let store = EtcdStore::NewWithEndpoints(&GATEWAY_CONFIG.etcdAddrs, false).await?;
 
         let leaseId = store.LeaseGrant(Self::LEASE_TTL).await?;
 
@@ -202,7 +202,7 @@ impl GwObjRepo {
     }
 
     pub async fn GetLeader(store: &EtcdStore, leaseId: i64) -> Result<()> {
-        let info = GatewayInfo::New(&NA_CONFIG.nodeName);
+        let info = GatewayInfo::New(&GATEWAY_CONFIG.nodeName);
         loop {
             match store.Create(&info.DataObject(), leaseId).await {
                 Ok(_) => break,

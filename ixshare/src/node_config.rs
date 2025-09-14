@@ -154,6 +154,122 @@ pub fn GetLocalIp(hostIpCidr: &str) -> Option<String> {
 }
 
 #[derive(Debug)]
+pub struct GatewayConfig {
+    pub nodeName: String,
+    pub etcdAddrs: Vec<String>,
+    pub stateSvcAddrs: Vec<String>,
+    pub nodeIp: String,
+    pub schedulerPort: u16,
+    pub auditdbAddr: String,
+    pub secretStoreAddr: String,
+    pub keycloakconfig: KeycloadConfig,
+    pub inferxAdminApikey: String,
+    pub gatewayPort: u16,
+}
+
+impl GatewayConfig {
+    pub fn New(config: &NodeConfig) -> Self {
+        assert!(config.etcdAddrs.len() > 0);
+        assert!(config.stateSvcAddrs.len() > 0);
+
+        let nodeName = match std::env::var("NODE_NAME") {
+            Ok(s) => {
+                info!("get nodename from env NODE_NAME: {}", &s);
+                s
+            }
+            Err(_) => {
+                if config.nodeName.len() == 0 {
+                    gethostname::gethostname()
+                        .to_str()
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    config.nodeName.clone()
+                }
+            }
+        };
+
+        let etcdAddrs = match std::env::var("ETCD_ADDR") {
+            Ok(s) => vec![s],
+            Err(_) => config.etcdAddrs.clone(),
+        };
+
+        let nodeIp = if config.nodeIp.len() == 0 {
+            assert!(config.hostIpCidr.len() != 0);
+            let nodeIp = GetLocalIp(&config.hostIpCidr).unwrap();
+            nodeIp
+        } else {
+            config.nodeIp.clone()
+        };
+
+        let schedulerPort = if config.schedulerPort == 0 {
+            DEFAULT_SCHEDULER_PORT
+        } else {
+            config.schedulerPort
+        };
+
+        let stateSvcAddrs = match std::env::var("STATESVC_ADDR") {
+            Ok(s) => vec![s],
+            Err(_) => config.stateSvcAddrs.clone(),
+        };
+
+        let secretStoreAddr = match std::env::var("SECRDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.secretStoreAddr.clone(),
+        };
+
+        let auditdbAddr = match std::env::var("AUDITDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.auditdbAddr.clone(),
+        };
+
+        let keycloakUrl = match std::env::var("KEYCLOAK_URL") {
+            Ok(s) => s,
+            Err(_) => config.keycloakconfig.url.clone(),
+        };
+
+        let keycloakRealm = match std::env::var("KEYCLOAK_REALM") {
+            Ok(s) => s,
+            Err(_) => config.keycloakconfig.realm.clone(),
+        };
+
+        let inferxAdminApikey = match std::env::var("INFERX_ADMIN_APIKEY") {
+            Ok(s) => {
+                info!("get inferxAdminApikey from env INFERX_ADMIN_APIKEY: {}", &s);
+                s
+            }
+            Err(_) => String::new(),
+        };
+
+        let gatewayPort = if config.gatewayPort == 0 {
+            DEFAULT_GATEWAY_PORT
+        } else {
+            config.gatewayPort
+        };
+
+        let ret = Self {
+            nodeName: nodeName,
+            etcdAddrs: etcdAddrs,
+            stateSvcAddrs: stateSvcAddrs,
+            nodeIp: nodeIp,
+            schedulerPort: schedulerPort,
+            secretStoreAddr: secretStoreAddr,
+            auditdbAddr: auditdbAddr,
+            keycloakconfig: KeycloadConfig {
+                url: keycloakUrl,
+                realm: keycloakRealm,
+            },
+            inferxAdminApikey: inferxAdminApikey,
+            gatewayPort: gatewayPort,
+        };
+
+        error!("GatewayConfig is {:#?}", &ret);
+
+        return ret;
+    }
+}
+
+#[derive(Debug)]
 pub struct SchedulerConfig {
     pub etcdAddrs: Vec<String>,
     pub stateSvcAddrs: Vec<String>,
@@ -205,7 +321,7 @@ impl SchedulerConfig {
 
 #[derive(Debug)]
 pub struct StateSvcConfig {
-    pub etcdAddresses: Vec<String>,
+    pub etcdAddrs: Vec<String>,
     pub stateSvcPort: u16,
     pub auditdbAddr: String,
 }
@@ -229,7 +345,7 @@ impl StateSvcConfig {
         };
 
         let ret = Self {
-            etcdAddresses: etcdAddrs,
+            etcdAddrs,
             stateSvcPort: stateSvcPort,
             auditdbAddr: auditdbAddr,
         };
@@ -281,7 +397,6 @@ pub struct NodeAgentConfig {
     pub tsotCniPort: u16,
     pub tsotSvcPort: u16,
     pub stateSvcPort: u16,
-    pub gatewayPort: u16,
 
     pub cidr: Mutex<String>,
     pub tsotSocketPath: String,
@@ -291,7 +406,6 @@ pub struct NodeAgentConfig {
     pub enableBlobStore: bool,
     pub memcache: ShareMem,
     pub tlsconfig: TLSConfig,
-    pub inferxAdminApikey: String,
     pub auditdbAddr: String,
     pub secretStoreAddr: String,
 }
@@ -309,14 +423,6 @@ impl NodeAgentConfig {
             nodeIp
         } else {
             config.nodeIp.clone()
-        };
-
-        let inferxAdminApikey = match std::env::var("INFERX_ADMIN_APIKEY") {
-            Ok(s) => {
-                info!("get inferxAdminApikey from env INFERX_ADMIN_APIKEY: {}", &s);
-                s
-            }
-            Err(_) => String::new(),
         };
 
         let nodeName = match std::env::var("NODE_NAME") {
@@ -358,12 +464,6 @@ impl NodeAgentConfig {
             DEFAULT_NASTATESVC_PORT
         } else {
             config.nodeagentStateSvcPort
-        };
-
-        let gatewayPort = if config.gatewayPort == 0 {
-            DEFAULT_GATEWAY_PORT
-        } else {
-            config.gatewayPort
         };
 
         let tsotSocketPath = if config.tsotSocketPath.len() == 0 {
@@ -555,7 +655,6 @@ impl NodeAgentConfig {
             tsotCniPort: tsotCniPort,
             tsotSvcPort: tsotSvcPort,
             stateSvcPort: nodeagentStateSvcPort,
-            gatewayPort: gatewayPort,
 
             cidr: Mutex::new(String::new()),
             tsotSocketPath: tsotSocketPath,
@@ -565,7 +664,6 @@ impl NodeAgentConfig {
             enableBlobStore: config.enableBlobStore,
             memcache: config.sharemem.clone(),
             tlsconfig: config.tlsconfig.clone(),
-            inferxAdminApikey: inferxAdminApikey,
             auditdbAddr: auditdbAddr,
             secretStoreAddr: secretStoreAddr,
         };

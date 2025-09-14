@@ -24,7 +24,6 @@ use tokio::sync::{mpsc, Notify};
 use crate::audit::SqlAudit;
 use crate::common::*;
 use crate::gateway::scheduler_client::SchedulerClient;
-use crate::peer_mgr::NA_CONFIG;
 use crate::scheduler::scheduler_handler::GetClient;
 use inferxlib::obj_mgr::func_mgr::*;
 
@@ -43,9 +42,9 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         None => (),
     }
 
-    let namespaceStore = NamespaceStore::New(&NA_CONFIG.etcdAddrs.to_vec()).await?;
+    let namespaceStore = NamespaceStore::New(&GATEWAY_CONFIG.etcdAddrs.to_vec()).await?;
 
-    let addr = NA_CONFIG.auditdbAddr.clone();
+    let addr = GATEWAY_CONFIG.auditdbAddr.clone();
     if addr.len() == 0 {
         // auditdb is not enabled
         return Ok(());
@@ -54,7 +53,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     let sqlaudit = SqlAudit::New(&addr).await?;
     let client = GetClient().await?;
 
-    let objRepo = GwObjRepo::New(NA_CONFIG.stateSvcAddrs.to_vec())
+    let objRepo = GwObjRepo::New(GATEWAY_CONFIG.stateSvcAddrs.to_vec())
         .await
         .unwrap();
 

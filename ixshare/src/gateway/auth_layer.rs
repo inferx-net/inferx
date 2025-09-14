@@ -28,7 +28,7 @@ use std::ops::Bound::Included;
 use std::ops::Bound::Unbounded;
 
 use super::secret::{Apikey, SqlSecret};
-use crate::peer_mgr::NA_CONFIG;
+use crate::gateway::http_gateway::GATEWAY_CONFIG;
 use crate::{common::*, node_config::NODE_CONFIG};
 
 pub const SECRET_ADDR: &str = "postgresql://audit_user:123456@localhost:5431/secretdb";
@@ -40,9 +40,14 @@ pub async fn GetTokenCache() -> &'static TokenCache {
         .get_or_init(|| async {
             info!(
                 "GetTokenCache config {:?} secretstore addr {}",
-                &NODE_CONFIG.keycloakconfig, &NA_CONFIG.secretStoreAddr
+                &NODE_CONFIG.keycloakconfig, &GATEWAY_CONFIG.secretStoreAddr
             );
-            match TokenCache::New(&NA_CONFIG.secretStoreAddr, &NODE_CONFIG.keycloakconfig).await {
+            match TokenCache::New(
+                &GATEWAY_CONFIG.secretStoreAddr,
+                &GATEWAY_CONFIG.keycloakconfig,
+            )
+            .await
+            {
                 Err(e) => {
                     error!("GetTokenCache error {:?}", e);
                     panic!();
@@ -372,7 +377,8 @@ impl TokenCache {
     }
 
     pub async fn GetTokenByApikey(&self, apikey: &str) -> Result<Arc<AccessToken>> {
-        if NA_CONFIG.inferxAdminApikey.len() > 0 && apikey == &NA_CONFIG.inferxAdminApikey {
+        if GATEWAY_CONFIG.inferxAdminApikey.len() > 0 && apikey == &GATEWAY_CONFIG.inferxAdminApikey
+        {
             return Ok(Arc::new(AccessToken::InferxAdminToken()));
         }
 

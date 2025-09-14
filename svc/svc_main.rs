@@ -27,7 +27,6 @@ use std::io::Write;
 use std::sync::Arc;
 
 use ixshare::gateway::func_agent_mgr::GatewaySvc;
-use ixshare::peer_mgr::NA_CONFIG;
 use ixshare::print::LOG;
 use tokio::sync::Notify;
 
@@ -36,7 +35,7 @@ use ixshare::metastore::unique_id::{UniqueId, UID};
 use ixshare::node_config::NODE_CONFIG;
 use ixshare::scheduler::scheduler::ExecSchedulerSvc;
 
-use ixshare::state_svc::state_svc::StateService;
+use ixshare::state_svc::state_svc::{StateService, STATESVC_CONFIG};
 
 pub fn LogPanic(info: &str) {
     // std::fs::write("/opt/inferx/log/panic.log", info).expect("Unable to write file");
@@ -116,7 +115,7 @@ async fn main() -> Result<()> {
         },
     };
 
-    let Uid = UniqueId::New(&NA_CONFIG.etcdAddrs).await?;
+    let Uid = UniqueId::New(&STATESVC_CONFIG.etcdAddrs).await?;
     UID.set(Uid).unwrap();
 
     match runService {

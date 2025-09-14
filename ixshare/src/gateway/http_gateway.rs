@@ -50,8 +50,7 @@ use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
-use crate::node_config::NODE_CONFIG;
-use crate::peer_mgr::NA_CONFIG;
+use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
@@ -61,6 +60,11 @@ use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::secret::Apikey;
 
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
+
+lazy_static::lazy_static! {
+    #[derive(Debug)]
+    pub static ref GATEWAY_CONFIG: GatewayConfig = GatewayConfig::New(&NODE_CONFIG);
+}
 
 pub fn GatewayId() -> i64 {
     return GATEWAY_ID.load(std::sync::atomic::Ordering::Relaxed);
@@ -151,7 +155,7 @@ impl HttpGateway {
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
             .layer(auth_layer);
 
-        let tlsconfig = NA_CONFIG.tlsconfig.clone();
+        let tlsconfig = NODE_CONFIG.tlsconfig.clone();
 
         println!("tls config is {:#?}", &tlsconfig);
         if tlsconfig.enable {
@@ -163,14 +167,14 @@ impl HttpGateway {
             .await
             .unwrap();
 
-            let addr = SocketAddr::from(([0, 0, 0, 0], NA_CONFIG.gatewayPort));
+            let addr = SocketAddr::from(([0, 0, 0, 0], GATEWAY_CONFIG.gatewayPort));
             println!("listening on tls {}", &addr);
             axum_server::bind_rustls(addr, config)
                 .serve(app.into_make_service())
                 .await
                 .unwrap();
         } else {
-            let gatewayUrl = format!("0.0.0.0:{}", NA_CONFIG.gatewayPort);
+            let gatewayUrl = format!("0.0.0.0:{}", GATEWAY_CONFIG.gatewayPort);
             let listener = tokio::net::TcpListener::bind(gatewayUrl).await.unwrap();
             println!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app).await.unwrap();
