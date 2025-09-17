@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.4
+VERSION := v0.1.5
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -32,7 +32,8 @@ pushsvc: svcdeploy
 
 ctl:	
 	# the release version has build error
-	cargo +stable build --bin ixctl 
+	OPENSSL_STATIC=1 cargo +stable build --bin ixctl
+	# sudo strip target/debug/ixctl
 	sudo cp -f ixctl_logging_config.yaml /opt/inferx/config/
 	sudo cp -f target/debug/ixctl /opt/inferx/bin/
 

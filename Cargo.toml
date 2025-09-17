@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 inferxlib = { path = "./inferxlib" }
 ixshare = { path = "./ixshare" }
+openssl = { version = "0.10", features = ["vendored"] }
 
 libc = "0.2.94"
 tokio = { version = "1.25", features = ["full"] }

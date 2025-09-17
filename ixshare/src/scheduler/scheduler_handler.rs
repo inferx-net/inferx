@@ -282,7 +282,10 @@ impl FuncStatus {
 
     pub fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
         let podKey = pod.pod.PodKey();
-        assert!(self.pods.insert(podKey, pod.clone()).is_some());
+        if self.pods.insert(podKey.clone(), pod.clone()).is_none() {
+            error!("podkey is {}", &podKey);
+            panic!("podkey is {}", &podKey);
+        }
 
         if pod.pod.object.status.state == PodState::Ready {
             loop {
