@@ -604,8 +604,32 @@ pub async fn auth_transform_keycloaktoken(
             KeycloakAuthStatus::Failure(_) => match req.headers().get("Authorization") {
                 None => GetTokenCache().await.anonymous.clone(),
                 Some(h) => {
-                    let v = h.to_str().ok().unwrap();
-                    let apikey = v.strip_prefix("Bearer ").unwrap().to_owned();
+                    // let v = h.to_str().ok().unwrap();
+
+                    let v = match h.to_str() {
+                        Ok(val) => val,
+                        Err(_) => {
+                            let body = Body::from(format!("invalid auth token"));
+                            let resp = Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .body(body)
+                                .unwrap();
+                            return Ok(resp);
+                        }
+                    };
+
+                    // let apikey = v.strip_prefix("Bearer ").unwrap().to_owned();
+                    let apikey = match v.strip_prefix("Bearer ") {
+                        Some(key) => key.to_owned(),
+                        None => {
+                            let body = Body::from(format!("invalid auth token"));
+                            let resp = Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .body(body)
+                                .unwrap();
+                            return Ok(resp);
+                        }
+                    };
                     match GetTokenCache().await.GetTokenByApikey(&apikey).await {
                         Err(_) => {
                             let body = Body::from(format!("invalid auth token"));
