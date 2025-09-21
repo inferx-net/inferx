@@ -76,7 +76,7 @@ pub fn Parse() -> Result<Arguments> {
     let matches = App::new("ixctl")
         .about("ixctl - inferx client command line tool")
         .setting(AppSettings::ColoredHelp)
-        .author(crate_authors!("\n"))
+        .author("InferX Team")
         .setting(AppSettings::SubcommandRequired)
         .version(crate_version!())
         .arg(

@@ -64,7 +64,7 @@ pub enum RunService {
 #[tokio::main(flavor = "multi_thread", worker_threads = 16)]
 async fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|info: &std::panic::PanicHookInfo<'_>| {
-        let backtrace = backtrace::Backtrace::new();
+        let backtrace: backtrace::Backtrace = backtrace::Backtrace::new();
         if let Some(s) = info.payload().downcast_ref::<&str>() {
             eprintln!("Panic message: {}", s);
             let info = format!("Panic message: {}", s);
