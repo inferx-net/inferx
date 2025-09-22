@@ -90,7 +90,7 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
     ) -> SResult<Response<ixmeta::CreateResponseMessage>, Status> {
         let req = request.get_ref();
 
-        let dataobj: DataObject<Value> = match &req.obj {
+        let mut dataobj: DataObject<Value> = match &req.obj {
             None => {
                 return Ok(Response::new(ixmeta::CreateResponseMessage {
                     error: format!("create error: invalid request"),
@@ -99,6 +99,10 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
             }
             Some(o) => o.into(),
         };
+
+        let version = self.write().unwrap().channelRev.Next();
+        dataobj.channelRev = version;
+        dataobj.revision = version;
 
         let cacher = match self.GetCacher(&dataobj.objType) {
             None => {
@@ -131,7 +135,7 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
         request: Request<ixmeta::UpdateRequestMessage>,
     ) -> SResult<Response<ixmeta::UpdateResponseMessage>, Status> {
         let req = request.get_ref();
-        let dataobj: DataObject<Value> = match &req.obj {
+        let mut dataobj: DataObject<Value> = match &req.obj {
             None => {
                 return Ok(Response::new(ixmeta::UpdateResponseMessage {
                     error: format!("update error: invalid request"),
@@ -140,6 +144,10 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
             }
             Some(o) => o.into(),
         };
+
+        let version = self.write().unwrap().channelRev.Next();
+        dataobj.channelRev = version;
+        dataobj.revision = version;
 
         let cacher = match self.GetCacher(&dataobj.objType) {
             None => {
@@ -194,6 +202,8 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
             "{}/{}/{}/{}",
             &req.obj_type, &req.tenant, &req.namespace, &req.name
         );
+
+        let _version = self.write().unwrap().channelRev.Next();
 
         match cacher
             .Get(&req.tenant, &req.namespace, &req.name, req.expect_rev)
