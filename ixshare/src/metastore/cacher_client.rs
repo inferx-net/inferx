@@ -54,7 +54,22 @@ impl CacherClient {
     }
 
     pub async fn NewUds(path: String) -> Result<Self> {
-        let inner = CacherClientInner::NewUds(path).await?;
+        let inner;
+        loop {
+            let ret = CacherClientInner::NewUds(path.clone()).await;
+            match ret {
+                Err(e) => {
+                    error!("CacherClient waiting for statesvc ready {:?}", e);
+                }
+                Ok(c) => {
+                    inner = c;
+                    break;
+                }
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+        }
+
         return Ok(Self(Arc::new(TMutex::new(inner))));
     }
 
