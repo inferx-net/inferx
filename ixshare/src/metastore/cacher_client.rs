@@ -53,6 +53,11 @@ impl CacherClient {
         return Ok(Self(Arc::new(TMutex::new(inner))));
     }
 
+    pub async fn NewUds(path: String) -> Result<Self> {
+        let inner = CacherClientInner::NewUds(path).await?;
+        return Ok(Self(Arc::new(TMutex::new(inner))));
+    }
+
     pub async fn Create(&self, obj: &DataObject<Value>) -> Result<i64> {
         let mut inner = self.lock().await;
         return inner.Create(obj).await;
@@ -125,6 +130,22 @@ pub struct CacherClientInner {
 impl CacherClientInner {
     pub async fn New(ixmetaSvcAddr: String) -> Result<Self> {
         let client = IxMetaServiceClient::connect(ixmetaSvcAddr).await?;
+        return Ok(Self { client: client });
+    }
+
+    pub async fn NewUds(ixmetaSvcAddr: String) -> Result<Self> {
+        use tokio::net::UnixStream;
+        use tonic::transport::{Endpoint, Uri};
+        use tower::service_fn;
+
+        let channel = Endpoint::try_from("http://[::]:50051")? // dummy URI
+            .connect_with_connector(service_fn(move |_: Uri| {
+                let path = ixmetaSvcAddr.to_string();
+                async move { UnixStream::connect(path).await }
+            }))
+            .await?;
+
+        let client = IxMetaServiceClient::new(channel);
         return Ok(Self { client: client });
     }
 
