@@ -143,6 +143,22 @@ impl FuncPod {
         );
     }
 
+    pub fn Uid(&self) -> Result<uuid::Uuid> {
+        match uuid::Uuid::parse_str(&self.object.spec.uid) {
+            Ok(u) => {
+                return Ok(u);
+            }
+            Err(e) => {
+                return Err(Error::CommonError(format!(
+                    "FuncPod {} get invalid uid {} error {:?}",
+                    self.FuncKey(),
+                    &self.object.spec.uid,
+                    e
+                )))
+            }
+        }
+    }
+
     pub fn ImageName(&self) -> String {
         return self.object.spec.containers[0].image.clone();
     }
@@ -198,8 +214,6 @@ pub enum PodState {
     Loading,
     // scheduler enable the pod to serve new requests
     Ready,
-    // a state preserved for use to draining requests
-    Draining,
     // a state nodeagent is killing the pod
     Terminating,
     // a normal pod exit status when nodemgr request to terminate
@@ -223,16 +237,8 @@ pub enum PodState {
     //
     ResumeDone,
 
-    // Start to hibernate the XPU HBM data to DRAM
-    MemHibernating,
     // Finish to hibernate the XPU HBM data to DRAM
     MemHibernated,
-    // Start to hibernate the Container state to Disk
-    DiskHibernating,
-    // finish to hibernate the Container state to Disk
-    DiskHibernated,
-    // transition state between MemHibernated to Running
-    Waking,
     // transition state between Snapshot to Snapshoted
     Snapshoting,
 
