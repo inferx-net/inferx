@@ -96,6 +96,7 @@ services:
       - ALLOC_CPU=24
       - CACHE_MEMORY=40Gi
       - ENABLE_2MB_PAGE=false
+      - CONTEXT_OVERHEAD=500
       - ENALBE_BLOB=false
       - BLOB_BUFF=4Gi
       - ETCD_ADDR=http://localhost:2379

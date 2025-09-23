@@ -214,7 +214,9 @@ spec:
           - name: CACHE_MEMORY
             value: "50Gi"
           - name: ENABLE_2MB_PAGE
-            value: "false"              
+            value: "false"  
+          - name: CONTEXT_OVERHEAD
+            value: "500"         
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:

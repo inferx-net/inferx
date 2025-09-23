@@ -625,6 +625,17 @@ impl NodeAgentConfig {
             Err(_) => resources.maxContextPerGPU,
         };
 
+        resources.contextOverhead = match std::env::var("CONTEXT_OVERHEAD") {
+            Ok(s) => {
+                info!("get context_overhead from env CONTEXT_OVERHEAD: {}", &s);
+                match s.parse::<u64>() {
+                    Err(_) => resources.contextOverhead,
+                    Ok(c) => c,
+                }
+            }
+            Err(_) => resources.contextOverhead,
+        };
+
         let stateSvcAddrs = match std::env::var("STATESVC_ADDR") {
             Ok(s) => vec![s],
             Err(_) => config.stateSvcAddrs.clone(),
