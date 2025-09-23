@@ -175,7 +175,7 @@ stopsvc:
 	-sudo kubectl delete deployment statesvc
 
 runna:
-	sudo rm /opt/inferx/log/*.log
+	-sudo rm /opt/inferx/log/*.log
 	sudo kubectl apply -f k8s/nodeagent.yaml
 stopna:
 	sudo kubectl delete DaemonSet nodeagent-blob

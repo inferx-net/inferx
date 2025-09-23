@@ -18,7 +18,7 @@ spec:
       hostPID: true
       containers:
         - name: nodeagent
-          image: inferx/inferx_na:v0.1.4
+          image: inferx/inferx_na:v0.1.5
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -85,8 +85,8 @@ spec:
             #   name: opt-inferx
             - mountPath: /opt/inferx/config
               name: opt-inferx-config
-            # - mountPath: /opt/inferx/bin
-            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
@@ -180,7 +180,7 @@ spec:
       #       ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_na:v0.1.4
+          image: inferx/inferx_na:v0.1.5
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -243,8 +243,8 @@ spec:
             #   name: opt-inferx
             # - mountPath: /opt/inferx/config
             #   name: opt-inferx-config
-            # - mountPath: /opt/inferx/bin
-            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
