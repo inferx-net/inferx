@@ -1356,7 +1356,7 @@ impl SchedulerHandler {
                 let pendingCnt = funcStatus.pendingPods.len();
                 let podcnt = funcStatus.pendingPods.len() + funcStatus.pods.len();
 
-                let keepaliveCnt = 2;
+                let keepaliveCnt = 8;
                 needRestore = (pendingCnt == 0) && (podcnt < keepaliveCnt);
 
                 // error!(
