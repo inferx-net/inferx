@@ -1022,25 +1022,28 @@ impl SchedulerHandler {
         // go through candidate list to look for node has enough free resource, if so return
         for nodename in candidateNodes {
             let node = self.nodes.get(nodename).unwrap();
-            let mut standbyPod = 0;
-            for (podname, pod) in &node.pods {
-                if pod.pod.object.status.state != PodState::Standby {
-                    continue;
+
+            if !createSnapshot {
+                let mut standbyPod = 0;
+                for (podname, pod) in &node.pods {
+                    if pod.pod.object.status.state != PodState::Standby {
+                        continue;
+                    }
+
+                    if pod.pod.FuncKey() != func.Id() {
+                        continue;
+                    }
+
+                    if node.pendingPods.contains_key(podname) {
+                        continue;
+                    }
+
+                    standbyPod += 1;
                 }
 
-                if pod.pod.FuncKey() != func.Id() {
+                if standbyPod == 0 {
                     continue;
                 }
-
-                if node.pendingPods.contains_key(podname) {
-                    continue;
-                }
-
-                standbyPod += 1;
-            }
-
-            if standbyPod == 0 {
-                continue;
             }
 
             let nr = node.available.clone();
