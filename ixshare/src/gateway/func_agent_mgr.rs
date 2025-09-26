@@ -229,6 +229,8 @@ impl FuncAgentInner {
                 worker.AssignReq(req);
                 self.availableSlot -= 1;
                 return;
+            } else {
+                // error!("can't assign req to {:?}", &worker.workerId)
             }
         }
 
@@ -340,9 +342,10 @@ impl FuncAgent {
                     if let Some(update) = stateUpdate {
                         match update {
                             WorkerUpdate::Ready(worker) => {
-                                let slot = worker.AvailableSlot();
+                                let slot = worker.ReadySlot();
                                 let oldslot = worker.contributeSlot.swap(slot, Ordering::SeqCst);
                                 assert!(oldslot == 0);
+                                
                                 self.IncrSlot(slot);
                                 self.TryProcessOneReq();
                             }
@@ -355,7 +358,6 @@ impl FuncAgent {
                                 self.DecrSlot(slot);
                                 let workerId = worker.workerId.clone();
                                 worker.ReturnWorker().await.ok();
-
 
                                 let funckey = self.FuncKey();
 
@@ -374,8 +376,8 @@ impl FuncAgent {
                                                 }
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("WorkerUpdate::WorkerFail fail3 {:?}", e);
+                                        Err(_e) => {
+                                            // error!("WorkerUpdate::WorkerFail fail3 {:?}", e);
 
                                             break;
                                         }
@@ -498,12 +500,24 @@ impl FuncAgent {
 
     pub fn IncrSlot(&self, cnt: usize) -> usize {
         let mut l = self.lock().unwrap();
+        // error!(
+        //     "IncrSlot cnt {} {} available {}",
+        //     l.Key(),
+        //     cnt,
+        //     l.availableSlot
+        // );
         l.availableSlot += cnt;
         return l.availableSlot;
     }
 
     pub fn DecrSlot(&self, cnt: usize) -> usize {
         let mut l = self.lock().unwrap();
+        // error!(
+        //     "DecrSlot cnt {} {} available {}",
+        //     l.Key(),
+        //     cnt,
+        //     l.availableSlot
+        // );
         l.availableSlot -= cnt;
         return l.availableSlot;
     }
@@ -519,13 +533,7 @@ impl FuncAgent {
                 return;
             }
             Some(req) => {
-                for (_, worker) in &inner.workers {
-                    if worker.AvailableSlot() > 0 {
-                        worker.AssignReq(req);
-                        inner.availableSlot -= 1;
-                        break;
-                    }
-                }
+                inner.AssignReq(req);
             }
         }
     }

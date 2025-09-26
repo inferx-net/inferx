@@ -194,8 +194,19 @@ impl FuncWorker {
         closeNotify.notify_one();
     }
 
+    pub fn ReadySlot(&self) -> usize {
+        return self.parallelLevel;
+    }
+
     pub fn AvailableSlot(&self) -> usize {
         let state = self.State();
+        // error!(
+        //     "AvailableSlot state {:?}/{:?}/{}/{}",
+        //     &self.workerId,
+        //     state,
+        //     self.parallelLevel,
+        //     self.ongoingReqCnt.load(Ordering::SeqCst)
+        // );
         if state == FuncWorkerState::Idle || state == FuncWorkerState::Processing {
             return self.parallelLevel - self.ongoingReqCnt.load(Ordering::SeqCst);
         } else {
@@ -204,6 +215,11 @@ impl FuncWorker {
     }
 
     pub fn AssignReq(&self, req: FuncClientReq) {
+        // error!(
+        //     "AssignReq ongoingReqCnt ongoing {:?}/{:?}",
+        //     &self.workerId,
+        //     self.ongoingReqCnt.load(Ordering::Relaxed)
+        // );
         self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
         self.reqQueue.try_send(req).unwrap();
     }
@@ -308,7 +324,11 @@ impl FuncWorker {
         let mut reqQueueRx = reqQueueRx;
         let resp = match self.LeaseWorker().await {
             Err(e) => {
-                error!("Lease worker fail with error {:?}", &e);
+                error!(
+                    "Lease worker {} fail with error {:?}",
+                    self.WorkerName(),
+                    &e
+                );
                 self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
                 self.SetState(FuncWorkerState::Init);
                 match &e {
@@ -453,6 +473,11 @@ impl FuncWorker {
                                     return Ok(())
                                 }
                                 Some(state) => {
+                                    let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
+                                    if cnt == 1 {
+                                        self.SetState(FuncWorkerState::Idle);
+                                    }
+
                                     if state == HttpClientState::Fail {
                                         if self.failCount.fetch_add(1, Ordering::SeqCst) == 2 { // fail 3 times
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
@@ -460,10 +485,6 @@ impl FuncWorker {
                                         }
                                     }
 
-                                    let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
-                                    if cnt == 1 {
-                                        self.SetState(FuncWorkerState::Idle);
-                                    }
                                     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::RequestDone(self.clone()));
                                 }
                             }
@@ -484,6 +505,17 @@ impl FuncWorker {
 
     pub fn PodNamespace(&self) -> String {
         return format!("{}/{}", &self.tenant, &self.namespace);
+    }
+
+    pub fn WorkerName(&self) -> String {
+        return format!(
+            "{}/{}/{}/{}/{:?}",
+            &self.tenant,
+            &self.namespace,
+            &self.funcname,
+            &self.fprevision,
+            self.id.lock()
+        );
     }
 }
 

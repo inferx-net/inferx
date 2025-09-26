@@ -171,7 +171,7 @@ impl Deref for ReqAuditAgent {
 
 impl ReqAuditAgent {
     pub fn New() -> Self {
-        let (tx, rx) = mpsc::channel::<ReqAudit>(30);
+        let (tx, rx) = mpsc::channel::<ReqAudit>(300);
 
         let inner = ReqAuditAgentInner {
             closeNotify: Arc::new(Notify::new()),
@@ -195,7 +195,12 @@ impl ReqAuditAgent {
     }
 
     pub fn Audit(&self, msg: ReqAudit) {
-        self.tx.try_send(msg).unwrap();
+        match self.tx.try_send(msg) {
+            Ok(()) => (),
+            Err(e) => {
+                error!("ReqAuditAgent: fail to send audit log {:?}", &e);
+            }
+        }
     }
 
     pub fn Enable() -> bool {
