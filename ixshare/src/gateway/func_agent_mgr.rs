@@ -142,7 +142,7 @@ impl FuncAgentMgr {
             }
         };
         let (tx, rx) = oneshot::channel();
-        agent.EnqReq(tenant, namespace, funcname, tx);
+        agent.EnqReq(tenant, namespace, funcname, tx)?;
         match rx.await {
             Err(_) => {
                 return Err(Error::CommonError(format!("funcworker fail ...")));
@@ -292,7 +292,7 @@ impl FuncAgent {
         namespace: &str,
         funcname: &str,
         tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
-    ) {
+    ) -> Result<()> {
         let funcReq = FuncClientReq {
             reqId: self.lock().unwrap().NextReqId(),
             tenant: tenant.to_owned(),
@@ -301,7 +301,12 @@ impl FuncAgent {
             keepalive: true,
             tx: tx,
         };
-        self.lock().unwrap().reqQueueTx.try_send(funcReq).unwrap();
+        match self.lock().unwrap().reqQueueTx.try_send(funcReq) {
+            Err(_e) => {
+                return Err(Error::CommonError("FuncAgent Queue is full".to_owned()));
+            }
+            Ok(_) => return Ok(()),
+        }
     }
 
     pub async fn Close(&self) {
@@ -354,7 +359,8 @@ impl FuncAgent {
                                 self.TryProcessOneReq();
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
-                                let slot = worker.AvailableSlot();
+                                let slot = worker.AvailableSlot(); // need to dec the current connect when fail
+                                // error!("WorkerUpdate::WorkerFail e {:?}", e);
                                 self.DecrSlot(slot);
                                 let workerId = worker.workerId.clone();
                                 worker.ReturnWorker().await.ok();
@@ -512,12 +518,6 @@ impl FuncAgent {
 
     pub fn DecrSlot(&self, cnt: usize) -> usize {
         let mut l = self.lock().unwrap();
-        // error!(
-        //     "DecrSlot cnt {} {} available {}",
-        //     l.Key(),
-        //     cnt,
-        //     l.availableSlot
-        // );
         l.availableSlot -= cnt;
         return l.availableSlot;
     }

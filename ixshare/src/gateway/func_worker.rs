@@ -324,11 +324,11 @@ impl FuncWorker {
         let mut reqQueueRx = reqQueueRx;
         let resp = match self.LeaseWorker().await {
             Err(e) => {
-                error!(
-                    "Lease worker {} fail with error {:?}",
-                    self.WorkerName(),
-                    &e
-                );
+                // error!(
+                //     "Lease worker {} fail with error {:?}",
+                //     self.WorkerName(),
+                //     &e
+                // );
                 self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
                 self.SetState(FuncWorkerState::Init);
                 match &e {
@@ -473,17 +473,21 @@ impl FuncWorker {
                                     return Ok(())
                                 }
                                 Some(state) => {
-                                    let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
-                                    if cnt == 1 {
-                                        self.SetState(FuncWorkerState::Idle);
-                                    }
 
+                                    // for fail worker, don't sub 1
                                     if state == HttpClientState::Fail {
                                         if self.failCount.fetch_add(1, Ordering::SeqCst) == 2 { // fail 3 times
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
                                             break;
                                         }
                                     }
+
+                                    let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
+                                    if cnt == 1 {
+                                        self.SetState(FuncWorkerState::Idle);
+                                    }
+
+
 
                                     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::RequestDone(self.clone()));
                                 }

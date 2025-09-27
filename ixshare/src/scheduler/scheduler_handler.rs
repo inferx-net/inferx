@@ -2078,20 +2078,23 @@ impl SchedulerHandler {
                             if func.object.status.snapshotingFailureCnt >= 3 {
                                 func.object.status.state = FuncState::Fail;
                             }
+
+                            let client = GetClient().await.unwrap();
+
+                            // update the func
+                            client.Update(&func.DataObject(), 0).await.unwrap();
                         }
                         CreatePodType::Restore => {
                             func.object.status.resumingFailureCnt += 1;
                             // if func.object.status.resumingFailureCnt >= 3 {
                             //     func.object.status.state = FuncState::Fail;
                             // }
+
+                            // restore failure update will lead all pod reset
+                            // todo: put the resumingFailureCnt in another database
                         }
                         _ => (),
                     }
-
-                    let client = GetClient().await.unwrap();
-
-                    // update the func
-                    client.Update(&func.DataObject(), 0).await.unwrap();
                 }
             }
         } else {
