@@ -256,8 +256,8 @@ impl Deref for FuncAgent {
 
 impl FuncAgent {
     pub fn New(func: &Function) -> Self {
-        let (rtx, rrx) = mpsc::channel(30);
-        let (wtx, wrx) = mpsc::channel(30);
+        let (rtx, rrx) = mpsc::channel(1000);
+        let (wtx, wrx) = mpsc::channel(1000);
         let inner = FuncAgentInner {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
@@ -350,7 +350,8 @@ impl FuncAgent {
                                 let slot = worker.ReadySlot();
                                 let oldslot = worker.contributeSlot.swap(slot, Ordering::SeqCst);
                                 assert!(oldslot == 0);
-                                
+
+                                error!("worker ready {}...", worker.WorkerName());
                                 self.IncrSlot(slot);
                                 self.TryProcessOneReq();
                             }
@@ -360,7 +361,7 @@ impl FuncAgent {
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 let slot = worker.AvailableSlot(); // need to dec the current connect when fail
-                                // error!("WorkerUpdate::WorkerFail e {:?}", e);
+                                error!("WorkerUpdate::WorkerFail worker {} slot {} e {:?}", worker.WorkerName(), slot, e);
                                 self.DecrSlot(slot);
                                 let workerId = worker.workerId.clone();
                                 worker.ReturnWorker().await.ok();
@@ -518,6 +519,12 @@ impl FuncAgent {
 
     pub fn DecrSlot(&self, cnt: usize) -> usize {
         let mut l = self.lock().unwrap();
+        // error!(
+        //     "DecrSlot cnt {} {} available {}",
+        //     l.Key(),
+        //     cnt,
+        //     l.availableSlot
+        // );
         l.availableSlot -= cnt;
         return l.availableSlot;
     }
@@ -547,6 +554,10 @@ impl FuncAgent {
 
                 if inner.waitingReqs.len() > inner.startingSlot {
                     needNewWorker = true;
+                    // error!(
+                    //     "needNewWorker  inner.startingSlot {} inner.availableSlot {}",
+                    //     inner.startingSlot, inner.availableSlot
+                    // );
                 }
             }
 

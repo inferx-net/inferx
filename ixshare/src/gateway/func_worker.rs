@@ -131,9 +131,9 @@ impl FuncWorker {
         endpoint: HttpEndpoint,
         funcAgent: &FuncAgent,
     ) -> Result<Self> {
-        let (tx, rx) = mpsc::channel::<FuncClientReq>(parallelLeve);
-        let (finishTx, finishRx) = mpsc::channel::<HttpClientState>(parallelLeve);
-        let (etx, erx) = mpsc::channel(30);
+        let (tx, rx) = mpsc::channel::<FuncClientReq>(parallelLeve * 2);
+        let (finishTx, finishRx) = mpsc::channel::<HttpClientState>(parallelLeve * 2);
+        let (etx, erx) = mpsc::channel(parallelLeve * 2);
 
         let connectPool =
             ConnectionPool::New(tenant, namespace, endpoint.clone(), 1, finishTx.clone());
@@ -476,7 +476,7 @@ impl FuncWorker {
 
                                     // for fail worker, don't sub 1
                                     if state == HttpClientState::Fail {
-                                        if self.failCount.fetch_add(1, Ordering::SeqCst) == 2 { // fail 3 times
+                                        if self.failCount.fetch_add(1, Ordering::SeqCst) == 10 { // fail 3 times
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
                                             break;
                                         }
@@ -585,25 +585,27 @@ impl ConnectionPool {
     }
 
     pub async fn GetConnect(&self) -> Result<QHttpCallClient> {
-        let mut joinset = self.joinset.lock().await;
-        let clone = self.clone();
-        joinset.spawn(async move { clone.NewHttpCallClient().await });
-        match joinset.join_next().await {
-            None => {
-                return Err(Error::CommonError(format!(
-                    "Connection get None connection"
-                )))
-            }
-            Some(conn) => match conn {
-                Ok(c) => return c,
-                Err(e) => {
-                    return Err(Error::CommonError(format!(
-                        "NewConnect fail with error {:?}",
-                        e
-                    )));
-                }
-            },
-        }
+        return self.NewHttpCallClient().await;
+
+        // let mut joinset = self.joinset.lock().await;
+        // let clone = self.clone();
+        // joinset.spawn(async move { clone.NewHttpCallClient().await });
+        // match joinset.join_next().await {
+        //     None => {
+        //         return Err(Error::CommonError(format!(
+        //             "Connection get None connection"
+        //         )))
+        //     }
+        //     Some(conn) => match conn {
+        //         Ok(c) => return c,
+        //         Err(e) => {
+        //             return Err(Error::CommonError(format!(
+        //                 "NewConnect fail with error {:?}",
+        //                 e
+        //             )));
+        //         }
+        //     },
+        // }
     }
 
     pub async fn NewHttpCallClient(&self) -> Result<QHttpCallClient> {

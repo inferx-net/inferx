@@ -194,13 +194,13 @@ impl ReqAuditAgent {
         return Ok(());
     }
 
-    pub fn Audit(&self, msg: ReqAudit) {
-        match self.tx.try_send(msg) {
-            Ok(()) => (),
-            Err(e) => {
-                error!("ReqAuditAgent: fail to send audit log {:?}", &e);
-            }
-        }
+    pub fn Audit(&self, _msg: ReqAudit) {
+        // match self.tx.try_send(msg) {
+        //     Ok(()) => (),
+        //     Err(e) => {
+        //         error!("ReqAuditAgent: fail to send audit log {:?}", &e);
+        //     }
+        // }
     }
 
     pub fn Enable() -> bool {
