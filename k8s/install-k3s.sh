@@ -8,6 +8,7 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--docker" sh -
 
 echo "[+] Waiting for K3s to be ready..."
 sleep 10
+sudo chmod 555 /etc/rancher/k3s/k3s.yaml
 kubectl get node
 
 ### 3. Install Helm (if not installed)
