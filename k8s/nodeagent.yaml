@@ -15,7 +15,6 @@ spec:
     spec:
       nodeSelector:
         inferx_nodeType: inferx_blob      
-      hostPID: true
       containers:
         - name: nodeagent
           image: inferx/inferx_na:v0.1.5
@@ -166,7 +165,6 @@ spec:
     spec:
       nodeSelector:
         inferx_nodeType: inferx_file      
-      hostPID: true
       # initContainers:
       #   - name: wait-for-dependencies
       #     image: busybox
@@ -193,6 +191,8 @@ spec:
             value: "http://statesvc:1237"
           - name: RUN_SERVICE
             value: "NodeAgent"
+          - name: ENABLE_COREDUMP
+            value: "false"
           - name: POD_IP
             valueFrom:
               fieldRef:
