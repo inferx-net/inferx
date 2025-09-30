@@ -37,15 +37,15 @@ pub struct NodeAddress {
     pub type_: String,
 }
 
-// CPU, in cores. (500m = .5 cores)
-pub const ResourceCPU: &str = "cpu";
-// Memory, in bytes. (500Gi = 500GiB = 500 * 1024 * 1024 * 1024)
-pub const ResourceMemory: &str = "memory";
-// Volume size, in bytes (e,g. 5Gi = 5GiB = 5 * 1024 * 1024 * 1024)
-pub const ResourceStorage: &str = "storage";
-// Local ephemeral storage, in bytes. (500Gi = 500GiB = 500 * 1024 * 1024 * 1024)
-// The resource name for ResourceEphemeralStorage is alpha and it can change across releases.
-pub const ResourceEphemeralStorage: &str = "ephemeral-storage";
+// // CPU, in cores. (500m = .5 cores)
+// pub const ResourceCPU: &str = "cpu";
+// // Memory, in bytes. (500Gi = 500GiB = 500 * 1024 * 1024 * 1024)
+// pub const ResourceMemory: &str = "memory";
+// // Volume size, in bytes (e,g. 5Gi = 5GiB = 5 * 1024 * 1024 * 1024)
+// pub const ResourceStorage: &str = "storage";
+// // Local ephemeral storage, in bytes. (500Gi = 500GiB = 500 * 1024 * 1024 * 1024)
+// // The resource name for ResourceEphemeralStorage is alpha and it can change across releases.
+// pub const ResourceEphemeralStorage: &str = "ephemeral-storage";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Quantity(pub i64);
@@ -110,7 +110,7 @@ pub type NodeStatus = DataObject<NodeStatusSpec>;
 pub type NodeStatusMgr = DataObjectMgr<NodeStatusSpec>;
 
 impl NodeStatus {
-    pub const KEY: &'static str = "node_status";
+    pub const KEY: &'static str = "node";
     pub const TENANT: &'static str = "system";
     pub const NAMESPACE: &'static str = "system";
 
