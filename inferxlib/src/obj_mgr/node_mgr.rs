@@ -7,10 +7,10 @@ use crate::data_obj::*;
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NodeSpec {
     pub nodeIp: String,
+    pub cidr: String,
     pub podMgrPort: u16,
     pub tsotSvcPort: u16,
     pub stateSvcPort: u16,
-    pub cidr: String,
     pub resources: NodeResources,
     pub blobStoreEnable: bool,
     pub CUDA_VISIBLE_DEVICES: String,

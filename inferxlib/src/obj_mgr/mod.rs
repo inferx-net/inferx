@@ -17,5 +17,6 @@ pub mod func_mgr;
 pub mod funcsnapshot_mgr;
 pub mod namespace_mgr;
 pub mod node_mgr;
+pub mod nodestatus_mgr;
 pub mod pod_mgr;
 pub mod tenant_mgr;

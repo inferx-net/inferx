@@ -23,7 +23,6 @@ use crate::obj_mgr::pod_mgr::{FuncPod, PodState};
 use super::resource::*;
 use crate::common::*;
 
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodeSystemInfo {
     /// The Architecture reported by the node
@@ -102,20 +101,8 @@ pub struct ContainerImage {
     pub size_bytes: i64,
 }
 
-/// ObjectMeta is metadata that all persisted resources must have, which includes all objects users must create.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ObjectMeta {
-    pub name: String,
-    pub namespace: String,
-    pub uid: String,
-    pub resource_version: String,
-    pub labels: BTreeMap<String, String>,
-    /// Annotations is an unstructured key value map stored with a resource that may be set by external tools to store and retrieve arbitrary metadata. They are not queryable and should be preserved when modifying objects. More info: http://kubernetes.io/docs/user-guide/annotations
-    pub annotations: BTreeMap<String, String>,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Node {
+pub struct NodeStatus {
     /////////////// metadata //////////////////////////
     pub name: String,
     pub tenant: String,
@@ -126,24 +113,10 @@ pub struct Node {
     /// Annotations is an unstructured key value map stored with a resource that may be set by external tools to store and retrieve arbitrary metadata. They are not queryable and should be preserved when modifying objects. More info: http://kubernetes.io/docs/user-guide/annotations
     pub annotations: BTreeMap<String, String>,
 
-    //////////////// spec ////////////////////
-    pub node_ip: String,
-
-    /// PodCIDR represents the pod IP range assigned to the node.
-    pub pod_cidr: String,
-
-    /// Unschedulable controls node schedulability of new pods. By default, node is schedulable. More info: https://kubernetes.io/docs/concepts/nodes/node/#manual-node-administration
-    pub unschedulable: bool,
-
-    // pub nodeResources: NodeResources,
-
-    //pub spec: NodeDef,
-    pub status: NodeStatus,
-    pub total: NodeResources,
-    pub available: NodeResources,
+    pub status: NodeStatusSpec,
 }
 
-impl Node {
+impl NodeStatus {
     pub fn NodeId(&self) -> String {
         return format!("{}/{}/{}", &self.tenant, &self.namespace, &self.name);
     }
@@ -153,25 +126,14 @@ impl Node {
     }
 
     pub fn FromString(s: &str) -> Result<Self> {
-        let p: Node = serde_json::from_str(s)?;
+        let p: NodeStatus = serde_json::from_str(s)?;
         return Ok(p);
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct NodeDef {
-    pub node_ip: String,
-
-    /// PodCIDR represents the pod IP range assigned to the node.
-    pub pod_cidr: String,
-
-    /// Unschedulable controls node schedulability of new pods. By default, node is schedulable. More info: https://kubernetes.io/docs/concepts/nodes/node/#manual-node-administration
-    pub unschedulable: bool,
-}
-
 /// NodeStatus is information about the current status of a node.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct NodeStatus {
+pub struct NodeStatusSpec {
     pub phase: String,
 
     /// List of addresses reachable to the node
@@ -191,87 +153,7 @@ pub struct NodeStatus {
 
     /// Set of ids/uuids to uniquely identify the node
     pub node_info: NodeSystemInfo,
-    // /// List of volumes that are attached to the node.
-    // pub volumes_attached: Option<Vec<crate::api::core::v1::AttachedVolume>>,
-
-    // /// List of attachable volumes in use (mounted) by the node.
-    // pub volumes_in_use: Option<Vec<String>>,
 }
-
-#[derive(Clone, Debug)]
-pub struct NodeInfo {
-    /// The Architecture reported by the node
-    pub architecture: String,
-
-    /// Boot ID reported by the node.
-    pub boot_id: String,
-
-    /// ContainerRuntime Version reported by the node through runtime remote API (e.g. containerd://1.4.2).
-    pub container_runtime_version: String,
-
-    /// Kernel Version reported by the node from 'uname -r' (e.g. 3.16.0-0.bpo.4-amd64).
-    pub kernel_version: String,
-
-    /// MachineID reported by the node. For unique machine identification in the cluster this field is preferred. Learn more from man(5) machine-id: http://man7.org/linux/man-pages/man5/machine-id.5.html
-    pub machine_id: String,
-
-    /// The Operating System reported by the node
-    pub operating_system: String,
-
-    //// SystemUUID reported by the node. For unique machine identification MachineID is preferred. This field is specific to Red Hat hosts https://access.redhat.com/documentation/en-us/red_hat_subscription_management/1/html/rhsm/uuid
-    pub system_uuid: String,
-
-    /// Capacity represents the total resources of a node
-    pub capacity: std::collections::BTreeMap<String, Quantity>,
-}
-
-pub struct QNodeInner {}
-pub enum FuncDef {
-    PythonFuncDef(PythonFuncDef),
-}
-
-pub struct PythonFuncDef {
-    pub environment: String,
-    pub envs: Vec<(String, String)>,
-    pub workingDir: Option<String>,
-    pub funcName: String,
-    pub initArgments: String,
-
-    pub resourceReq: BTreeMap<String, Quantity>,
-}
-
-pub struct Environment {
-    pub image: String,
-    pub envs: BTreeMap<String, String>,
-    pub commands: Vec<String>,
-    pub args: Vec<String>,
-    pub working_dir: String,
-    pub volume_mounts: Vec<VolumeMount>,
-
-    pub overhead: BTreeMap<String, Quantity>,
-}
-
-pub struct EnvDeployment {
-    pub environment: String,
-    pub resource: BTreeMap<String, Quantity>,
-}
-
-pub struct FuncServiceSpec {
-    pub environments: BTreeMap<String, Environment>,
-    pub functions: BTreeMap<String, FuncDef>,
-    pub httpEntryFunc: String, // entry function name
-}
-
-pub struct FuncServiceDeployConfig {
-    pub envDeployments: BTreeMap<String, EnvDeployment>, // envDeployName --> EnvDeployment
-    pub funcMapping: BTreeMap<String, String>,           // funcName --> PodName
-}
-
-pub struct FuncServiceDeployment {
-    pub envDeployments: BTreeMap<String, FuncPod>, // podname --> PodDef
-}
-
-pub struct FuncServiceInstance {}
 
 pub type ReturnId = u64;
 
@@ -290,7 +172,6 @@ impl WorkerPodState {
         }
     }
 }
-
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PodCondition {
