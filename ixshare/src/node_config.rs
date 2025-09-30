@@ -509,13 +509,13 @@ impl NodeAgentConfig {
                     }
                     Some(s) => {
                         let res = s / 1024u64.pow(2);
-                        if res * 2 > resources.allocMemory {
+                        if res > resources.allocMemory {
                             error!(
-                                "CACHE_MEMORY {} MB can't exceed half of ALLOC_MEMORY {} MB",
+                                "CACHE_MEMORY {} MB can't exceed ALLOC_MEMORY {} MB",
                                 res, resources.allocMemory
                             );
                             panic!(
-                                "CACHE_MEMORY {} MB can't exceed half of ALLOC_MEMORY {} MB",
+                                "CACHE_MEMORY {} MB can't exceed ALLOC_MEMORY {} MB",
                                 res, resources.allocMemory
                             );
                         }
