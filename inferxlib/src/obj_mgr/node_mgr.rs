@@ -7,6 +7,7 @@ use crate::data_obj::*;
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NodeSpec {
     pub nodeIp: String,
+    pub naIp: String,
     pub cidr: String,
     pub podMgrPort: u16,
     pub tsotSvcPort: u16,
@@ -25,6 +26,6 @@ impl Node {
     pub const NAMESPACE: &'static str = "system";
 
     pub fn NodeAgentUrl(&self) -> String {
-        return format!("http://{}:{}", self.object.nodeIp, self.object.podMgrPort);
+        return format!("http://{}:{}", self.object.naIp, self.object.podMgrPort);
     }
 }
