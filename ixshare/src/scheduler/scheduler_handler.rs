@@ -1976,8 +1976,11 @@ impl SchedulerHandler {
             return Err(Error::NotExist(format!("NodeMgr::UpdateNode {}", nodeName)));
         }
 
+        error!("UpdateNode the node is {:#?}", &node);
+
         let ns = self.nodes.get_mut(&nodeName).unwrap();
         ns.state = node.object.state;
+        ns.node = node;
 
         return Ok(());
     }
