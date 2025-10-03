@@ -302,10 +302,16 @@ impl EtcdStore {
         &self,
         expectedRev: i64,
         obj: &DataObject<Value>,
+        leaseId: i64,
     ) -> Result<DataObject<Value>> {
         let key = obj.StoreKey();
         let preparedKey = self.PrepareKey(&key)?;
         let keyVec: &str = &preparedKey;
+        let putopt = if leaseId == 0 {
+            None
+        } else {
+            Some(PutOptions::default().with_lease(leaseId))
+        };
         let txn = if expectedRev > 0 {
             Txn::new()
                 .when(vec![Compare::mod_revision(
@@ -313,10 +319,10 @@ impl EtcdStore {
                     CompareOp::Equal,
                     expectedRev,
                 )])
-                .and_then(vec![TxnOp::put(keyVec, obj.Encode()?, None)])
+                .and_then(vec![TxnOp::put(keyVec, obj.Encode()?, putopt)])
                 .or_else(vec![TxnOp::get(keyVec, None)])
         } else {
-            Txn::new().and_then(vec![TxnOp::put(keyVec, obj.Encode()?, None)])
+            Txn::new().and_then(vec![TxnOp::put(keyVec, obj.Encode()?, putopt)])
         };
 
         let resp = self.client.lock().await.txn(txn).await?;

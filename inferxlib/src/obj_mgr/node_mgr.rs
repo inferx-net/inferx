@@ -4,6 +4,18 @@ use crate::resource::NodeResources;
 
 use crate::data_obj::*;
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NAState {
+    NodeProxyAvailable,
+    NodeAgentAvaiable,
+}
+
+impl Default for NAState {
+    fn default() -> Self {
+        return Self::NodeProxyAvailable;
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NodeSpec {
     pub nodeIp: String,
@@ -15,6 +27,7 @@ pub struct NodeSpec {
     pub resources: NodeResources,
     pub blobStoreEnable: bool,
     pub CUDA_VISIBLE_DEVICES: String,
+    pub state: NAState,
 }
 
 pub type Node = DataObject<NodeSpec>;

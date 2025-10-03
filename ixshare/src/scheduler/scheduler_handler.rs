@@ -24,6 +24,7 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use inferxlib::node::WorkerPodState;
+use inferxlib::obj_mgr::node_mgr::NAState;
 use inferxlib::resource::StandbyType;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::Sender;
@@ -112,6 +113,7 @@ pub struct NodeStatus {
 
     pub pods: BTreeMap<String, WorkerPod>,
     pub createTime: Instant,
+    pub state: NAState,
 }
 
 impl NodeStatus {
@@ -127,6 +129,7 @@ impl NodeStatus {
 
         // error!("NodeStatus total {:#?}, availabe {:#?}", &total, &available);
 
+        let state = node.object.state;
         return Ok(Self {
             node: node,
             total: total,
@@ -134,6 +137,7 @@ impl NodeStatus {
             pendingPods: BTreeMap::new(),
             pods: pods,
             createTime: std::time::Instant::now(),
+            state: state,
         });
     }
 
@@ -802,7 +806,11 @@ impl SchedulerHandler {
                                     if self.listDone {
                                         self.ProcessAddFunc(&fpId).await?;
                                     }
-
+                                }
+                                Node::KEY => {
+                                    let node = Node::FromDataObject(obj)?;
+                                    error!("Update node {:?}", &node);
+                                    self.UpdateNode(node)?;
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
@@ -1192,13 +1200,22 @@ impl SchedulerHandler {
         )));
     }
 
+    pub fn IsNodeReady(&self, nodename: &str) -> bool {
+        match self.nodes.get(nodename) {
+            None => return false,
+            Some(ns) => {
+                return ns.state == NAState::NodeAgentAvaiable;
+            }
+        }
+    }
+
     pub fn GetSnapshotNodes(&self, funcid: &str) -> BTreeSet<String> {
         let mut nodes = BTreeSet::new();
         match self.snapshots.get(funcid) {
             None => return nodes,
             Some(ns) => {
-                for (n, _) in ns {
-                    nodes.insert(n.to_owned());
+                for (nodename, _) in ns {
+                    nodes.insert(nodename.to_owned());
                 }
                 return nodes;
             }
@@ -1220,6 +1237,10 @@ impl SchedulerHandler {
         let mut nodes = BTreeSet::new();
 
         for (_, ns) in &self.nodes {
+            if ns.state != NAState::NodeAgentAvaiable {
+                continue;
+            }
+
             // wait 5 sec to sync the snapshot information
             if std::time::Instant::now().duration_since(ns.createTime)
                 < std::time::Duration::from_secs(5)
@@ -1283,7 +1304,10 @@ impl SchedulerHandler {
             // error!("GetBestNodeToRestore id {} state {}", &funcid, podstate);
             // the pod reach ready state, create another standby pod
             if podstate != PodState::Ready {
-                existnodes.insert(pod.pod.object.spec.nodename.clone());
+                let nodename = pod.pod.object.spec.nodename.clone();
+                if self.IsNodeReady(&nodename) {
+                    existnodes.insert(pod.pod.object.spec.nodename.clone());
+                }
             }
         }
 
@@ -1942,6 +1966,18 @@ impl SchedulerHandler {
         let nodeStatus = NodeStatus::New(node, total, pods)?;
 
         self.nodes.insert(nodeName, nodeStatus);
+
+        return Ok(());
+    }
+
+    pub fn UpdateNode(&mut self, node: Node) -> Result<()> {
+        let nodeName = node.name.clone();
+        if !self.nodes.contains_key(&nodeName) {
+            return Err(Error::NotExist(format!("NodeMgr::UpdateNode {}", nodeName)));
+        }
+
+        let ns = self.nodes.get_mut(&nodeName).unwrap();
+        ns.state = node.object.state;
 
         return Ok(());
     }

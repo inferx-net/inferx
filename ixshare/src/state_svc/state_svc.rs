@@ -338,7 +338,7 @@ impl ixmeta::ix_meta_service_server::IxMetaService for StateSvc {
             Ok(()) => (),
         }
 
-        let o = match self.store.Update(req.expect_rev, &dataobj).await {
+        let o = match self.store.Update(req.expect_rev, &dataobj, 0).await {
             Err(e) => {
                 return Ok(Response::new(ixmeta::UpdateResponseMessage {
                     error: format!("create error: {:?}", e),

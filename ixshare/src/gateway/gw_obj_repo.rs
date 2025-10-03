@@ -747,7 +747,7 @@ impl NamespaceStore {
 
     pub async fn UpdateNamespace(&self, namespace: &Namespace) -> Result<()> {
         let namespaceObj = namespace.DataObject();
-        self.store.Update(namespace.revision, &namespaceObj).await?;
+        self.store.Update(namespace.revision, &namespaceObj, 0).await?;
         return Ok(());
     }
 
@@ -755,7 +755,7 @@ impl NamespaceStore {
         let mut namespace = namespace.clone();
         namespace.object.status.disable = true;
         self.store
-            .Update(namespace.revision, &namespace.DataObject())
+            .Update(namespace.revision, &namespace.DataObject(), 0)
             .await?;
         return Ok(());
     }
@@ -768,7 +768,7 @@ impl NamespaceStore {
 
     pub async fn UpdateFunc(&self, func: &Function) -> Result<()> {
         let obj = func.DataObject();
-        self.store.Update(func.revision, &obj).await?;
+        self.store.Update(func.revision, &obj, 0).await?;
         return Ok(());
     }
 
