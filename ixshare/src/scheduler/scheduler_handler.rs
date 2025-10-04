@@ -1031,6 +1031,10 @@ impl SchedulerHandler {
         for nodename in candidateNodes {
             let node = self.nodes.get(nodename).unwrap();
 
+            if Self::PRINT_SCHEDER_INFO {
+                error!("FindNode4Pod 1 ns is {:#?}", &node.available);
+            }
+
             if !createSnapshot {
                 let mut standbyPod = 0;
                 for (podname, pod) in &node.pods {
@@ -1237,6 +1241,13 @@ impl SchedulerHandler {
         let mut nodes = BTreeSet::new();
 
         for (_, ns) in &self.nodes {
+            if Self::PRINT_SCHEDER_INFO {
+                error!(
+                    "GetSnapshotCandidateNodes 1 {:?}/{:?}",
+                    ns.state, &ns.available
+                );
+            }
+
             if ns.state != NAState::NodeAgentAvaiable {
                 continue;
             }
@@ -1315,9 +1326,12 @@ impl SchedulerHandler {
         match self.snapshots.get(&funcid) {
             None => (),
             Some(set) => {
-                for (n, _) in set {
-                    if !existnodes.contains(n) {
-                        res.push(n.to_owned());
+                for (nodename, _) in set {
+                    if !self.IsNodeReady(nodename) {
+                        continue;
+                    }
+                    if !existnodes.contains(nodename) {
+                        res.push(nodename.to_owned());
                     }
                 }
             }
@@ -1422,8 +1436,8 @@ impl SchedulerHandler {
             let nodeAgentUrl;
             let resourceQuota;
 
+            let standbyResource = self.StandyResource(funcid, &nodename);
             {
-                let standbyResource = self.StandyResource(funcid, &nodename);
                 let nodeStatus = match self.nodes.get_mut(&nodename) {
                     None => return Ok(()), // the node information is not synced
                     Some(ns) => ns,
@@ -1435,16 +1449,28 @@ impl SchedulerHandler {
                 nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
             }
 
-            let id = self
+            let id = match self
                 .StartWorker(
                     &nodeAgentUrl,
                     &function,
                     &allocResources,
                     &resourceQuota,
-                    na::CreatePodType::Restore,
+                    na::CreatePodType::Restore, 
                     &Vec::new(),
                 )
-                .await?;
+                .await
+            {
+                Err(e) => {
+                    let nodeStatus = match self.nodes.get_mut(&nodename) {
+                        None => return Ok(()), // the node information is not synced
+                        Some(ns) => ns,
+                    };
+                    let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
+                    nodeStatus.FreeResource(&resourceQuota, "")?;
+                    return Err(e);
+                }
+                Ok(id) => id,
+            };
 
             let podKey = FuncPod::FuncPodKey(
                 &function.tenant,
@@ -1468,9 +1494,23 @@ impl SchedulerHandler {
     }
 
     pub const MAX_SNAPSHOT_PER_FUNC: usize = 3;
+    pub const PRINT_SCHEDER_INFO: bool = false;
 
     pub async fn TryCreateSnapshot(&mut self, funcid: &str, func: &Function) -> Result<()> {
+        if Self::PRINT_SCHEDER_INFO {
+            error!("TryCreateSnapshot 1 {}", funcid);
+        }
+
         let nodes = self.GetSnapshotNodes(funcid);
+
+        if Self::PRINT_SCHEDER_INFO {
+            error!(
+                "TryCreateSnapshot 2 {}/{:?}/{}",
+                funcid,
+                &nodes,
+                self.HasPendingSnapshot(funcid)
+            );
+        }
         if nodes.len() > Self::MAX_SNAPSHOT_PER_FUNC {
             return Ok(());
         }
@@ -1479,6 +1519,9 @@ impl SchedulerHandler {
             let (nodename, terminatePods) = match self.GetBestNodeToSnapshot(&func).await {
                 Ok(ret) => ret,
                 Err(e) => {
+                    if Self::PRINT_SCHEDER_INFO {
+                        error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
+                    }
                     if nodes.len() > 0 {
                         return Ok(());
                     }
@@ -1487,6 +1530,9 @@ impl SchedulerHandler {
                 }
             };
 
+            if Self::PRINT_SCHEDER_INFO {
+                error!("TryCreateSnapshot 4 {}", funcid);
+            }
             // error!(
             //     "TryCreateSnapshot 2 name {} nodes.len() {}",
             //     &nodename,

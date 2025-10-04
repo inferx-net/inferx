@@ -402,7 +402,6 @@ pub struct NodeResources {
     pub gpus: GPUResourceMap,
     #[serde(rename = "MaxContextPerGPU", default)]
     pub maxContextCnt: u64,
-
 }
 
 impl NodeResources {
@@ -464,7 +463,7 @@ impl NodeResources {
             let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
             let _gpus = self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
 
-            if !_memory {
+            if true || !_memory {
                 error!(
                     "self.memory is {} required memory is {}",
                     self.memory, req.memory
@@ -478,7 +477,10 @@ impl NodeResources {
     }
 
     pub fn Sub(&mut self, other: &Self) -> Result<()> {
-        // error!("NodeResources sub \n curr is {:?} \n sub {:?}", self, other);
+        // error!(
+        //     "NodeResources sub  curr is {:?} sub {:?}",
+        //     self.cacheMemory, other.cacheMemory
+        // );
         // self.cpu -= other.cpu;
         self.memory -= other.memory;
         self.cacheMemory -= other.cacheMemory;
@@ -512,6 +514,11 @@ impl NodeResources {
             )));
         }
 
+        // error!(
+        //     "NodeResources alloc curr is {:?} sub {:?}",
+        //     self.cacheMemory, req.cacheMemory
+        // );
+
         // we don't allc/free cpu resource, assume there are enough cpu resource
         // self.cpu -= req.cpu;
         self.memory -= req.memory;
@@ -530,6 +537,11 @@ impl NodeResources {
     }
 
     pub fn Add(&mut self, free: &NodeResources) -> Result<()> {
+        // error!(
+        //     "NodeResources Add curr is {:?} sub {:?}",
+        //     self.cacheMemory, free.cacheMemory
+        // );
+
         assert!(self.gpuType == free.gpuType);
         self.gpus.Add(&free.gpus);
         // self.cpu += free.cpu;

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use super::funcsnapshot_mgr::*;
@@ -28,6 +29,19 @@ use crate::resource::Standby;
 
 use super::func_mgr::FuncSpec;
 use super::func_mgr::HttpEndpoint;
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+pub struct IdxList {
+    pub list: Vec<u16>,
+    pub size: u64,
+}
+
+impl IdxList {
+    pub fn Clear(&mut self) {
+        self.list.clear();
+        self.size = 0;
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum CreatePodType {
@@ -77,6 +91,10 @@ pub struct FuncPodSpec {
 
     pub standby: Standby,
     pub snapshotStandbyInfo: SnapshotStandyInfo,
+
+    pub cudaHostMemIdxList: IdxList,
+    pub hostMemIdxList: IdxList,
+    pub gpuMemSlots: BTreeMap<i32, IdxList>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -178,14 +196,6 @@ impl FuncPod {
     pub fn ResumeRestore(&mut self, resources: &NodeResources) -> Result<()> {
         self.object.spec.allocResources = resources.clone();
         return Ok(());
-    }
-
-    pub fn MemHibernateDone(&mut self) -> Result<()> {
-        return self
-            .object
-            .spec
-            .allocResources
-            .Sub(&self.object.spec.allocResources.GPUResource());
     }
 
     pub fn MemWakeup(&mut self, gpuResources: GPUResourceMap) -> Result<()> {
