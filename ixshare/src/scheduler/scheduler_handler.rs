@@ -454,7 +454,8 @@ impl SchedulerHandler {
             let pod = &worker.pod;
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 let returnId = worker.SetWorking(req.gateway_id);
-                self.idlePods.remove(&returnId);
+                let remove = self.idlePods.remove(&returnId);
+                error!("ProcessLeaseWorkerReq remove idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -508,6 +509,8 @@ impl SchedulerHandler {
             req.fprevision,
             &req.id,
         )?;
+
+        error!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
             error!(
@@ -1024,7 +1027,7 @@ impl SchedulerHandler {
         forStandby: bool,
         candidateNodes: &BTreeSet<String>,
         createSnapshot: bool,
-    ) -> Result<(String, Vec<WorkerPod>)> {
+    ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
         let mut nodeSnapshots = BTreeMap::new();
 
         // go through candidate list to look for node has enough free resource, if so return
@@ -1067,7 +1070,7 @@ impl SchedulerHandler {
                 self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
             };
             if nr.CanAlloc(&req, createSnapshot) {
-                return Ok((nodename.clone(), Vec::new()));
+                return Ok((nodename.clone(), Vec::new(), nr));
             }
             nodeSnapshots.insert(nodename.clone(), (nr, Vec::new()));
         }
@@ -1075,9 +1078,14 @@ impl SchedulerHandler {
         let mut missWorkers = Vec::new();
 
         let mut findnodeName = None;
-        let mut contextCount = 0;
+        let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
+        error!(
+            "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
+            func.Id(),
+            &self.idlePods
+        );
         for (workid, podKey) in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
@@ -1087,7 +1095,7 @@ impl SchedulerHandler {
                 Some(pod) => match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
                     None => (),
                     Some((nr, workids)) => {
-                        workids.push(*workid);
+                        workids.push((*workid, pod.clone()));
                         nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
                         let req = if !forStandby {
@@ -1101,9 +1109,8 @@ impl SchedulerHandler {
                         };
                         if nr.CanAlloc(&req, createSnapshot) {
                             findnodeName = Some(pod.pod.object.spec.nodename.clone());
-                            if !forStandby {
-                                contextCount = nr.maxContextCnt;
-                            }
+                            nodeResource = nr.clone();
+                            break;
                         }
                     }
                 },
@@ -1111,7 +1118,8 @@ impl SchedulerHandler {
         }
 
         for workerid in &missWorkers {
-            self.idlePods.remove(workerid);
+            let pod = self.idlePods.remove(workerid);
+            error!("FindNode4Pod remove idlepod missing {:?}", &pod);
         }
 
         if findnodeName.is_none() {
@@ -1123,43 +1131,50 @@ impl SchedulerHandler {
 
         let nodename = findnodeName.unwrap();
 
-        let req = if !forStandby {
-            func.object.spec.SnapshotResource(contextCount)
-        } else {
-            // func.object.spec.AllResources()
-            self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
-        };
+        let (_, workids) = nodeSnapshots.get(&nodename).unwrap().clone();
 
-        let mut pods = Vec::new();
-        let (_, workdis) = nodeSnapshots.get(&nodename).unwrap().clone();
-        for workid in &workdis {
-            match self.idlePods.remove(workid) {
-                None => unreachable!(),
-                Some(podkey) => match self.pods.get(&podkey) {
-                    None => unreachable!(),
-                    Some(pod) => {
-                        let nodename = pod.pod.object.spec.nodename.clone();
-                        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                        self.stoppingPods.insert(podkey.clone());
+        return Ok((nodename, workids, nodeResource));
 
-                        nodeStatus
-                            .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-                        pods.push(pod.clone());
-                        if nodeStatus.available.CanAlloc(&req, createSnapshot) {
-                            break;
-                        }
-                    }
-                },
-            }
-        }
+        // let req = if !forStandby {
+        //     func.object.spec.SnapshotResource(contextCount)
+        // } else {
+        //     // func.object.spec.AllResources()
+        //     self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
+        // };
 
-        return Ok((nodename, pods));
+        // for workid in &workids {
+        //     match self.idlePods.remove(workid) {
+        //         None => unreachable!(),
+        //         Some(podkey) => {
+        //             error!("FindNode4Pod remove idlepod terminal {:?}", &podkey);
+        //             match self.pods.get(&podkey) {
+        //                 None => unreachable!(),
+        //                 Some(pod) => {
+        //                     let nodename = pod.pod.object.spec.nodename.clone();
+        //                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        //                     self.stoppingPods.insert(podkey.clone());
+
+        //                     nodeStatus.FreeResource(
+        //                         &pod.pod.object.spec.allocResources,
+        //                         &pod.pod.PodKey(),
+        //                     )?;
+        //                     pods.push(pod.clone());
+        //                     if nodeStatus.available.CanAlloc(&req, createSnapshot) {
+        //                         break;
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
+        // return Ok((nodename, pods));
     }
 
     pub async fn GetBestResumeWorker(
         &mut self,
         fp: &Function,
-    ) -> Result<(WorkerPod, Vec<WorkerPod>)> {
+    ) -> Result<(WorkerPod, Vec<(u64, WorkerPod)>, NodeResources)> {
         let funcid = fp.Id();
 
         let pods = self.GetFuncPodsByKey(&funcid)?;
@@ -1186,7 +1201,8 @@ impl SchedulerHandler {
             )));
         }
 
-        let (nodename, terminalpods) = self.FindNode4Pod(fp, true, &nodes, false).await?;
+        let (nodename, termimalworkers, nodeResource) =
+            self.FindNode4Pod(fp, true, &nodes, false).await?;
 
         for worker in &pods {
             if worker.pod.object.status.state != PodState::Standby {
@@ -1194,7 +1210,7 @@ impl SchedulerHandler {
             }
 
             if &worker.pod.object.spec.nodename == &nodename {
-                return Ok((worker.clone(), terminalpods));
+                return Ok((worker.clone(), termimalworkers, nodeResource));
             }
         }
 
@@ -1287,7 +1303,7 @@ impl SchedulerHandler {
     pub async fn GetBestNodeToSnapshot(
         &mut self,
         func: &Function,
-    ) -> Result<(String, Vec<WorkerPod>)> {
+    ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
         let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
         if snapshotCandidateNodes.len() == 0 {
             return Err(Error::SchedulerErr(format!(
@@ -1296,11 +1312,11 @@ impl SchedulerHandler {
             )));
         }
 
-        let (nodename, pods) = self
+        let (nodename, workers, nodeResource) = self
             .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
             .await?;
 
-        return Ok((nodename, pods));
+        return Ok((nodename, workers, nodeResource));
     }
 
     pub async fn GetBestNodeToRestore(&mut self, fp: &Function) -> Result<String> {
@@ -1455,7 +1471,7 @@ impl SchedulerHandler {
                     &function,
                     &allocResources,
                     &resourceQuota,
-                    na::CreatePodType::Restore, 
+                    na::CreatePodType::Restore,
                     &Vec::new(),
                 )
                 .await
@@ -1516,28 +1532,25 @@ impl SchedulerHandler {
         }
 
         if !self.HasPendingSnapshot(funcid) {
-            let (nodename, terminatePods) = match self.GetBestNodeToSnapshot(&func).await {
-                Ok(ret) => ret,
-                Err(e) => {
-                    if Self::PRINT_SCHEDER_INFO {
-                        error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
-                    }
-                    if nodes.len() > 0 {
-                        return Ok(());
-                    }
+            let (nodename, terminateWorkers, mut nodeResources) =
+                match self.GetBestNodeToSnapshot(&func).await {
+                    Ok(ret) => ret,
+                    Err(e) => {
+                        if Self::PRINT_SCHEDER_INFO {
+                            error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
+                        }
+                        if nodes.len() > 0 {
+                            return Ok(());
+                        }
 
-                    return Err(e);
-                }
-            };
+                        return Err(e);
+                    }
+                };
 
             if Self::PRINT_SCHEDER_INFO {
                 error!("TryCreateSnapshot 4 {}", funcid);
             }
-            // error!(
-            //     "TryCreateSnapshot 2 name {} nodes.len() {}",
-            //     &nodename,
-            //     nodes.len()
-            // );
+
             let resources;
             let nodeAgentUrl;
 
@@ -1545,12 +1558,18 @@ impl SchedulerHandler {
                 let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
                 let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
                 let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-                resources =
-                    nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
+                // resources =
+                //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
+                resources = nodeResources.Alloc(&snapshotResource, true)?;
                 nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
             }
 
-            let id = match self
+            let terminatePods: Vec<WorkerPod> = terminateWorkers
+                .iter()
+                .map(|(_, pod)| pod.clone())
+                .collect();
+
+            let id = self
                 .StartWorker(
                     &nodeAgentUrl,
                     &func,
@@ -1559,15 +1578,24 @@ impl SchedulerHandler {
                     na::CreatePodType::Snapshot,
                     &terminatePods,
                 )
-                .await
-            {
-                Err(e) => {
-                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    nodeStatus.FreeResource(&resources, &func.Id())?;
-                    return Err(e);
+                .await?;
+
+            for (workid, pod) in &terminateWorkers {
+                let remove = self.idlePods.remove(workid);
+                assert!(remove.is_some());
+                let podkey = pod.pod.PodKey();
+                match self.pods.get(&podkey) {
+                    None => unreachable!(),
+                    Some(pod) => {
+                        let nodename = pod.pod.object.spec.nodename.clone();
+                        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                        self.stoppingPods.insert(podkey.clone());
+
+                        nodeStatus
+                            .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+                    }
                 }
-                Ok(a) => a,
-            };
+            }
 
             let podKey = FuncPod::FuncPodKey(
                 &func.tenant,
@@ -1580,6 +1608,10 @@ impl SchedulerHandler {
             let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &resources);
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
             nodeStatus.AddPendingPod(&pendingPod)?;
+
+            let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+            let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+            nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
 
             self.funcs
                 .get_mut(funcid)
@@ -1678,24 +1710,34 @@ impl SchedulerHandler {
             Some(fpStatus) => fpStatus.func.clone(),
         };
 
-        let (pod, terminatePods) = self.GetBestResumeWorker(&fp).await?;
-        let resources;
+        let (pod, terminateWorkers, mut nodeResource) = self.GetBestResumeWorker(&fp).await?;
         let naUrl;
         let nodename = pod.pod.object.spec.nodename.clone();
         let id = pod.pod.object.spec.id.clone();
 
+        let terminalPods: Vec<WorkerPod> = terminateWorkers
+            .iter()
+            .map(|(_, pod)| pod.clone())
+            .collect();
+
+        let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
+        let standbyResource = pod.pod.object.spec.allocResources.clone();
+        nodeResource.Add(&standbyResource)?;
+        let resources = nodeResource.Alloc(&readyResource, false)?;
+
         {
-            let readyResource =
-                self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
+            // let readyResource =
+            //     self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
 
-            let standbyResource = pod.pod.object.spec.allocResources.clone();
+            // let standbyResource = pod.pod.object.spec.allocResources.clone();
 
-            nodeStatus.FreeResource(&standbyResource, &fp.name)?;
-            resources = nodeStatus.AllocResource(&readyResource, "ResumePod", &id, false)?;
+            // nodeStatus.FreeResource(&standbyResource, &fp.name)?;
+            // resources = nodeStatus.AllocResource(&readyResource, "ResumePod", &id, false)?;
             naUrl = nodeStatus.node.NodeAgentUrl();
         }
 
+        error!("resume worker idle {:?}", &self.idlePods);
         self.ResumeWorker(
             &naUrl,
             &pod.pod.tenant,
@@ -1704,9 +1746,33 @@ impl SchedulerHandler {
             pod.pod.object.spec.fprevision,
             &id,
             &resources,
-            &terminatePods,
+            &terminalPods,
         )
         .await?;
+
+        for (workid, pod) in &terminateWorkers {
+            let remove = self.idlePods.remove(workid);
+            assert!(remove.is_some());
+            let podkey = pod.pod.PodKey();
+            match self.pods.get(&podkey) {
+                None => unreachable!(),
+                Some(pod) => {
+                    let nodename = pod.pod.object.spec.nodename.clone();
+                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                    self.stoppingPods.insert(podkey.clone());
+
+                    nodeStatus
+                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+                }
+            }
+        }
+
+        {
+            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+            let standbyResource = pod.pod.object.spec.allocResources.clone();
+            nodeStatus.FreeResource(&standbyResource, &fp.name)?;
+            nodeStatus.available.Sub(&resources)?;
+        }
 
         let podKey = FuncPod::FuncPodKey(
             &fp.tenant,
