@@ -381,8 +381,8 @@ pub struct SchedulerHandler {
     pub stoppingPods: BTreeSet<String>,
 
     // temp pods storage when the func is not ready
-    // package name -> <Podid --> WorkerPod>
-    pub packagePods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
+    // funcname name -> <Podid --> WorkerPod>
+    pub funcPods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
 
     pub nodeListDone: bool,
     pub funcListDone: bool,
@@ -1865,74 +1865,6 @@ impl SchedulerHandler {
         return Ok(id);
     }
 
-    // pub async fn HibernateWorker(
-    //     &self,
-    //     naUrl: &str,
-    //     tenant: &str,
-    //     namespace: &str,
-    //     funcname: &str,
-    //     fprevision: i64,
-    //     id: &str,
-    // ) -> Result<()> {
-    //     let mut client =
-    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-    //             .await?;
-
-    //     let request = tonic::Request::new(na::HibernatePodReq {
-    //         tenant: tenant.to_owned(),
-    //         namespace: namespace.to_owned(),
-    //         funcname: funcname.to_owned(),
-    //         fprevision: fprevision,
-    //         id: id.to_owned(),
-    //         hibernate_type: 1,
-    //     });
-    //     let response = client.hibernate_pod(request).await?;
-    //     let resp = response.into_inner();
-    //     if resp.error.len() != 0 {
-    //         error!(
-    //             "Scheduler: Fail to Hibernate worker {} {} {} {}",
-    //             namespace, funcname, id, resp.error
-    //         );
-    //     }
-
-    //     return Ok(());
-    // }
-
-    // pub async fn WakeupWorker(
-    //     &self,
-    //     naUrl: &str,
-    //     tenant: &str,
-    //     namespace: &str,
-    //     funcname: &str,
-    //     fprevsion: i64,
-    //     id: &str,
-    //     allocResources: &NodeResources,
-    // ) -> Result<()> {
-    //     let mut client =
-    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-    //             .await?;
-
-    //     let request = tonic::Request::new(na::WakeupPodReq {
-    //         tenant: tenant.to_owned(),
-    //         namespace: namespace.to_owned(),
-    //         funcname: funcname.to_owned(),
-    //         fprevision: fprevsion,
-    //         id: id.to_owned(),
-    //         hibernate_type: 1,
-    //         alloc_resources: serde_json::to_string(allocResources).unwrap(),
-    //     });
-    //     let response = client.wakeup_pod(request).await?;
-    //     let resp = response.into_inner();
-    //     if resp.error.len() != 0 {
-    //         error!(
-    //             "Scheduler: Fail to Wakeup worker {} {} {} {}",
-    //             namespace, funcname, id, resp.error
-    //         );
-    //     }
-
-    //     return Ok(());
-    // }
-
     pub async fn ResumeWorker(
         &self,
         naUrl: &str,
@@ -2140,11 +2072,11 @@ impl SchedulerHandler {
         }
 
         match self.funcs.get_mut(&fpKey) {
-            None => match self.packagePods.get_mut(&fpKey) {
+            None => match self.funcPods.get_mut(&fpKey) {
                 None => {
                     let mut pods = BTreeMap::new();
                     pods.insert(podKey, boxPod);
-                    self.packagePods.insert(fpKey, pods);
+                    self.funcPods.insert(fpKey, pods);
                 }
                 Some(pods) => {
                     pods.insert(podKey, boxPod);
@@ -2185,11 +2117,11 @@ impl SchedulerHandler {
         }
 
         match self.funcs.get_mut(&funcKey) {
-            None => match self.packagePods.get_mut(&funcKey) {
+            None => match self.funcPods.get_mut(&funcKey) {
                 None => {
                     let mut pods = BTreeMap::new();
                     pods.insert(podKey, boxPod);
-                    self.packagePods.insert(funcKey, pods);
+                    self.funcPods.insert(funcKey, pods);
                 }
                 Some(pods) => {
                     pods.insert(podKey, boxPod);
@@ -2288,7 +2220,7 @@ impl SchedulerHandler {
             return Err(Error::Exist(format!("FuncMgr::add {}", fpId)));
         }
 
-        let pods = match self.packagePods.remove(&fpId) {
+        let pods = match self.funcPods.remove(&fpId) {
             None => BTreeMap::new(),
             Some(pods) => pods,
         };

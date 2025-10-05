@@ -46,11 +46,13 @@ use tokio::sync::mpsc;
 use crate::audit::{ReqAudit, SqlAudit, REQ_AUDIT_AGENT};
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
+use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
 use crate::node_config::{GatewayConfig, NODE_CONFIG};
+use crate::peer_mgr::IxTcpClient;
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
@@ -104,9 +106,16 @@ impl HttpGateway {
             .route("/apikey/", delete(DeleteApikey))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
-            .route("/funccall/*rest", post(PostCall))
-            .route("/funccall/*rest", get(PostCall))
-            .route("/funccall/*rest", head(PostCall))
+            .route(
+                "/readypods/:tenant/:namespace/:funcname/",
+                get(ListReadyPods),
+            )
+            .route("/directfunccall/*rest", post(DirectFuncCall))
+            .route("/directfunccall/*rest", get(DirectFuncCall))
+            .route("/directfunccall/*rest", head(DirectFuncCall))
+            .route("/funccall/*rest", post(FuncCall))
+            .route("/funccall/*rest", get(FuncCall))
+            .route("/funccall/*rest", head(FuncCall))
             .route("/prompt/", post(PostPrompt))
             .route(
                 "/sampleccall/:tenant/:namespace/:name/",
@@ -411,7 +420,156 @@ async fn PostPrompt(
     return Ok(response);
 }
 
-async fn PostCall(
+async fn ListReadyPods(
+    State(gw): State<HttpGateway>,
+    Path((tenant, namespace, funcname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    error!("ListReadyPods 1 {}/{}/{}", &tenant, &namespace, &funcname);
+    match gw.objRepo.ListReadyPods(&tenant, &namespace, &funcname) {
+        Ok(pods) => {
+            let data = serde_json::to_string(&pods).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn DirectFuncCallProc(gw: &HttpGateway, mut req: Request) -> Result<Response> {
+    let path = req.uri().path();
+    let parts = path.split("/").collect::<Vec<&str>>();
+
+    let partsCount = parts.len();
+    let tenant = parts[2].to_owned();
+    let namespace = parts[3].to_owned();
+    let funcname = parts[4].to_owned();
+    let version = parts[5].to_owned();
+    let id = parts[6].to_owned();
+
+    let podname = format!(
+        "{}/{}/{}/{}/{}",
+        &tenant, &namespace, &funcname, &version, &id
+    );
+
+    error!("DirectFuncCallProc 2 {}", &podname);
+    let pod = gw.objRepo.GetFuncPod(&tenant, &namespace, &podname)?;
+
+    error!("DirectFuncCallProc 2.0 {}", &pod.object.spec.host_ip);
+    let hostip = IpAddress::FromString(&pod.object.spec.host_ip)?;
+    let hostport = pod.object.spec.host_port;
+    let dstPort = pod.object.spec.funcspec.endpoint.port;
+    let dstIp = pod.object.spec.ipAddr;
+
+    let tcpclient = IxTcpClient {
+        hostIp: hostip.0,
+        hostPort: hostport,
+        tenant: pod.tenant.clone(),
+        namespace: pod.namespace.clone(),
+        dstIp: dstIp,
+        dstPort: dstPort,
+        srcIp: 0x01020305,
+        srcPort: 123,
+    };
+
+    error!("DirectFuncCallProc 2.1 {:?}", &tcpclient);
+
+    let stream = tcpclient.Connect().await?;
+
+    let mut remainPath = "".to_string();
+    for i in 7..partsCount {
+        remainPath = remainPath + "/" + parts[i];
+    }
+
+    error!("DirectFuncCallProc 3 {}", &remainPath);
+    let uri = format!("http://127.0.0.1{}", remainPath); // &func.object.spec.endpoint.path);
+    *req.uri_mut() = Uri::try_from(uri).unwrap();
+
+    let mut client = QHttpCallClientDirect::New(stream).await?;
+
+    let mut res = client.Send(req).await?;
+
+    let mut kvs = Vec::new();
+    for (k, v) in res.headers() {
+        kvs.push((k.clone(), v.clone()));
+    }
+
+    error!("DirectFuncCallProc 4 {}", &remainPath);
+    let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
+    tokio::spawn(async move {
+        defer!(drop(client));
+        loop {
+            let frame = res.frame().await;
+            let bytes = match frame {
+                None => {
+                    return;
+                }
+                Some(b) => match b {
+                    Ok(b) => b,
+                    Err(e) => {
+                        error!(
+                            "PostCall for path {}/{}/{} get error {:?}",
+                            tenant, namespace, funcname, e
+                        );
+                        return;
+                    }
+                },
+            };
+            let bytes: Bytes = bytes.into_data().unwrap();
+
+            match tx.send(Ok(bytes)).await {
+                Err(_) => {
+                    // error!("PostCall sendbytes fail with channel unexpected closed");
+                    return;
+                }
+                Ok(()) => (),
+            }
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let body = http_body_util::StreamBody::new(stream);
+
+    let body = axum::body::Body::from_stream(body);
+
+    let mut resp = Response::new(body);
+
+    for (k, v) in kvs {
+        resp.headers_mut().insert(k, v);
+    }
+
+    return Ok(resp);
+}
+
+async fn DirectFuncCall(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    match DirectFuncCallProc(&gw, req).await {
+        Ok(resp) => return Ok(resp),
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn FuncCall(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     mut req: Request,

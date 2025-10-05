@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use core::ops::Deref;
+use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use inferxlib::obj_mgr::tenant_mgr::TenantMgr;
 use serde::{Deserialize, Serialize};
@@ -632,6 +633,34 @@ impl GwObjRepo {
         return Ok(funcbriefs);
     }
 
+    pub fn ListReadyPods(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+    ) -> Result<Vec<FuncReadyPod>> {
+        let podPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
+        let pods = self
+            .podMgr
+            .GetObjectsByPrefix(tenant, namespace, &podPrefix)?;
+        let mut filterPods = Vec::new();
+        for p in pods {
+            if p.object.status.state == PodState::Ready {
+                let readyPod = FuncReadyPod {
+                    tenant: p.tenant.clone(),
+                    namespace: p.namespace.clone(),
+                    funcname: p.name.clone(),
+                    fprevision: p.revision,
+                    id: p.object.spec.id,
+                };
+
+                filterPods.push(readyPod);
+            }
+        }
+
+        return Ok(filterPods);
+    }
+
     pub fn GetFuncDetail(
         &self,
         tenant: &str,
@@ -721,6 +750,15 @@ pub struct FuncDetail {
     pub isAdmin: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct FuncReadyPod {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub fprevision: i64,
+    pub id: String,
+}
+
 impl EventHandler for GwObjRepo {
     fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         self.ProcessDeltaEvent(event).unwrap();
@@ -747,7 +785,9 @@ impl NamespaceStore {
 
     pub async fn UpdateNamespace(&self, namespace: &Namespace) -> Result<()> {
         let namespaceObj = namespace.DataObject();
-        self.store.Update(namespace.revision, &namespaceObj, 0).await?;
+        self.store
+            .Update(namespace.revision, &namespaceObj, 0)
+            .await?;
         return Ok(());
     }
 

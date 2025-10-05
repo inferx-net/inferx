@@ -779,12 +779,12 @@ impl QHttpCallClient {
 }
 
 #[derive(Debug)]
-pub struct QHttpCallClient1 {
+pub struct QHttpCallClientDirect {
     sender: SendRequest<axum::body::Body>,
     pub fail: AtomicBool,
 }
 
-impl QHttpCallClient1 {
+impl QHttpCallClientDirect {
     pub async fn New(stream: TcpStream) -> Result<Self> {
         let io = TokioIo::new(stream);
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
