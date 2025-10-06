@@ -12,6 +12,9 @@ pub struct NodeStatusSpec {
     /// List of addresses reachable to the node
     pub addresses: Vec<NodeAddress>,
 
+    /// tsot svc port
+    pub tsotSvcPort: u16,
+
     /// Allocatable represents the resources of a node that are available for scheduling. Defaults to Capacity.
     pub allocatable: BTreeMap<String, Quantity>,
 

@@ -81,6 +81,7 @@ pub struct FuncPodSpec {
 
     //pub status: PodStatus,
     pub host_ip: String,
+    pub host_port: u16,
     pub pod_ip: String,
     pub pod_ips: Vec<String>,
 
