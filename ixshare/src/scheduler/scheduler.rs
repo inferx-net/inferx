@@ -12,9 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 
 use inferxlib::node::WorkerPodState;
 use inferxlib::obj_mgr::pod_mgr::FuncPod;
@@ -22,6 +28,7 @@ use inferxlib::obj_mgr::pod_mgr::PodState;
 use std::ops::Deref;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::Mutex as TMutex;
 use tokio::sync::Notify;
 
 use crate::common::*;
@@ -270,5 +277,207 @@ impl From<FuncPod> for WorkerPod {
         }
 
         return ret;
+    }
+}
+
+pub struct TaskQueue {
+    pub tx: tokio::sync::mpsc::Sender<SchedTask>,
+    pub throttle: TMutex<Pin<Box<dyn Stream<Item = SchedTask> + Send>>>,
+}
+
+impl std::fmt::Debug for TaskQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskQueue")
+            .field("throttle", &"<stream>") // hide non-Debug field
+            .finish()
+    }
+}
+
+impl Default for TaskQueue {
+    fn default() -> Self {
+        return Self::New(2000, 50);
+    }
+}
+
+impl TaskQueue {
+    pub fn New(bufsize: usize, throttle: u64) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel::<SchedTask>(bufsize);
+        let stream: ReceiverStream<SchedTask> = tokio_stream::wrappers::ReceiverStream::new(rx);
+        let throttled = stream.throttle(std::time::Duration::from_millis(throttle));
+        return Self {
+            tx: tx,
+            throttle: TMutex::new(Box::pin(throttled)),
+        };
+    }
+
+    pub async fn Next(&self) -> Option<SchedTask> {
+        let mut t = self.throttle.lock().await;
+        return t.next().await;
+    }
+
+    pub fn AddTask(&self, task: SchedTask) {
+        self.tx.try_send(task).unwrap();
+    }
+
+    pub fn AddSnapshotTask(&self, nodename: &str, funcId: &str) {
+        error!("AddSnapshotTask {}/{}", nodename, funcId);
+        self.AddTask(SchedTask::SnapshotTask(FuncNodePair {
+            nodename: nodename.to_owned(),
+            funcId: funcId.to_owned(),
+        }));
+    }
+
+    pub fn AddNode(&self, nodename: &str) {
+        self.AddTask(SchedTask::AddNode(nodename.to_owned()));
+    }
+
+    pub fn AddFunc(&self, funcId: &str) {
+        self.AddTask(SchedTask::AddFunc(funcId.to_owned()));
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SchedTask {
+    RefreshSnapshot,
+    RemoveSnapshotFromNode(RemoveSnapshotFromNode),
+    SnapshotTask(FuncNodePair),
+    AddNode(String),
+    AddFunc(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncNodePair {
+    pub funcId: String,
+    pub nodename: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoveSnapshotFromNode {
+    pub nodeName: String,
+    pub nodeAgentUrl: String,
+    pub funckey: String,
+}
+
+#[derive(Debug)]
+pub enum SnapshotScheduleState {
+    Done,
+    Cannot(String),
+    Waiting(String),
+}
+
+impl Default for SnapshotScheduleState {
+    fn default() -> Self {
+        return Self::Done;
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SnapshotScheduleInfoInner {
+    pub funcId: String,
+    pub nodename: String,
+    pub scheduleSnapshot: SnapshotScheduleState,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotScheduleInfo(Arc<Mutex<SnapshotScheduleInfoInner>>);
+
+#[derive(Debug, Clone, Default)]
+pub struct BiIndex<Info: Clone> {
+    byId1: BTreeMap<String, BTreeMap<String, Info>>,
+    byId2: BTreeMap<String, BTreeMap<String, Info>>,
+}
+
+impl<Info: Clone> BiIndex<Info> {
+    pub fn New() -> Self {
+        Self {
+            byId1: BTreeMap::new(),
+            byId2: BTreeMap::new(),
+        }
+    }
+
+    /// Insert (id1, id2, info)
+    pub fn Insert(&mut self, id1: &str, id2: &str, info: Info) {
+        self.byId1
+            .entry(id1.to_string())
+            .or_default()
+            .insert(id2.to_string(), info.clone());
+
+        self.byId2
+            .entry(id2.to_string())
+            .or_default()
+            .insert(id1.to_string(), info);
+    }
+
+    /// Get a clone of info by id1/id2
+    pub fn Get12(&self, id1: &str, id2: &str) -> Option<Info> {
+        self.byId1.get(id1)?.get(id2).cloned()
+    }
+
+    /// Get a clone of info by id2/id1
+    pub fn Get21(&self, id2: &str, id1: &str) -> Option<Info> {
+        self.byId2.get(id2)?.get(id1).cloned()
+    }
+
+    /// Remove a single (id1, id2) pair
+    pub fn RemovePair(&mut self, id1: &str, id2: &str) {
+        if let Some(map2) = self.byId1.get_mut(id1) {
+            map2.remove(id2);
+            if map2.is_empty() {
+                self.byId1.remove(id1);
+            }
+        }
+
+        if let Some(map1) = self.byId2.get_mut(id2) {
+            map1.remove(id1);
+            if map1.is_empty() {
+                self.byId2.remove(id2);
+            }
+        }
+    }
+
+    /// Remove all entries by id1
+    pub fn RemoveById1(&mut self, id1: &str) {
+        if let Some(map2) = self.byId1.remove(id1) {
+            for id2 in map2.keys() {
+                if let Some(map1) = self.byId2.get_mut(id2) {
+                    map1.remove(id1);
+                    if map1.is_empty() {
+                        self.byId2.remove(id2);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remove all entries by id2
+    pub fn RemoveById2(&mut self, id2: &str) {
+        if let Some(map1) = self.byId2.remove(id2) {
+            for id1 in map1.keys() {
+                if let Some(map2) = self.byId1.get_mut(id1) {
+                    map2.remove(id2);
+                    if map2.is_empty() {
+                        self.byId1.remove(id1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get all entries for a given id1
+    pub fn GetById1(&self, id1: &str) -> Option<BTreeMap<String, Info>> {
+        self.byId1.get(id1).map(|m| m.clone())
+    }
+
+    /// Get all entries for a given id2
+    pub fn GetById2(&self, id2: &str) -> Option<BTreeMap<String, Info>> {
+        self.byId2.get(id2).map(|m| m.clone())
+    }
+
+    pub fn Len(&self) -> usize {
+        self.byId1.values().map(|m| m.len()).sum()
+    }
+
+    pub fn IsEmpty(&self) -> bool {
+        self.byId1.is_empty()
     }
 }

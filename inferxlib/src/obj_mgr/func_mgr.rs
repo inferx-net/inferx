@@ -96,6 +96,30 @@ impl Default for SampleCall {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleConfig {
+    #[serde(rename = "min_replica")]
+    pub minReplica: u64,
+    #[serde(rename = "max_replica")]
+    pub maxReplica: u64,
+    #[serde(rename = "standby_per_node")]
+    pub standbyPerNode: u64,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        return Self {
+            minReplica: 0,
+            maxReplica: 10,
+            standbyPerNode: 1,
+        };
+    }
+}
+
+pub fn DefaultScheduleConfig() -> ScheduleConfig {
+    return ScheduleConfig::default();
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
     #[serde(rename = "text2text")]
     Text2Text,
@@ -136,6 +160,9 @@ pub struct FuncSpec {
 
     #[serde(rename = "sample_query")]
     pub sampleCall: SampleCall,
+
+    #[serde(default = "DefaultScheduleConfig")]
+    pub scheduleConfig: ScheduleConfig,
 }
 
 fn PromptDefault() -> String {
@@ -180,6 +207,7 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             probe: HttpEndpoint::default(),
             sampleCall: SampleCall::default(),
+            scheduleConfig: ScheduleConfig::default(),
         };
     }
 }

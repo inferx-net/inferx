@@ -772,7 +772,7 @@ pub struct Standby {
     #[serde(default, rename = "gpu")]
     pub gpuMem: StandbyType,
     #[serde(default, rename = "pageable")]
-    pageableMem: StandbyType,
+    pub pageableMem: StandbyType,
     #[serde(default, rename = "pinned")]
     pub pinndMem: StandbyType,
 }

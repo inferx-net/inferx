@@ -54,6 +54,10 @@ use crate::na::Kv;
 use inferxlib::obj_mgr::node_mgr::Node;
 use inferxlib::resource::Resources;
 
+use super::scheduler::BiIndex;
+use super::scheduler::SchedTask;
+use super::scheduler::SnapshotScheduleInfo;
+use super::scheduler::TaskQueue;
 use super::scheduler::WorkerPod;
 
 lazy_static::lazy_static! {
@@ -384,6 +388,9 @@ pub struct SchedulerHandler {
     // funcname name -> <Podid --> WorkerPod>
     pub funcPods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
 
+    // Snapshot schedule state, id1: funcid, id2: nodename
+    pub SnapshotSched: BiIndex<SnapshotScheduleInfo>,
+
     pub nodeListDone: bool,
     pub funcListDone: bool,
     pub funcPodListDone: bool,
@@ -391,6 +398,8 @@ pub struct SchedulerHandler {
     pub listDone: bool,
 
     pub nextWorkId: AtomicU64,
+
+    pub taskQueue: TaskQueue,
 }
 
 impl SchedulerHandler {
@@ -634,7 +643,13 @@ impl SchedulerHandler {
 
     pub fn UpdateSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
-        assert!(self.snapshots.contains_key(&funckey));
+        if !self.snapshots.contains_key(&funckey) {
+            error!(
+                "UpdateSnapshot get snapshot will non exist funckey {}",
+                funckey
+            );
+            return Ok(());
+        }
 
         self.snapshots
             .get_mut(&funckey)
@@ -735,8 +750,25 @@ impl SchedulerHandler {
         interval: &mut Interval,
     ) -> Result<()> {
         tokio::select! {
-            _ = closeNotfiy.notified() => {
-                return Err(Error::ProcessDone);
+            biased;
+            m = msgRx.recv() => {
+                if let Some(msg) = m {
+                    match msg {
+                        WorkerHandlerMsg::LeaseWorker((m, tx)) => {
+                            self.ProcessLeaseWorkerReq(m, tx).await?;
+                        }
+                        WorkerHandlerMsg::ReturnWorker((m, tx)) => {
+                            self.ProcessReturnWorkerReq(m, tx).await.ok();
+                        }
+                        WorkerHandlerMsg::RefreshGateway(m) => {
+                            self.ProcessRefreshGateway(m).await?;
+                        }
+                        _ => ()
+                    }
+                } else {
+                    error!("scheduler msgRx read fail...");
+                    return Err(Error::ProcessDone);
+                }
             }
             _ = interval.tick() => {
                 if self.listDone {
@@ -759,6 +791,7 @@ impl SchedulerHandler {
                                     self.AddFunc(func)?;
                                     if self.listDone {
                                         self.ProcessAddFunc(&funcid).await?;
+                                        self.taskQueue.AddFunc(&funcid);
                                     }
                                 }
                                 Node::KEY => {
@@ -808,6 +841,7 @@ impl SchedulerHandler {
                                     self.AddFunc(spec)?;
                                     if self.listDone {
                                         self.ProcessAddFunc(&fpId).await?;
+                                        self.taskQueue.AddFunc(&fpId);
                                     }
                                 }
                                 Node::KEY => {
@@ -849,9 +883,6 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.RemoveSnapshot(&snapshot).await?;
-
-
-
                                 }
                                 _ => {
                                 }
@@ -889,25 +920,20 @@ impl SchedulerHandler {
                     return Err(Error::ProcessDone);
                 }
             }
-            m = msgRx.recv() => {
-                if let Some(msg) = m {
-                    match msg {
-                        WorkerHandlerMsg::LeaseWorker((m, tx)) => {
-                            self.ProcessLeaseWorkerReq(m, tx).await?;
-                        }
-                        WorkerHandlerMsg::ReturnWorker((m, tx)) => {
-                            self.ProcessReturnWorkerReq(m, tx).await.ok();
-                        }
-                        WorkerHandlerMsg::RefreshGateway(m) => {
-                            self.ProcessRefreshGateway(m).await?;
-                        }
-                        _ => ()
+            t = self.taskQueue.Next() => {
+                let task = match t {
+                    None => {
+                        return Ok(());
                     }
-                } else {
-                    error!("scheduler msgRx read fail...");
-                    return Err(Error::ProcessDone);
-                }
+                    Some(t) => t
+                };
+
+                self.ProcessTask(&task).await?;
             }
+            _ = closeNotfiy.notified() => {
+                return Err(Error::ProcessDone);
+            }
+
         }
 
         return Ok(());
@@ -1134,41 +1160,6 @@ impl SchedulerHandler {
         let (_, workids) = nodeSnapshots.get(&nodename).unwrap().clone();
 
         return Ok((nodename, workids, nodeResource));
-
-        // let req = if !forStandby {
-        //     func.object.spec.SnapshotResource(contextCount)
-        // } else {
-        //     // func.object.spec.AllResources()
-        //     self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
-        // };
-
-        // for workid in &workids {
-        //     match self.idlePods.remove(workid) {
-        //         None => unreachable!(),
-        //         Some(podkey) => {
-        //             error!("FindNode4Pod remove idlepod terminal {:?}", &podkey);
-        //             match self.pods.get(&podkey) {
-        //                 None => unreachable!(),
-        //                 Some(pod) => {
-        //                     let nodename = pod.pod.object.spec.nodename.clone();
-        //                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-        //                     self.stoppingPods.insert(podkey.clone());
-
-        //                     nodeStatus.FreeResource(
-        //                         &pod.pod.object.spec.allocResources,
-        //                         &pod.pod.PodKey(),
-        //                     )?;
-        //                     pods.push(pod.clone());
-        //                     if nodeStatus.available.CanAlloc(&req, createSnapshot) {
-        //                         break;
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-
-        // return Ok((nodename, pods));
     }
 
     pub async fn GetBestResumeWorker(
@@ -1393,6 +1384,238 @@ impl SchedulerHandler {
         }
     }
 
+    pub fn InitSnapshotTask(&self) -> Result<()> {
+        for (funcId, _) in &self.funcs {
+            for (nodename, _) in &self.nodes {
+                self.taskQueue.AddSnapshotTask(nodename, funcId);
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
+        match task {
+            SchedTask::AddNode(nodename) => {
+                for (funcId, _) in &self.funcs {
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                }
+            }
+            SchedTask::AddFunc(funcId) => {
+                for (nodename, _) in &self.nodes {
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                }
+            }
+            SchedTask::SnapshotTask(p) => {
+                self.TryCreateSnapshotOnNode(&p.funcId, &p.nodename)
+                    .await
+                    .ok();
+                return Ok(());
+            }
+
+            _ => (),
+        }
+
+        return Ok(());
+    }
+
+    pub fn TryFreeResources(
+        &mut self,
+        nodename: &str,
+        funcId: &str,
+        available: &mut NodeResources,
+        reqResource: &Resources,
+        createSnapshot: bool,
+    ) -> Result<Vec<(u64, WorkerPod)>> {
+        let mut workids = Vec::new();
+        let mut missWorkers = Vec::new();
+
+        for (workid, podKey) in &self.idlePods {
+            match self.pods.get(podKey) {
+                None => {
+                    missWorkers.push(*workid);
+                    continue;
+                }
+                Some(pod) => {
+                    if &pod.pod.object.spec.nodename != nodename {
+                        continue;
+                    }
+
+                    workids.push((*workid, pod.clone()));
+                    available.Add(&pod.pod.object.spec.allocResources).unwrap();
+                    if available.CanAlloc(&reqResource, createSnapshot) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for workerid in &missWorkers {
+            let pod = self.idlePods.remove(workerid);
+            error!("FindNode4Pod remove idlepod missing {:?}", &pod);
+        }
+
+        if !available.CanAlloc(&reqResource, createSnapshot) {
+            return Err(Error::SchedulerNoEnoughResource(format!(
+                "Node {} has no enough free resource to run {}",
+                nodename, funcId
+            )));
+        }
+
+        return Ok(workids);
+    }
+
+    pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
+        // error!(
+        //     "TryCreateSnapshotOnNode 1 {}/{}/{:?}",
+        //     funcId,
+        //     nodename,
+        //     self.snapshots.keys()
+        // );
+        match self.snapshots.get(funcId) {
+            None => (),
+            Some(ss) => {
+                match ss.get(nodename) {
+                    Some(_) => {
+                        // there is snapshot on the node
+                        return Ok(());
+                    }
+                    None => (),
+                }
+            }
+        }
+        
+        let func = match self.funcs.get(funcId) {
+            None => return Ok(()),
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+        
+        let nodeStatus = match self.nodes.get(nodename) {
+            None => return Ok(()),
+            Some(n) => n,
+        };
+
+        if nodeStatus.state != NAState::NodeAgentAvaiable {
+            self.taskQueue.AddSnapshotTask(nodename, funcId);
+            return Err(Error::SchedulerNoEnoughResource(
+                "NodAgent node ready".to_owned(),
+            ));
+        }
+
+        let spec = &func.object.spec;
+        if !nodeStatus.node.object.blobStoreEnable {
+            if spec.standby.gpuMem == StandbyType::Blob
+                || spec.standby.PageableMem() == StandbyType::Blob
+                || spec.standby.pinndMem == StandbyType::Blob
+            {
+                return Err(Error::SchedulerNoEnoughResource(
+                    "NodAgent doesn't support blob".to_owned(),
+                ));
+            }
+        }
+
+        let contextCount = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+        let reqResource = func.object.spec.SnapshotResource(contextCount).clone();
+
+        if !nodeStatus.total.CanAlloc(&reqResource, true) {
+            error!("TryCreateSnapshotOnNode 3 {}/{}", funcId, nodename);
+            return Err(Error::SchedulerNoEnoughResource(format!(
+                "Node {} has no enough resource to run {}",
+                nodename, funcId
+            )));
+        }
+        let mut nodeResources: NodeResources = nodeStatus.available.clone();
+
+        let terminateWorkers =
+            match self.TryFreeResources(nodename, funcId, &mut nodeResources, &reqResource, true) {
+                Err(Error::SchedulerNoEnoughResource(s)) => {
+                    error!("TryCreateSnapshotOnNode AddFunc xx 1");
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                    return Err(Error::SchedulerNoEnoughResource(s));
+                }
+                Err(e) => return Err(e),
+                Ok(t) => t,
+            };
+
+        let resources;
+        let nodeAgentUrl;
+
+        {
+            let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+            let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+            let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+            // resources =
+            //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
+            resources = nodeResources.Alloc(&snapshotResource, true)?;
+            nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+        }
+
+        let terminatePods: Vec<WorkerPod> = terminateWorkers
+            .iter()
+            .map(|(_, pod)| pod.clone())
+            .collect();
+
+        let id: u64 = match self
+            .StartWorker(
+                &nodeAgentUrl,
+                &func,
+                &resources,
+                &resources,
+                na::CreatePodType::Snapshot,
+                &terminatePods,
+            )
+            .await
+        {
+            Err(e) => {
+                error!("TryCreateSnapshotOnNode StartWorker xx 1");
+                self.taskQueue.AddSnapshotTask(nodename, funcId);
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        for (workid, pod) in &terminateWorkers {
+            let remove = self.idlePods.remove(workid);
+            assert!(remove.is_some());
+            let podkey = pod.pod.PodKey();
+            match self.pods.get(&podkey) {
+                None => unreachable!(),
+                Some(pod) => {
+                    let nodename = pod.pod.object.spec.nodename.clone();
+                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                    self.stoppingPods.insert(podkey.clone());
+
+                    nodeStatus
+                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+                }
+            }
+        }
+
+        let podKey = FuncPod::FuncPodKey(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            func.Version(),
+            &format!("{id}"),
+        );
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, funcId, &resources);
+        let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+
+        let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+        let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+        nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
+
+        self.funcs
+            .get_mut(funcId)
+            .unwrap()
+            .AddPendingPod(&pendingPod)?;
+
+        self.AddPendingSnapshot(funcId, &nodename);
+        return Ok(());
+    }
+
     pub async fn ProcessAddFunc(&mut self, funcid: &str) -> Result<()> {
         let func = match self.funcs.get(funcid) {
             None => {
@@ -1410,7 +1633,7 @@ impl SchedulerHandler {
             return Ok(());
         }
 
-        self.TryCreateSnapshot(funcid, &func).await?;
+        // self.TryCreateSnapshot(funcid, &func).await?;
         self.TryCreateStandbyPod(funcid).await?;
         return Ok(());
     }
@@ -1569,7 +1792,7 @@ impl SchedulerHandler {
                 .map(|(_, pod)| pod.clone())
                 .collect();
 
-            let id = self
+            let id: u64 = self
                 .StartWorker(
                     &nodeAgentUrl,
                     &func,
@@ -1987,6 +2210,7 @@ impl SchedulerHandler {
             self.listDone = true;
 
             self.RefreshScheduling().await?;
+            self.InitSnapshotTask()?;
 
             return Ok(true);
         }
@@ -2009,7 +2233,8 @@ impl SchedulerHandler {
         };
         let nodeStatus = NodeStatus::New(node, total, pods)?;
 
-        self.nodes.insert(nodeName, nodeStatus);
+        self.nodes.insert(nodeName.clone(), nodeStatus);
+        self.taskQueue.AddNode(&nodeName);
 
         return Ok(());
     }
