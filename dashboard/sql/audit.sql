@@ -56,6 +56,19 @@ CREATE TABLE FuncState (
     PRIMARY KEY(tenant, namespace, fpname, fprevision, updatetime)
 );
 
+DROP TABLE SnapshotSchedule;
+CREATE TABLE SnapshotSchedule (
+    tenant          VARCHAR NOT NULL,
+    namespace       VARCHAR NOT NULL,
+    funcname        VARCHAR NOT NULL,
+    revision        bigint,
+    nodename        VARCHAR NOT NULL,
+    state           VARCHAR NOT NULL,
+    detail          VARCHAR NOT NULL,
+    updatetime      TIMESTAMP,
+    PRIMARY KEY(tenant, namespace, funcname, revision, nodename)
+);
+
 DROP TABLE ReqAudit;
 CREATE TABLE ReqAudit (
     seqid           SERIAL PRIMARY KEY, 

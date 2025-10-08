@@ -62,6 +62,22 @@ CREATE TABLE ReqAudit (
     latency         int
 );
 
+-- DROP TABLE SnapshotScheduleAudit;
+CREATE TABLE SnapshotScheduleAudit (
+    tenant          VARCHAR NOT NULL,
+    namespace       VARCHAR NOT NULL,
+    funcname        VARCHAR NOT NULL,
+    revision        bigint,
+    nodename        VARCHAR NOT NULL,
+    state           VARCHAR NOT NULL,
+    detail          VARCHAR NOT NULL,
+    updatetime      TIMESTAMPTZ,
+    PRIMARY KEY(tenant, namespace, funcname, revision, nodename, state)
+);
+
+-- CREATE INDEX idx_snapshot_audit
+-- ON SnapshotScheduleAudit (tenant, namespace, funcname, revision, nodename);
+
 CREATE OR REPLACE FUNCTION notification_trigger() RETURNS TRIGGER AS 
 $$
 BEGIN

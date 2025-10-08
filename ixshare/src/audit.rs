@@ -418,8 +418,16 @@ impl SqlAudit {
     }
 
     pub async fn CreateSnapshotScheduleRecord(&self, audit: &SnapshotScheduleAudit) -> Result<()> {
-        let query ="insert into SnapshotScheduleAudit (tenant, namespace, funcname, revision, nodename, state, detail, updatetime) values \
-        ($1, $2, $3, $4, $5, $6, $7, NOW())";
+        error!("CreateSnapshotScheduleRecord x {:#?}", audit);
+        let query = r#"
+                            INSERT INTO SnapshotScheduleAudit 
+                                (tenant, namespace, funcname, revision, nodename, state, detail, updatetime)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                            ON CONFLICT (tenant, namespace, funcname, revision, nodename, state)
+                            DO UPDATE SET
+                                detail = EXCLUDED.detail,
+                                updatetime = NOW()
+                            "#;
         let _result = sqlx::query(query)
             .bind(&audit.tenant)
             .bind(&audit.namespace)
@@ -449,7 +457,7 @@ impl SqlAudit {
               AND namespace = $2
               AND funcname = $3
               AND revision = $4
-            ORDER BY updatetime DESC;
+            ORDER BY updatetime;
             "#,
         )
         .bind(tenant)
