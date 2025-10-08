@@ -71,7 +71,7 @@ pub enum Error {
     TokioOneshotError(tokio::sync::oneshot::error::RecvError),
     SqlxError(sqlx::Error),
     AddControlMessageError(tokio_seqpacket::ancillary::AddControlMessageError),
-    SqliteErr(rusqlite::Error),
+    // SqliteErr(rusqlite::Error),
     KeycloakError(keycloak::KeycloakError),
 }
 
@@ -93,11 +93,11 @@ impl From<InferxLibError> for Error {
     }
 }
 
-impl From<rusqlite::Error> for Error {
-    fn from(item: rusqlite::Error) -> Self {
-        return Self::SqliteErr(item);
-    }
-}
+// impl From<rusqlite::Error> for Error {
+//     fn from(item: rusqlite::Error) -> Self {
+//         return Self::SqliteErr(item);
+//     }
+// }
 
 impl From<keycloak::KeycloakError> for Error {
     fn from(item: keycloak::KeycloakError) -> Self {

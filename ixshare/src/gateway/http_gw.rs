@@ -14,7 +14,7 @@ use inferxlib::{
 use serde_json::Value;
 
 use crate::{
-    audit::{PodAuditLog, PodFailLog},
+    audit::{PodAuditLog, PodFailLog, SnapshotScheduleAudit},
     common::*,
     metastore::selection_predicate::ListOption,
 };
@@ -611,6 +611,25 @@ impl HttpGateway {
         let s = self
             .sqlAudit
             .ReadPodAudit(&tenant, &namespace, &funcname, version, id)
+            .await?;
+        return Ok(s);
+    }
+
+    pub async fn ReadSnapshotScheduleRecords(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        version: i64,
+    ) -> Result<Vec<SnapshotScheduleAudit>> {
+        if !token.IsNamespaceUser(tenant, namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        let s = self
+            .sqlAudit
+            .ReadSnapshotScheduleRecords(&tenant, &namespace, &funcname, version)
             .await?;
         return Ok(s);
     }

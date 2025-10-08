@@ -130,6 +130,10 @@ impl HttpGateway {
                 get(ReadPodAuditLog),
             )
             .route(
+                "/SnapshotSchedule/:tenant/:namespace/:name/:revision/",
+                get(ReadSnapshotScheduleRecords),
+            )
+            .route(
                 "/faillogs/:tenant/:namespace/:name/:revision",
                 get(ReadPodFaillogs),
             )
@@ -1309,6 +1313,36 @@ async fn ReadPodAuditLog(
         }
         Err(e) => {
             error!("ReadPodAuditLog error {:?}", &e);
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn ReadSnapshotScheduleRecords(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((tenant, namespace, funcname, version)): Path<(String, String, String, i64)>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .ReadSnapshotScheduleRecords(&token, &tenant, &namespace, &funcname, version)
+        .await
+    {
+        Ok(recs) => {
+            let data = serde_json::to_string(&recs).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            error!("ReadSnapshotScheduleRecords error {:?}", &e);
             let body = Body::from(format!("service failure {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)

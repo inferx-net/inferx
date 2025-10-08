@@ -358,36 +358,79 @@ pub struct RemoveSnapshotFromNode {
     pub funckey: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SnapshotScheduleState {
+    Init,
     Done,
+    Scheduled,
+    ScheduleFail(String),
     Cannot(String),
     Waiting(String),
 }
 
 impl Default for SnapshotScheduleState {
     fn default() -> Self {
-        return Self::Done;
+        return Self::Init;
     }
 }
 
-#[derive(Debug, Default)]
+impl SnapshotScheduleState {
+    pub fn StateName(&self) -> String {
+        let s = match self {
+            Self::Init => "Init",
+            Self::Done => "Done",
+            Self::Scheduled => "Scheduled",
+            Self::ScheduleFail(_) => "ScheduleFail",
+            Self::Cannot(_) => "Cannot",
+            Self::Waiting(_) => "Waiting",
+        };
+
+        return s.to_owned();
+    }
+
+    pub fn Detail(&self) -> String {
+        let s = match self {
+            Self::Init => "Init",
+            Self::Done => "Done",
+            Self::Scheduled => "Scheduled",
+            Self::ScheduleFail(s) => return s.clone(),
+            Self::Cannot(s) => return s.clone(),
+            Self::Waiting(s) => return s.clone(),
+        };
+
+        return s.to_owned();
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SnapshotScheduleInfoInner {
     pub funcId: String,
     pub nodename: String,
-    pub scheduleSnapshot: SnapshotScheduleState,
+    pub state: SnapshotScheduleState,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SnapshotScheduleInfo(Arc<SnapshotScheduleInfoInner>);
+
+impl SnapshotScheduleInfo {
+    pub fn New(funcId: &str, nodename: &str, state: SnapshotScheduleState) -> Self {
+        let inner = SnapshotScheduleInfoInner {
+            funcId: funcId.to_owned(),
+            nodename: nodename.to_owned(),
+            state: state,
+        };
+
+        return Self(Arc::new(inner));
+    }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SnapshotScheduleInfo(Arc<Mutex<SnapshotScheduleInfoInner>>);
-
-#[derive(Debug, Clone, Default)]
-pub struct BiIndex<Info: Clone> {
+pub struct BiIndex<Info: Clone + PartialEq> {
     byId1: BTreeMap<String, BTreeMap<String, Info>>,
     byId2: BTreeMap<String, BTreeMap<String, Info>>,
 }
 
-impl<Info: Clone> BiIndex<Info> {
+impl<Info: Clone + PartialEq> BiIndex<Info> {
     pub fn New() -> Self {
         Self {
             byId1: BTreeMap::new(),
@@ -396,7 +439,17 @@ impl<Info: Clone> BiIndex<Info> {
     }
 
     /// Insert (id1, id2, info)
-    pub fn Insert(&mut self, id1: &str, id2: &str, info: Info) {
+    /// return true: Update, false: No change
+    pub fn Set(&mut self, id1: &str, id2: &str, info: Info) -> bool {
+        match self.Get12(id1, id2) {
+            None => (),
+            Some(old) => {
+                if old == info {
+                    return false;
+                }
+            }
+        }
+
         self.byId1
             .entry(id1.to_string())
             .or_default()
@@ -406,6 +459,8 @@ impl<Info: Clone> BiIndex<Info> {
             .entry(id2.to_string())
             .or_default()
             .insert(id1.to_string(), info);
+
+        return true;
     }
 
     /// Get a clone of info by id1/id2

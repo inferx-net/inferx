@@ -31,6 +31,8 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
 use tokio::time::Interval;
 
+use crate::audit::SnapshotScheduleAudit;
+use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
@@ -57,6 +59,7 @@ use inferxlib::resource::Resources;
 use super::scheduler::BiIndex;
 use super::scheduler::SchedTask;
 use super::scheduler::SnapshotScheduleInfo;
+use super::scheduler::SnapshotScheduleState;
 use super::scheduler::TaskQueue;
 use super::scheduler::WorkerPod;
 
@@ -155,6 +158,7 @@ impl NodeStatus {
     pub fn AddPod(&mut self, pod: &WorkerPod) -> Result<()> {
         let podKey = pod.pod.PodKey();
 
+        error!("AddPod xx {:?}", &podKey);
         match self.pendingPods.remove(&podKey) {
             None => {
                 // this pod is not created by the scheduler
@@ -1465,6 +1469,30 @@ impl SchedulerHandler {
         return Ok(workids);
     }
 
+    pub fn SetSnapshotStatus(
+        &mut self,
+        funcId: &str,
+        nodename: &str,
+        state: SnapshotScheduleState,
+    ) {
+        let update = self.SnapshotSched.Set(
+            funcId,
+            nodename,
+            SnapshotScheduleInfo::New(funcId, nodename, state.clone()),
+        );
+
+        if update {
+            match SnapshotScheduleAudit::New(funcId, nodename, &state) {
+                Err(e) => {
+                    error!("SetSnapshotStatus fail with {:?}", e);
+                }
+                Ok(a) => {
+                    POD_AUDIT_AGENT.AuditSnapshotSchedule(a);
+                }
+            }
+        }
+    }
+
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
         // error!(
         //     "TryCreateSnapshotOnNode 1 {}/{}/{:?}",
@@ -1484,23 +1512,16 @@ impl SchedulerHandler {
                 }
             }
         }
-        
+
         let func = match self.funcs.get(funcId) {
             None => return Ok(()),
             Some(fpStatus) => fpStatus.func.clone(),
         };
-        
+
         let nodeStatus = match self.nodes.get(nodename) {
             None => return Ok(()),
             Some(n) => n,
         };
-
-        if nodeStatus.state != NAState::NodeAgentAvaiable {
-            self.taskQueue.AddSnapshotTask(nodename, funcId);
-            return Err(Error::SchedulerNoEnoughResource(
-                "NodAgent node ready".to_owned(),
-            ));
-        }
 
         let spec = &func.object.spec;
         if !nodeStatus.node.object.blobStoreEnable {
@@ -1508,17 +1529,40 @@ impl SchedulerHandler {
                 || spec.standby.PageableMem() == StandbyType::Blob
                 || spec.standby.pinndMem == StandbyType::Blob
             {
+                self.SetSnapshotStatus(
+                    funcId,
+                    nodename,
+                    SnapshotScheduleState::Cannot(format!("NodAgent doesn't support blob")),
+                );
                 return Err(Error::SchedulerNoEnoughResource(
                     "NodAgent doesn't support blob".to_owned(),
                 ));
             }
         }
 
+        if nodeStatus.state != NAState::NodeAgentAvaiable {
+            self.taskQueue.AddSnapshotTask(nodename, funcId);
+
+            // self.SetSnapshotStatus(
+            //     funcId,
+            //     nodename,
+            //     SnapshotScheduleState::Waiting(format!("NodAgent not ready")),
+            // );
+
+            return Err(Error::SchedulerNoEnoughResource(
+                "NodAgent node ready".to_owned(),
+            ));
+        }
+
         let contextCount = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
         let reqResource = func.object.spec.SnapshotResource(contextCount).clone();
 
         if !nodeStatus.total.CanAlloc(&reqResource, true) {
-            error!("TryCreateSnapshotOnNode 3 {}/{}", funcId, nodename);
+            self.SetSnapshotStatus(
+                funcId,
+                nodename,
+                SnapshotScheduleState::Cannot(format!("has no enough resource to run")),
+            );
             return Err(Error::SchedulerNoEnoughResource(format!(
                 "Node {} has no enough resource to run {}",
                 nodename, funcId
@@ -1530,6 +1574,11 @@ impl SchedulerHandler {
             match self.TryFreeResources(nodename, funcId, &mut nodeResources, &reqResource, true) {
                 Err(Error::SchedulerNoEnoughResource(s)) => {
                     error!("TryCreateSnapshotOnNode AddFunc xx 1");
+                    self.SetSnapshotStatus(
+                        funcId,
+                        nodename,
+                        SnapshotScheduleState::Waiting(format!("Resource is busy")),
+                    );
                     self.taskQueue.AddSnapshotTask(nodename, funcId);
                     return Err(Error::SchedulerNoEnoughResource(s));
                 }
@@ -1567,12 +1616,18 @@ impl SchedulerHandler {
             .await
         {
             Err(e) => {
-                error!("TryCreateSnapshotOnNode StartWorker xx 1");
+                self.SetSnapshotStatus(
+                    funcId,
+                    nodename,
+                    SnapshotScheduleState::ScheduleFail(format!("snapshoting sched fail {:?}", &e)),
+                );
                 self.taskQueue.AddSnapshotTask(nodename, funcId);
                 return Err(e);
             }
             Ok(id) => id,
         };
+
+        self.SetSnapshotStatus(funcId, nodename, SnapshotScheduleState::Scheduled);
 
         for (workid, pod) in &terminateWorkers {
             let remove = self.idlePods.remove(workid);
