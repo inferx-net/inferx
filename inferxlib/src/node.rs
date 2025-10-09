@@ -45,11 +45,13 @@ pub struct ContainerImage {
 
 pub type ReturnId = u64;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerPodState {
     Init,
-    Working(i64),   // leased by one gateway, GatewayId
+    Standby,
+    Resuming,
     Idle(ReturnId), // no one leasing the worker, inner is return SeqId,
+    Working(i64),   // leased by one gateway, GatewayId
 }
 
 impl WorkerPodState {

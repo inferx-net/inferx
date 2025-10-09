@@ -1206,6 +1206,10 @@ impl SchedulerHandler {
                 continue;
             }
 
+            if worker.State() != WorkerPodState::Standby {
+                continue;
+            }
+
             if &worker.pod.object.spec.nodename == &nodename {
                 return Ok((worker.clone(), termimalworkers, nodeResource));
             }
@@ -1398,8 +1402,12 @@ impl SchedulerHandler {
     }
 
     pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
+        use tokio::time::{sleep, Duration};
         match task {
             SchedTask::AddNode(nodename) => {
+                // wait until all info of the node be synced
+                // todo: can't block main thread
+                sleep(Duration::from_secs(3)).await;
                 for (funcId, _) in &self.funcs {
                     self.taskQueue.AddSnapshotTask(nodename, funcId);
                 }
@@ -2154,18 +2162,26 @@ impl SchedulerHandler {
             naUrl = nodeStatus.node.NodeAgentUrl();
         }
 
-        error!("resume worker idle {:?}", &self.idlePods);
-        self.ResumeWorker(
-            &naUrl,
-            &pod.pod.tenant,
-            &pod.pod.namespace,
-            &pod.pod.object.spec.funcname,
-            pod.pod.object.spec.fprevision,
-            &id,
-            &resources,
-            &terminalPods,
-        )
-        .await?;
+        pod.SetState(WorkerPodState::Resuming);
+        match self
+            .ResumeWorker(
+                &naUrl,
+                &pod.pod.tenant,
+                &pod.pod.namespace,
+                &pod.pod.object.spec.funcname,
+                pod.pod.object.spec.fprevision,
+                &id,
+                &resources,
+                &terminalPods,
+            )
+            .await
+        {
+            Err(e) => {
+                pod.SetState(WorkerPodState::Standby);
+                return Err(e);
+            }
+            Ok(()) => (),
+        }
 
         for (workid, pod) in &terminateWorkers {
             let remove = self.idlePods.remove(workid);
@@ -2465,7 +2481,7 @@ impl SchedulerHandler {
         let nodename = pod.object.spec.nodename.clone();
         let fpKey = pod.FuncKey();
 
-        let boxPod: WorkerPod = pod.into();
+        let boxPod: WorkerPod = WorkerPod::New(pod);
         assert!(self.pods.insert(podKey.clone(), boxPod.clone()).is_none());
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
@@ -2512,7 +2528,7 @@ impl SchedulerHandler {
         let nodeName = pod.object.spec.nodename.clone();
         let funcKey = pod.FuncKey();
 
-        let boxPod: WorkerPod = pod.into();
+        let boxPod: WorkerPod = WorkerPod::New(pod);
 
         let oldPod = self
             .pods

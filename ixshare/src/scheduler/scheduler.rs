@@ -232,7 +232,7 @@ impl WorkerPod {
 
     pub fn SetIdle(&self) -> u64 {
         let returnId = IDLE_POD_SEQNUM.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.workerState.lock().unwrap() = WorkerPodState::Idle(returnId);
+        self.SetState(WorkerPodState::Idle(returnId));
         return returnId;
     }
 
@@ -245,12 +245,35 @@ impl WorkerPod {
             WorkerPodState::Init => {
                 returnId = 0;
             }
+            WorkerPodState::Resuming | WorkerPodState::Standby => {
+                unreachable!("WorkerPod::SetWorking Resuming");
+            }
             WorkerPodState::Idle(id) => {
                 returnId = id;
             }
         }
         *self.workerState.lock().unwrap() = WorkerPodState::Working(gatewayId);
         return returnId;
+    }
+
+    pub fn New(pod: FuncPod) -> Self {
+        let inner = WorkerPodInner {
+            pod: pod,
+            workerState: Mutex::new(WorkerPodState::Init),
+        };
+        let ret: WorkerPod = Self(Arc::new(inner));
+
+        error!("New workerpod pod {} {:?}", ret.pod.PodKey(), ret.pod.object.status.state);
+
+        if ret.pod.object.status.state == PodState::Ready {
+            ret.SetIdle();
+        }
+
+        if ret.pod.object.status.state == PodState::Standby {
+            ret.SetState(WorkerPodState::Standby);
+        }
+
+        return ret;
     }
 }
 
@@ -262,23 +285,6 @@ impl Deref for WorkerPod {
     }
 }
 
-impl From<FuncPod> for WorkerPod {
-    fn from(item: FuncPod) -> Self {
-        let inner = WorkerPodInner {
-            pod: item,
-            workerState: Mutex::new(WorkerPodState::Init),
-        };
-        let ret: WorkerPod = Self(Arc::new(inner));
-
-        if ret.pod.object.status.state == PodState::Ready
-            || ret.pod.object.status.state == PodState::Standby
-        {
-            ret.SetIdle();
-        }
-
-        return ret;
-    }
-}
 
 pub struct TaskQueue {
     pub tx: tokio::sync::mpsc::Sender<SchedTask>,
