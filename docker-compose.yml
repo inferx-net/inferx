@@ -81,7 +81,7 @@ services:
       - /etc/letsencrypt/:/etc/letsencrypt/
     # command:
     #   - /opt/inferx/config/node1.json
-  inferx_runtime:
+  inferx_nodeagent:
     image: inferx/inferx_na:${Version}
     restart: always
     container_name: inferx_na
@@ -90,17 +90,12 @@ services:
     cpus: 20
     network_mode: "host"
     environment:
-      - NODE_NAME=${HOSTNAME}
-      - POD_IP=${LOCAL_IP}
-      - ALLOC_MEMORY=80Gi
-      - ALLOC_CPU=24
-      - CACHE_MEMORY=40Gi
-      - ENABLE_2MB_PAGE=false
-      - CONTEXT_OVERHEAD=500
-      - ENALBE_BLOB=false
-      - BLOB_BUFF=4Gi
-      - ETCD_ADDR=http://localhost:2379
       - STATESVC_ADDR=http://localhost:1237
+      - RUN_SERVICE=NodeAgent
+      - POD_IP=${LOCAL_IP}
+      - NODE_NAME=${HOSTNAME}
+      - ALLOC_MEMORY=100Gi
+      - ETCD_ADDR=http://localhost:2379
       - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
     pid: "host"
     healthcheck:
@@ -125,6 +120,7 @@ services:
       - /opt/inferx/cache:/opt/inferx/cache
       - /opt/inferx/snapshot:/opt/inferx/snapshot
       - /opt/inferx/work:/opt/inferx/work
+      - /opt/inferx/run:/opt/inferx/run
       # - /opt/inferx/:/opt/inferx/
       - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
@@ -138,8 +134,65 @@ services:
             - driver: nvidia
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
-    # command:
-    #   - /opt/inferx/config/node1.json
+  inferx_ixproxy:
+    image: inferx/inferx_na:${Version}
+    restart: always
+    container_name: inferx_proxy
+    privileged: true
+    user: root
+    cpus: 20
+    network_mode: "host"
+    environment:
+      - STATESVC_ADDR=http://localhost:1237
+      - RUN_SERVICE=IxProxy
+      - POD_IP=${LOCAL_IP}
+      - NODE_NAME=${HOSTNAME}
+      - ALLOC_MEMORY=180Gi
+      - ALLOC_MEMORY_2M=30Gi
+      - CACHE_MEMORY=20Gi
+      - ENABLE_2MB_PAGE=true
+      - CONTEXT_OVERHEAD=500
+      - ALLOC_CPU=24
+      - ENALBE_BLOB=false
+      - ETCD_ADDR=http://localhost:2379
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+    pid: "host"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4000" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_started
+      etcd:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      secret_db:
+        condition: service_started
+    volumes:
+      # - /opt/inferx/bin:/opt/inferx/bin
+      # - /opt/inferx/config:/opt/inferx/config
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /opt/inferx/cache:/opt/inferx/cache
+      - /opt/inferx/snapshot:/opt/inferx/snapshot
+      - /opt/inferx/work:/opt/inferx/work
+      - /opt/inferx/run:/opt/inferx/run
+      # - /opt/inferx/:/opt/inferx/
+      - /opt/inferx/dind:/var/lib/docker
+      - /run/udev:/run/udev
+      - /dev/hugepages:/dev/hugepages
+      - /etc/letsencrypt/:/etc/letsencrypt/
+      # - /var/lib/docker/:/var/lib/docker/
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all # alternatively, use `count: all` for all GPUs
+              capabilities: [ gpu ]
   dashboard:
     image: inferx/inferx_dashboard:${Version}
     restart: on-failure
