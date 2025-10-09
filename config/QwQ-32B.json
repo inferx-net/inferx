@@ -15,15 +15,15 @@
                 "0.99",
                 "--max-model-len",
                 "2000",
-                "--tensor-parallel-size=2"
+                "--tensor-parallel-size=1"
             ],
             "resources": {
-                "CPU": 20000,
+                "CPU": 12000,
                 "Mem": 80000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 2,
-                    "vRam": 36000
+                    "Count": 1,
+                    "vRam": 66000
                 }
             },
             "envs": [
@@ -59,9 +59,9 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "Mem"
             }
         }
     }

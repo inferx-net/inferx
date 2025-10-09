@@ -1,26 +1,27 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-7B-Instruct",
+    "namespace": "deepseek-ai",
+    "name": "DeepSeek-R1-Distill-Llama-70B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Coder-7B-Instruct",
+                "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
-                "2000",
+                "1000",
                 "--tensor-parallel-size=2"
             ],
             "resources": {
-                "CPU": 12000,
-                "Mem": 30000,
+                "CPU": 20000,
+                "Mem": 100000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13000
+                    "vRam": 80000
                 }
             },
             "envs": [
@@ -46,11 +47,11 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
+                "prompt": "what is the integral of x^2 from 0 to 2?\nPlease reason step by step, and put your final answer within \\boxed{}.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
-                    "max_tokens": "1000",
+                    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                    "max_tokens": "800",
                     "temperature": "0",
                     "stream": "true"
                 }
@@ -58,7 +59,7 @@
             "standby": {
                 "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "File"
+                "pinned": "Mem"
             }
         }
     }

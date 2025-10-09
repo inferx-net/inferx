@@ -14,13 +14,13 @@
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 30000,
+                "Mem": 24000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
                     "vRam": 12000
                 },
-                "parallel": 10
+                "parallel": 120
             },
             "envs": [
                 [
@@ -55,9 +55,9 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "Mem"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             }
         }
     }

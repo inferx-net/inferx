@@ -5,7 +5,7 @@
     "name": "Qwen2.5-1.5B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-1.5B",
@@ -19,9 +19,9 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 8000
+                    "vRam": 6000
                 },
-                "parallel": 1
+                "parallel": 100
             },
             "envs": [
                 [
@@ -59,6 +59,11 @@
                 "gpu": "Mem",
                 "pageable": "File",
                 "pinned": "Mem"
+            },
+            "scheduleConfig": {
+                "min_replica": 0,
+                "max_replica": 10,
+                "standby_per_node": 2
             }
         }
     }
