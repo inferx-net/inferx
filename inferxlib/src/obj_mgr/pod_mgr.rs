@@ -262,3 +262,14 @@ impl Default for PodState {
         return Self::Init;
     }
 }
+
+impl PodState {
+    pub fn BlockStandby(&self) -> bool {
+        match self {
+            Self::Restoring => return true,
+            Self::Creating => return true,
+            Self::Resuming => return true,
+            _ => return false,
+        }
+    }
+}

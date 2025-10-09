@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -1295,29 +1297,26 @@ impl SchedulerHandler {
         return nodes;
     }
 
-    pub async fn GetBestNodeToSnapshot(
-        &mut self,
-        func: &Function,
-    ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
-        let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
-        if snapshotCandidateNodes.len() == 0 {
-            return Err(Error::SchedulerErr(format!(
-                "GetBestNodeToSnapshot can't schedule {}, no enough resource",
-                func.Id(),
-            )));
-        }
+    // pub async fn GetBestNodeToSnapshot(
+    //     &mut self,
+    //     func: &Function,
+    // ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
+    //     let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
+    //     if snapshotCandidateNodes.len() == 0 {
+    //         return Err(Error::SchedulerErr(format!(
+    //             "GetBestNodeToSnapshot can't schedule {}, no enough resource",
+    //             func.Id(),
+    //         )));
+    //     }
 
-        let (nodename, workers, nodeResource) = self
-            .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
-            .await?;
+    //     let (nodename, workers, nodeResource) = self
+    //         .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
+    //         .await?;
 
-        return Ok((nodename, workers, nodeResource));
-    }
+    //     return Ok((nodename, workers, nodeResource));
+    // }
 
     pub async fn GetBestNodeToRestore(&mut self, fp: &Function) -> Result<String> {
-        use rand::prelude::SliceRandom;
-        use rand::thread_rng;
-
         let funcid = fp.Id();
         let pods = self.GetFuncPodsByKey(&funcid)?;
         let mut existnodes = BTreeSet::new();
@@ -1404,6 +1403,8 @@ impl SchedulerHandler {
                 for (funcId, _) in &self.funcs {
                     self.taskQueue.AddSnapshotTask(nodename, funcId);
                 }
+                self.taskQueue
+                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
             }
             SchedTask::AddFunc(funcId) => {
                 for (nodename, _) in &self.nodes {
@@ -1414,7 +1415,9 @@ impl SchedulerHandler {
                 self.TryCreateSnapshotOnNode(&p.funcId, &p.nodename)
                     .await
                     .ok();
-                return Ok(());
+            }
+            SchedTask::StandbyTask(nodename) => {
+                self.TryCreateStandbyOnNode(&nodename).await.ok();
             }
 
             _ => (),
@@ -1494,12 +1497,6 @@ impl SchedulerHandler {
     }
 
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
-        // error!(
-        //     "TryCreateSnapshotOnNode 1 {}/{}/{:?}",
-        //     funcId,
-        //     nodename,
-        //     self.snapshots.keys()
-        // );
         match self.snapshots.get(funcId) {
             None => (),
             Some(ss) => {
@@ -1509,6 +1506,16 @@ impl SchedulerHandler {
                         return Ok(());
                     }
                     None => (),
+                }
+            }
+        }
+
+        match self.pendingsnapshots.get(funcId) {
+            None => (),
+            Some(m) => {
+                if m.contains(nodename) {
+                    // doing snapshot in the node
+                    return Ok(());
                 }
             }
         }
@@ -1543,12 +1550,6 @@ impl SchedulerHandler {
         if nodeStatus.state != NAState::NodeAgentAvaiable {
             self.taskQueue.AddSnapshotTask(nodename, funcId);
 
-            // self.SetSnapshotStatus(
-            //     funcId,
-            //     nodename,
-            //     SnapshotScheduleState::Waiting(format!("NodAgent not ready")),
-            // );
-
             return Err(Error::SchedulerNoEnoughResource(
                 "NodAgent node ready".to_owned(),
             ));
@@ -1573,7 +1574,6 @@ impl SchedulerHandler {
         let terminateWorkers =
             match self.TryFreeResources(nodename, funcId, &mut nodeResources, &reqResource, true) {
                 Err(Error::SchedulerNoEnoughResource(s)) => {
-                    error!("TryCreateSnapshotOnNode AddFunc xx 1");
                     self.SetSnapshotStatus(
                         funcId,
                         nodename,
@@ -1671,6 +1671,145 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    pub async fn TryCreateStandbyOnNode(&mut self, nodename: &str) -> Result<()> {
+        if !self.nodes.contains_key(nodename) {
+            return Ok(());
+        }
+
+        match self.nodes.get(nodename) {
+            None => return Ok(()),
+            Some(ns) => {
+                // add another StandbyTask for the node
+                self.taskQueue
+                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
+                if ns.pendingPods.len() > 0 {
+                    return Ok(());
+                }
+            }
+        }
+
+        let mut funcPodCnt = BTreeMap::new();
+        for (funcId, m) in &self.snapshots {
+            if m.contains_key(nodename) {
+                funcPodCnt.insert(funcId.to_owned(), 0);
+            }
+        }
+
+        for (_, pod) in &self.pods {
+            if &pod.pod.object.spec.nodename != nodename {
+                continue;
+            }
+
+            let funcId = pod.pod.FuncKey();
+            let state = pod.pod.object.status.state;
+
+            if state.BlockStandby() {
+                // avoid conflict
+                return Ok(());
+            }
+
+            if state != PodState::Standby {
+                continue;
+            }
+
+            match funcPodCnt.get(&funcId) {
+                None => {
+                    continue;
+                }
+                Some(c) => {
+                    funcPodCnt.insert(funcId, *c + 1);
+                }
+            }
+        }
+
+        let mut needStandby = Vec::new();
+        for (funcId, &cnt) in &funcPodCnt {
+            let func = match self.funcs.get(funcId) {
+                None => continue,
+                Some(f) => f,
+            };
+
+            if func.func.object.spec.scheduleConfig.standbyPerNode > cnt {
+                needStandby.push(funcId.to_owned());
+            }
+        }
+
+        if needStandby.len() == 0 {
+            return Ok(());
+        }
+
+        {
+            let mut rng = thread_rng();
+            needStandby.shuffle(&mut rng);
+        }
+
+        let funcId = &needStandby[0];
+        let nodename = nodename.to_owned();
+        let allocResources;
+        let nodeAgentUrl;
+        let resourceQuota;
+
+        let function = match self.funcs.get(funcId) {
+            None => return Ok(()),
+            Some(f) => f.func.clone(),
+        };
+
+        let standbyResource = self.StandyResource(funcId, &nodename);
+        {
+            let nodeStatus = match self.nodes.get_mut(&nodename) {
+                None => return Ok(()), // the node information is not synced
+                Some(ns) => ns,
+            };
+
+            allocResources =
+                nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcId, false)?;
+            resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
+            nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+        }
+
+        let id = match self
+            .StartWorker(
+                &nodeAgentUrl,
+                &function,
+                &allocResources,
+                &resourceQuota,
+                na::CreatePodType::Restore,
+                &Vec::new(),
+            )
+            .await
+        {
+            Err(e) => {
+                let nodeStatus = match self.nodes.get_mut(&nodename) {
+                    None => return Ok(()), // the node information is not synced
+                    Some(ns) => ns,
+                };
+                let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
+                nodeStatus.FreeResource(&resourceQuota, "")?;
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        let podKey = FuncPod::FuncPodKey(
+            &function.tenant,
+            &function.namespace,
+            &function.name,
+            function.Version(),
+            &format!("{id}"),
+        );
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, &funcId, &allocResources);
+        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+
+        self.funcs
+            .get_mut(funcId)
+            .unwrap()
+            .AddPendingPod(&pendingPod)?;
+
+        return Ok(());
+    }
+
     pub async fn ProcessAddFunc(&mut self, funcid: &str) -> Result<()> {
         let func = match self.funcs.get(funcid) {
             None => {
@@ -1689,218 +1828,218 @@ impl SchedulerHandler {
         }
 
         // self.TryCreateSnapshot(funcid, &func).await?;
-        self.TryCreateStandbyPod(funcid).await?;
+        // self.TryCreateStandbyPod(funcid).await?;
         return Ok(());
     }
 
-    pub async fn TryCreateStandbyPod(&mut self, funcid: &str) -> Result<()> {
-        let nodes = self.GetReadySnapshotNodes(funcid)?;
+    // pub async fn TryCreateStandbyPod(&mut self, funcid: &str) -> Result<()> {
+    //     let nodes = self.GetReadySnapshotNodes(funcid)?;
 
-        if nodes.len() == 0 {
-            // no checkpoint
-            return Ok(());
-        }
+    //     if nodes.len() == 0 {
+    //         // no checkpoint
+    //         return Ok(());
+    //     }
 
-        let needRestore; // whether need to create new standby pod
-        let function = match self.funcs.get(funcid) {
-            None => {
-                return Err(Error::NotExist(format!(
-                    "ProcessAddFunc can't find funcpcakge with id {}",
-                    funcid
-                )))
-            }
-            Some(funcStatus) => {
-                let pendingCnt = funcStatus.pendingPods.len();
-                let podcnt = funcStatus.pendingPods.len() + funcStatus.pods.len();
+    //     let needRestore; // whether need to create new standby pod
+    //     let function = match self.funcs.get(funcid) {
+    //         None => {
+    //             return Err(Error::NotExist(format!(
+    //                 "ProcessAddFunc can't find funcpcakge with id {}",
+    //                 funcid
+    //             )))
+    //         }
+    //         Some(funcStatus) => {
+    //             let pendingCnt = funcStatus.pendingPods.len();
+    //             let podcnt = funcStatus.pendingPods.len() + funcStatus.pods.len();
 
-                let keepaliveCnt = 8;
-                needRestore = (pendingCnt == 0) && (podcnt < keepaliveCnt);
+    //             let keepaliveCnt = 8;
+    //             needRestore = (pendingCnt == 0) && (podcnt < keepaliveCnt);
 
-                // error!(
-                //     "TryRetorePod pendingCnt {} podcnt {} needRestore {} keepaliveCnt {} for {}",
-                //     pendingCnt, podcnt, needRestore, keepaliveCnt, fpKey
-                // );
-                funcStatus.func.clone()
-            }
-        };
+    //             // error!(
+    //             //     "TryRetorePod pendingCnt {} podcnt {} needRestore {} keepaliveCnt {} for {}",
+    //             //     pendingCnt, podcnt, needRestore, keepaliveCnt, fpKey
+    //             // );
+    //             funcStatus.func.clone()
+    //         }
+    //     };
 
-        if needRestore {
-            let nodename = self.GetBestNodeToRestore(&function).await?;
-            let allocResources; // = NodeResources::default();
-            let nodeAgentUrl;
-            let resourceQuota;
+    //     if needRestore {
+    //         let nodename = self.GetBestNodeToRestore(&function).await?;
+    //         let allocResources; // = NodeResources::default();
+    //         let nodeAgentUrl;
+    //         let resourceQuota;
 
-            let standbyResource = self.StandyResource(funcid, &nodename);
-            {
-                let nodeStatus = match self.nodes.get_mut(&nodename) {
-                    None => return Ok(()), // the node information is not synced
-                    Some(ns) => ns,
-                };
+    //         let standbyResource = self.StandyResource(funcid, &nodename);
+    //         {
+    //             let nodeStatus = match self.nodes.get_mut(&nodename) {
+    //                 None => return Ok(()), // the node information is not synced
+    //                 Some(ns) => ns,
+    //             };
 
-                allocResources =
-                    nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcid, false)?;
-                resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
-                nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
-            }
+    //             allocResources =
+    //                 nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcid, false)?;
+    //             resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
+    //             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+    //         }
 
-            let id = match self
-                .StartWorker(
-                    &nodeAgentUrl,
-                    &function,
-                    &allocResources,
-                    &resourceQuota,
-                    na::CreatePodType::Restore,
-                    &Vec::new(),
-                )
-                .await
-            {
-                Err(e) => {
-                    let nodeStatus = match self.nodes.get_mut(&nodename) {
-                        None => return Ok(()), // the node information is not synced
-                        Some(ns) => ns,
-                    };
-                    let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
-                    nodeStatus.FreeResource(&resourceQuota, "")?;
-                    return Err(e);
-                }
-                Ok(id) => id,
-            };
+    //         let id = match self
+    //             .StartWorker(
+    //                 &nodeAgentUrl,
+    //                 &function,
+    //                 &allocResources,
+    //                 &resourceQuota,
+    //                 na::CreatePodType::Restore,
+    //                 &Vec::new(),
+    //             )
+    //             .await
+    //         {
+    //             Err(e) => {
+    //                 let nodeStatus = match self.nodes.get_mut(&nodename) {
+    //                     None => return Ok(()), // the node information is not synced
+    //                     Some(ns) => ns,
+    //                 };
+    //                 let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
+    //                 nodeStatus.FreeResource(&resourceQuota, "")?;
+    //                 return Err(e);
+    //             }
+    //             Ok(id) => id,
+    //         };
 
-            let podKey = FuncPod::FuncPodKey(
-                &function.tenant,
-                &function.namespace,
-                &function.name,
-                function.Version(),
-                &format!("{id}"),
-            );
+    //         let podKey = FuncPod::FuncPodKey(
+    //             &function.tenant,
+    //             &function.namespace,
+    //             &function.name,
+    //             function.Version(),
+    //             &format!("{id}"),
+    //         );
 
-            let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &allocResources);
-            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-            nodeStatus.AddPendingPod(&pendingPod)?;
+    //         let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &allocResources);
+    //         let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+    //         nodeStatus.AddPendingPod(&pendingPod)?;
 
-            self.funcs
-                .get_mut(funcid)
-                .unwrap()
-                .AddPendingPod(&pendingPod)?;
-        }
+    //         self.funcs
+    //             .get_mut(funcid)
+    //             .unwrap()
+    //             .AddPendingPod(&pendingPod)?;
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 
     pub const MAX_SNAPSHOT_PER_FUNC: usize = 3;
     pub const PRINT_SCHEDER_INFO: bool = false;
 
-    pub async fn TryCreateSnapshot(&mut self, funcid: &str, func: &Function) -> Result<()> {
-        if Self::PRINT_SCHEDER_INFO {
-            error!("TryCreateSnapshot 1 {}", funcid);
-        }
+    // pub async fn TryCreateSnapshot(&mut self, funcid: &str, func: &Function) -> Result<()> {
+    //     if Self::PRINT_SCHEDER_INFO {
+    //         error!("TryCreateSnapshot 1 {}", funcid);
+    //     }
 
-        let nodes = self.GetSnapshotNodes(funcid);
+    //     let nodes = self.GetSnapshotNodes(funcid);
 
-        if Self::PRINT_SCHEDER_INFO {
-            error!(
-                "TryCreateSnapshot 2 {}/{:?}/{}",
-                funcid,
-                &nodes,
-                self.HasPendingSnapshot(funcid)
-            );
-        }
-        if nodes.len() > Self::MAX_SNAPSHOT_PER_FUNC {
-            return Ok(());
-        }
+    //     if Self::PRINT_SCHEDER_INFO {
+    //         error!(
+    //             "TryCreateSnapshot 2 {}/{:?}/{}",
+    //             funcid,
+    //             &nodes,
+    //             self.HasPendingSnapshot(funcid)
+    //         );
+    //     }
+    //     if nodes.len() > Self::MAX_SNAPSHOT_PER_FUNC {
+    //         return Ok(());
+    //     }
 
-        if !self.HasPendingSnapshot(funcid) {
-            let (nodename, terminateWorkers, mut nodeResources) =
-                match self.GetBestNodeToSnapshot(&func).await {
-                    Ok(ret) => ret,
-                    Err(e) => {
-                        if Self::PRINT_SCHEDER_INFO {
-                            error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
-                        }
-                        if nodes.len() > 0 {
-                            return Ok(());
-                        }
+    //     if !self.HasPendingSnapshot(funcid) {
+    //         let (nodename, terminateWorkers, mut nodeResources) =
+    //             match self.GetBestNodeToSnapshot(&func).await {
+    //                 Ok(ret) => ret,
+    //                 Err(e) => {
+    //                     if Self::PRINT_SCHEDER_INFO {
+    //                         error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
+    //                     }
+    //                     if nodes.len() > 0 {
+    //                         return Ok(());
+    //                     }
 
-                        return Err(e);
-                    }
-                };
+    //                     return Err(e);
+    //                 }
+    //             };
 
-            if Self::PRINT_SCHEDER_INFO {
-                error!("TryCreateSnapshot 4 {}", funcid);
-            }
+    //         if Self::PRINT_SCHEDER_INFO {
+    //             error!("TryCreateSnapshot 4 {}", funcid);
+    //         }
 
-            let resources;
-            let nodeAgentUrl;
+    //         let resources;
+    //         let nodeAgentUrl;
 
-            {
-                let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
-                let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-                // resources =
-                //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
-                resources = nodeResources.Alloc(&snapshotResource, true)?;
-                nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
-            }
+    //         {
+    //             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+    //             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+    //             let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+    //             // resources =
+    //             //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
+    //             resources = nodeResources.Alloc(&snapshotResource, true)?;
+    //             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+    //         }
 
-            let terminatePods: Vec<WorkerPod> = terminateWorkers
-                .iter()
-                .map(|(_, pod)| pod.clone())
-                .collect();
+    //         let terminatePods: Vec<WorkerPod> = terminateWorkers
+    //             .iter()
+    //             .map(|(_, pod)| pod.clone())
+    //             .collect();
 
-            let id: u64 = self
-                .StartWorker(
-                    &nodeAgentUrl,
-                    &func,
-                    &resources,
-                    &resources,
-                    na::CreatePodType::Snapshot,
-                    &terminatePods,
-                )
-                .await?;
+    //         let id: u64 = self
+    //             .StartWorker(
+    //                 &nodeAgentUrl,
+    //                 &func,
+    //                 &resources,
+    //                 &resources,
+    //                 na::CreatePodType::Snapshot,
+    //                 &terminatePods,
+    //             )
+    //             .await?;
 
-            for (workid, pod) in &terminateWorkers {
-                let remove = self.idlePods.remove(workid);
-                assert!(remove.is_some());
-                let podkey = pod.pod.PodKey();
-                match self.pods.get(&podkey) {
-                    None => unreachable!(),
-                    Some(pod) => {
-                        let nodename = pod.pod.object.spec.nodename.clone();
-                        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                        self.stoppingPods.insert(podkey.clone());
+    //         for (workid, pod) in &terminateWorkers {
+    //             let remove = self.idlePods.remove(workid);
+    //             assert!(remove.is_some());
+    //             let podkey = pod.pod.PodKey();
+    //             match self.pods.get(&podkey) {
+    //                 None => unreachable!(),
+    //                 Some(pod) => {
+    //                     let nodename = pod.pod.object.spec.nodename.clone();
+    //                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+    //                     self.stoppingPods.insert(podkey.clone());
 
-                        nodeStatus
-                            .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-                    }
-                }
-            }
+    //                     nodeStatus
+    //                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+    //                 }
+    //             }
+    //         }
 
-            let podKey = FuncPod::FuncPodKey(
-                &func.tenant,
-                &func.namespace,
-                &func.name,
-                func.Version(),
-                &format!("{id}"),
-            );
+    //         let podKey = FuncPod::FuncPodKey(
+    //             &func.tenant,
+    //             &func.namespace,
+    //             &func.name,
+    //             func.Version(),
+    //             &format!("{id}"),
+    //         );
 
-            let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &resources);
-            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-            nodeStatus.AddPendingPod(&pendingPod)?;
+    //         let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &resources);
+    //         let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+    //         nodeStatus.AddPendingPod(&pendingPod)?;
 
-            let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
-            let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-            nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
+    //         let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+    //         let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+    //         nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
 
-            self.funcs
-                .get_mut(funcid)
-                .unwrap()
-                .AddPendingPod(&pendingPod)?;
+    //         self.funcs
+    //             .get_mut(funcid)
+    //             .unwrap()
+    //             .AddPendingPod(&pendingPod)?;
 
-            self.AddPendingSnapshot(funcid, &nodename);
-        }
+    //         self.AddPendingSnapshot(funcid, &nodename);
+    //     }
 
-        return Ok(());
-    }
+    //     return Ok(());
+    // }
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
         let pods = self.GetFuncPods(&spec.tenant, &spec.namespace, &spec.name, spec.Version())?;

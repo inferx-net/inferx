@@ -418,7 +418,6 @@ impl SqlAudit {
     }
 
     pub async fn CreateSnapshotScheduleRecord(&self, audit: &SnapshotScheduleAudit) -> Result<()> {
-        error!("CreateSnapshotScheduleRecord x {:#?}", audit);
         let query = r#"
                             INSERT INTO SnapshotScheduleAudit 
                                 (tenant, namespace, funcname, revision, nodename, state, detail, updatetime)

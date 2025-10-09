@@ -320,7 +320,6 @@ impl TaskQueue {
     }
 
     pub fn AddSnapshotTask(&self, nodename: &str, funcId: &str) {
-        error!("AddSnapshotTask {}/{}", nodename, funcId);
         self.AddTask(SchedTask::SnapshotTask(FuncNodePair {
             nodename: nodename.to_owned(),
             funcId: funcId.to_owned(),
@@ -341,6 +340,7 @@ pub enum SchedTask {
     RefreshSnapshot,
     RemoveSnapshotFromNode(RemoveSnapshotFromNode),
     SnapshotTask(FuncNodePair),
+    StandbyTask(String),
     AddNode(String),
     AddFunc(String),
 }
