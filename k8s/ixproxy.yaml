@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ixproxy
+  labels:
+    app: ixproxy
+spec:
+  selector:
+    matchLabels:
+      app: ixproxy
+  template:
+    metadata:
+      labels:
+        app: ixproxy
+    spec:
+      containers:
+        - name: ixproxy
+          image: inferx/inferx_na:${VERSION}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: RUN_SERVICE
+            value: "IxProxy"
+          - name: ENABLE_COREDUMP
+            value: "false"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY
+            valueFrom:
+              resourceFieldRef:
+                containerName: ixproxy
+                resource: limits.memory                
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: ixproxy
+                resource: limits.hugepages-2Mi   
+          - name: CACHE_MEMORY
+            value: "25Gi"
+          - name: ENABLE_2MB_PAGE
+            value: "true"  
+          - name: CONTEXT_OVERHEAD
+            value: "500"         
+          - name: ALLOC_CPU
+            valueFrom:
+              resourceFieldRef:
+                containerName: ixproxy
+                resource: limits.cpu                            
+          - name: ENALBE_BLOB
+            value: "false"                     
+          resources:
+            requests:
+              cpu: "5"
+              memory: "30Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "30Gi" 
+            limits:
+              cpu: "20"
+              memory: "180Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "30Gi" 
+              # nvidia.com/gpu: 1
+          volumeMounts:
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+            - name: shm
+              mountPath: /dev/shm
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            # - mountPath: /opt/inferx/config
+            #   name: opt-inferx-config
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime'
+            - name: dind
+              mountPath: /var/lib/docker
+            - name: opt-inferx-run
+              mountPath: /opt/inferx/run
+      volumes:
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: shm
+          hostPath:
+            path: /dev/shm
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log
+        - name: opt-inferx-config
+          hostPath:
+            path: /opt/inferx/config
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
+        - name: opt-inferx-run
+          hostPath:
+            path: /opt/inferx/run
+      restartPolicy: Always

@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: statesvc
-          image: inferx/inferx_platform:v0.1.5
+          image: inferx/inferx_platform:${VERSION}
           imagePullPolicy: IfNotPresent
           env:
           - name: POD_IP

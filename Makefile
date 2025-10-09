@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5
+VERSION := v0.1.5.beta1
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -84,7 +84,7 @@ sql:
 	sudo cp ./dashboard/sql/create_table.sql /opt/inferx/config
 	sudo cp ./dashboard/sql/secret.sql /opt/inferx/config
 
-postgres:
+db: 
 	-mkdir -p ./target/postgres
 	-rm ./target/postgres/* -rf
 	cp ./dashboard/sql/*.sql ./target/postgres
@@ -93,6 +93,9 @@ postgres:
 	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION) ./target/postgres
 	sudo docker image prune -f
 	# sudo docker push inferx/inferx_postgres:$(VERSION)
+
+pushdb: db
+	sudo docker push inferx/inferx_postgres:$(VERSION)
 
 run:
 	-sudo pkill -9 inferx
@@ -134,20 +137,22 @@ runkblob:
 	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/secretdb.yaml
-	sudo kubectl apply -f k8s/db-deployment.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	sudo kubectl apply -f k8s/statesvc.yaml
-	sudo kubectl apply -f k8s/gateway.yaml
-	sudo kubectl apply -f k8s/scheduler.yaml
-	sudo kubectl apply -f k8s/nodeagent.yaml
-	sudo kubectl apply -f k8s/dashboard.yaml
+	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	# VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	# VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
 stopall:
 	sudo kubectl delete all --all 
 
 runstatesvc:
-	sudo kubectl apply -f k8s/statesvc.yaml
+	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 
 stopstatesvc:
 	sudo kubectl delete deployment statesvc
@@ -165,9 +170,9 @@ stopscheduler:
 	sudo kubectl delete deployment scheduler
 
 runsvc:
-	sudo kubectl apply -f k8s/statesvc.yaml
-	sudo kubectl apply -f k8s/gateway.yaml
-	sudo kubectl apply -f k8s/scheduler.yaml
+	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 
 stopsvc:
 	-sudo kubectl delete deployment scheduler
@@ -176,10 +181,26 @@ stopsvc:
 
 runna:
 	# -sudo rm /opt/inferx/log/*.log
-	sudo kubectl apply -f k8s/nodeagent.yaml
+	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 stopna:
+	# sudo kubectl delete DaemonSet ixproxy
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
+
+runproxy:
+	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+stopproxy:
+	sudo kubectl delete DaemonSet ixproxy
+
+runnaall:
+	# -sudo rm /opt/inferx/log/*.log
+	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+stopnaall:
+	sudo kubectl delete DaemonSet ixproxy
+	sudo kubectl delete DaemonSet nodeagent-blob
+	sudo kubectl delete DaemonSet nodeagent-file
+
 restartgw:
 	sudo kubectl delete deployment gateway
 	sudo kubectl apply -f k8s/gateway.yaml

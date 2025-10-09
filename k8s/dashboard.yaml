@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: inferx-dashboard
-          image: inferx/inferx_dashboard:v0.1.3
+          image: inferx/inferx_dashboard:${VERSION}
           imagePullPolicy: IfNotPresent
           env:
             - name: KEYCLOAK_URL

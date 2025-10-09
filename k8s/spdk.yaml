@@ -26,7 +26,7 @@ spec:
             runAsUser: 0
           env:
             - name: HUGEMEM
-              value: "64000"
+              value: "44000"
           volumeMounts:
             - name: hugepages
               mountPath: /dev/hugepages
