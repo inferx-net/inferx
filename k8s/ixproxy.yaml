@@ -95,7 +95,7 @@ spec:
             - mountPath: /opt/inferx/snapshot
               name: opt-inferx-snapshot
             - mountPath: /var/run/docker/runtime-runc/moby/
-              name: docker-runtime'
+              name: docker-runtime
             - name: dind
               mountPath: /var/lib/docker
             - name: opt-inferx-run
