@@ -150,7 +150,7 @@ services:
       - ALLOC_MEMORY=180Gi
       - ALLOC_MEMORY_2M=30Gi
       - CACHE_MEMORY=20Gi
-      - ENABLE_2MB_PAGE=true
+      - ENABLE_2MB_PAGE=false
       - CONTEXT_OVERHEAD=500
       - ALLOC_CPU=24
       - ENALBE_BLOB=false
