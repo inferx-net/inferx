@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::response::Response;
+use opentelemetry::global::ObjectSafeSpan;
+use opentelemetry::trace::Tracer;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Notify};
 use tokio::sync::{oneshot, Mutex as TMutex};
@@ -321,9 +323,12 @@ impl FuncWorker {
         _eventQueueRx: mpsc::Receiver<DeltaEvent>,
         idleClientRx: mpsc::Receiver<HttpClientState>,
     ) -> Result<()> {
+        let tracer = opentelemetry::global::tracer("gateway");
+        let mut span = tracer.start("lease");
         let mut reqQueueRx = reqQueueRx;
         let resp = match self.LeaseWorker().await {
             Err(e) => {
+                span.end();
                 // error!(
                 //     "Lease worker {} fail with error {:?}",
                 //     self.WorkerName(),
@@ -374,6 +379,8 @@ impl FuncWorker {
             }
             Ok(resp) => resp,
         };
+
+        span.end();
 
         let id = resp.id;
         let ipaddr = resp.ipaddr;

@@ -27,6 +27,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use ixshare::gateway::func_agent_mgr::GatewaySvc;
+use ixshare::gateway::trace::InitTracer;
 use ixshare::print::LOG;
 use tokio::sync::Notify;
 
@@ -91,6 +92,8 @@ async fn main() -> Result<()> {
         "Start inferx service ....xxx std::env::var(RUN_SERVICE) {:?}",
         std::env::var(RUN_SERVICE)
     );
+
+    InitTracer().await;
 
     let runService = match std::env::var(RUN_SERVICE) {
         Err(_) => {

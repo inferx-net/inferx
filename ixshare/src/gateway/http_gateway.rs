@@ -20,6 +20,11 @@ use std::result::Result as SResult;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
+use opentelemetry::global::ObjectSafeSpan;
+use opentelemetry::trace::TraceContextExt;
+use opentelemetry::trace::Tracer;
+use opentelemetry::KeyValue;
+
 use axum::extract::{Request, State};
 use axum::http::HeaderValue;
 use axum::response::Response;
@@ -32,6 +37,7 @@ use axum::{
 use hyper::header::CONTENT_TYPE;
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
+use opentelemetry::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
@@ -580,6 +586,13 @@ async fn FuncCall(
 ) -> SResult<Response, StatusCode> {
     let path = req.uri().path();
 
+    let tracer = opentelemetry::global::tracer("gateway");
+    let mut ttftSpan = tracer.start("TTFT");
+    ttftSpan.set_attribute(KeyValue::new("req", path.to_owned()));
+    let ttftCtx = Context::current_with_span(ttftSpan);
+
+    let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
+
     let now = std::time::Instant::now();
 
     let parts = path.split("/").collect::<Vec<&str>>();
@@ -621,6 +634,8 @@ async fn FuncCall(
         Ok(client) => client,
     };
 
+    startupSpan.end();
+
     let uri = format!("http://127.0.0.1{}", remainPath); // &func.object.spec.endpoint.path);
     *req.uri_mut() = Uri::try_from(uri).unwrap();
 
@@ -637,6 +652,7 @@ async fn FuncCall(
                 .body(body)
                 .unwrap();
 
+            ttftCtx.span().end();
             return Ok(resp);
         }
         Ok(r) => r,
@@ -658,6 +674,7 @@ async fn FuncCall(
                 ttft = start.elapsed().as_millis() as u64;
                 ttftTx.send(ttft).await.ok();
 
+                ttftCtx.span().end();
                 first = false;
             }
             let bytes = match frame {

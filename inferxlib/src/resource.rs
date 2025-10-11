@@ -470,7 +470,7 @@ impl NodeResources {
                 );
             }
 
-            error!("CanAlloc fail cpu:{_cpu} memory:{_memory}, cacheMemory:{_cacheMemory}, gpuType:{_gpuType}, gpus:{_gpus}");
+            // error!("CanAlloc fail cpu:{_cpu} memory:{_memory}, cacheMemory:{_cacheMemory}, gpuType:{_gpuType}, gpus:{_gpus}");
         }
 
         return canAlloc;
