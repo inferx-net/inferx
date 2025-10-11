@@ -20,4 +20,4 @@ pub mod http_gateway;
 pub mod http_gw;
 pub mod scheduler_client;
 pub mod secret;
-pub mod trace;
+pub mod metrics;

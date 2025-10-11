@@ -35,5 +35,15 @@ helm install --wait gpu-operator \
 
 echo "[✓] K3s with Docker runtime and NVIDIA GPU Operator installed successfully."
 
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+kubectl create namespace monitor
+helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitor
+
+kubectl patch svc prometheus-grafana -n monitor \
+  -p '{"spec": {"type": "NodePort", "ports": [{"port": 80, "targetPort": 3000, "nodePort": 32000}]}}'
+  
+
+
 #kubectl apply  -f https://github.com/NVIDIA/k8s-device-plugin/releases/download/v0.17.3/nvidia-device-plugin.yml
 #kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml

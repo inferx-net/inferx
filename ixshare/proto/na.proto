@@ -82,6 +82,7 @@ message LeaseWorkerResp {
   bool   keepalive = 5;  
   uint32 hostipaddr = 6;
   uint32 hostport = 7;
+  bool   coldstart = 8;
 }
 
 message ReturnWorkerReq {

@@ -83,6 +83,8 @@ pub struct LeaseWorkerResp {
     pub hostipaddr: u32,
     #[prost(uint32, tag = "7")]
     pub hostport: u32,
+    #[prost(bool, tag = "8")]
+    pub coldstart: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

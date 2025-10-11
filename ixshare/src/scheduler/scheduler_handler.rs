@@ -321,6 +321,7 @@ impl FuncStatus {
                             keepalive: false,
                             hostipaddr: peer.hostIp,
                             hostport: peer.port as u32,
+                            coldstart: true,
                         };
 
                         match tx.send(resp) {
@@ -486,6 +487,7 @@ impl SchedulerHandler {
                     keepalive: true,
                     hostipaddr: peer.hostIp,
                     hostport: peer.port as u32,
+                    coldstart: false,
                 };
                 tx.send(resp).unwrap();
                 return Ok(());

@@ -3,6 +3,15 @@ use opentelemetry::KeyValue;
 use opentelemetry_otlp::Protocol;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::metrics::family::Family;
+use prometheus_client::registry::Registry;
+use prometheus_client_derive_encode::{EncodeLabelSet, EncodeLabelValue};
+use tokio::sync::Mutex;
+
+lazy_static::lazy_static! {
+    pub static ref registry: Mutex<Registry> = Mutex::new(Registry::default());
+}
 
 pub async fn InitTracer() {
     let enableTracer = match std::env::var("ENABLE_TRACER") {
@@ -41,5 +50,28 @@ pub async fn InitTracer() {
 
         // Set it as the global provider
         global::set_tracer_provider(tracer_provider.clone());
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
+pub enum Method {
+    Get,
+    Post,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct MethodLabels {
+    pub method: Method,
+}
+
+#[derive(Debug)]
+pub struct Metrics {
+    requests: Family<MethodLabels, Counter>,
+    sends: Family<MethodLabels, Counter>,
+}
+
+impl Metrics {
+    pub fn inc_requests(&self, method: Method) {
+        self.requests.get_or_create(&MethodLabels { method }).inc();
     }
 }
