@@ -134,6 +134,7 @@ stopdash:
 
 runkblob:
 	-sudo rm /opt/inferx/log/*.log
+	sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
 	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/jaeger.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
@@ -159,7 +160,7 @@ stopstatesvc:
 	sudo kubectl delete deployment statesvc
 
 rungateway:
-	sudo kubectl apply -f k8s/gateway.yaml
+	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
 
 stopgateway:
 	sudo kubectl delete deployment gateway

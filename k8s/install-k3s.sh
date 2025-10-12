@@ -42,7 +42,9 @@ helm install prometheus prometheus-community/kube-prometheus-stack --namespace m
 
 kubectl patch svc prometheus-grafana -n monitor \
   -p '{"spec": {"type": "NodePort", "ports": [{"port": 80, "targetPort": 3000, "nodePort": 32000}]}}'
-  
+kubectl patch svc prometheus-kube-prometheus-prometheus \
+  -n monitor \
+  -p '{"spec": {"type": "NodePort", "ports": [{"port": 9090, "nodePort": 30900, "protocol": "TCP", "targetPort": 9090}]}}' 
 
 
 #kubectl apply  -f https://github.com/NVIDIA/k8s-device-plugin/releases/download/v0.17.3/nvidia-device-plugin.yml
