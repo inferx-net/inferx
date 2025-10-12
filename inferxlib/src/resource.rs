@@ -449,33 +449,6 @@ impl NodeResources {
         };
     }
 
-    pub fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> bool {
-        let canAlloc = self.cpu >= req.cpu
-            && self.memory >= req.memory
-            && self.cacheMemory >= req.cacheMemory
-            && self.gpuType.CanAlloc(&req.gpu.type_)
-            && self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
-
-        if !canAlloc {
-            let _cpu = self.cpu >= req.cpu;
-            let _memory = self.memory >= req.memory;
-            let _cacheMemory = self.cacheMemory >= req.cacheMemory;
-            let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-            let _gpus = self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
-
-            if true || !_memory {
-                error!(
-                    "self.memory is {} required memory is {}",
-                    self.memory, req.memory
-                );
-            }
-
-            // error!("CanAlloc fail cpu:{_cpu} memory:{_memory}, cacheMemory:{_cacheMemory}, gpuType:{_gpuType}, gpus:{_gpus}");
-        }
-
-        return canAlloc;
-    }
-
     pub fn Sub(&mut self, other: &Self) -> Result<()> {
         // error!(
         //     "NodeResources sub  curr is {:?} sub {:?}",
@@ -500,40 +473,6 @@ impl NodeResources {
             gpus: GPUResourceMap::default(),
             maxContextCnt: self.maxContextCnt,
         };
-    }
-
-    pub fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
-        if !self.CanAlloc(req, createSnapshot) {
-            error!(
-                "NodeResources::alloc fail available {:#?} require {:#?} for createSnapshot {}",
-                self, req, createSnapshot
-            );
-            return Err(Error::SchedulerNoEnoughResource(format!(
-                "NodeResources::alloc fail available {:?} require {:?}",
-                self, req
-            )));
-        }
-
-        // error!(
-        //     "NodeResources alloc curr is {:?} sub {:?}",
-        //     self.cacheMemory, req.cacheMemory
-        // );
-
-        // we don't allc/free cpu resource, assume there are enough cpu resource
-        // self.cpu -= req.cpu;
-        self.memory -= req.memory;
-        self.cacheMemory -= req.cacheMemory;
-        let gpus = self.gpus.Alloc(&req.gpu, createSnapshot)?;
-
-        return Ok(NodeResources {
-            nodename: self.nodename.clone(),
-            cpu: req.cpu,
-            memory: req.memory,
-            cacheMemory: req.cacheMemory,
-            gpuType: self.gpuType.clone(),
-            gpus: gpus,
-            maxContextCnt: self.maxContextCnt,
-        });
     }
 
     pub fn Add(&mut self, free: &NodeResources) -> Result<()> {

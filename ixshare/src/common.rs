@@ -34,6 +34,7 @@ pub enum Error {
     SchedulerErr(String),
     BollardErr(bollard::errors::Error),
     SchedulerNoEnoughResource(String),
+    ScheduleFail(AllocState),
     SysError(i32),
     SocketClose,
     NotExist(String),
@@ -90,6 +91,21 @@ impl From<InferxLibError> for Error {
             InferxLibError::StdIOErr(s) => return Self::StdIOErr(s),
             InferxLibError::ReqWestErr(s) => return Self::ReqWestErr(s),
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct AllocState {
+    pub cpu: bool,
+    pub memory: bool,
+    pub cacheMem: bool,
+    pub gpuType: bool,
+    pub gpu: bool,
+}
+
+impl AllocState {
+    pub fn Ok(&self) -> bool {
+        return self.cpu && self.memory && self.cacheMem && self.gpuType && self.gpu;
     }
 }
 

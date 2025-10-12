@@ -249,6 +249,44 @@ impl NodeStatus {
     }
 }
 
+pub trait ResourceAlloc {
+    fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> AllocState;
+    fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources>;
+}
+
+impl ResourceAlloc for NodeResources {
+    fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> AllocState {
+        return AllocState {
+            cpu: self.cpu >= req.cpu,
+            memory: self.memory >= req.memory,
+            cacheMem: self.cacheMemory >= req.cacheMemory,
+            gpuType: self.gpuType.CanAlloc(&req.gpu.type_),
+            gpu: self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some(),
+        };
+    }
+
+    fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
+        let state = self.CanAlloc(req, createSnapshot);
+        if !state.Ok() {
+            return Err(Error::ScheduleFail(state));
+        }
+
+        self.memory -= req.memory;
+        self.cacheMemory -= req.cacheMemory;
+        let gpus = self.gpus.Alloc(&req.gpu, createSnapshot)?;
+
+        return Ok(NodeResources {
+            nodename: self.nodename.clone(),
+            cpu: req.cpu,
+            memory: req.memory,
+            cacheMemory: req.cacheMemory,
+            gpuType: self.gpuType.clone(),
+            gpus: gpus,
+            maxContextCnt: self.maxContextCnt,
+        });
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LeaseReq {
     pub req: na::LeaseWorkerReq,
@@ -1150,6 +1188,7 @@ impl SchedulerHandler {
         createSnapshot: bool,
     ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
         let mut nodeSnapshots = BTreeMap::new();
+        let mut allocStates = BTreeMap::new();
 
         // go through candidate list to look for node has enough free resource, if so return
         for nodename in candidateNodes {
@@ -1190,9 +1229,13 @@ impl SchedulerHandler {
             } else {
                 self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
             };
-            if nr.CanAlloc(&req, createSnapshot) {
+
+            let state = nr.CanAlloc(&req, createSnapshot);
+            if state.Ok() {
                 return Ok((nodename.clone(), Vec::new(), nr));
             }
+
+            allocStates.insert(nodename.clone(), state);
             nodeSnapshots.insert(nodename.clone(), (nr, Vec::new()));
         }
 
@@ -1207,6 +1250,7 @@ impl SchedulerHandler {
             func.Id(),
             &self.idlePods
         );
+
         for (workid, podKey) in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
@@ -1228,11 +1272,13 @@ impl SchedulerHandler {
                                 &pod.pod.object.spec.nodename,
                             )
                         };
-                        if nr.CanAlloc(&req, createSnapshot) {
+                        let state = nr.CanAlloc(&req, createSnapshot);
+                        if state.Ok() {
                             findnodeName = Some(pod.pod.object.spec.nodename.clone());
                             nodeResource = nr.clone();
                             break;
                         }
+                        allocStates.insert(pod.pod.object.spec.nodename.clone(), state);
                     }
                 },
             }
@@ -1245,8 +1291,9 @@ impl SchedulerHandler {
 
         if findnodeName.is_none() {
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "can find enough resource for {}",
-                func.Key()
+                "can find enough resource for {}, nodes state {:#?}",
+                func.Key(),
+                allocStates.values()
             )));
         }
 
@@ -1379,7 +1426,7 @@ impl SchedulerHandler {
                 match self.nodes.get(&ns.node.name) {
                     None => (),
                     Some(ns) => {
-                        if ns.total.CanAlloc(&func.object.spec.resources, true) {
+                        if ns.total.CanAlloc(&func.object.spec.resources, true).Ok() {
                             nodes.insert(ns.node.name.clone());
                         }
                     }
@@ -1547,7 +1594,7 @@ impl SchedulerHandler {
 
                     workids.push((*workid, pod.clone()));
                     available.Add(&pod.pod.object.spec.allocResources).unwrap();
-                    if available.CanAlloc(&reqResource, createSnapshot) {
+                    if available.CanAlloc(&reqResource, createSnapshot).Ok() {
                         break;
                     }
                 }
@@ -1559,10 +1606,11 @@ impl SchedulerHandler {
             error!("FindNode4Pod remove idlepod missing {:?}", &pod);
         }
 
-        if !available.CanAlloc(&reqResource, createSnapshot) {
+        let state = available.CanAlloc(&reqResource, createSnapshot);
+        if !state.Ok() {
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "Node {} has no enough free resource to run {}",
-                nodename, funcId
+                "Node {} has no enough free resource to run {} {:?}",
+                nodename, funcId, state
             )));
         }
 
@@ -1655,11 +1703,12 @@ impl SchedulerHandler {
         let contextCount = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
         let reqResource = func.object.spec.SnapshotResource(contextCount).clone();
 
-        if !nodeStatus.total.CanAlloc(&reqResource, true) {
+        let state = nodeStatus.total.CanAlloc(&reqResource, true);
+        if !state.Ok() {
             self.SetSnapshotStatus(
                 funcId,
                 nodename,
-                SnapshotScheduleState::Cannot(format!("has no enough resource to run")),
+                SnapshotScheduleState::Cannot(format!("has no enough resource to run {:?}", state)),
             );
             return Err(Error::SchedulerNoEnoughResource(format!(
                 "Node {} has no enough resource to run {}",
