@@ -27,14 +27,14 @@ use std::io::Write;
 use std::sync::Arc;
 
 use ixshare::gateway::func_agent_mgr::GatewaySvc;
-use ixshare::gateway::metrics::{InitTracer, METRICS};
+use ixshare::gateway::metrics::{InitTracer, GATEWAY_METRICS};
 use ixshare::print::LOG;
 use tokio::sync::Notify;
 
 use ixshare::common::*;
 use ixshare::metastore::unique_id::{UniqueId, UID};
 use ixshare::node_config::NODE_CONFIG;
-use ixshare::scheduler::scheduler::ExecSchedulerSvc;
+use ixshare::scheduler::scheduler::SchedulerSvc;
 
 use ixshare::state_svc::state_svc::{StateService, STATESVC_CONFIG};
 
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     );
 
     InitTracer().await;
-    METRICS.lock().await.Register().await;
+    GATEWAY_METRICS.lock().await.Register().await;
 
     let runService = match std::env::var(RUN_SERVICE) {
         Err(_) => {
@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
                 res = StateService(Some(notify.clone())) => {
                     info!("stateservice finish {:?}", res);
                 }
-                res = Scheduler() => {
+                res = SchedulerSvc() => {
                     info!("schedulerFuture finish {:?}", res);
                 }
                 res = GatewaySvc(Some(notify.clone())) => {
@@ -162,7 +162,7 @@ async fn main() -> Result<()> {
             LOG.SetServiceName("Scheduler");
             error!("Scheduler start ...");
             tokio::select! {
-                res = Scheduler() => {
+                res = SchedulerSvc() => {
                     info!("schedulerFuture finish {:?}", res);
                 }
             }
@@ -170,26 +170,4 @@ async fn main() -> Result<()> {
     }
 
     return Ok(());
-}
-
-async fn Scheduler() -> Result<()> {
-    return ExecSchedulerSvc().await;
-}
-
-pub struct Scheduler {}
-
-impl Scheduler {
-    // need one more pod for the funcpackage to service request
-    pub fn ScaleOut(&self, _fpKey: &str) -> Result<()> {
-        unimplemented!()
-    }
-
-    // ok to scale in one pod
-    pub fn ScaleIn(&self, _fpKey: &str) -> Result<()> {
-        unimplemented!()
-    }
-
-    pub fn DemissionPod(&self, _podid: &str) -> Result<()> {
-        unimplemented!()
-    }
 }

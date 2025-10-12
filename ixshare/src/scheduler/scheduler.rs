@@ -32,12 +32,14 @@ use tokio::sync::Mutex as TMutex;
 use tokio::sync::Notify;
 
 use crate::common::*;
+use crate::gateway::metrics::SCHEDULER_METRICS;
 use crate::metastore::informer::EventHandler;
 use crate::metastore::store::ThreadSafeStore;
 use crate::na;
 use crate::node_config::SchedulerConfig;
 use crate::node_config::NODE_CONFIG;
 use crate::scheduler::sched_obj_repo::SchedObjRepo;
+use crate::scheduler::scheduler_http::SchedulerHttpSrv;
 use crate::scheduler::scheduler_register::SchedulerRegister;
 use crate::scheduler::scheduler_svc::RunSchedulerSvc;
 use inferxlib::data_obj::DeltaEvent;
@@ -166,7 +168,9 @@ impl Scheduler {
     }
 }
 
-pub async fn ExecSchedulerSvc() -> Result<()> {
+pub async fn SchedulerSvc() -> Result<()> {
+    SCHEDULER_METRICS.lock().await.Register().await;
+
     let objRepo = SchedObjRepo::New(SCHEDULER_CONFIG.stateSvcAddrs.clone()).await?;
 
     let schedulerSvcFuture = RunSchedulerSvc();
@@ -180,6 +184,9 @@ pub async fn ExecSchedulerSvc() -> Result<()> {
         }
         res  = SchedulerProcess() => {
             info!("schedulerRegister finish {:?}", res);
+        }
+        res = SchedulerHttpSrv() => {
+            info!("SchedulerHttpSrv finish {:?}", res);
         }
     }
 
@@ -263,7 +270,11 @@ impl WorkerPod {
         };
         let ret: WorkerPod = Self(Arc::new(inner));
 
-        error!("New workerpod pod {} {:?}", ret.pod.PodKey(), ret.pod.object.status.state);
+        error!(
+            "New workerpod pod {} {:?}",
+            ret.pod.PodKey(),
+            ret.pod.object.status.state
+        );
 
         if ret.pod.object.status.state == PodState::Ready {
             ret.SetIdle();
@@ -284,7 +295,6 @@ impl Deref for WorkerPod {
         &self.0
     }
 }
-
 
 pub struct TaskQueue {
     pub tx: tokio::sync::mpsc::Sender<SchedTask>,

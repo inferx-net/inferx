@@ -36,6 +36,8 @@ use tokio::time::Interval;
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
+use crate::gateway::metrics::PodLabels;
+use crate::gateway::metrics::SCHEDULER_METRICS;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
 use crate::na::RemoveSnapshotReq;
@@ -246,6 +248,12 @@ impl NodeStatus {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LeaseReq {
+    pub req: na::LeaseWorkerReq,
+    pub time: SystemTime,
+}
+
 #[derive(Debug)]
 pub struct FuncStatus {
     pub func: Function,
@@ -254,7 +262,7 @@ pub struct FuncStatus {
     // podname --> PendingPod
     pub pendingPods: BTreeMap<String, PendingPod>,
 
-    pub leaseWorkerReqs: VecDeque<(na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)>,
+    pub leaseWorkerReqs: VecDeque<(LeaseReq, Sender<na::LeaseWorkerResp>)>,
 }
 
 impl FuncStatus {
@@ -268,12 +276,14 @@ impl FuncStatus {
     }
 
     pub fn PushLeaseWorkerReq(&mut self, req: na::LeaseWorkerReq, tx: Sender<na::LeaseWorkerResp>) {
+        let req = LeaseReq {
+            req: req,
+            time: SystemTime::now(),
+        };
         self.leaseWorkerReqs.push_back((req, tx));
     }
 
-    pub fn PopLeaseWorkerReq(
-        &mut self,
-    ) -> Option<(na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)> {
+    pub fn PopLeaseWorkerReq(&mut self) -> Option<(LeaseReq, Sender<na::LeaseWorkerResp>)> {
         return self.leaseWorkerReqs.pop_front();
     }
 
@@ -294,7 +304,7 @@ impl FuncStatus {
         return Ok(());
     }
 
-    pub fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
+    pub async fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
         let podKey = pod.pod.PodKey();
         if self.pods.insert(podKey.clone(), pod.clone()).is_none() {
             error!("podkey is {}", &podKey);
@@ -305,7 +315,30 @@ impl FuncStatus {
             loop {
                 match self.PopLeaseWorkerReq() {
                     Some((req, tx)) => {
+                        let elapsed = req.time.elapsed().unwrap().as_millis();
+
+                        let req = &req.req;
                         pod.SetWorking(req.gateway_id); // first time get ready, we don't need to remove it from idlePods in scheduler
+
+                        let labels = PodLabels {
+                            tenant: req.tenant.clone(),
+                            namespace: req.namespace.clone(),
+                            funcname: req.funcname.clone(),
+                            revision: req.fprevision,
+                        };
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .podLeaseCnt
+                            .get_or_create(&labels)
+                            .inc();
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .coldStartPodLatency
+                            .get_or_create(&labels)
+                            .observe(elapsed as f64 / 1000.0);
 
                         let peer = match PEER_MGR.LookforPeer(pod.pod.object.spec.ipAddr) {
                             Ok(p) => p,
@@ -478,6 +511,20 @@ impl SchedulerHandler {
                         return Err(e);
                     }
                 };
+
+                let labels = PodLabels {
+                    tenant: req.tenant.clone(),
+                    namespace: req.namespace.clone(),
+                    funcname: req.funcname.clone(),
+                    revision: req.fprevision,
+                };
+
+                SCHEDULER_METRICS
+                    .lock()
+                    .await
+                    .podLeaseCnt
+                    .get_or_create(&labels)
+                    .inc();
 
                 let resp = na::LeaseWorkerResp {
                     error: String::new(),
@@ -2563,7 +2610,7 @@ impl SchedulerHandler {
                 }
             },
             Some(fpStatus) => {
-                fpStatus.UpdatePod(&boxPod)?;
+                fpStatus.UpdatePod(&boxPod).await?;
             }
         }
 

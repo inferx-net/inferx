@@ -68,7 +68,7 @@ use super::func_agent_mgr::FuncAgentMgr;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
-use super::metrics::METRICS;
+use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::secret::Apikey;
 
@@ -651,7 +651,7 @@ async fn FuncCall(
     {
         Err(e) => {
             labels.status = Status::ConnectFailure;
-            METRICS
+            GATEWAY_METRICS
                 .lock()
                 .await
                 .funccallcnt
@@ -678,7 +678,7 @@ async fn FuncCall(
     let start = std::time::Instant::now();
 
     if !keepalive {
-        METRICS
+        GATEWAY_METRICS
             .lock()
             .await
             .funccallCsCnt
@@ -697,7 +697,7 @@ async fn FuncCall(
                 .unwrap();
 
             labels.status = Status::RequestFailure;
-            METRICS
+            GATEWAY_METRICS
                 .lock()
                 .await
                 .funccallcnt
@@ -711,7 +711,7 @@ async fn FuncCall(
     };
 
     labels.status = Status::Success;
-    METRICS
+    GATEWAY_METRICS
         .lock()
         .await
         .funccallcnt
@@ -737,21 +737,16 @@ async fn FuncCall(
                 ttftCtx.span().end();
                 first = false;
 
-                error!(
-                    "ttft label {:?} keepalive {} ttft {}",
-                    &labels, keepalive, ttft
-                );
-
                 let total = ttft + tcpConnLatency;
                 if !keepalive {
-                    METRICS
+                    GATEWAY_METRICS
                         .lock()
                         .await
                         .funccallCsTtft
                         .get_or_create(&labels)
                         .observe(total as f64 / 1000.0);
                 } else {
-                    METRICS
+                    GATEWAY_METRICS
                         .lock()
                         .await
                         .funccallTtft

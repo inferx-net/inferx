@@ -1,4 +1,4 @@
-// Copyright (c) 2025 InferX Authors /  
+// Copyright (c) 2025 InferX Authors /
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,5 +15,6 @@
 pub mod sched_obj_repo;
 pub mod scheduler;
 pub mod scheduler_handler;
+pub mod scheduler_http;
 pub mod scheduler_register;
 pub mod scheduler_svc;
