@@ -582,10 +582,35 @@ async fn DirectFuncCallProc(gw: &HttpGateway, mut req: Request) -> Result<Respon
 }
 
 async fn DirectFuncCall(
-    Extension(_token): Extension<Arc<AccessToken>>,
+    Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
+    let path = req.uri().path();
+    let parts = path.split("/").collect::<Vec<&str>>();
+
+    let partsCount = parts.len();
+    if partsCount < 7 {
+        let body = Body::from(format!("service failure: Invalid input"));
+        let resp = Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(body)
+            .unwrap();
+
+        return Ok(resp);
+    }
+    let tenant = parts[2].to_owned();
+    let namespace = parts[3].to_owned();
+
+    if !token.IsNamespaceUser(&tenant, &namespace) {
+        let body = Body::from(format!("service failure: No permission"));
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+
+        return Ok(resp);
+    }
     match DirectFuncCallProc(&gw, req).await {
         Ok(resp) => return Ok(resp),
         Err(e) => {
@@ -616,8 +641,16 @@ async fn FuncCall(
     let now = std::time::Instant::now();
 
     let parts = path.split("/").collect::<Vec<&str>>();
-
     let partsCount = parts.len();
+    if partsCount < 5 {
+        let body = Body::from(format!("service failure: Invalid input"));
+        let resp = Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(body)
+            .unwrap();
+
+        return Ok(resp);
+    }
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
     let funcname = parts[4].to_owned();
