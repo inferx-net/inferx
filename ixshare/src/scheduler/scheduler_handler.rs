@@ -36,6 +36,7 @@ use tokio::time::Interval;
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
+use crate::gateway::metrics::Nodelabel;
 use crate::gateway::metrics::PodLabels;
 use crate::gateway::metrics::SCHEDULER_METRICS;
 use crate::metastore::cacher_client::CacherClient;
@@ -325,6 +326,7 @@ impl FuncStatus {
                             namespace: req.namespace.clone(),
                             funcname: req.funcname.clone(),
                             revision: req.fprevision,
+                            nodename: pod.pod.object.spec.nodename.clone(),
                         };
                         SCHEDULER_METRICS
                             .lock()
@@ -339,6 +341,19 @@ impl FuncStatus {
                             .coldStartPodLatency
                             .get_or_create(&labels)
                             .observe(elapsed as f64 / 1000.0);
+
+                        let nodelabel = Nodelabel {
+                            nodename: pod.pod.object.spec.nodename.clone(),
+                        };
+
+                        let gpuCnt = pod.pod.object.spec.reqResources.gpu.gpuCount;
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGPU
+                            .get_or_create(&nodelabel)
+                            .inc_by(gpuCnt as i64);
 
                         let peer = match PEER_MGR.LookforPeer(pod.pod.object.spec.ipAddr) {
                             Ok(p) => p,
@@ -517,6 +532,7 @@ impl SchedulerHandler {
                     namespace: req.namespace.clone(),
                     funcname: req.funcname.clone(),
                     revision: req.fprevision,
+                    nodename: pod.object.spec.nodename.clone(),
                 };
 
                 SCHEDULER_METRICS
@@ -525,6 +541,19 @@ impl SchedulerHandler {
                     .podLeaseCnt
                     .get_or_create(&labels)
                     .inc();
+
+                let nodelabel = Nodelabel {
+                    nodename: pod.object.spec.nodename.clone(),
+                };
+
+                let gpuCnt = pod.object.spec.reqResources.gpu.gpuCount;
+
+                SCHEDULER_METRICS
+                    .lock()
+                    .await
+                    .usedGPU
+                    .get_or_create(&nodelabel)
+                    .inc_by(gpuCnt as i64);
 
                 let resp = na::LeaseWorkerResp {
                     error: String::new(),
@@ -581,6 +610,19 @@ impl SchedulerHandler {
                 worker.State()
             );
         }
+
+        let nodelabel = Nodelabel {
+            nodename: worker.pod.object.spec.nodename.clone(),
+        };
+
+        let gpuCnt = worker.pod.object.spec.reqResources.gpu.gpuCount;
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .usedGPU
+            .get_or_create(&nodelabel)
+            .dec_by(gpuCnt as i64);
 
         // in case the gateway dead and recover and try to return an out of date pod
         // assert!(
@@ -866,7 +908,7 @@ impl SchedulerHandler {
                                         }
                                         Ok(()) => (),
                                     };
-                                    self.AddNode(node)?;
+                                    self.AddNode(node).await?;
 
                                 }
                                 FuncPod::KEY => {
@@ -927,7 +969,7 @@ impl SchedulerHandler {
                                     let node = Node::FromDataObject(obj)?;
                                     let cidr = ipnetwork::Ipv4Network::from_str(&node.object.cidr).unwrap();
                                     PEER_MGR.RemovePeer(cidr.ip().into()).unwrap();
-                                    self.RemoveNode(node)?;
+                                    self.RemoveNode(node).await?;
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
@@ -2475,13 +2517,26 @@ impl SchedulerHandler {
         return Ok(false);
     }
 
-    pub fn AddNode(&mut self, node: Node) -> Result<()> {
+    pub async fn AddNode(&mut self, node: Node) -> Result<()> {
         info!("add node {:#?}", &node);
 
         let nodeName = node.name.clone();
         if self.nodes.contains_key(&nodeName) {
             return Err(Error::Exist(format!("NodeMgr::add {}", nodeName)));
         }
+
+        let nodelabel = Nodelabel {
+            nodename: nodeName.clone(),
+        };
+
+        let gpuCnt = node.object.resources.gpus.Gpus().len();
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .totalGPU
+            .get_or_create(&nodelabel)
+            .inc_by(gpuCnt as i64);
 
         let total = node.object.resources.clone();
         let pods = match self.nodePods.remove(&nodeName) {
@@ -2511,9 +2566,23 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub fn RemoveNode(&mut self, node: Node) -> Result<()> {
+    pub async fn RemoveNode(&mut self, node: Node) -> Result<()> {
         info!("remove node {}", &node.name);
         let key = node.name.clone();
+
+        let nodelabel = Nodelabel {
+            nodename: key.clone(),
+        };
+
+        let gpuCnt = node.object.resources.gpus.Gpus().len();
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .totalGPU
+            .get_or_create(&nodelabel)
+            .dec_by(gpuCnt as i64);
+
         if !self.nodes.contains_key(&key) {
             return Err(Error::NotExist(format!("NodeMgr::Remove {}", key)));
         }

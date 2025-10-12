@@ -5,6 +5,7 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::exponential_buckets;
 use prometheus_client::metrics::histogram::linear_buckets;
 use prometheus_client::metrics::histogram::Histogram;
@@ -158,6 +159,12 @@ pub struct PodLabels {
     pub namespace: String,
     pub funcname: String,
     pub revision: i64,
+    pub nodename: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct Nodelabel {
+    pub nodename: String,
 }
 
 #[derive(Debug)]
@@ -165,6 +172,8 @@ pub struct SchedulerMetrics {
     pub podLeaseCnt: Family<PodLabels, Counter>,
     // request count which trigger cold start
     pub coldStartPodLatency: Family<PodLabels, Histogram>,
+    pub usedGPU: Family<Nodelabel, Gauge>,
+    pub totalGPU: Family<Nodelabel, Gauge>,
 }
 
 impl SchedulerMetrics {
@@ -174,6 +183,8 @@ impl SchedulerMetrics {
         let ret = Self {
             podLeaseCnt: Family::default(),
             coldStartPodLatency: Family::new_with_constructor(csHg),
+            usedGPU: Family::default(),
+            totalGPU: Family::default(),
         };
 
         return ret;
@@ -190,6 +201,17 @@ impl SchedulerMetrics {
             "coldStartPodLatency",
             "cold start lease latency",
             self.coldStartPodLatency.clone(),
+        );
+
+        METRICS_REGISTRY
+            .lock()
+            .await
+            .register("usedGPU", "used gpu count", self.usedGPU.clone());
+
+        METRICS_REGISTRY.lock().await.register(
+            "totalGPU",
+            "total gpu count",
+            self.totalGPU.clone(),
         );
     }
 }
