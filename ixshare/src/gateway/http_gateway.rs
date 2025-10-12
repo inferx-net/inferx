@@ -38,6 +38,7 @@ use hyper::header::CONTENT_TYPE;
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use opentelemetry::Context;
+use prometheus_client::encoding::text::encode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
@@ -65,6 +66,10 @@ use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 use super::auth_layer::{AccessToken, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
+use super::metrics::FunccallLabels;
+use super::metrics::Status;
+use super::metrics::METRICS;
+use super::metrics::METRICS_REGISTRY;
 use super::secret::Apikey;
 
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
@@ -169,6 +174,7 @@ impl HttpGateway {
                 get(GetSnapshot),
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
+            .route("/metrics", get(GetMetrics))
             .with_state(self.clone())
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
@@ -205,6 +211,20 @@ impl HttpGateway {
 
 async fn root() -> &'static str {
     "InferX Gateway!"
+}
+
+async fn GetMetrics() -> SResult<Response, StatusCode> {
+    let mut buffer = String::new();
+    let registery = METRICS_REGISTRY.lock().await;
+    encode(&mut buffer, &*registery).unwrap();
+    return Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            CONTENT_TYPE,
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        )
+        .body(Body::from(buffer))
+        .unwrap());
 }
 
 async fn GetReqs(
@@ -617,12 +637,27 @@ async fn FuncCall(
         remainPath = remainPath + "/" + parts[i];
     }
 
+    let mut labels = FunccallLabels {
+        tenant: tenant.clone(),
+        namespace: namespace.clone(),
+        funcname: funcname.clone(),
+        status: Status::NA,
+    };
+
     let (mut client, keepalive, _func) = match gw
         .funcAgentMgr
         .GetClient(&tenant, &namespace, &funcname)
         .await
     {
         Err(e) => {
+            labels.status = Status::ConnectFailure;
+            METRICS
+                .lock()
+                .await
+                .funccallcnt
+                .get_or_create(&labels)
+                .inc();
+
             let body = Body::from(format!("service failure {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -642,6 +677,15 @@ async fn FuncCall(
     let tcpConnLatency = now.elapsed().as_millis() as u64;
     let start = std::time::Instant::now();
 
+    if !keepalive {
+        METRICS
+            .lock()
+            .await
+            .funccallCsCnt
+            .get_or_create(&labels)
+            .inc();
+    }
+
     let mut first = true;
 
     let mut res = match client.Send(req).await {
@@ -652,11 +696,27 @@ async fn FuncCall(
                 .body(body)
                 .unwrap();
 
+            labels.status = Status::RequestFailure;
+            METRICS
+                .lock()
+                .await
+                .funccallcnt
+                .get_or_create(&labels)
+                .inc();
+
             ttftCtx.span().end();
             return Ok(resp);
         }
         Ok(r) => r,
     };
+
+    labels.status = Status::Success;
+    METRICS
+        .lock()
+        .await
+        .funccallcnt
+        .get_or_create(&labels)
+        .inc();
 
     let mut kvs = Vec::new();
     for (k, v) in res.headers() {
@@ -676,6 +736,28 @@ async fn FuncCall(
 
                 ttftCtx.span().end();
                 first = false;
+
+                error!(
+                    "ttft label {:?} keepalive {} ttft {}",
+                    &labels, keepalive, ttft
+                );
+
+                let total = ttft + tcpConnLatency;
+                if !keepalive {
+                    METRICS
+                        .lock()
+                        .await
+                        .funccallCsTtft
+                        .get_or_create(&labels)
+                        .observe(total as f64 / 1000.0);
+                } else {
+                    METRICS
+                        .lock()
+                        .await
+                        .funccallTtft
+                        .get_or_create(&labels)
+                        .observe(total as f64);
+                }
             }
             let bytes = match frame {
                 None => {
