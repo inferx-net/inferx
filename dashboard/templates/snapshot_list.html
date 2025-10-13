@@ -55,8 +55,8 @@
             </div>
         </td>
 
-        <td>{{ snapshot["object"]['info']['processCheckpointSize'] // (1024 * 1024) }}</td>
-        <td>{{ snapshot["object"]['info']['hostMemSize'] // (1024 * 1024) }}</td>
+        <td>{{ snapshot["object"]['info']['processCheckpointSize'] / (1024 * 1024) }}</td>
+        <td>{{ snapshot["object"]['info']['hostMemSize'] / (1024 * 1024) }}</td>
         <td>{{ snapshot["object"]['meta']['imagename'] }}</td>
         <td>{{ snapshot["object"]['meta']['buildId'] }}</td>
     </tr>
