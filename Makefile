@@ -159,6 +159,12 @@ runstatesvc:
 
 stopstatesvc:
 	sudo kubectl delete deployment statesvc
+	
+runkdash:
+	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+
+stopkdash:
+	sudo kubectl delete deployment inferx-dashboard
 
 rungateway:
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
