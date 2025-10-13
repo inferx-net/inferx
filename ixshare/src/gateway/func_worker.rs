@@ -389,6 +389,7 @@ impl FuncWorker {
         let hostport = resp.hostport as u16;
 
         self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
+        self.funcAgent.lock().unwrap().totalSlot += self.parallelLevel;
 
         *self.id.lock().unwrap() = id;
         *self.ipAddr.lock().unwrap() = IpAddress(ipaddr);
@@ -401,9 +402,11 @@ impl FuncWorker {
             .await;
 
         let mut idleClientRx = idleClientRx;
-        self.SetState(FuncWorkerState::Idle);
+        let slots = self.parallelLevel;
+        self.funcAgent.IncrSlot(slots);
         self.funcAgent
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
+        self.SetState(FuncWorkerState::Idle);
         loop {
             let state = self.State();
             match state {
@@ -443,6 +446,7 @@ impl FuncWorker {
                         }
                         _ = tokio::time::sleep(Duration::from_millis(self.keepaliveTime)) => {
                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
+                            self.funcAgent.lock().unwrap().totalSlot -= self.parallelLevel;
                         }
 
                     }
@@ -465,6 +469,9 @@ impl FuncWorker {
                                             error!("Funcworker connect fail with error {:?}", &e);
                                             let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
+                                            self.funcAgent.lock().unwrap().totalSlot -= self.parallelLevel;
+                                            let slot = self.AvailableSlot(); // need to dec the current connect when fail
+                                            self.funcAgent.DecrSlot(slot);
                                             req.Send(Err(err));
                                             break;
                                         }
@@ -495,7 +502,7 @@ impl FuncWorker {
                                     }
 
 
-
+                                    self.funcAgent.IncrSlot(1);
                                     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::RequestDone(self.clone()));
                                 }
                             }
@@ -671,6 +678,7 @@ pub struct FuncClientReq {
     pub namespace: String,
     pub funcName: String,
     pub keepalive: bool,
+    pub enqueueTime: std::time::Instant,
     pub tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
 }
 

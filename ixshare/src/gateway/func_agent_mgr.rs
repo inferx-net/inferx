@@ -14,12 +14,15 @@
 
 use core::ops::Deref;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
-use tokio::sync::oneshot;
+use tokio::sync::Semaphore;
 use tokio::sync::{mpsc, Notify};
+use tokio::sync::{oneshot, Mutex as TMutex};
+use tokio::time;
 
 use crate::audit::SqlAudit;
 use crate::common::*;
@@ -177,6 +180,12 @@ pub enum WorkerUpdate {
     IdleTimeout(FuncWorker),
 }
 
+#[derive(Debug, PartialEq)]
+pub enum WaitState {
+    WaitReq,
+    WaitSlot,
+}
+
 #[derive(Debug)]
 pub struct FuncAgentInner {
     pub closeNotify: Arc<Notify>,
@@ -188,10 +197,14 @@ pub struct FuncAgentInner {
     pub func: Function,
     pub funcVersion: i64,
 
+    pub reqQueue: ClientReqQueue,
+    pub slots: Arc<Semaphore>,
+
     pub waitingReqs: VecDeque<FuncClientReq>,
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
     pub availableSlot: usize,
+    pub totalSlot: usize,
     pub startingSlot: usize,
     pub workers: BTreeMap<String, FuncWorker>,
     pub nextWorkerId: u64,
@@ -223,23 +236,13 @@ impl FuncAgentInner {
         return self.nextWorkerId;
     }
 
-    pub fn AssignReq(&mut self, req: FuncClientReq) {
-        for (_, worker) in &self.workers {
-            if worker.AvailableSlot() > 0 {
-                worker.AssignReq(req);
-                self.availableSlot -= 1;
-                return;
-            } else {
-                // error!("can't assign req to {:?}", &worker.workerId)
-            }
-        }
-
-        panic!("funcagentmgr fail to assign req {:?}", &req);
-    }
-
     pub fn NextReqId(&mut self) -> u64 {
         self.nextReqId += 1;
         return self.nextReqId;
+    }
+
+    pub fn TotalSlot(&self) -> usize {
+        return self.totalSlot + self.startingSlot;
     }
 }
 
@@ -256,6 +259,7 @@ impl Deref for FuncAgent {
 
 impl FuncAgent {
     pub fn New(func: &Function) -> Self {
+        let reqQueue = ClientReqQueue::New(1000, 30_000);
         let (rtx, rrx) = mpsc::channel(1000);
         let (wtx, wrx) = mpsc::channel(1000);
         let inner = FuncAgentInner {
@@ -269,11 +273,15 @@ impl FuncAgent {
             waitingReqs: VecDeque::new(),
             reqQueueTx: rtx,
             workerStateUpdateTx: wtx,
+            totalSlot: 0,
             availableSlot: 0,
             startingSlot: 0,
             workers: BTreeMap::new(),
             nextWorkerId: 0,
             nextReqId: 0,
+
+            reqQueue: reqQueue,
+            slots: Arc::new(Semaphore::new(0)),
         };
 
         let ret = Self(Arc::new(Mutex::new(inner)));
@@ -299,6 +307,7 @@ impl FuncAgent {
             namespace: namespace.to_owned(),
             funcName: funcname.to_owned(),
             keepalive: true,
+            enqueueTime: std::time::Instant::now(),
             tx: tx,
         };
         match self.lock().unwrap().reqQueueTx.try_send(funcReq) {
@@ -319,6 +328,49 @@ impl FuncAgent {
         return inner.Key();
     }
 
+    pub async fn AssignReqs(
+        &self,
+        reqQueue: &ClientReqQueue,
+        workers: &Vec<FuncWorker>,
+    ) -> WaitState {
+        if reqQueue.Count().await == 0 {
+            return WaitState::WaitReq;
+        }
+
+        if self.lock().unwrap().availableSlot == 0 {
+            return WaitState::WaitSlot;
+        }
+        for worker in workers {
+            while worker.AvailableSlot() > 0 {
+                let req = match reqQueue.TryRecv().await {
+                    None => return WaitState::WaitReq,
+                    Some(req) => req,
+                };
+                // let total = self.lock().unwrap().totalSlot;
+                // error!(
+                //     "worker.AvailableSlot() {}/{}/{}",
+                //     worker.AvailableSlot(),
+                //     self.lock().unwrap().availableSlot,
+                //     total
+                // );
+                worker.AssignReq(req);
+                self.DecrSlot(1);
+            }
+        }
+
+        return WaitState::WaitSlot;
+    }
+
+    pub async fn NeedNewWorker(&self, reqQueue: &ClientReqQueue) -> bool {
+        let reqCnt = reqQueue.Count().await;
+        let totalSlotCnt = self.lock().unwrap().TotalSlot();
+        if reqCnt as f64 >= 1.5 * totalSlotCnt as f64 {
+            return true;
+        }
+
+        return false;
+    }
+
     pub async fn Process(
         &self,
         reqQueueRx: mpsc::Receiver<FuncClientReq>,
@@ -328,8 +380,29 @@ impl FuncAgent {
         let mut workerStateUpdateRx = workerStateUpdateRx;
 
         let closeNotify = self.lock().unwrap().closeNotify.clone();
+        let reqQueue = self.lock().unwrap().reqQueue.clone();
+        let throttle = Throttle::New(2, 2, Duration::from_secs(1)).await;
 
         loop {
+            let workers: Vec<FuncWorker> = self.lock().unwrap().workers.values().cloned().collect();
+            let state = self.AssignReqs(&reqQueue, &workers).await;
+            if state == WaitState::WaitSlot {
+                if self.NeedNewWorker(&reqQueue).await {
+                    if throttle.TryAcquire().await {
+                        match self.NewWorker().await {
+                            Ok(()) => {}
+                            Err(e) => {
+                                error!(
+                                    "Func Create New Worker fail {:?} for {}",
+                                    e,
+                                    self.lock().unwrap().Key()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // let key = self.lock().unwrap().Key();
             tokio::select! {
                 _ = closeNotify.notified() => {
@@ -338,7 +411,8 @@ impl FuncAgent {
                 }
                 workReq = reqQueueRx.recv() => {
                     if let Some(req) = workReq {
-                        self.ProcessReq(req).await;
+                        reqQueue.Send(req).await;
+                        // self.ProcessReq(req).await;
                     } else {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
                     }
@@ -352,18 +426,15 @@ impl FuncAgent {
                                 assert!(oldslot == 0);
 
                                 error!("worker ready {}...", worker.WorkerName());
-                                self.IncrSlot(slot);
-                                self.TryProcessOneReq();
+
+                                worker.SetState(FuncWorkerState::Idle);
                             }
                             WorkerUpdate::RequestDone(_worker) => {
-                                self.IncrSlot(1);
-                                self.TryProcessOneReq();
+                                // self.IncrSlot(1);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
-                                let slot = worker.AvailableSlot(); // need to dec the current connect when fail
-                                error!("WorkerUpdate::WorkerFail worker {} slot {} e {:?}", worker.WorkerName(), slot, e);
-                                self.DecrSlot(slot);
                                 let workerId = worker.workerId.clone();
+                                error!("ReturnWorker WorkerUpdate::WorkerFail ... e {:?}", e);
                                 worker.ReturnWorker().await.ok();
 
                                 let funckey = self.FuncKey();
@@ -419,6 +490,7 @@ impl FuncAgent {
                                 // need to check whether the work get new requests.
                                 if worker.OngoingReq() == 0 {
                                     let slot = worker.contributeSlot.swap(0, Ordering::SeqCst);
+                                    error!("ReturnWorker WorkerUpdate::IdleTimeout 1 ... id {}", worker.workerId);
                                     let _ = self.DecrSlot(slot);
                                     worker.Close().await;
                                     worker.ReturnWorker().await.ok();
@@ -447,7 +519,7 @@ impl FuncAgent {
     }
 
     pub async fn NewWorker(&self) -> Result<()> {
-        let keepaliveTime = 10; // 10 millisecond self.lock().unwrap().func.spec.keepalivePolicy.keepaliveTime;
+        let keepaliveTime = 200; // 200 millisecond self.lock().unwrap().func.spec.keepalivePolicy.keepaliveTime;
 
         let workerId = self.lock().unwrap().NextWorkerId();
         let workderId = format!("{}", workerId);
@@ -528,56 +600,218 @@ impl FuncAgent {
         l.availableSlot -= cnt;
         return l.availableSlot;
     }
+}
 
-    pub fn TryProcessOneReq(&self) {
-        let mut inner = self.lock().unwrap();
-        if inner.availableSlot == 0 {
-            return;
-        }
+#[derive(Debug)]
+pub struct ClientReqQueuInner {
+    pub queue: TMutex<VecDeque<FuncClientReq>>,
+    pub queueLen: usize,
+    pub timeout: u64, // ms
+    pub notify: Arc<Notify>,
+}
 
-        match inner.waitingReqs.pop_front() {
-            None => {
-                return;
-            }
-            Some(req) => {
-                inner.AssignReq(req);
+#[derive(Debug, Clone)]
+pub struct ClientReqQueue(Arc<ClientReqQueuInner>);
+
+impl Deref for ClientReqQueue {
+    type Target = Arc<ClientReqQueuInner>;
+
+    fn deref(&self) -> &Arc<ClientReqQueuInner> {
+        &self.0
+    }
+}
+
+impl ClientReqQueue {
+    pub fn New(queueLen: usize, timeout: u64) -> Self {
+        let inner = ClientReqQueuInner {
+            queue: TMutex::new(VecDeque::new()),
+            queueLen: queueLen,
+            timeout: timeout,
+            notify: Arc::new(Notify::new()),
+        };
+
+        return Self(Arc::new(inner));
+    }
+
+    pub async fn Count(&self) -> usize {
+        return self.queue.lock().await.len();
+    }
+
+    pub async fn CleanTimeout(&self) {
+        let mut q = self.queue.lock().await;
+        loop {
+            match q.front() {
+                None => break,
+                Some(first) => {
+                    if first.enqueueTime.elapsed().as_millis() as u64 > self.timeout {
+                        let item = q.pop_front().unwrap();
+                        item.tx.send(Err(Error::Timeout)).ok();
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
 
-    pub async fn ProcessReq(&self, req: FuncClientReq) {
-        if self.lock().unwrap().availableSlot == 0 {
-            let mut needNewWorker = false;
+    pub async fn Send(&self, req: FuncClientReq) {
+        self.CleanTimeout().await;
+        let mut q = self.queue.lock().await;
+        if q.len() >= self.queueLen {
+            req.tx.send(Err(Error::QueueFull)).unwrap();
+            return;
+        }
+
+        q.push_back(req);
+        if q.len() == 1 {
+            self.notify.notify_waiters();
+        }
+    }
+
+    pub async fn TryRecv(&self) -> Option<FuncClientReq> {
+        self.CleanTimeout().await;
+        return self.queue.lock().await.pop_front();
+    }
+
+    pub async fn Recv(&self) -> FuncClientReq {
+        self.CleanTimeout().await;
+        loop {
+            match self.queue.lock().await.pop_front() {
+                Some(r) => return r,
+                None => (),
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    pub async fn Wait(&self) {
+        self.CleanTimeout().await;
+        loop {
             {
-                let mut inner = self.lock().unwrap();
-                inner.waitingReqs.push_back(req);
-
-                if inner.waitingReqs.len() > inner.startingSlot {
-                    needNewWorker = true;
-                    // error!(
-                    //     "needNewWorker  inner.startingSlot {} inner.availableSlot {}",
-                    //     inner.startingSlot, inner.availableSlot
-                    // );
+                let q = self.queue.lock().await;
+                if q.len() > 0 {
+                    return;
                 }
             }
 
-            if needNewWorker {
-                match self.NewWorker().await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        let req = self.lock().unwrap().waitingReqs.pop_front();
+            self.notify.notified().await;
+        }
+    }
+}
 
-                        if let Some(req) = req {
-                            match req.tx.send(Err(e)) {
-                                Err(e) => error!("send response to client fail with error {:?}", e),
-                                Ok(_) => (),
-                            }
-                        }
-                    }
+#[derive(Debug, Default)]
+pub struct ProcessSlotInner {
+    pub slots: AtomicUsize,
+    pub notify: Notify,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ProcessSlot(Arc<ProcessSlotInner>);
+
+impl Deref for ProcessSlot {
+    type Target = Arc<ProcessSlotInner>;
+
+    fn deref(&self) -> &Arc<ProcessSlotInner> {
+        &self.0
+    }
+}
+
+impl ProcessSlot {
+    pub fn Dec(&self) {
+        self.DecBy(1);
+    }
+
+    pub fn Inc(&self) {
+        self.IncBy(1);
+    }
+
+    pub fn IncBy(&self, count: usize) {
+        self.slots.fetch_add(count, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn DecBy(&self, count: usize) {
+        self.slots.fetch_sub(count, Ordering::SeqCst);
+    }
+
+    pub fn Count(&self) -> usize {
+        return self.slots.load(Ordering::SeqCst);
+    }
+
+    pub async fn Wait(&self) {
+        self.notify.notified().await;
+    }
+}
+
+#[derive(Debug)]
+pub struct ThrottleInner {
+    tokens: TMutex<usize>,
+    capacity: usize,
+    refill_interval: Duration,
+    notify: Notify,
+}
+
+#[derive(Debug, Clone)]
+pub struct Throttle(Arc<ThrottleInner>);
+
+impl Deref for Throttle {
+    type Target = Arc<ThrottleInner>;
+
+    fn deref(&self) -> &Arc<ThrottleInner> {
+        &self.0
+    }
+}
+
+impl Throttle {
+    pub async fn New(initial: usize, capacity: usize, refill_interval: Duration) -> Self {
+        let throttle = Self(Arc::new(ThrottleInner {
+            tokens: TMutex::new(initial.min(capacity)),
+            capacity,
+            refill_interval,
+            notify: Notify::new(),
+        }));
+
+        // Start background refill task
+        Self::Refill(throttle.clone()).await;
+        throttle
+    }
+
+    async fn Refill(throttle: Self) {
+        tokio::spawn(async move {
+            let mut ticker = time::interval(throttle.refill_interval);
+            loop {
+                ticker.tick().await;
+                let mut tokens = throttle.tokens.lock().await;
+                if *tokens < throttle.capacity {
+                    *tokens += 1;
+                    throttle.notify.notify_one();
                 }
             }
+        });
+    }
+
+    /// Acquire a token (wait if none available)
+    pub async fn Acquire(&self) {
+        loop {
+            {
+                let mut tokens = self.tokens.lock().await;
+                if *tokens > 0 {
+                    *tokens -= 1;
+                    return;
+                }
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    /// Try to acquire a token immediately (non-blocking)
+    pub async fn TryAcquire(&self) -> bool {
+        let mut tokens = self.tokens.lock().await;
+        if *tokens > 0 {
+            *tokens -= 1;
+            true
         } else {
-            self.lock().unwrap().AssignReq(req);
+            false
         }
     }
 }

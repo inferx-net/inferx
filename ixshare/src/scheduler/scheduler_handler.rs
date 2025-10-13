@@ -1257,30 +1257,36 @@ impl SchedulerHandler {
                     missWorkers.push(*workid);
                     continue;
                 }
-                Some(pod) => match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
-                    None => (),
-                    Some((nr, workids)) => {
-                        workids.push((*workid, pod.clone()));
-                        nr.Add(&pod.pod.object.spec.allocResources).unwrap();
-
-                        let req = if !forStandby {
-                            func.object.spec.SnapshotResource(nr.maxContextCnt)
-                        } else {
-                            self.ReqResumeResource(
-                                &func.object.spec.RunningResource(),
-                                &func.Id(),
-                                &pod.pod.object.spec.nodename,
-                            )
-                        };
-                        let state = nr.CanAlloc(&req, createSnapshot);
-                        if state.Ok() {
-                            findnodeName = Some(pod.pod.object.spec.nodename.clone());
-                            nodeResource = nr.clone();
-                            break;
-                        }
-                        allocStates.insert(pod.pod.object.spec.nodename.clone(), state);
+                Some(pod) => {
+                    // we won't kill another same func instance to start a new one
+                    if pod.pod.FuncKey() == func.Id() {
+                        continue;
                     }
-                },
+                    match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
+                        None => (),
+                        Some((nr, workids)) => {
+                            workids.push((*workid, pod.clone()));
+                            nr.Add(&pod.pod.object.spec.allocResources).unwrap();
+
+                            let req = if !forStandby {
+                                func.object.spec.SnapshotResource(nr.maxContextCnt)
+                            } else {
+                                self.ReqResumeResource(
+                                    &func.object.spec.RunningResource(),
+                                    &func.Id(),
+                                    &pod.pod.object.spec.nodename,
+                                )
+                            };
+                            let state = nr.CanAlloc(&req, createSnapshot);
+                            if state.Ok() {
+                                findnodeName = Some(pod.pod.object.spec.nodename.clone());
+                                nodeResource = nr.clone();
+                                break;
+                            }
+                            allocStates.insert(pod.pod.object.spec.nodename.clone(), state);
+                        }
+                    }
+                }
             }
         }
 
