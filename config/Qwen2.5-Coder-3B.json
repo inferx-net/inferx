@@ -57,11 +57,6 @@
                 "gpu": "Mem",
                 "pageable": "File",
                 "pinned": "File"
-            },
-            "scheduleConfig": {
-                "min_replica": 0,
-                "max_replica": 10,
-                "standby_per_node": 2
             }
         }
     }

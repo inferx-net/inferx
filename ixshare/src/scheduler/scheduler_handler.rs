@@ -70,7 +70,6 @@ use super::scheduler::SnapshotScheduleInfo;
 use super::scheduler::SnapshotScheduleState;
 use super::scheduler::TaskQueue;
 use super::scheduler::WorkerPod;
-use super::scheduler::SCHED_OBJREPO;
 
 lazy_static::lazy_static! {
     pub static ref PEER_MGR: PeerMgr = {
@@ -318,29 +317,6 @@ impl FuncStatus {
         });
     }
 
-    pub fn FuncPolicy(&self) -> Result<FuncPolicySpec> {
-        match &self.func.object.spec.policy {
-            ObjRef::Obj(p) => return Ok(p.clone()),
-            ObjRef::Link(l) => {
-                if l.objType != FuncPolicy::KEY {
-                    return Err(Error::CommonError(format!(
-                        "FuncStatus::FuncPolicy for func {} fail invalic link type {}",
-                        self.func.Id(),
-                        l.objType
-                    )));
-                }
-
-                let obj = SCHED_OBJREPO.get().unwrap().funcpolicyMgr.Get(
-                    &l.tenant,
-                    &l.namespace,
-                    &l.name,
-                )?;
-
-                return Ok(obj.object);
-            }
-        }
-    }
-
     pub fn PushLeaseWorkerReq(&mut self, req: na::LeaseWorkerReq, tx: Sender<na::LeaseWorkerResp>) {
         let req = LeaseReq {
             req: req,
@@ -510,10 +486,13 @@ pub struct SchedulerHandler {
     // Snapshot schedule state, id1: funcid, id2: nodename
     pub SnapshotSched: BiIndex<SnapshotScheduleInfo>,
 
+    pub funcpolicy: BTreeMap<String, FuncPolicySpec>,
+
     pub nodeListDone: bool,
     pub funcListDone: bool,
     pub funcPodListDone: bool,
     pub snapshotListDone: bool,
+    pub funcpolicyDone: bool,
     pub listDone: bool,
 
     pub nextWorkId: AtomicU64,
@@ -984,6 +963,11 @@ impl SchedulerHandler {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.AddSnapshot(&snapshot)?;
                                 }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.insert(key, policy.object);
+                                }
                                 _ => {
                                 }
                             }
@@ -1017,6 +1001,11 @@ impl SchedulerHandler {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
                                 }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.insert(key, policy.object);
+                                }
                                 _ => {
                                 }
                             }
@@ -1044,6 +1033,11 @@ impl SchedulerHandler {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.RemoveSnapshot(&snapshot).await?;
                                 }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.remove(&key);
+                                }
                                 _ => {
                                 }
                             }
@@ -1061,6 +1055,9 @@ impl SchedulerHandler {
                                 }
                                 ContainerSnapshot::KEY => {
                                     self.ListDone(ListType::Snapshot).await?;
+                                }
+                                FuncPolicy::KEY => {
+                                    self.ListDone(ListType::Funcpolicy).await?;
                                 }
                                 _ => {
                                     error!("SchedulerHandler get unexpect list done {}", &obj.objType);
@@ -1850,6 +1847,29 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    pub fn FuncPolicy(&self, tenant: &str, p: &ObjRef<FuncPolicySpec>) -> FuncPolicySpec {
+        match p {
+            ObjRef::Obj(p) => return p.clone(),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return FuncPolicySpec::default();
+                    // return Err(Error::CommonError(format!(
+                    //     "FuncStatus::FuncPolicy for policy {} fail invalic link type {}",
+                    //     l.Key(),
+                    //     l.objType
+                    // )));
+                }
+
+                match self.funcpolicy.get(&l.Key(tenant)) {
+                    None => {
+                        return FuncPolicySpec::default();
+                    }
+                    Some(p) => return p.clone(),
+                }
+            }
+        }
+    }
+
     pub async fn TryCreateStandbyOnNode(&mut self, nodename: &str) -> Result<()> {
         if !self.nodes.contains_key(nodename) {
             return Ok(());
@@ -1908,13 +1928,9 @@ impl SchedulerHandler {
                 Some(f) => f,
             };
 
-            let policy = match func.FuncPolicy() {
-                Err(e) => {
-                    error!("TryCreateStandbyOnNode for func {} on node {} fail with invalid policy {:?}", funcId, nodename, e);
-                    return Ok(());
-                }
-                Ok(p) => p,
-            };
+            let tenant = func.func.tenant.clone();
+
+            let policy = self.FuncPolicy(&tenant, &func.func.object.spec.policy);
 
             if policy.standbyPerNode > cnt {
                 needStandby.push(funcId.to_owned());
@@ -2593,6 +2609,7 @@ impl SchedulerHandler {
             ListType::FuncPod => self.funcPodListDone = true,
             ListType::Node => self.nodeListDone = true,
             ListType::Snapshot => self.snapshotListDone = true,
+            ListType::Funcpolicy => self.funcpolicyDone = true,
         }
 
         if self.nodeListDone && self.funcListDone && self.funcPodListDone && self.snapshotListDone {
@@ -2895,6 +2912,7 @@ pub enum ListType {
     FuncPod,
     Func,
     Snapshot,
+    Funcpolicy,
 }
 
 pub async fn GetClient() -> Result<CacherClient> {

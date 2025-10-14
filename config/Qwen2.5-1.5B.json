@@ -60,10 +60,12 @@
                 "pageable": "File",
                 "pinned": "Mem"
             },
-            "scheduleConfig": {
-                "min_replica": 0,
-                "max_replica": 10,
-                "standby_per_node": 2
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
             }
         }
     }

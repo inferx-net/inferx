@@ -1048,7 +1048,7 @@ async fn UpdateObj(
         Tenant::KEY => gw.UpdateTenant(&token, dataobj).await,
         Namespace::KEY => gw.UpdateNamespace(&token, dataobj).await,
         Function::KEY => gw.UpdateFunc(&token, dataobj).await,
-        _ => gw.client.Create(&dataobj).await,
+        _ => gw.client.Update(&dataobj, 0).await,
     };
 
     match res {

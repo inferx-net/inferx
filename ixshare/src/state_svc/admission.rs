@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use serde_json::Value;
 
 use super::state_svc::*;
@@ -31,6 +32,9 @@ impl StateSvc {
                 return self.CreateNamespaceCheck(obj);
             }
             Function::KEY => {
+                return self.CreateFuncCheck(obj);
+            }
+            FuncPolicy::KEY => {
                 return self.CreateFuncCheck(obj);
             }
             _ => (),
@@ -133,6 +137,11 @@ impl StateSvc {
         return Ok(());
     }
 
+    pub fn CreateFuncPolicyCheck(&self, obj: &DataObject<Value>) -> Result<()> {
+        let _polic = FuncPolicy::FromDataObject(obj.clone())?;
+        return Ok(());
+    }
+
     pub fn UpdateObjCheck(&self, obj: &DataObject<Value>) -> Result<()> {
         match obj.objType.as_str() {
             Tenant::KEY | Namespace::KEY => {
@@ -143,6 +152,9 @@ impl StateSvc {
             }
             Function::KEY => {
                 return self.UpdateFuncCheck(obj);
+            }
+            FuncPolicy::KEY => {
+                return self.CreateFuncPolicyCheck(obj);
             }
             _ => {
                 return Err(Error::CommonError(format!(

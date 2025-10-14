@@ -58,6 +58,14 @@
                 "gpu": "Blob",
                 "pageable": "Blob",
                 "pinned": "Blob"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 10,
+                    "standby_per_node": 1,
+                    "parallel": 2
+                }
             }
         }
     }

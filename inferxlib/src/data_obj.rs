@@ -432,9 +432,14 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ObjLink {
     pub objType: String,
-    pub tenant: String,
     pub namespace: String,
     pub name: String,
+}
+
+impl ObjLink {
+    pub fn Key(&self, tenant: &str) -> String {
+        return format!("{}/{}/{}", tenant, &self.namespace, &self.name);
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

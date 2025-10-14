@@ -470,7 +470,8 @@ impl FuncAgent {
     }
 
     pub fn ParallelLevel(&self) -> Result<usize> {
-        let mut level = self.FuncPolicy()?.parallel;
+        let tenant = self.lock().unwrap().tenant.clone();
+        let mut level = self.FuncPolicy(&tenant)?.parallel;
         if level == 0 {
             level = DEFAULT_PARALLEL_LEVEL;
         }
@@ -478,7 +479,7 @@ impl FuncAgent {
         return Ok(level);
     }
 
-    pub fn FuncPolicy(&self) -> Result<FuncPolicySpec> {
+    pub fn FuncPolicy(&self, tenant: &str) -> Result<FuncPolicySpec> {
         match &self.lock().unwrap().func.object.spec.policy {
             ObjRef::Obj(p) => return Ok(p.clone()),
             ObjRef::Link(l) => {
@@ -490,11 +491,12 @@ impl FuncAgent {
                     )));
                 }
 
-                let obj = GW_OBJREPO.get().unwrap().funcpolicyMgr.Get(
-                    &l.tenant,
-                    &l.namespace,
-                    &l.name,
-                )?;
+                let obj =
+                    GW_OBJREPO
+                        .get()
+                        .unwrap()
+                        .funcpolicyMgr
+                        .Get(tenant, &l.namespace, &l.name)?;
 
                 return Ok(obj.object);
             }
