@@ -312,7 +312,7 @@ impl FuncWorker {
             return Ok(resp);
         }
 
-        self.SetState(FuncWorkerState::Processing);
+        // self.SetState(FuncWorkerState::Processing);
 
         return Err(Error::CommonError(resp.error));
     }
@@ -326,6 +326,7 @@ impl FuncWorker {
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
         let mut reqQueueRx = reqQueueRx;
+        self.SetState(FuncWorkerState::Init);
         let resp = match self.LeaseWorker().await {
             Err(e) => {
                 span.end();
@@ -335,7 +336,6 @@ impl FuncWorker {
                 //     &e
                 // );
                 self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
-                self.SetState(FuncWorkerState::Init);
                 match &e {
                     Error::SchedulerErr(s) => {
                         self.funcAgent

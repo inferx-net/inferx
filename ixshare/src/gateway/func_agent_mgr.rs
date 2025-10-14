@@ -200,7 +200,6 @@ pub struct FuncAgentInner {
     pub reqQueue: ClientReqQueue,
     pub slots: Arc<Semaphore>,
 
-    pub waitingReqs: VecDeque<FuncClientReq>,
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
     pub availableSlot: usize,
@@ -270,7 +269,6 @@ impl FuncAgent {
             funcName: func.name.to_owned(),
             funcVersion: func.Version(),
             func: func.clone(),
-            waitingReqs: VecDeque::new(),
             reqQueueTx: rtx,
             workerStateUpdateTx: wtx,
             totalSlot: 0,
@@ -437,51 +435,6 @@ impl FuncAgent {
                                 error!("ReturnWorker WorkerUpdate::WorkerFail ... e {:?}", e);
                                 worker.ReturnWorker().await.ok();
 
-                                let funckey = self.FuncKey();
-
-                                loop {
-                                    match reqQueueRx.try_recv() {
-                                        Ok(req) => {
-                                            match &e {
-                                                Error::SchedulerErr(s) => {
-                                                    req.Send(Err(Error::SchedulerErr(s.clone())));
-                                                }
-                                                e => {
-                                                    let err = Err(Error::CommonError(format!(
-                                                            "fail to run func {:?} with error {:?}", &funckey, e
-                                                        )));
-                                                    req.Send(err);
-                                                }
-                                            }
-                                        }
-                                        Err(_e) => {
-                                            // error!("WorkerUpdate::WorkerFail fail3 {:?}", e);
-
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                loop {
-                                    match self.lock().unwrap().waitingReqs.pop_back() {
-                                        Some(req) => {
-                                            match &e {
-                                                Error::SchedulerErr(s) => {
-                                                    req.Send(Err(Error::SchedulerErr(s.clone())));
-                                                }
-                                                e => {
-                                                    let err = Err(Error::CommonError(format!(
-                                                            "fail to run func {:?} with error {:?}", &funckey, e
-                                                        )));
-                                                    req.Send(err);
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            break;
-                                        }
-                                    }
-                                }
 
                                 self.lock().unwrap().workers.remove(&workerId);
                             }
