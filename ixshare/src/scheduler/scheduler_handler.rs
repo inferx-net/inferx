@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use inferxlib::data_obj::ObjRef;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::collections::BTreeMap;
@@ -67,6 +70,7 @@ use super::scheduler::SnapshotScheduleInfo;
 use super::scheduler::SnapshotScheduleState;
 use super::scheduler::TaskQueue;
 use super::scheduler::WorkerPod;
+use super::scheduler::SCHED_OBJREPO;
 
 lazy_static::lazy_static! {
     pub static ref PEER_MGR: PeerMgr = {
@@ -312,6 +316,29 @@ impl FuncStatus {
             pendingPods: BTreeMap::new(),
             leaseWorkerReqs: VecDeque::new(),
         });
+    }
+
+    pub fn FuncPolicy(&self) -> Result<FuncPolicySpec> {
+        match &self.func.object.spec.policy {
+            ObjRef::Obj(p) => return Ok(p.clone()),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return Err(Error::CommonError(format!(
+                        "FuncStatus::FuncPolicy for func {} fail invalic link type {}",
+                        self.func.Id(),
+                        l.objType
+                    )));
+                }
+
+                let obj = SCHED_OBJREPO.get().unwrap().funcpolicyMgr.Get(
+                    &l.tenant,
+                    &l.namespace,
+                    &l.name,
+                )?;
+
+                return Ok(obj.object);
+            }
+        }
     }
 
     pub fn PushLeaseWorkerReq(&mut self, req: na::LeaseWorkerReq, tx: Sender<na::LeaseWorkerResp>) {
@@ -1881,7 +1908,15 @@ impl SchedulerHandler {
                 Some(f) => f,
             };
 
-            if func.func.object.spec.scheduleConfig.standbyPerNode > cnt {
+            let policy = match func.FuncPolicy() {
+                Err(e) => {
+                    error!("TryCreateStandbyOnNode for func {} on node {} fail with invalid policy {:?}", funcId, nodename, e);
+                    return Ok(());
+                }
+                Ok(p) => p,
+            };
+
+            if policy.standbyPerNode > cnt {
                 needStandby.push(funcId.to_owned());
             }
         }

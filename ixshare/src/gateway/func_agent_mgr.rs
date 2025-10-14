@@ -18,7 +18,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use inferxlib::data_obj::ObjRef;
+use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
+use once_cell::sync::OnceCell;
 use tokio::sync::Semaphore;
 use tokio::sync::{mpsc, Notify};
 use tokio::sync::{oneshot, Mutex as TMutex};
@@ -32,6 +35,8 @@ use inferxlib::obj_mgr::func_mgr::*;
 
 use super::func_worker::*;
 use super::gw_obj_repo::GwObjRepo;
+
+pub static GW_OBJREPO: OnceCell<GwObjRepo> = OnceCell::new();
 
 pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     use crate::gateway::func_agent_mgr::FuncAgentMgr;
@@ -70,6 +75,8 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         sqlAudit: sqlaudit,
         client: client,
     };
+
+    GW_OBJREPO.set(objRepo.clone()).unwrap();
 
     let handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
@@ -462,13 +469,36 @@ impl FuncAgent {
         return Ok(());
     }
 
-    pub fn ParallelLevel(&self) -> usize {
-        let mut level = self.lock().unwrap().func.object.spec.resources.parallel;
+    pub fn ParallelLevel(&self) -> Result<usize> {
+        let mut level = self.FuncPolicy()?.parallel;
         if level == 0 {
             level = DEFAULT_PARALLEL_LEVEL;
         }
 
-        return level;
+        return Ok(level);
+    }
+
+    pub fn FuncPolicy(&self) -> Result<FuncPolicySpec> {
+        match &self.lock().unwrap().func.object.spec.policy {
+            ObjRef::Obj(p) => return Ok(p.clone()),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return Err(Error::CommonError(format!(
+                        "GetFuncPolicy for func {} fail invalic link type {}",
+                        self.FuncKey(),
+                        &l.objType
+                    )));
+                }
+
+                let obj = GW_OBJREPO.get().unwrap().funcpolicyMgr.Get(
+                    &l.tenant,
+                    &l.namespace,
+                    &l.name,
+                )?;
+
+                return Ok(obj.object);
+            }
+        }
     }
 
     pub async fn NewWorker(&self) -> Result<()> {
@@ -492,8 +522,8 @@ impl FuncAgent {
             endpoint = inner.func.object.spec.endpoint.clone();
         }
 
-        let parallelLevel = self.lock().unwrap().func.object.spec.resources.parallel;
-        self.lock().unwrap().startingSlot += self.ParallelLevel();
+        let parallelLevel = self.ParallelLevel()?;
+        self.lock().unwrap().startingSlot += parallelLevel;
         match FuncWorker::New(
             &workderId,
             &tenant,

@@ -18,6 +18,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use once_cell::sync::OnceCell;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
@@ -46,6 +47,8 @@ use inferxlib::data_obj::DeltaEvent;
 
 use super::scheduler_handler::SchedulerHandler;
 use super::scheduler_handler::WorkerHandlerMsg;
+
+pub static SCHED_OBJREPO: OnceCell<SchedObjRepo> = OnceCell::new();
 
 lazy_static::lazy_static! {
     pub static ref SCHEDULER_CONFIG: SchedulerConfig = SchedulerConfig::New(&NODE_CONFIG);
@@ -172,6 +175,8 @@ pub async fn SchedulerSvc() -> Result<()> {
     SCHEDULER_METRICS.lock().await.Register().await;
 
     let objRepo = SchedObjRepo::New(SCHEDULER_CONFIG.stateSvcAddrs.clone()).await?;
+
+    SCHED_OBJREPO.set(objRepo.clone()).unwrap();
 
     let schedulerSvcFuture = RunSchedulerSvc();
 

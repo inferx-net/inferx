@@ -164,9 +164,6 @@ pub struct FuncSpec {
     #[serde(rename = "sample_query")]
     pub sampleCall: SampleCall,
 
-    #[serde(default = "DefaultScheduleConfig")]
-    pub scheduleConfig: ScheduleConfig,
-
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
 }
@@ -217,7 +214,6 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             probe: HttpEndpoint::default(),
             sampleCall: SampleCall::default(),
-            scheduleConfig: ScheduleConfig::default(),
             policy: Default::default(),
         };
     }
