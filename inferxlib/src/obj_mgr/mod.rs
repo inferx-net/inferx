@@ -20,3 +20,4 @@ pub mod node_mgr;
 pub mod nodestatus_mgr;
 pub mod pod_mgr;
 pub mod tenant_mgr;
+pub mod funcpolicy_mgr;

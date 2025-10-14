@@ -20,8 +20,11 @@ use crate::data_obj::*;
 use crate::resource;
 use crate::resource::*;
 
-pub const FUNCPOD_TYPE: &str = "funcpod_type.qservice.io";
-pub const FUNCPOD_FUNCNAME: &str = "fun_name.qservice.io";
+use super::funcpolicy_mgr::FuncPolicy;
+use super::funcpolicy_mgr::FuncPolicySpec;
+
+pub const FUNCPOD_TYPE: &str = "funcpod_type.inferx.io";
+pub const FUNCPOD_FUNCNAME: &str = "fun_name.inferx.io";
 pub const FUNCPOD_PROMPT: &str = "prompt";
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -163,10 +166,17 @@ pub struct FuncSpec {
 
     #[serde(default = "DefaultScheduleConfig")]
     pub scheduleConfig: ScheduleConfig,
+
+    #[serde(default = "FuncpolicyDefault")]
+    pub policy: ObjRef<FuncPolicySpec>,
 }
 
 fn PromptDefault() -> String {
     return "Seattle is a".to_owned();
+}
+
+fn FuncpolicyDefault() -> ObjRef<FuncPolicySpec> {
+    return ObjRef::Obj(FuncPolicySpec::default());
 }
 
 impl FuncSpec {
@@ -208,6 +218,7 @@ impl Default for FuncSpec {
             probe: HttpEndpoint::default(),
             sampleCall: SampleCall::default(),
             scheduleConfig: ScheduleConfig::default(),
+            policy: Default::default(),
         };
     }
 }

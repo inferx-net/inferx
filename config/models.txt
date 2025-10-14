@@ -18,6 +18,7 @@ export IFERX_USERNAME="testuser1"
 export IFERX_PASSWORD="test"
 
 /opt/inferx/bin/ixctl create public.json
+/opt/inferx/bin/ixctl create default_funcpolicy.json
 
 # /opt/inferx/bin/ixctl delete tenant system system public
 

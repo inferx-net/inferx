@@ -1,0 +1,12 @@
+{
+    "type": "funcpolicy",
+    "tenant": "public",
+    "namespace": "system",
+    "name": "default_funcpolicy",
+    "object": {
+        "min_replica": 0,
+        "max_replica": 10,
+        "standby_per_node": 2,
+        "parallel": 2
+    }
+}

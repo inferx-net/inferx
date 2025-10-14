@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta1
+VERSION := v0.1.5.beta2
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -45,7 +45,7 @@ dash:
 	-sudo docker image rm inferx/inferx_dashboard:$(VERSION)
 	sudo docker build -t inferx/inferx_dashboard:$(VERSION) ./target/dashboard
 
-pushdash:
+pushdash: dash
 	# sudo docker login -u inferx
 	sudo docker tag inferx/inferx_dashboard:$(VERSION) inferx/inferx_dashboard:$(VERSION)
 	sudo docker push inferx/inferx_dashboard:$(VERSION)

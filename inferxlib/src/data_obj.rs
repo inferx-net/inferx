@@ -429,26 +429,25 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
     }
 }
 
-// #[derive(Debug, Default)]
-// pub struct DataObjList {
-//     pub objs: Vec<DataObject<Value>>,
-//     pub revision: i64,
-//     pub continue_: Option<Continue>,
-//     pub remainCount: i64,
-// }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ObjLink {
+    pub objType: String,
+    pub tenant: String,
+    pub namespace: String,
+    pub name: String,
+}
 
-// impl DataObjList {
-//     pub fn New(
-//         objs: Vec<DataObject<Value>>,
-//         revision: i64,
-//         continue_: Option<Continue>,
-//         remainCount: i64,
-//     ) -> Self {
-//         return Self {
-//             objs: objs,
-//             revision: revision,
-//             continue_: continue_,
-//             remainCount: remainCount,
-//         };
-//     }
-// }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ObjRef<SpecType: Serialize + Clone + core::fmt::Debug + Default> {
+    Obj(SpecType),
+    Link(ObjLink),
+}
+
+impl<SpecType> Default for ObjRef<SpecType>
+where
+    SpecType: Serialize + Clone + core::fmt::Debug + Default,
+{
+    fn default() -> Self {
+        Self::Obj(SpecType::default())
+    }
+}
