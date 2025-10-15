@@ -61,7 +61,9 @@ spec:
           - name: ENABLE_2MB_PAGE
             value: "true"  
           - name: CONTEXT_OVERHEAD
-            value: "500"         
+            value: "500"   
+          - name: CONTEXT_COUNT
+            value: "1"      
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:

@@ -1330,11 +1330,11 @@ impl SchedulerHandler {
         let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
-        error!(
-            "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
-            func.Id(),
-            &self.idlePods
-        );
+        // error!(
+        //     "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
+        //     func.Id(),
+        //     &self.idlePods
+        // );
 
         for (workid, podKey) in &self.idlePods {
             match self.pods.get(podKey) {
