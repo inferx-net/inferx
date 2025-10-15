@@ -335,7 +335,9 @@ impl FuncWorker {
                 //     self.WorkerName(),
                 //     &e
                 // );
-                self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
+                self.funcAgent
+                    .startingSlot
+                    .fetch_sub(self.parallelLevel, Ordering::SeqCst);
                 match &e {
                     Error::SchedulerErr(s) => {
                         self.funcAgent
@@ -388,8 +390,12 @@ impl FuncWorker {
         let hostipaddr = resp.hostipaddr;
         let hostport = resp.hostport as u16;
 
-        self.funcAgent.lock().unwrap().startingSlot -= self.parallelLevel;
-        self.funcAgent.lock().unwrap().totalSlot += self.parallelLevel;
+        self.funcAgent
+            .startingSlot
+            .fetch_sub(self.parallelLevel, Ordering::SeqCst);
+        self.funcAgent
+            .totalSlot
+            .fetch_add(self.parallelLevel, Ordering::SeqCst);
 
         *self.id.lock().unwrap() = id;
         *self.ipAddr.lock().unwrap() = IpAddress(ipaddr);
@@ -446,7 +452,7 @@ impl FuncWorker {
                         }
                         _ = tokio::time::sleep(Duration::from_millis(self.keepaliveTime)) => {
                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
-                            self.funcAgent.lock().unwrap().totalSlot -= self.parallelLevel;
+                            self.funcAgent.totalSlot.fetch_sub(self.parallelLevel, Ordering::SeqCst);
                         }
 
                     }
@@ -469,7 +475,7 @@ impl FuncWorker {
                                             error!("Funcworker connect fail with error {:?}", &e);
                                             let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
-                                            self.funcAgent.lock().unwrap().totalSlot -= self.parallelLevel;
+                                            self.funcAgent.totalSlot.fetch_sub(self.parallelLevel, Ordering::SeqCst);
                                             let slot = self.AvailableSlot(); // need to dec the current connect when fail
                                             self.funcAgent.DecrSlot(slot);
                                             req.Send(Err(err));
