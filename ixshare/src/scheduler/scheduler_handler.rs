@@ -973,7 +973,7 @@ impl SchedulerHandler {
                                     let funcid = func.Id();
                                     self.AddFunc(func)?;
                                     if self.listDone {
-                                        self.ProcessAddFunc(&funcid).await?;
+                                        self.ProcessAddFunc(&funcid).await;
                                         self.taskQueue.AddFunc(&funcid);
                                     }
                                 }
@@ -1028,7 +1028,7 @@ impl SchedulerHandler {
                                     let fpId = spec.Id();
                                     self.AddFunc(spec)?;
                                     if self.listDone {
-                                        self.ProcessAddFunc(&fpId).await?;
+                                        self.ProcessAddFunc(&fpId).await;
                                         self.taskQueue.AddFunc(&fpId);
                                     }
                                 }
@@ -1621,9 +1621,12 @@ impl SchedulerHandler {
     }
 
     pub async fn RefreshScheduling(&mut self) -> Result<()> {
-        let funcids: Vec<String> = self.funcs.keys().cloned().collect();
+        let mut funcids: Vec<String> = self.funcs.keys().cloned().collect();
+        funcids.shuffle(&mut thread_rng());
         for fpId in &funcids {
-            self.ProcessAddFunc(fpId).await.ok();
+            if self.ProcessAddFunc(fpId).await {
+                break;
+            }
         }
 
         return Ok(());
@@ -2101,13 +2104,16 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub async fn ProcessAddFunc(&mut self, funcid: &str) -> Result<()> {
+    // return whether we prewarm a
+    pub async fn ProcessAddFunc(&mut self, funcid: &str) -> bool {
+        // the func is doing something, skip this round
+        if self.funcPods.contains_key(funcid) {
+            return false;
+        }
+
         let func = match self.funcs.get(funcid) {
             None => {
-                return Err(Error::NotExist(format!(
-                    "ProcessAddFunc can't find funcpcakge with id {}",
-                    funcid
-                )));
+                return false;
             }
             Some(fpStatus) => fpStatus.func.clone(),
         };
@@ -2115,12 +2121,27 @@ impl SchedulerHandler {
         let funcState = func.object.status.state;
 
         if funcState == FuncState::Fail {
-            return Ok(());
+            return false;
         }
 
-        // self.TryCreateSnapshot(funcid, &func).await?;
-        // self.TryCreateStandbyPod(funcid).await?;
-        return Ok(());
+        let policy = self.FuncPolicy(&func.tenant, &func.object.spec.policy);
+        if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
+            match self.ResumePod(&funcid).await {
+                Err(e) => {
+                    error!(
+                        "ProcessAddFunc Prewarm one pod fail for func {} error {:?}",
+                        funcid, e
+                    );
+                    return false;
+                }
+                Ok(_) => {
+                    error!("Prewarm one pod for func {}", funcid);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     pub const PRINT_SCHEDER_INFO: bool = false;
