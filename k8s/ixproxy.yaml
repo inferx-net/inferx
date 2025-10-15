@@ -17,6 +17,14 @@ spec:
         - name: ixproxy
           image: inferx/inferx_na:${VERSION}
           imagePullPolicy: IfNotPresent
+          livenessProbe:          # <-- Kubernetes keepalive check
+            httpGet:
+              path: /
+              port: 1240
+            initialDelaySeconds: 6    # wait before first probe
+            periodSeconds: 10         # ping every 10s
+            timeoutSeconds: 2         # fail if no response in 2s
+            failureThreshold: 3
           securityContext:
             privileged: true
             capabilities:

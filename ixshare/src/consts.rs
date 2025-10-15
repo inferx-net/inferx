@@ -51,6 +51,7 @@ pub const DEFAULT_STATESVC_PORT: u16 = 1237;
 pub const DEFAULT_SCHEDULER_PORT: u16 = 1238;
 pub const DEFAULT_GATEWAY_PORT: u16 = 4000;
 pub const DEFAULT_DASHBOARD_PORT: u16 = 1239;
+pub const DEFAULT_IXPROXY_HTTP_PORT: u16 = 1240;
 
 pub static TSOT_SOCKET_PATH: &'static str = "/opt/inferx/sockets/tsot-socket";
 pub static TSOT_GW_SOCKET_PATH: &'static str = "/opt/inferx/sockets_host/tsot-socket";
