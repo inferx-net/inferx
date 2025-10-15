@@ -14,7 +14,7 @@
 
 use core::ops::Deref;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,7 +22,6 @@ use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
 use once_cell::sync::OnceCell;
-use tokio::sync::Semaphore;
 use tokio::sync::{mpsc, Notify};
 use tokio::sync::{oneshot, Mutex as TMutex};
 use tokio::time;
@@ -183,7 +182,6 @@ pub enum WorkerState {
 pub enum WorkerUpdate {
     Ready(FuncWorker), // parallel level
     WorkerFail((FuncWorker, Error)),
-    RequestDone(FuncWorker),
     IdleTimeout(FuncWorker),
 }
 
@@ -205,11 +203,11 @@ pub struct FuncAgentInner {
     pub funcVersion: i64,
 
     pub reqQueue: ClientReqQueue,
-    pub slots: Arc<Semaphore>,
+    pub dataNotify: Arc<Notify>,
 
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
-    pub availableSlot: Arc<AtomicUsize>,
+    pub availableSlot: Arc<AtomicIsize>,
     pub totalSlot: Arc<AtomicUsize>,
     pub startingSlot: Arc<AtomicUsize>,
     pub workers: Mutex<BTreeMap<String, FuncWorker>>,
@@ -278,14 +276,14 @@ impl FuncAgent {
             reqQueueTx: rtx,
             workerStateUpdateTx: wtx,
             totalSlot: Arc::new(AtomicUsize::new(0)),
-            availableSlot: Arc::new(AtomicUsize::new(0)),
+            availableSlot: Arc::new(AtomicIsize::new(0)),
             startingSlot: Arc::new(AtomicUsize::new(0)),
             workers: Mutex::new(BTreeMap::new()),
             nextWorkerId: AtomicU64::new(0),
             nextReqId: AtomicU64::new(0),
 
             reqQueue: reqQueue,
-            slots: Arc::new(Semaphore::new(0)),
+            dataNotify: Arc::new(Notify::new()),
         };
 
         let ret = Self(Arc::new(inner));
@@ -340,7 +338,7 @@ impl FuncAgent {
             return WaitState::WaitReq;
         }
 
-        if self.availableSlot.load(Ordering::SeqCst) == 0 {
+        if self.availableSlot.load(Ordering::SeqCst) <= 0 {
             return WaitState::WaitSlot;
         }
         for worker in workers {
@@ -416,6 +414,8 @@ impl FuncAgent {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
                     }
                 }
+                // some data available
+                _ = self.dataNotify.notified() => (),
                 stateUpdate = workerStateUpdateRx.recv() => {
                     if let Some(update) = stateUpdate {
                         match update {
@@ -427,9 +427,6 @@ impl FuncAgent {
                                 error!("worker ready {}...", worker.WorkerName());
 
                                 worker.SetState(FuncWorkerState::Idle);
-                            }
-                            WorkerUpdate::RequestDone(_worker) => {
-                                // self.IncrSlot(1);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 let workerId = worker.workerId.clone();
@@ -577,7 +574,7 @@ impl FuncAgent {
         //     cnt,
         //     l.availableSlot
         // );
-        return self.availableSlot.fetch_add(cnt, Ordering::SeqCst) + cnt;
+        return self.availableSlot.fetch_add(cnt as isize, Ordering::SeqCst) as usize + cnt;
     }
 
     pub fn DecrSlot(&self, cnt: usize) -> usize {
@@ -587,7 +584,7 @@ impl FuncAgent {
         //     cnt,
         //     l.availableSlot
         // );
-        return self.availableSlot.fetch_sub(cnt, Ordering::SeqCst) - cnt;
+        return self.availableSlot.fetch_sub(cnt as isize, Ordering::SeqCst) as usize - cnt;
     }
 }
 

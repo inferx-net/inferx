@@ -502,14 +502,13 @@ impl FuncWorker {
                                         }
                                     }
 
+                                    self.funcAgent.IncrSlot(1);
                                     let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
                                     if cnt == 1 {
                                         self.SetState(FuncWorkerState::Idle);
                                     }
 
-
-                                    self.funcAgent.IncrSlot(1);
-                                    self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::RequestDone(self.clone()));
+                                    self.funcAgent.dataNotify.notify_waiters();
                                 }
                             }
                         }
