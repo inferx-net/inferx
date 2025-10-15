@@ -231,7 +231,7 @@ pub struct WorkerPodInner {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkerPod(Arc<WorkerPodInner>);
+pub struct WorkerPod(pub Arc<WorkerPodInner>);
 
 impl WorkerPod {
     pub fn State(&self) -> WorkerPodState {

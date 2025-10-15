@@ -61,6 +61,13 @@ impl WorkerPodState {
             _ => return false,
         }
     }
+
+    pub fn IsReady(&self) -> bool {
+        match self {
+            Self::Init | Self::Standby => return false,
+            _ => return true,
+        }
+    }
 }
 
 /// VolumeMount describes a mounting of a Volume within a container.

@@ -443,7 +443,24 @@ impl FuncAgent {
                                 worker.ReturnWorker().await.ok();
 
 
-                                self.lock().unwrap().workers.remove(&workerId);
+                                let agentCount = {
+                                    let mut agent = self.lock().unwrap();
+
+                                    agent.workers.remove(&workerId);
+                                    agent.workers.len()
+                                };
+
+                                if agentCount == 0 {
+                                    let error = format!("{:?}", e);
+                                    loop {
+                                        let req = match reqQueue.TryRecv().await {
+                                            None => break,
+                                            Some(req) => req,
+                                        };
+
+                                        req.Send(Err(Error::CommonError(error.clone())));
+                                    }
+                                }
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 // there is race condition there might be new request coming after work idle timeout and before funcagent return the worker

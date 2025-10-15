@@ -612,11 +612,55 @@ impl SchedulerHandler {
             }
         }
 
-        let key = format!(
+        let funcname = format!(
             "{}/{}/{}/{}",
             &req.tenant, &req.namespace, &req.funcname, req.fprevision
         );
-        match self.ResumePod(&key).await {
+
+        let fp = match self.funcs.get(&funcname) {
+            None => {
+                let resp = na::LeaseWorkerResp {
+                    error: format!(
+                        "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                        funcname,
+                        self.funcs.keys(),
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Err(Error::NotExist(format!(
+                    "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                    funcname,
+                    self.funcs.keys(),
+                )));
+            }
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        let policy = self.FuncPolicy(&req.tenant, &fp.object.spec.policy);
+
+        let readyCnt = self.ReadyPodCount(&funcname);
+
+        if policy.maxReplica <= readyCnt as u64 {
+            let resp = na::LeaseWorkerResp {
+                error: format!(
+                    "ProcessLeaseWorkerReq can't create pod for func {} as reach max_replica limitation {} ready pod count {}",
+                    funcname,
+                    policy.maxReplica,
+                    readyCnt
+                ),
+                ..Default::default()
+            };
+            tx.send(resp).unwrap();
+            return Err(Error::NotExist(format!(
+                "ProcessLeaseWorkerReq can't create pod for func {} as reach max_replica limitation {} ready pod count {}",
+                funcname,
+                policy.maxReplica,
+                readyCnt
+            )));
+        }
+
+        match self.ResumePod(&funcname).await {
             Err(e) => {
                 let resp = na::LeaseWorkerResp {
                     error: format!("{:?}", e),
@@ -625,7 +669,7 @@ impl SchedulerHandler {
                 tx.send(resp).unwrap();
             }
             Ok(_) => {
-                self.PushLeaseWorkerReq(&key, req, tx)?;
+                self.PushLeaseWorkerReq(&funcname, req, tx)?;
             }
         }
 
@@ -1202,6 +1246,23 @@ impl SchedulerHandler {
         return snapshot.ReadyCacheMemory();
     }
 
+    pub fn ReadyPodCount(&self, funcname: &str) -> usize {
+        let mut count = 0;
+        match self.funcs.get(funcname) {
+            None => (),
+            Some(status) => {
+                // error!("ReadyPodCount pods {:?}", status.pods.keys());
+                for (_, pod) in &status.pods {
+                    if pod.State().IsReady() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
+
     // find a node to run the pod (snapshot or standy resume), if there is no enough free resource, add list of evaction pods
     // ret ==> (node, evacation pods)
     pub async fn FindNode4Pod(
@@ -1260,7 +1321,7 @@ impl SchedulerHandler {
             }
 
             allocStates.insert(nodename.clone(), state);
-            nodeSnapshots.insert(nodename.clone(), (nr, Vec::new()));
+            nodeSnapshots.insert(nodename.clone(), (nr, Vec::<(u64, WorkerPod)>::new()));
         }
 
         let mut missWorkers = Vec::new();
@@ -1289,6 +1350,33 @@ impl SchedulerHandler {
                     match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
                         None => (),
                         Some((nr, workids)) => {
+                            let evictfuncname = pod.pod.FuncKey();
+                            let totalevictcnt = {
+                                let mut count = 0;
+                                for (_, pod) in workids.clone() {
+                                    if &pod.pod.FuncKey() == &evictfuncname {
+                                        count += 1;
+                                    }
+                                }
+                                count
+                            };
+
+                            let policy = self
+                                .FuncPolicy(&pod.pod.tenant, &pod.pod.object.spec.funcspec.policy);
+
+                            // error!(
+                            //     "try evict {} totalevict {}, ready {}, min {}",
+                            //     &evictfuncname,
+                            //     totalevictcnt,
+                            //     self.ReadyPodCount(&evictfuncname),
+                            //     policy.minReplica
+                            // );
+                            if self.ReadyPodCount(&evictfuncname) - totalevictcnt
+                                <= policy.minReplica as usize
+                            {
+                                continue;
+                            }
+
                             workids.push((*workid, pod.clone()));
                             nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
@@ -2035,214 +2123,7 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    // pub async fn TryCreateStandbyPod(&mut self, funcid: &str) -> Result<()> {
-    //     let nodes = self.GetReadySnapshotNodes(funcid)?;
-
-    //     if nodes.len() == 0 {
-    //         // no checkpoint
-    //         return Ok(());
-    //     }
-
-    //     let needRestore; // whether need to create new standby pod
-    //     let function = match self.funcs.get(funcid) {
-    //         None => {
-    //             return Err(Error::NotExist(format!(
-    //                 "ProcessAddFunc can't find funcpcakge with id {}",
-    //                 funcid
-    //             )))
-    //         }
-    //         Some(funcStatus) => {
-    //             let pendingCnt = funcStatus.pendingPods.len();
-    //             let podcnt = funcStatus.pendingPods.len() + funcStatus.pods.len();
-
-    //             let keepaliveCnt = 8;
-    //             needRestore = (pendingCnt == 0) && (podcnt < keepaliveCnt);
-
-    //             // error!(
-    //             //     "TryRetorePod pendingCnt {} podcnt {} needRestore {} keepaliveCnt {} for {}",
-    //             //     pendingCnt, podcnt, needRestore, keepaliveCnt, fpKey
-    //             // );
-    //             funcStatus.func.clone()
-    //         }
-    //     };
-
-    //     if needRestore {
-    //         let nodename = self.GetBestNodeToRestore(&function).await?;
-    //         let allocResources; // = NodeResources::default();
-    //         let nodeAgentUrl;
-    //         let resourceQuota;
-
-    //         let standbyResource = self.StandyResource(funcid, &nodename);
-    //         {
-    //             let nodeStatus = match self.nodes.get_mut(&nodename) {
-    //                 None => return Ok(()), // the node information is not synced
-    //                 Some(ns) => ns,
-    //             };
-
-    //             allocResources =
-    //                 nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcid, false)?;
-    //             resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
-    //             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
-    //         }
-
-    //         let id = match self
-    //             .StartWorker(
-    //                 &nodeAgentUrl,
-    //                 &function,
-    //                 &allocResources,
-    //                 &resourceQuota,
-    //                 na::CreatePodType::Restore,
-    //                 &Vec::new(),
-    //             )
-    //             .await
-    //         {
-    //             Err(e) => {
-    //                 let nodeStatus = match self.nodes.get_mut(&nodename) {
-    //                     None => return Ok(()), // the node information is not synced
-    //                     Some(ns) => ns,
-    //                 };
-    //                 let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
-    //                 nodeStatus.FreeResource(&resourceQuota, "")?;
-    //                 return Err(e);
-    //             }
-    //             Ok(id) => id,
-    //         };
-
-    //         let podKey = FuncPod::FuncPodKey(
-    //             &function.tenant,
-    //             &function.namespace,
-    //             &function.name,
-    //             function.Version(),
-    //             &format!("{id}"),
-    //         );
-
-    //         let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &allocResources);
-    //         let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-    //         nodeStatus.AddPendingPod(&pendingPod)?;
-
-    //         self.funcs
-    //             .get_mut(funcid)
-    //             .unwrap()
-    //             .AddPendingPod(&pendingPod)?;
-    //     }
-
-    //     return Ok(());
-    // }
-
-    pub const MAX_SNAPSHOT_PER_FUNC: usize = 3;
     pub const PRINT_SCHEDER_INFO: bool = false;
-
-    // pub async fn TryCreateSnapshot(&mut self, funcid: &str, func: &Function) -> Result<()> {
-    //     if Self::PRINT_SCHEDER_INFO {
-    //         error!("TryCreateSnapshot 1 {}", funcid);
-    //     }
-
-    //     let nodes = self.GetSnapshotNodes(funcid);
-
-    //     if Self::PRINT_SCHEDER_INFO {
-    //         error!(
-    //             "TryCreateSnapshot 2 {}/{:?}/{}",
-    //             funcid,
-    //             &nodes,
-    //             self.HasPendingSnapshot(funcid)
-    //         );
-    //     }
-    //     if nodes.len() > Self::MAX_SNAPSHOT_PER_FUNC {
-    //         return Ok(());
-    //     }
-
-    //     if !self.HasPendingSnapshot(funcid) {
-    //         let (nodename, terminateWorkers, mut nodeResources) =
-    //             match self.GetBestNodeToSnapshot(&func).await {
-    //                 Ok(ret) => ret,
-    //                 Err(e) => {
-    //                     if Self::PRINT_SCHEDER_INFO {
-    //                         error!("TryCreateSnapshot 3 {:?}/{:?}", funcid, &e);
-    //                     }
-    //                     if nodes.len() > 0 {
-    //                         return Ok(());
-    //                     }
-
-    //                     return Err(e);
-    //                 }
-    //             };
-
-    //         if Self::PRINT_SCHEDER_INFO {
-    //             error!("TryCreateSnapshot 4 {}", funcid);
-    //         }
-
-    //         let resources;
-    //         let nodeAgentUrl;
-
-    //         {
-    //             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-    //             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
-    //             let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-    //             // resources =
-    //             //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
-    //             resources = nodeResources.Alloc(&snapshotResource, true)?;
-    //             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
-    //         }
-
-    //         let terminatePods: Vec<WorkerPod> = terminateWorkers
-    //             .iter()
-    //             .map(|(_, pod)| pod.clone())
-    //             .collect();
-
-    //         let id: u64 = self
-    //             .StartWorker(
-    //                 &nodeAgentUrl,
-    //                 &func,
-    //                 &resources,
-    //                 &resources,
-    //                 na::CreatePodType::Snapshot,
-    //                 &terminatePods,
-    //             )
-    //             .await?;
-
-    //         for (workid, pod) in &terminateWorkers {
-    //             let remove = self.idlePods.remove(workid);
-    //             assert!(remove.is_some());
-    //             let podkey = pod.pod.PodKey();
-    //             match self.pods.get(&podkey) {
-    //                 None => unreachable!(),
-    //                 Some(pod) => {
-    //                     let nodename = pod.pod.object.spec.nodename.clone();
-    //                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-    //                     self.stoppingPods.insert(podkey.clone());
-
-    //                     nodeStatus
-    //                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-    //                 }
-    //             }
-    //         }
-
-    //         let podKey = FuncPod::FuncPodKey(
-    //             &func.tenant,
-    //             &func.namespace,
-    //             &func.name,
-    //             func.Version(),
-    //             &format!("{id}"),
-    //         );
-
-    //         let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &resources);
-    //         let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-    //         nodeStatus.AddPendingPod(&pendingPod)?;
-
-    //         let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
-    //         let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-    //         nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
-
-    //         self.funcs
-    //             .get_mut(funcid)
-    //             .unwrap()
-    //             .AddPendingPod(&pendingPod)?;
-
-    //         self.AddPendingSnapshot(funcid, &nodename);
-    //     }
-
-    //     return Ok(());
-    // }
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
         let pods = self.GetFuncPods(&spec.tenant, &spec.namespace, &spec.name, spec.Version())?;
