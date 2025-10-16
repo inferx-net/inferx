@@ -125,7 +125,7 @@
     <tr>
         <td>{{ pod["tenant"] }}</td>
         <td>{{ pod["namespace"] }}</td>
-        <td><a href="{{ hosturl }}pod?tenant={{ pod["tenant"] }}&&namespace={{ pod["namespace"] }}&&name={{ pod["name"]
+        <td><a href="{{ hosturl }}pod?tenant={{ pod[" tenant"] }}&&namespace={{ pod["namespace"] }}&&name={{ pod["name"]
                 }}">{{
                 pod["name"] }}</a></td>
         <td>{{ pod["object"]["status"]["state"] }}</td>
@@ -327,6 +327,9 @@
 {% endif %}
 <br />
 <textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
+
+<h2>FuncPolicy</h2>
+<textarea id="FuncPolicy" rows="5" cols="120">{{ funcpolicy }}</textarea>
 
 <script>
     const tenant = {{ tenant | tojson }};

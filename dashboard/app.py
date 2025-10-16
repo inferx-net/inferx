@@ -790,6 +790,7 @@ def GetFunc():
     isAdmin = func["isAdmin"]
 
     version = func["func"]["object"]["spec"]["version"]
+    funcpolicy = func["policy"]
     fails = GetFailLogs(tenant, namespace, name, version)
     snapshotaudit = GetSnapshotAudit(tenant, namespace, name, version)
 
@@ -813,6 +814,7 @@ def GetFunc():
         apiType=apiType,
         map=map,
         isAdmin=isAdmin,
+        funcpolicy=funcpolicy,
         path=sample["path"]
     )
 
