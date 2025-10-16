@@ -1350,30 +1350,7 @@ impl SchedulerHandler {
                     match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
                         None => (),
                         Some((nr, workids)) => {
-                            let evictfuncname = pod.pod.FuncKey();
-                            let totalevictcnt = {
-                                let mut count = 0;
-                                for (_, pod) in workids.clone() {
-                                    if &pod.pod.FuncKey() == &evictfuncname {
-                                        count += 1;
-                                    }
-                                }
-                                count
-                            };
-
-                            let policy = self
-                                .FuncPolicy(&pod.pod.tenant, &pod.pod.object.spec.funcspec.policy);
-
-                            // error!(
-                            //     "try evict {} totalevict {}, ready {}, min {}",
-                            //     &evictfuncname,
-                            //     totalevictcnt,
-                            //     self.ReadyPodCount(&evictfuncname),
-                            //     policy.minReplica
-                            // );
-                            if self.ReadyPodCount(&evictfuncname) - totalevictcnt
-                                <= policy.minReplica as usize
-                            {
+                            if !self.VerifyMinReplicaPolicy(pod, &workids) {
                                 continue;
                             }
 
@@ -1691,6 +1668,27 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    pub fn VerifyMinReplicaPolicy(&self, pod: &WorkerPod, workids: &Vec<(u64, WorkerPod)>) -> bool {
+        let evictfuncname = pod.pod.FuncKey();
+        let totalevictcnt = {
+            let mut count = 0;
+            for (_, pod) in workids.clone() {
+                if &pod.pod.FuncKey() == &evictfuncname {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        let policy = self.FuncPolicy(&pod.pod.tenant, &pod.pod.object.spec.funcspec.policy);
+
+        if self.ReadyPodCount(&evictfuncname) - totalevictcnt <= policy.minReplica as usize {
+            return false;
+        }
+
+        return true;
+    }
+
     pub fn TryFreeResources(
         &mut self,
         nodename: &str,
@@ -1699,7 +1697,7 @@ impl SchedulerHandler {
         reqResource: &Resources,
         createSnapshot: bool,
     ) -> Result<Vec<(u64, WorkerPod)>> {
-        let mut workids = Vec::new();
+        let mut workids: Vec<(u64, WorkerPod)> = Vec::new();
         let mut missWorkers = Vec::new();
 
         for (workid, podKey) in &self.idlePods {
@@ -1710,6 +1708,10 @@ impl SchedulerHandler {
                 }
                 Some(pod) => {
                     if &pod.pod.object.spec.nodename != nodename {
+                        continue;
+                    }
+
+                    if !self.VerifyMinReplicaPolicy(pod, &workids) {
                         continue;
                     }
 
