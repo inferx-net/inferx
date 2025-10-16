@@ -487,19 +487,20 @@ impl FuncWorker {
                                 }
                             }
                         }
-                        worker = idleClientRx.recv() => {
-                            match worker {
+                        httpstate = idleClientRx.recv() => {
+                            match httpstate {
                                 None => {
                                     return Ok(())
                                 }
                                 Some(state) => {
-
-                                    // for fail worker, don't sub 1
                                     if state == HttpClientState::Fail {
-                                        if self.failCount.fetch_add(1, Ordering::SeqCst) == 10 { // fail 3 times
+                                        if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 { // fail 3 times
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
                                             break;
                                         }
+                                    } else {
+                                        // clear failure count
+                                        self.failCount.store(0, Ordering::Relaxed);
                                     }
 
                                     self.funcAgent.IncrSlot(1);

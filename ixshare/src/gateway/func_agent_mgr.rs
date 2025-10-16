@@ -467,23 +467,23 @@ impl FuncAgent {
                                 worker.ReturnWorker().await.ok();
 
 
-                                let agentCount = {
+                                let _agentCount = {
                                     let mut workers = self.workers.lock().unwrap();
                                     workers.remove(&workerId);
                                     workers.len()
                                 };
 
-                                if agentCount == 0 {
-                                    let error = format!("{:?}", e);
-                                    loop {
-                                        let req = match reqQueue.TryRecv().await {
-                                            None => break,
-                                            Some(req) => req,
-                                        };
+                                // if agentCount == 0 {
+                                //     let error = format!("{:?}", e);
+                                //     loop {
+                                //         let req = match reqQueue.TryRecv().await {
+                                //             None => break,
+                                //             Some(req) => req,
+                                //         };
 
-                                        req.Send(Err(Error::CommonError(error.clone())));
-                                    }
-                                }
+                                //         req.Send(Err(Error::CommonError(error.clone())));
+                                //     }
+                                // }
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 // there is race condition there might be new request coming after work idle timeout and before funcagent return the worker

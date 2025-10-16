@@ -8,7 +8,7 @@ use crate::resource::*;
 
 pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
 pub const DEFAULT_QUEUE_LEN: usize = 1000;
-pub const DEFAULT_QUEUE_TIMEOUT: f64 = 30.0;
+pub const DEFAULT_QUEUE_TIMEOUT: f64 = 5.0;
 pub const DEFAULT_SCALEIN_TIMEOUT: f64 = 0.01; // 10 ms
 pub const DEFAULT_QUEUE_RATIO: f64 = 0.5;
 
@@ -66,7 +66,7 @@ fn default_queue_timeout() -> f64 {
 }
 
 fn default_scalein_timeout() -> f64 {
-    DEFAULT_QUEUE_TIMEOUT
+    DEFAULT_SCALEIN_TIMEOUT
 }
 
 impl Default for FuncPolicySpec {
