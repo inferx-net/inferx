@@ -15,6 +15,7 @@
 use core::ops::Deref;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicyMgr;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use inferxlib::obj_mgr::tenant_mgr::TenantMgr;
@@ -749,6 +750,14 @@ impl GwObjRepo {
     ) -> Result<FuncDetail> {
         let func = self.GetFunc(tenant, namespace, funcname)?;
 
+        let policy = match &func.object.spec.policy {
+            ObjRef::Link(l) => match self.funcpolicyMgr.Get(tenant, &l.namespace, &l.name) {
+                Ok(p) => p.object,
+                _ => FuncPolicySpec::default(),
+            },
+            ObjRef::Obj(o) => o.clone(),
+        };
+
         let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
         let snapshots = self
             .snapshotMgr
@@ -777,6 +786,7 @@ impl GwObjRepo {
             sampleRestCall: sampleRestCall,
             pods: filterPods,
             isAdmin: false,
+            policy: policy,
         });
     }
 
@@ -828,6 +838,7 @@ pub struct FuncDetail {
     pub sampleRestCall: String,
     pub pods: Vec<FuncPod>,
     pub isAdmin: bool,
+    pub policy: FuncPolicySpec,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
