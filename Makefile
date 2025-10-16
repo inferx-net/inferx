@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta2
+VERSION := v0.1.5.beta3
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -139,9 +139,9 @@ runkblob:
 	sudo kubectl apply -f k8s/spdk.yaml
 	sudo kubectl apply -f k8s/jaeger.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
-	sudo kubectl apply -f k8s/secretdb.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
+	VERSION=$(VERSION) sudo kubectl apply -f k8s/secretdb.yaml
 	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -

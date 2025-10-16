@@ -1,6 +1,6 @@
 services:
   secret_db:
-    image: postgres:14.5
+    image: inferx/inferx_postgres:${Version}
     restart: unless-stopped
     container_name: secret_db
     environment:
@@ -8,10 +8,11 @@ services:
       - POSTGRES_PASSWORD=123456
       - POSTGRES_DB=secretdb
       - PGDATA=/data/postgres
+      - INIT_SQL=secret.sql 
     ports:
       - '5431:5432'
     volumes:
-      - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
+      # - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres_secret:/data/postgres
   db:
     image: inferx/inferx_postgres:${Version}
@@ -155,7 +156,7 @@ services:
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1240" ]
       interval: 10s
-      timeout: 10s
+      timeout: 2s
       retries: 3
     depends_on:
       db:
