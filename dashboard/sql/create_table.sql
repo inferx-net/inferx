@@ -8,7 +8,7 @@ CREATE TABLE Pod (
     id              VARCHAR NOT NULL,
     nodename        VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id)
 );
 
@@ -22,7 +22,7 @@ CREATE TABLE PodAudit (
     nodename        VARCHAR NOT NULL,
     action          VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id, updatetime)
 );
 
@@ -35,7 +35,7 @@ CREATE TABLE PodFailLog (
     id              VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
     nodename        VARCHAR NOT NULL,
-    createtime      TIMESTAMP,
+    createtime      TIMESTAMPTZ,
     log             VARCHAR NOT NULL,
     exit_info       VARCHAR NOT NULL,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id)
@@ -48,7 +48,7 @@ CREATE TABLE FuncState (
     fpname          VARCHAR NOT NULL,
     fprevision      bigint,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, updatetime)
 );
 

@@ -637,7 +637,7 @@ impl SqlAudit {
         id: &str,
     ) -> Result<Vec<PodAuditLog>> {
         let query = format!(
-            "SELECT state, to_char(updatetime, 'YYYY/MM/DD HH24:MI:SS') as updatetime FROM podaudit where tenant = '{}' and namespace='{}' \
+            "SELECT state, updatetime FROM podaudit where tenant = '{}' and namespace='{}' \
          and fpname='{}' and fprevision='{}' and id='{}' order by updatetime;",
             tenant, namespace, fpname, fprevision, id
         );
@@ -653,11 +653,16 @@ impl SqlAudit {
         fpname: &str,
         fprevision: i64,
     ) -> Result<Vec<PodFailLog>> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, '' as log, exit_info \
+        let query = format!("select tenant, namespace, fpname, fprevision, id, state, createtime, nodename, '' as log, exit_info \
          from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {}", 
             tenant, namespace, fpname, fprevision);
         let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
-        let logs: Vec<PodFailLog> = selectQuery.fetch_all(&self.pool).await?;
+        let logs: Vec<PodFailLog> = match selectQuery.fetch_all(&self.pool).await {
+            Err(e) => {
+                return Err(e.into());
+            }
+            Ok(l) => l,
+        };
         return Ok(logs);
     }
 
@@ -686,8 +691,7 @@ pub struct PodFailLog {
     pub id: String,
     pub state: String,
     pub nodename: String,
-    // #[serde(skip_serializing)]
-    // pub createtime: sqlx::types::time::OffsetDateTime,
+    pub createtime: chrono::DateTime<chrono::Utc>,
     pub log: String,
     pub exit_info: String,
 }
@@ -695,7 +699,7 @@ pub struct PodFailLog {
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PodAuditLog {
     pub state: String,
-    pub updatetime: String,
+    pub updatetime: chrono::DateTime<chrono::Utc>,
 }
 
 pub mod datetime_local {
