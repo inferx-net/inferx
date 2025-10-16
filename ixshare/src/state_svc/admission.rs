@@ -35,7 +35,7 @@ impl StateSvc {
                 return self.CreateFuncCheck(obj);
             }
             FuncPolicy::KEY => {
-                return self.CreateFuncCheck(obj);
+                return self.CreateFuncPolicyCheck(obj);
             }
             _ => (),
         }
