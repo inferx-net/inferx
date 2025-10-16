@@ -200,6 +200,30 @@ impl GwObjRepo {
         return Ok(mgr);
     }
 
+    pub fn FuncPolicy(&self, func: &Function) -> FuncPolicySpec {
+        let p = &func.object.spec.policy;
+        match p {
+            ObjRef::Obj(p) => return p.clone(),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return FuncPolicySpec::default();
+                    // return Err(Error::CommonError(format!(
+                    //     "FuncStatus::FuncPolicy for policy {} fail invalic link type {}",
+                    //     l.Key(),
+                    //     l.objType
+                    // )));
+                }
+
+                match self.funcpolicyMgr.Get(&func.tenant, &l.namespace, &l.name) {
+                    Err(_) => {
+                        return FuncPolicySpec::default();
+                    }
+                    Ok(p) => return p.object,
+                }
+            }
+        }
+    }
+
     pub const LEASE_TTL: i64 = 1; // seconds
 
     pub async fn Process(&self) -> Result<()> {
@@ -757,6 +781,8 @@ impl GwObjRepo {
             },
             ObjRef::Obj(o) => o.clone(),
         };
+
+        error!("GetFuncDetail the policy is {:#?}", policy);
 
         let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
         let snapshots = self

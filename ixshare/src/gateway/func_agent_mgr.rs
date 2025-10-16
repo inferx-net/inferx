@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use inferxlib::data_obj::ObjRef;
-use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
+use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec, ScaleOutPolicy};
 use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
 use once_cell::sync::OnceCell;
 use tokio::sync::{mpsc, Notify};
@@ -202,6 +202,9 @@ pub struct FuncAgentInner {
     pub func: Function,
     pub funcVersion: i64,
 
+    pub scaleoutPolicy: Mutex<ScaleOutPolicy>,
+    pub scaleinTimeout: AtomicU64,
+
     pub reqQueue: ClientReqQueue,
     pub dataNotify: Arc<Notify>,
 
@@ -262,9 +265,14 @@ impl Deref for FuncAgent {
 
 impl FuncAgent {
     pub fn New(func: &Function) -> Self {
-        let reqQueue = ClientReqQueue::New(1000, 30_000);
+        let policy = GW_OBJREPO.get().unwrap().FuncPolicy(func);
+
+        let queueLen = policy.queueLen;
+        let timeout = (policy.queueTimeout * 1000.0) as u64;
+
+        let reqQueue = ClientReqQueue::New(queueLen, timeout);
         let (rtx, rrx) = mpsc::channel(1000);
-        let (wtx, wrx) = mpsc::channel(1000);
+        let (wtx, wrx) = mpsc::channel(100);
         let inner = FuncAgentInner {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
@@ -284,6 +292,9 @@ impl FuncAgent {
 
             reqQueue: reqQueue,
             dataNotify: Arc::new(Notify::new()),
+
+            scaleoutPolicy: Mutex::new(policy.scaleoutPolicy),
+            scaleinTimeout: AtomicU64::new((policy.scaleinTimeout * 1000.0) as u64),
         };
 
         let ret = Self(Arc::new(inner));
@@ -294,6 +305,16 @@ impl FuncAgent {
         });
 
         return ret;
+    }
+
+    pub fn UpdatePolicy(&self) {
+        let policy = GW_OBJREPO.get().unwrap().FuncPolicy(&self.func);
+        self.reqQueue
+            .Update(policy.queueLen, (policy.queueTimeout * 1000.0) as u64);
+
+        *self.scaleoutPolicy.lock().unwrap() = policy.scaleoutPolicy;
+        self.scaleinTimeout
+            .store((policy.scaleinTimeout * 1000.0) as u64, Ordering::Relaxed);
     }
 
     pub fn EnqReq(
@@ -339,6 +360,7 @@ impl FuncAgent {
         }
 
         if self.availableSlot.load(Ordering::SeqCst) <= 0 {
+            reqQueue.CleanTimeout().await;
             return WaitState::WaitSlot;
         }
         for worker in workers {
@@ -365,8 +387,12 @@ impl FuncAgent {
     pub async fn NeedNewWorker(&self, reqQueue: &ClientReqQueue) -> bool {
         let reqCnt = reqQueue.Count().await;
         let totalSlotCnt = self.TotalSlot();
-        if reqCnt as f64 >= 1.5 * totalSlotCnt as f64 {
-            return true;
+        match &*self.scaleoutPolicy.lock().unwrap() {
+            ScaleOutPolicy::WaitQueueRatio(ratio) => {
+                if reqCnt as f64 >= ratio.waitRatio * totalSlotCnt as f64 {
+                    return true;
+                }
+            }
         }
 
         return false;
@@ -383,6 +409,7 @@ impl FuncAgent {
         let closeNotify = self.closeNotify.clone();
         let reqQueue = self.reqQueue.clone();
         let throttle = Throttle::New(2, 2, Duration::from_secs(1)).await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
 
         loop {
             let workers: Vec<FuncWorker> = self.workers.lock().unwrap().values().cloned().collect();
@@ -414,6 +441,12 @@ impl FuncAgent {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
                     }
                 }
+                _ = interval.tick() => {
+                    // keepalive for each 500 ms
+                    self.UpdatePolicy();
+                }
+                // trigger timeout checkout
+                _ = time::sleep(Duration::from_secs(1)) => {}
                 // some data available
                 _ = self.dataNotify.notified() => (),
                 stateUpdate = workerStateUpdateRx.recv() => {
@@ -511,7 +544,7 @@ impl FuncAgent {
     }
 
     pub async fn NewWorker(&self) -> Result<()> {
-        let keepaliveTime = 200; // 200 millisecond self.lock().unwrap().func.spec.keepalivePolicy.keepaliveTime;
+        let keepaliveTime = self.scaleinTimeout.load(Ordering::Relaxed);
 
         let workerId = self.NextWorkerId();
         let workderId = format!("{}", workerId);
@@ -591,8 +624,8 @@ impl FuncAgent {
 #[derive(Debug)]
 pub struct ClientReqQueuInner {
     pub queue: TMutex<VecDeque<FuncClientReq>>,
-    pub queueLen: usize,
-    pub timeout: u64, // ms
+    pub queueLen: AtomicUsize,
+    pub timeout: AtomicU64, // ms
     pub notify: Arc<Notify>,
 }
 
@@ -611,8 +644,8 @@ impl ClientReqQueue {
     pub fn New(queueLen: usize, timeout: u64) -> Self {
         let inner = ClientReqQueuInner {
             queue: TMutex::new(VecDeque::new()),
-            queueLen: queueLen,
-            timeout: timeout,
+            queueLen: AtomicUsize::new(queueLen),
+            timeout: AtomicU64::new(timeout),
             notify: Arc::new(Notify::new()),
         };
 
@@ -623,13 +656,20 @@ impl ClientReqQueue {
         return self.queue.lock().await.len();
     }
 
+    pub fn Update(&self, queueLen: usize, timeout: u64) {
+        self.queueLen.store(queueLen, Ordering::Relaxed);
+        self.timeout.store(timeout, Ordering::Relaxed);
+    }
+
     pub async fn CleanTimeout(&self) {
         let mut q = self.queue.lock().await;
         loop {
             match q.front() {
                 None => break,
                 Some(first) => {
-                    if first.enqueueTime.elapsed().as_millis() as u64 > self.timeout {
+                    if first.enqueueTime.elapsed().as_millis() as u64
+                        > self.timeout.load(Ordering::Relaxed)
+                    {
                         let item = q.pop_front().unwrap();
                         item.tx.send(Err(Error::Timeout)).ok();
                     } else {
@@ -643,7 +683,7 @@ impl ClientReqQueue {
     pub async fn Send(&self, req: FuncClientReq) {
         self.CleanTimeout().await;
         let mut q = self.queue.lock().await;
-        if q.len() >= self.queueLen {
+        if q.len() >= self.queueLen.load(Ordering::Relaxed) {
             req.tx.send(Err(Error::QueueFull)).unwrap();
             return;
         }

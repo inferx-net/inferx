@@ -645,7 +645,7 @@ async fn FuncCall(
     if partsCount < 5 {
         let body = Body::from(format!("service failure: Invalid input"));
         let resp = Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .status(StatusCode::BAD_REQUEST)
             .body(body)
             .unwrap();
 
@@ -691,11 +691,17 @@ async fn FuncCall(
                 .get_or_create(&labels)
                 .inc();
 
-            let body = Body::from(format!("service failure {:?}", e));
-            let resp = Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body(body)
-                .unwrap();
+            error!("Http call fail with error {:?}", &e);
+            let errcode = match &e {
+                Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
+                Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
+                e => {
+                    error!("Http start fail with error {:?}", e);
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            };
+            let body = Body::from(format!("service failure {:?}", &e));
+            let resp = Response::builder().status(errcode).body(body).unwrap();
 
             return Ok(resp);
         }
