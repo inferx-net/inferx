@@ -289,6 +289,10 @@ impl WorkerPod {
             ret.SetState(WorkerPodState::Standby);
         }
 
+        if ret.pod.object.status.state == PodState::Resuming {
+            ret.SetState(WorkerPodState::Resuming);
+        }
+
         return ret;
     }
 }
