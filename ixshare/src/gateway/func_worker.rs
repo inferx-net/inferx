@@ -36,13 +36,12 @@ use hyper_util::rt::TokioIo;
 use inferxlib::data_obj::DeltaEvent;
 
 use crate::common::*;
-use crate::na::{self, LeaseWorkerResp};
+use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
 
 use super::func_agent_mgr::{FuncAgent, WorkerUpdate};
-use super::gw_obj_repo::SCHEDULER_URL;
-use super::http_gateway::GatewayId;
+use super::scheduler_client::SchedulerClient;
 
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
 pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
@@ -75,7 +74,6 @@ pub struct FuncWorkerInner {
     pub keepalive: AtomicBool, // is this a new worker and a keepalive worker
 
     pub parallelLevel: usize,
-    pub contributeSlot: AtomicUsize,
     pub keepaliveTime: u64,
     pub ongoingReqCnt: AtomicUsize,
 
@@ -108,6 +106,7 @@ pub enum FuncWorkerState {
     Idle,
     // the worker is processing a request
     Processing,
+    Finish,
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +158,6 @@ impl FuncWorker {
             hostport: Mutex::new(0),
 
             parallelLevel: parallelLeve,
-            contributeSlot: AtomicUsize::new(0),
             keepaliveTime,
             ongoingReqCnt: AtomicUsize::new(0),
 
@@ -243,78 +241,42 @@ impl FuncWorker {
         }
     }
 
-    pub async fn ReturnWorker(&self) -> Result<()> {
-        let schedulerUrl = match SCHEDULER_URL.lock().unwrap().clone() {
-            None => {
-                return Err(Error::CommonError(format!(
-                    "ReturnWorker fail as no valid scheduler"
-                )))
-            }
-            Some(u) => u,
-        };
-        let mut schedClient =
-            na::scheduler_service_client::SchedulerServiceClient::connect(schedulerUrl).await?;
-
-        let tenant = self.tenant.clone();
-        let namespace = self.namespace.clone();
-        let funcname = self.funcname.clone();
-        let revision = self.fprevision.clone();
-        let req = na::ReturnWorkerReq {
-            tenant: tenant,
-            namespace: namespace,
-            funcname: funcname,
-            fprevision: revision,
-            id: self.id.lock().unwrap().clone(),
-        };
-
-        let request = tonic::Request::new(req);
-        let response = schedClient.return_worker(request).await?;
-        let resp = response.into_inner();
-        if resp.error.len() == 0 {
-            return Ok(());
-        }
-
-        return Err(Error::CommonError(format!(
-            "REturn Worker fail with error {}",
-            resp.error
-        )));
+    pub async fn ReturnWorker(&self, failworker: bool) -> Result<()> {
+        let id = self.id.lock().unwrap().clone();
+        return SchedulerClient {}
+            .ReturnWorker(
+                &self.tenant,
+                &self.namespace,
+                &self.funcname,
+                self.fprevision,
+                &id,
+                failworker,
+            )
+            .await;
     }
 
     // return: (workerId, IPAddr, Keepalive)
     pub async fn LeaseWorker(&self) -> Result<LeaseWorkerResp> {
-        let schedulerUrl = match SCHEDULER_URL.lock().unwrap().clone() {
-            None => {
-                return Err(Error::CommonError(format!(
-                    "AskFuncPod fail as no valid scheduler"
-                )))
-            }
-            Some(u) => u,
-        };
-        let mut schedClient =
-            na::scheduler_service_client::SchedulerServiceClient::connect(schedulerUrl).await?;
+        return SchedulerClient {}
+            .LeaseWorker(
+                &self.tenant,
+                &self.namespace,
+                &self.funcname,
+                self.fprevision,
+            )
+            .await;
+    }
 
-        let tenant = self.tenant.clone();
-        let namespace = self.namespace.clone();
-        let funcname = self.funcname.clone();
-        let revision = self.fprevision.clone();
-        let req = na::LeaseWorkerReq {
-            tenant: tenant,
-            namespace: namespace,
-            funcname: funcname,
-            fprevision: revision,
-            gateway_id: GatewayId(),
-        };
-
-        let request = tonic::Request::new(req);
-        let response = schedClient.lease_worker(request).await?;
-        let resp = response.into_inner();
-        if resp.error.len() == 0 {
-            return Ok(resp);
-        }
-
-        // self.SetState(FuncWorkerState::Processing);
-
-        return Err(Error::CommonError(resp.error));
+    pub fn FinishWorker(&self) {
+        self.funcAgent
+            .totalSlot
+            .fetch_sub(self.parallelLevel, Ordering::SeqCst);
+        assert!(
+            self.State() == FuncWorkerState::Idle || self.State() == FuncWorkerState::Processing
+        );
+        let slot = self.AvailableSlot(); // need to dec the current connect when fail
+        self.funcAgent.DecrSlot(slot);
+        self.SetState(FuncWorkerState::Finish);
     }
 
     pub async fn Process(
@@ -341,7 +303,7 @@ impl FuncWorker {
                 match &e {
                     Error::SchedulerErr(s) => {
                         self.funcAgent
-                            .SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((
+                            .SendWorkerStatusUpdate(WorkerUpdate::WorkerLeaseFail((
                                 self.clone(),
                                 Error::SchedulerErr(s.clone()),
                             )));
@@ -349,7 +311,10 @@ impl FuncWorker {
                     e => {
                         let err = Error::CommonError(format!("{:?}", e));
                         self.funcAgent
-                            .SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), err)));
+                            .SendWorkerStatusUpdate(WorkerUpdate::WorkerLeaseFail((
+                                self.clone(),
+                                err,
+                            )));
                     }
                 }
 
@@ -416,6 +381,9 @@ impl FuncWorker {
         loop {
             let state = self.State();
             match state {
+                FuncWorkerState::Init | FuncWorkerState::Finish => {
+                    unreachable!()
+                }
                 FuncWorkerState::Idle => {
                     tokio::select! {
                         _ = self.closeNotify.notified() => {
@@ -439,8 +407,9 @@ impl FuncWorker {
                                         Err(e) => {
                                             error!("Funcworker connect fail with error {:?}", &e);
                                             let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
-                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
                                             req.Send(Err(err));
+                                            self.FinishWorker();
+                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
                                             break;
                                         }
                                         Ok(c) => c,
@@ -451,8 +420,9 @@ impl FuncWorker {
                             }
                         }
                         _ = tokio::time::sleep(Duration::from_millis(self.keepaliveTime)) => {
+                            self.FinishWorker();
                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
-                            self.funcAgent.totalSlot.fetch_sub(self.parallelLevel, Ordering::SeqCst);
+                            break;
                         }
 
                     }
@@ -474,11 +444,9 @@ impl FuncWorker {
                                         Err(e) => {
                                             error!("Funcworker connect fail with error {:?}", &e);
                                             let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
-                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
-                                            self.funcAgent.totalSlot.fetch_sub(self.parallelLevel, Ordering::SeqCst);
-                                            let slot = self.AvailableSlot(); // need to dec the current connect when fail
-                                            self.funcAgent.DecrSlot(slot);
                                             req.Send(Err(err));
+                                            self.FinishWorker();
+                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
                                             break;
                                         }
                                         Ok(c) => c,
@@ -495,6 +463,7 @@ impl FuncWorker {
                                 Some(state) => {
                                     if state == HttpClientState::Fail {
                                         if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 { // fail 3 times
+                                            self.FinishWorker();
                                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
                                             break;
                                         }
@@ -515,7 +484,6 @@ impl FuncWorker {
                         }
                     }
                 }
-                _ => (),
             }
         }
 
@@ -792,7 +760,13 @@ impl QHttpCallClient {
                         self.fail.store(true, Ordering::SeqCst);
                         return Err(Error::CommonError(format!("Error in connection: {}", e)));
                     }
-                    Ok(r) => return Ok(r)
+                    Ok(r) => {
+                        let status = r.status();
+                        if status != StatusCode::OK {
+                            self.fail.store(true, Ordering::SeqCst);
+                        }
+                        return Ok(r);
+                    }
                 }
             }
         }

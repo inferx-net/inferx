@@ -90,6 +90,7 @@ message ReturnWorkerReq {
   string funcname = 3;
   int64 fprevision = 4;
   string id = 5;
+  bool  failworker = 6;
 }
 
 message ReturnWorkerResp {

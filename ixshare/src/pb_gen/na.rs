@@ -98,6 +98,8 @@ pub struct ReturnWorkerReq {
     pub fprevision: i64,
     #[prost(string, tag = "5")]
     pub id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "6")]
+    pub failworker: bool,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

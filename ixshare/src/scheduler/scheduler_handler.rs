@@ -166,7 +166,6 @@ impl NodeStatus {
     pub fn AddPod(&mut self, pod: &WorkerPod) -> Result<()> {
         let podKey = pod.pod.PodKey();
 
-        error!("AddPod xx {:?}", &podKey);
         match self.pendingPods.remove(&podKey) {
             None => {
                 // this pod is not created by the scheduler
@@ -718,8 +717,23 @@ impl SchedulerHandler {
         //     "the state is {:?}",
         //     worker.State()
         // );
-        let returnId = worker.SetIdle();
-        self.idlePods.insert(returnId, worker.pod.PodKey());
+
+        if req.failworker {
+            match self.StopWorker(&worker.pod).await {
+                Ok(()) => (),
+                Err(e) => {
+                    error!(
+                        "ProcessReturnWorkerReq kill failure pod: fail to stop func worker {:?} with error {:#?}",
+                        worker.pod.PodKey(),
+                        e
+                    );
+                }
+            }
+        } else {
+            let returnId = worker.SetIdle();
+            self.idlePods.insert(returnId, worker.pod.PodKey());
+        }
+
         let resp = na::ReturnWorkerResp {
             error: "".to_owned(),
         };

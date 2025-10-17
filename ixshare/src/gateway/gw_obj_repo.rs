@@ -782,8 +782,6 @@ impl GwObjRepo {
             ObjRef::Obj(o) => o.clone(),
         };
 
-        error!("GetFuncDetail the policy is {:#?}", policy);
-
         let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
         let snapshots = self
             .snapshotMgr

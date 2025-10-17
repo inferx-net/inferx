@@ -182,6 +182,7 @@ pub enum WorkerState {
 pub enum WorkerUpdate {
     Ready(FuncWorker), // parallel level
     WorkerFail((FuncWorker, Error)),
+    WorkerLeaseFail((FuncWorker, Error)),
     IdleTimeout(FuncWorker),
 }
 
@@ -210,9 +211,11 @@ pub struct FuncAgentInner {
 
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
+
     pub availableSlot: Arc<AtomicIsize>,
     pub totalSlot: Arc<AtomicUsize>,
     pub startingSlot: Arc<AtomicUsize>,
+
     pub workers: Mutex<BTreeMap<String, FuncWorker>>,
     pub nextWorkerId: AtomicU64,
     pub nextReqId: AtomicU64,
@@ -453,51 +456,25 @@ impl FuncAgent {
                     if let Some(update) = stateUpdate {
                         match update {
                             WorkerUpdate::Ready(worker) => {
-                                let slot = worker.ReadySlot();
-                                let oldslot = worker.contributeSlot.swap(slot, Ordering::SeqCst);
-                                assert!(oldslot == 0);
-
-                                error!("worker ready {}...", worker.WorkerName());
-
                                 worker.SetState(FuncWorkerState::Idle);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 let workerId = worker.workerId.clone();
-                                error!("ReturnWorker WorkerUpdate::WorkerFail ... e {:?}", e);
-                                worker.ReturnWorker().await.ok();
-
-
-                                let _agentCount = {
-                                    let mut workers = self.workers.lock().unwrap();
-                                    workers.remove(&workerId);
-                                    workers.len()
-                                };
-
-                                // if agentCount == 0 {
-                                //     let error = format!("{:?}", e);
-                                //     loop {
-                                //         let req = match reqQueue.TryRecv().await {
-                                //             None => break,
-                                //             Some(req) => req,
-                                //         };
-
-                                //         req.Send(Err(Error::CommonError(error.clone())));
-                                //     }
-                                // }
+                                error!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?} e {:?}", worker.funcname, worker.id, e);
+                                worker.ReturnWorker(true).await.ok();
+                                self.workers.lock().unwrap().remove(&workerId);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
-                                // there is race condition there might be new request coming after work idle timeout and before funcagent return the worker
-                                // need to check whether the work get new requests.
-                                if worker.OngoingReq() == 0 {
-                                    let slot = worker.contributeSlot.swap(0, Ordering::SeqCst);
-                                    error!("ReturnWorker WorkerUpdate::IdleTimeout 1 ... id {}", worker.workerId);
-                                    let _ = self.DecrSlot(slot);
-                                    worker.Close().await;
-                                    worker.ReturnWorker().await.ok();
-                                    let workerId = worker.workerId.clone();
-                                    self.workers.lock().unwrap().remove(&workerId);
-                                }
+                                worker.ReturnWorker(false).await.ok();
+                                let workerId = worker.workerId.clone();
+                                self.workers.lock().unwrap().remove(&workerId);
                             }
+                            WorkerUpdate::WorkerLeaseFail((worker, _e)) => {
+                                let workerId = worker.workerId.clone();
+                                let mut workers = self.workers.lock().unwrap();
+                                workers.remove(&workerId);
+                            }
+
                         }
                     } else {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
