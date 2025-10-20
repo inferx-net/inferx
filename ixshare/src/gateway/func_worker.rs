@@ -40,7 +40,7 @@ use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
 
-use super::func_agent_mgr::{FuncAgent, WorkerUpdate};
+use super::func_agent_mgr::{FuncAgent, IxTimestamp, WorkerUpdate};
 use super::scheduler_client::SchedulerClient;
 
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
@@ -588,8 +588,26 @@ impl ConnectionPool {
         }
     }
 
+    pub fn FuncName(&self) -> String {
+        let id = self.id.lock().unwrap().clone();
+        return format!(
+            "{}/{}/{}/{}/{}",
+            &self.tenant, &self.namespace, &self.funcname, self.revision, &id
+        );
+    }
+
     pub async fn GetConnect(&self) -> Result<QHttpCallClient> {
-        return self.NewHttpCallClient().await;
+        match self.NewHttpCallClient().await {
+            Err(Error::CommonError(str)) => {
+                return Err(Error::CommonError(format!(
+                    "Socket fail: {} {}",
+                    self.FuncName(),
+                    str
+                )));
+            }
+            Ok(c) => Ok(c),
+            Err(e) => return Err(e),
+        }
 
         // let mut joinset = self.joinset.lock().await;
         // let clone = self.clone();
@@ -666,12 +684,11 @@ pub struct HttpResponse {
 
 #[derive(Debug)]
 pub struct FuncClientReq {
-    pub reqId: u64,
     pub tenant: String,
     pub namespace: String,
     pub funcName: String,
     pub keepalive: bool,
-    pub enqueueTime: std::time::Instant,
+    pub enqueueTime: IxTimestamp,
     pub tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
 }
 
@@ -695,7 +712,7 @@ impl QHttpClient {
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::spawn(async move {
             if let Err(e) = conn.await {
-                error!("Error in connection: {}", e);
+                error!("QHttpClient::Error in connection: {}", e);
             }
         });
         return Ok(Self { sender: sender });
@@ -709,19 +726,24 @@ impl QHttpClient {
         if timeout == 0 {
             let res = self.sender.send_request(req).await;
             match res {
-                Err(e) => return Err(Error::CommonError(format!("Error in connection: {}", e))),
+                Err(e) => {
+                    return Err(Error::CommonError(format!(
+                        "QHttpClient::Error in Send1: {}",
+                        e
+                    )))
+                }
                 Ok(r) => return Ok(r),
             }
         } else {
             tokio::select! {
                 res = self.sender.send_request(req) => {
                     match res {
-                        Err(e) => return Err(Error::CommonError(format!("Error in connection: {}", e))),
+                        Err(e) => return Err(Error::CommonError(format!("QHttpClient::Error in Send2: {}", e))),
                         Ok(r) => return Ok(r)
                     }
                 }
                 _ = time::sleep(Duration::from_millis(timeout)) => {
-                    return Err(Error::CommonError(format!("Error in connection: timeout")));
+                    return Err(Error::CommonError(format!("QHttpClient::Error in Send3: timeout")));
                 }
             }
         }
@@ -760,9 +782,8 @@ impl QHttpCallClient {
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::spawn(async move {
             if let Err(e) = conn.await {
-                error!("Error in connection: {}", e);
+                error!("QHttpCallClient::Error in connection: {}", e);
             }
-            // error!("QHttpCallClient exiting fd {}", fd);
         });
         return Ok(Self {
             finishQueue: finishQueue,
@@ -777,7 +798,7 @@ impl QHttpCallClient {
                 match res {
                     Err(e) => {
                         self.fail.store(true, Ordering::SeqCst);
-                        return Err(Error::CommonError(format!("Error in connection: {}", e)));
+                        return Err(Error::CommonError(format!("QHttpCallClient::Error in sending: {}", e)));
                     }
                     Ok(r) => {
                         let status = r.status();
@@ -804,7 +825,7 @@ impl QHttpCallClientDirect {
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::spawn(async move {
             if let Err(e) = conn.await {
-                error!("Error in connection: {}", e);
+                error!("QHttpCallClientDirect::Error in connection: {}", e);
             }
             // error!("QHttpCallClient exiting fd {}", fd);
         });
@@ -820,7 +841,7 @@ impl QHttpCallClientDirect {
                 match res {
                     Err(e) => {
                         self.fail.store(true, Ordering::SeqCst);
-                        return Err(Error::CommonError(format!("Error in connection: {}", e)));
+                        return Err(Error::CommonError(format!("QHttpCallClientDirect::Error in Send: {}", e)));
                     }
                     Ok(r) => return Ok(r)
                 }

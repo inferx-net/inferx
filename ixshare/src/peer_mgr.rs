@@ -182,12 +182,12 @@ impl IxTcpClient {
         let stream = match TcpStream::connect(socketv4Addr).await {
             // let stream = match socket.connect(socketv4Addr.into()).await {
             Err(e) => {
-                error!(
-                    "InferxTcpClient::Connect fail hostip {:?} hostport {} {:?}",
-                    IpAddress(self.hostIp).AsBytes(),
-                    self.hostPort,
-                    &e
-                );
+                // error!(
+                //     "InferxTcpClient::Connect fail hostip {:?} hostport {} {:?}",
+                //     IpAddress(self.hostIp).AsBytes(),
+                //     self.hostPort,
+                //     &e
+                // );
                 return Err(e.into());
             }
             Ok(s) => s,

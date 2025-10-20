@@ -275,11 +275,11 @@ impl WorkerPod {
         };
         let ret: WorkerPod = Self(Arc::new(inner));
 
-        error!(
-            "New workerpod pod {} {:?}",
-            ret.pod.PodKey(),
-            ret.pod.object.status.state
-        );
+        // error!(
+        //     "New workerpod pod {} {:?}",
+        //     ret.pod.PodKey(),
+        //     ret.pod.object.status.state
+        // );
 
         if ret.pod.object.status.state == PodState::Ready {
             ret.SetIdle();

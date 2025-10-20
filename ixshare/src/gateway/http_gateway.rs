@@ -65,6 +65,9 @@ use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
 use super::auth_layer::{AccessToken, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
+use super::func_agent_mgr::IxTimestamp;
+use super::func_agent_mgr::GW_OBJREPO;
+use super::func_worker::QHttpCallClient;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
@@ -624,6 +627,48 @@ async fn DirectFuncCall(
     }
 }
 
+async fn RetryGetClient(
+    gw: &HttpGateway,
+    tenant: &str,
+    namespace: &str,
+    funcname: &str,
+    func: &Function,
+    timeout: u64,
+    timestamp: IxTimestamp,
+) -> Result<(QHttpCallClient, bool)> {
+    let mut _retry = 0;
+    loop {
+        match gw
+            .funcAgentMgr
+            .GetClient(&tenant, &namespace, &funcname, &func, timestamp)
+            .await
+        {
+            Err(e) => {
+                _retry += 1;
+                if timestamp.Elapsed() < timeout {
+                    // info!(
+                    //     "RetryGetClient retry {} {}/{}/{} timeout {}",
+                    //     retry,
+                    //     tenant,
+                    //     namespace,
+                    //     funcname,
+                    //     timestamp.Elapsed()
+                    // );
+                    continue;
+                }
+                return Err(e);
+            }
+            Ok(client) => {
+                if _retry > 0 {
+                    // info!("RetryGetClient retry success {} ", retry);
+                }
+
+                return Ok(client);
+            }
+        };
+    }
+}
+
 async fn FuncCall(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -677,10 +722,27 @@ async fn FuncCall(
         status: Status::NA,
     };
 
-    let (mut client, keepalive, _func) = match gw
+    let timestamp = IxTimestamp::default();
+    let func = match gw
         .funcAgentMgr
-        .GetClient(&tenant, &namespace, &funcname)
-        .await
+        .objRepo
+        .GetFunc(&tenant, &namespace, &funcname)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            let errcode = StatusCode::INTERNAL_SERVER_ERROR;
+            let body = Body::from(format!("service failure {:?}", &e));
+            let resp = Response::builder().status(errcode).body(body).unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let policy = GW_OBJREPO.get().unwrap().FuncPolicy(&func);
+    let timeout = (policy.queueTimeout * 1000.0) as u64;
+    let (mut client, keepalive) = match RetryGetClient(
+        &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
+    )
+    .await
     {
         Err(e) => {
             labels.status = Status::ConnectFailure;
@@ -725,29 +787,102 @@ async fn FuncCall(
             .inc();
     }
 
-    let mut first = true;
+    let mut res;
 
-    let mut res = match client.Send(req).await {
+    let (parts, body) = req.into_parts();
+
+    // Collect the body bytes
+    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
         Err(e) => {
-            let body = Body::from(format!("service failure {:?}", e));
-            let resp = Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body(body)
-                .unwrap();
-
-            labels.status = Status::RequestFailure;
-            GATEWAY_METRICS
-                .lock()
-                .await
-                .funccallcnt
-                .get_or_create(&labels)
-                .inc();
-
-            ttftCtx.span().end();
+            let errcode = StatusCode::INTERNAL_SERVER_ERROR;
+            let body = Body::from(format!("service failure {:?}", &e));
+            let resp = Response::builder().status(errcode).body(body).unwrap();
             return Ok(resp);
         }
-        Ok(r) => r,
+        Ok(b) => b,
     };
+
+    let mut retry = 0;
+    loop {
+        let body = axum::body::Body::from(bytes.clone());
+        let req = Request::from_parts(parts.clone(), body);
+        res = match client.Send(req).await {
+            Err(e) => {
+                retry += 1;
+                error!(
+                    "FuncCall fail {} retry {} with error {:?}",
+                    func.Id(),
+                    retry,
+                    &e
+                );
+                if timestamp.Elapsed() < timeout {
+                    match RetryGetClient(
+                        &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
+                    )
+                    .await
+                    {
+                        Err(e) => {
+                            labels.status = Status::ConnectFailure;
+                            let errcode = match &e {
+                                Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
+                                Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
+                                e => {
+                                    error!("Http start fail with error {:?}", e);
+                                    StatusCode::INTERNAL_SERVER_ERROR
+                                }
+                            };
+
+                            error!(
+                                "FuncCall fail {} retry connect {} with error {:?}",
+                                func.Id(),
+                                retry,
+                                &e
+                            );
+
+                            let body = Body::from(format!("service failure {:?}", &e));
+                            let resp = Response::builder().status(errcode).body(body).unwrap();
+
+                            return Ok(resp);
+                        }
+                        Ok((c, _)) => {
+                            client = c;
+                        }
+                    };
+
+                    continue;
+                } else {
+                    error!(
+                        "FuncCall retry finish fail {} retry {} with error {:?}",
+                        func.Id(),
+                        retry,
+                        &e
+                    );
+                }
+
+                let body = Body::from(format!("service failure {:?}", e));
+                let resp = Response::builder()
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(body)
+                    .unwrap();
+
+                labels.status = Status::RequestFailure;
+                GATEWAY_METRICS
+                    .lock()
+                    .await
+                    .funccallcnt
+                    .get_or_create(&labels)
+                    .inc();
+
+                ttftCtx.span().end();
+                return Ok(resp);
+            }
+            Ok(r) => r,
+        };
+
+        break;
+    }
+
+    let mut first = true;
 
     labels.status = Status::Success;
     GATEWAY_METRICS
@@ -761,6 +896,8 @@ async fn FuncCall(
     for (k, v) in res.headers() {
         kvs.push((k.clone(), v.clone()));
     }
+
+    let mut bytecnt = 0;
 
     let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
     let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
@@ -793,6 +930,7 @@ async fn FuncCall(
                         .observe(total as f64);
                 }
             }
+
             let bytes = match frame {
                 None => {
                     let latency = start.elapsed();
@@ -810,14 +948,15 @@ async fn FuncCall(
                     Ok(b) => b,
                     Err(e) => {
                         error!(
-                            "PostCall for path {}/{}/{} get error {:?}",
-                            tenant, namespace, funcname, e
+                            "PostCall for path {}/{}/{} len {} get error {:?}",
+                            tenant, namespace, funcname, bytecnt, e
                         );
                         return;
                     }
                 },
             };
             let bytes: Bytes = bytes.into_data().unwrap();
+            bytecnt += bytes.len();
 
             match tx.send(Ok(bytes)).await {
                 Err(_) => {

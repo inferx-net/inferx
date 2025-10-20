@@ -37,6 +37,11 @@ use super::gw_obj_repo::GwObjRepo;
 
 pub static GW_OBJREPO: OnceCell<GwObjRepo> = OnceCell::new();
 
+static TIMESTAMP_COUNT: AtomicU64 = AtomicU64::new(0);
+lazy_static::lazy_static! {
+    pub static ref TIMESTAMP_START: std::time::Instant = std::time::Instant::now();
+}
+
 pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     use crate::gateway::func_agent_mgr::FuncAgentMgr;
     use crate::gateway::gw_obj_repo::{GwObjRepo, NamespaceStore};
@@ -136,22 +141,23 @@ impl FuncAgentMgr {
         tenant: &str,
         namespace: &str,
         funcname: &str,
-    ) -> Result<(QHttpCallClient, bool, Function)> {
-        let func = self.objRepo.GetFunc(tenant, namespace, funcname)?;
+        func: &Function,
+        timestamp: IxTimestamp,
+    ) -> Result<(QHttpCallClient, bool)> {
         let agent = {
             let funcId = func.Id();
             let mut inner = self.agents.lock().unwrap();
             match inner.get(&funcId) {
                 Some(agent) => agent.clone(),
                 None => {
-                    let agent = FuncAgent::New(&func);
+                    let agent = FuncAgent::New(func);
                     inner.insert(funcId, agent.clone());
                     agent
                 }
             }
         };
         let (tx, rx) = oneshot::channel();
-        agent.EnqReq(tenant, namespace, funcname, tx)?;
+        agent.EnqReq(tenant, namespace, funcname, timestamp, tx)?;
         match rx.await {
             Err(_) => {
                 return Err(Error::CommonError(format!(
@@ -164,7 +170,7 @@ impl FuncAgentMgr {
                     return Err(e);
                 }
                 Ok((client, keepalive)) => {
-                    return Ok((client, keepalive, func));
+                    return Ok((client, keepalive));
                 }
             },
         };
@@ -328,15 +334,15 @@ impl FuncAgent {
         tenant: &str,
         namespace: &str,
         funcname: &str,
+        timestamp: IxTimestamp,
         tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
     ) -> Result<()> {
         let funcReq = FuncClientReq {
-            reqId: self.NextReqId(),
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
             funcName: funcname.to_owned(),
             keepalive: true,
-            enqueueTime: std::time::Instant::now(),
+            enqueueTime: timestamp,
             tx: tx,
         };
         match self.reqQueueTx.try_send(funcReq) {
@@ -463,7 +469,8 @@ impl FuncAgent {
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 let workerId = worker.workerId.clone();
-                                error!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?} e {:?}", worker.funcname, worker.id, e);
+                                let id = worker.id.lock().unwrap().clone();
+                                error!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{}/{:?} e {:?}", worker.funcname, worker.fprevision, id, e);
                                 worker.ReturnWorker(true).await.ok();
                                 self.workers.lock().unwrap().remove(&workerId);
                             }
@@ -602,9 +609,35 @@ impl FuncAgent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
+pub struct IxTimestamp {
+    pub count: u64,
+    pub ms: u64,
+}
+
+impl Default for IxTimestamp {
+    fn default() -> Self {
+        return Self::New();
+    }
+}
+
+impl IxTimestamp {
+    pub fn New() -> Self {
+        return Self {
+            count: TIMESTAMP_COUNT.fetch_add(1, Ordering::SeqCst),
+            ms: TIMESTAMP_START.elapsed().as_millis() as u64,
+        };
+    }
+
+    pub fn Elapsed(&self) -> u64 {
+        return TIMESTAMP_START.elapsed().as_millis() as u64 - self.ms;
+    }
+}
+
 #[derive(Debug)]
 pub struct ClientReqQueuInner {
     pub queue: TMutex<VecDeque<FuncClientReq>>,
+    pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
     pub queueLen: AtomicUsize,
     pub timeout: AtomicU64, // ms
     pub notify: Arc<Notify>,
@@ -625,6 +658,7 @@ impl ClientReqQueue {
     pub fn New(queueLen: usize, timeout: u64) -> Self {
         let inner = ClientReqQueuInner {
             queue: TMutex::new(VecDeque::new()),
+            reqQueue: TMutex::new(BTreeMap::new()),
             queueLen: AtomicUsize::new(queueLen),
             timeout: AtomicU64::new(timeout),
             notify: Arc::new(Notify::new()),
@@ -648,9 +682,7 @@ impl ClientReqQueue {
             match q.front() {
                 None => break,
                 Some(first) => {
-                    if first.enqueueTime.elapsed().as_millis() as u64
-                        > self.timeout.load(Ordering::Relaxed)
-                    {
+                    if first.enqueueTime.Elapsed() as u64 > self.timeout.load(Ordering::Relaxed) {
                         let item = q.pop_front().unwrap();
                         item.tx.send(Err(Error::Timeout)).ok();
                     } else {

@@ -60,6 +60,7 @@ pub enum Error {
     DecodeError(DecodeError),
     Timeout,
     QueueFull,
+    Invalid,
     MinRevsionErr(MinRevsionErr),
     NewKeyExistsErr(NewKeyExistsErr),
     DeleteRevNotMatchErr(DeleteRevNotMatchErr),
