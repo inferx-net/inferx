@@ -146,8 +146,8 @@ services:
       - ALLOC_MEMORY_2M=30Gi
       - CACHE_MEMORY=20Gi
       - ENABLE_2MB_PAGE=false
-      - CONTEXT_OVERHEAD=500
-      - CONTEXT_COUNT=2
+      - CONTEXT_OVERHEAD=600
+      - CONTEXT_COUNT=1
       - ALLOC_CPU=24
       - ENALBE_BLOB=false
       - ETCD_ADDR=http://localhost:2379
@@ -168,7 +168,7 @@ services:
       secret_db:
         condition: service_started
     volumes:
-      # - /opt/inferx/bin:/opt/inferx/bin
+      - /opt/inferx/bin:/opt/inferx/bin
       # - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log
