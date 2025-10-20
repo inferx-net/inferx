@@ -154,7 +154,10 @@ impl FuncAgentMgr {
         agent.EnqReq(tenant, namespace, funcname, tx)?;
         match rx.await {
             Err(_) => {
-                return Err(Error::CommonError(format!("funcworker fail ...")));
+                return Err(Error::CommonError(format!(
+                    "funcworker fail ... {}",
+                    func.Id()
+                )));
             }
             Ok(res) => match res {
                 Err(e) => {
@@ -466,6 +469,7 @@ impl FuncAgent {
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 worker.ReturnWorker(false).await.ok();
+                                error!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.funcname, worker.id);
                                 let workerId = worker.workerId.clone();
                                 self.workers.lock().unwrap().remove(&workerId);
                             }

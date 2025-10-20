@@ -561,7 +561,7 @@ impl SchedulerHandler {
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 let returnId = worker.SetWorking(req.gateway_id);
                 let remove = self.idlePods.remove(&returnId);
-                error!("ProcessLeaseWorkerReq remove idlepod work {:?}", &remove);
+                error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -1344,11 +1344,11 @@ impl SchedulerHandler {
         let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
-        // error!(
-        //     "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
-        //     func.Id(),
-        //     &self.idlePods
-        // );
+        error!(
+            "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
+            func.Id(),
+            &self.idlePods
+        );
 
         for (workid, podKey) in &self.idlePods {
             match self.pods.get(podKey) {
@@ -1369,6 +1369,11 @@ impl SchedulerHandler {
                             }
 
                             workids.push((*workid, pod.clone()));
+                            error!(
+                                "FindNode4Pod for resuming func {:?} with idle pod {:#?}",
+                                func.Id(),
+                                podKey
+                            );
                             nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
                             let req = if !forStandby {
@@ -1399,6 +1404,11 @@ impl SchedulerHandler {
         }
 
         if findnodeName.is_none() {
+            error!(
+                "can find enough resource for {}, nodes state {:#?}",
+                func.Key(),
+                allocStates.values()
+            );
             return Err(Error::SchedulerNoEnoughResource(format!(
                 "can find enough resource for {}, nodes state {:#?}",
                 func.Key(),

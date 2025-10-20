@@ -136,8 +136,15 @@ impl FuncWorker {
         let (finishTx, finishRx) = mpsc::channel::<HttpClientState>(parallelLeve * 2);
         let (etx, erx) = mpsc::channel(parallelLeve * 2);
 
-        let connectPool =
-            ConnectionPool::New(tenant, namespace, endpoint.clone(), 1, finishTx.clone());
+        let connectPool = ConnectionPool::New(
+            tenant,
+            namespace,
+            funcname,
+            fprevision,
+            endpoint.clone(),
+            1,
+            finishTx.clone(),
+        );
 
         let inner = FuncWorkerInner {
             closeNotify: Arc::new(Notify::new()),
@@ -362,14 +369,14 @@ impl FuncWorker {
             .totalSlot
             .fetch_add(self.parallelLevel, Ordering::SeqCst);
 
-        *self.id.lock().unwrap() = id;
+        *self.id.lock().unwrap() = id.clone();
         *self.ipAddr.lock().unwrap() = IpAddress(ipaddr);
         self.keepalive.store(keepalive, Ordering::SeqCst);
         *self.hostIpaddr.lock().unwrap() = IpAddress(hostipaddr);
         *self.hostport.lock().unwrap() = hostport;
 
         self.connPool
-            .Init(IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
+            .Init(&id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
             .await;
 
         let mut idleClientRx = idleClientRx;
@@ -515,6 +522,9 @@ impl FuncWorker {
 pub struct ConnectionPoolInner {
     pub tenant: String,
     pub namespace: String,
+    pub funcname: String,
+    pub revision: i64,
+    pub id: Mutex<String>,
     pub ipAddr: Mutex<IpAddress>,
     pub hostIpaddr: Mutex<IpAddress>,
     pub hostport: Mutex<u16>,
@@ -539,6 +549,8 @@ impl ConnectionPool {
     pub fn New(
         tenant: &str,
         namespace: &str,
+        funcname: &str,
+        revision: i64,
         endpoint: HttpEndpoint,
         queueLen: usize,
         finishQueue: mpsc::Sender<HttpClientState>,
@@ -547,6 +559,9 @@ impl ConnectionPool {
         let inner = ConnectionPoolInner {
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
+            funcname: funcname.to_owned(),
+            revision: revision,
+            id: Mutex::new("".to_owned()),
             ipAddr: Mutex::new(IpAddress::default()),
             hostIpaddr: Mutex::new(Default::default()),
             hostport: Mutex::new(0),
@@ -561,8 +576,9 @@ impl ConnectionPool {
         return pool;
     }
 
-    pub async fn Init(&self, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
+    pub async fn Init(&self, id: &str, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
         *self.ipAddr.lock().unwrap() = ipaddr;
+        *self.id.lock().unwrap() = id.to_owned();
         *self.hostIpaddr.lock().unwrap() = hostipaddr;
         *self.hostport.lock().unwrap() = hostport;
         let mut joinset = self.joinset.lock().await;
@@ -606,7 +622,10 @@ impl ConnectionPool {
         for _ in 0..10 {
             match self.TryConnectPod(self.endpoint.port).await {
                 Err(e) => {
-                    error!("connectpod error {:?}", e);
+                    error!(
+                        "connectpod error {:?} for pod {}/{:?}",
+                        e, &self.funcname, &self.id
+                    );
                 }
                 Ok(s) => return Ok(s),
             }

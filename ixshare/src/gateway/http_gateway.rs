@@ -691,7 +691,7 @@ async fn FuncCall(
                 .get_or_create(&labels)
                 .inc();
 
-            error!("Http call fail with error {:?}", &e);
+            // error!("Http call fail with error {:?}", &e);
             let errcode = match &e {
                 Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
                 Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
