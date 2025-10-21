@@ -481,6 +481,7 @@ impl FuncWorker {
                                     return Ok(())
                                 }
                                 Some(sender) => {
+                                    self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
                                     let state = sender.HttpState();
                                     if state == HttpClientState::Fail {
                                         if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 { // fail 3 times

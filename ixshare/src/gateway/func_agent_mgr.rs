@@ -226,6 +226,7 @@ pub struct FuncAgentInner {
     pub availableSlot: Arc<AtomicIsize>,
     pub totalSlot: Arc<AtomicUsize>,
     pub startingSlot: Arc<AtomicUsize>,
+    pub activeReqCnt: AtomicUsize,
 
     pub workers: Mutex<BTreeMap<String, FuncWorker>>,
     pub nextWorkerId: AtomicU64,
@@ -299,6 +300,7 @@ impl FuncAgent {
             totalSlot: Arc::new(AtomicUsize::new(0)),
             availableSlot: Arc::new(AtomicIsize::new(0)),
             startingSlot: Arc::new(AtomicUsize::new(0)),
+            activeReqCnt: AtomicUsize::new(0),
             workers: Mutex::new(BTreeMap::new()),
             nextWorkerId: AtomicU64::new(0),
             nextReqId: AtomicU64::new(0),
@@ -448,6 +450,7 @@ impl FuncAgent {
                 }
                 workReq = reqQueueRx.recv() => {
                     if let Some(req) = workReq {
+                        self.activeReqCnt.fetch_add(1, Ordering::SeqCst);
                         reqQueue.Send(req).await;
                         // self.ProcessReq(req).await;
                     } else {
@@ -637,7 +640,6 @@ impl IxTimestamp {
 
 #[derive(Debug)]
 pub struct ClientReqQueuInner {
-    pub queue: TMutex<VecDeque<FuncClientReq>>,
     pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
     pub queueLen: AtomicUsize,
     pub notify: Arc<Notify>,
@@ -657,7 +659,6 @@ impl Deref for ClientReqQueue {
 impl ClientReqQueue {
     pub fn New(queueLen: usize) -> Self {
         let inner = ClientReqQueuInner {
-            queue: TMutex::new(VecDeque::new()),
             reqQueue: TMutex::new(BTreeMap::new()),
             queueLen: AtomicUsize::new(queueLen),
             notify: Arc::new(Notify::new()),
@@ -667,17 +668,17 @@ impl ClientReqQueue {
     }
 
     pub async fn Count(&self) -> usize {
-        return self.queue.lock().await.len();
+        return self.reqQueue.lock().await.len();
     }
 
     pub async fn CleanTimeout(&self) {
-        let mut q = self.queue.lock().await;
+        let mut q = self.reqQueue.lock().await;
         loop {
-            match q.front() {
+            match q.first_key_value() {
                 None => break,
-                Some(first) => {
+                Some((_, first)) => {
                     if first.enqueueTime.Elapsed() as u64 > first.timeout {
-                        let item = q.pop_front().unwrap();
+                        let (_, item) = q.pop_first().unwrap();
                         item.tx.send(Err(Error::Timeout)).ok();
                     } else {
                         break;
@@ -689,13 +690,13 @@ impl ClientReqQueue {
 
     pub async fn Send(&self, req: FuncClientReq) {
         self.CleanTimeout().await;
-        let mut q = self.queue.lock().await;
+        let mut q = self.reqQueue.lock().await;
         if q.len() >= self.queueLen.load(Ordering::Relaxed) {
             req.tx.send(Err(Error::QueueFull)).unwrap();
             return;
         }
 
-        q.push_back(req);
+        q.insert(req.enqueueTime.clone(), req);
         if q.len() == 1 {
             self.notify.notify_waiters();
         }
@@ -703,31 +704,9 @@ impl ClientReqQueue {
 
     pub async fn TryRecv(&self) -> Option<FuncClientReq> {
         self.CleanTimeout().await;
-        return self.queue.lock().await.pop_front();
-    }
-
-    pub async fn Recv(&self) -> FuncClientReq {
-        self.CleanTimeout().await;
-        loop {
-            match self.queue.lock().await.pop_front() {
-                Some(r) => return r,
-                None => (),
-            }
-            self.notify.notified().await;
-        }
-    }
-
-    pub async fn Wait(&self) {
-        self.CleanTimeout().await;
-        loop {
-            {
-                let q = self.queue.lock().await;
-                if q.len() > 0 {
-                    return;
-                }
-            }
-
-            self.notify.notified().await;
+        match self.reqQueue.lock().await.pop_first() {
+            None => return None,
+            Some((_, v)) => return Some(v),
         }
     }
 }
