@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta3
+VERSION := v0.1.5.beta5
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -29,6 +29,8 @@ pushsvc: svcdeploy
 	# sudo docker login -u inferx
 	sudo docker tag inferx/inferx_platform:$(VERSION) inferx/inferx_platform:$(VERSION)
 	sudo docker push inferx/inferx_platform:$(VERSION)
+
+pushall: pushsvc pushdb pushdash
 
 ctl:	
 	# the release version has build error
@@ -102,8 +104,8 @@ run:
 	@echo "LOCAL_IP=$$(hostname -I | awk '{print $$1}' | xargs)" > .env
 	@echo "Version=$(VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
-	- sudo rm -f /opt/inferx/log/inferx.log
-	- sudo rm -f /opt/inferx/log/onenode.log
+	- sudo rm -f /opt/inferx/log/*.log
+	# - sudo rm -f /opt/inferx/log/onenode.log
 	sudo docker compose -f docker-compose.yml up -d --remove-orphans
 	rm .env
 

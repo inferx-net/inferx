@@ -640,7 +640,7 @@ async fn RetryGetClient(
     loop {
         match gw
             .funcAgentMgr
-            .GetClient(&tenant, &namespace, &funcname, &func, timestamp)
+            .GetClient(&tenant, &namespace, &funcname, &func, timeout, timestamp)
             .await
         {
             Err(e) => {
@@ -738,7 +738,23 @@ async fn FuncCall(
     };
 
     let policy = GW_OBJREPO.get().unwrap().FuncPolicy(&func);
-    let timeout = (policy.queueTimeout * 1000.0) as u64;
+
+    let timeout_header = req
+        .headers()
+        .get("X-Inferx-Timeout")
+        .and_then(|v| v.to_str().ok());
+
+    let timeoutSec = match &timeout_header {
+        None => policy.queueTimeout,
+        Some(s) => {
+            match s.parse() {
+                Err(_) => policy.queueTimeout,
+                Ok(t) => policy.queueTimeout.min(t),
+            }
+        }
+    };
+
+    let timeout = (timeoutSec * 1000.0) as u64;
     let (mut client, keepalive) = match RetryGetClient(
         &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
     )
@@ -755,7 +771,10 @@ async fn FuncCall(
 
             // error!("Http call fail with error {:?}", &e);
             let errcode = match &e {
-                Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
+                Error::Timeout => {
+                    error!("Http start fail with timeout {:?}", timeout);
+                    StatusCode::GATEWAY_TIMEOUT
+                }
                 Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
                 e => {
                     error!("Http start fail with error {:?}", e);

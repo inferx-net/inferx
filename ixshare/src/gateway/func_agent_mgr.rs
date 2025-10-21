@@ -142,6 +142,7 @@ impl FuncAgentMgr {
         namespace: &str,
         funcname: &str,
         func: &Function,
+        timeout: u64,
         timestamp: IxTimestamp,
     ) -> Result<(QHttpCallClient, bool)> {
         let agent = {
@@ -157,7 +158,7 @@ impl FuncAgentMgr {
             }
         };
         let (tx, rx) = oneshot::channel();
-        agent.EnqReq(tenant, namespace, funcname, timestamp, tx)?;
+        agent.EnqReq(tenant, namespace, funcname, timestamp, timeout, tx)?;
         match rx.await {
             Err(e) => {
                 return Err(Error::CommonError(format!(
@@ -281,9 +282,8 @@ impl FuncAgent {
         let policy = GW_OBJREPO.get().unwrap().FuncPolicy(func);
 
         let queueLen = policy.queueLen;
-        let timeout = (policy.queueTimeout * 1000.0) as u64;
 
-        let reqQueue = ClientReqQueue::New(queueLen, timeout);
+        let reqQueue = ClientReqQueue::New(queueLen);
         let (rtx, rrx) = mpsc::channel(1000);
         let (wtx, wrx) = mpsc::channel(100);
         let inner = FuncAgentInner {
@@ -322,8 +322,6 @@ impl FuncAgent {
 
     pub fn UpdatePolicy(&self) {
         let policy = GW_OBJREPO.get().unwrap().FuncPolicy(&self.func);
-        self.reqQueue
-            .Update(policy.queueLen, (policy.queueTimeout * 1000.0) as u64);
 
         *self.scaleoutPolicy.lock().unwrap() = policy.scaleoutPolicy;
         self.scaleinTimeout
@@ -336,6 +334,7 @@ impl FuncAgent {
         namespace: &str,
         funcname: &str,
         timestamp: IxTimestamp,
+        timeout: u64,
         tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
     ) -> Result<()> {
         let funcReq = FuncClientReq {
@@ -343,6 +342,7 @@ impl FuncAgent {
             namespace: namespace.to_owned(),
             funcName: funcname.to_owned(),
             keepalive: true,
+            timeout: timeout,
             enqueueTime: timestamp,
             tx: tx,
         };
@@ -640,7 +640,6 @@ pub struct ClientReqQueuInner {
     pub queue: TMutex<VecDeque<FuncClientReq>>,
     pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
     pub queueLen: AtomicUsize,
-    pub timeout: AtomicU64, // ms
     pub notify: Arc<Notify>,
 }
 
@@ -656,12 +655,11 @@ impl Deref for ClientReqQueue {
 }
 
 impl ClientReqQueue {
-    pub fn New(queueLen: usize, timeout: u64) -> Self {
+    pub fn New(queueLen: usize) -> Self {
         let inner = ClientReqQueuInner {
             queue: TMutex::new(VecDeque::new()),
             reqQueue: TMutex::new(BTreeMap::new()),
             queueLen: AtomicUsize::new(queueLen),
-            timeout: AtomicU64::new(timeout),
             notify: Arc::new(Notify::new()),
         };
 
@@ -672,18 +670,13 @@ impl ClientReqQueue {
         return self.queue.lock().await.len();
     }
 
-    pub fn Update(&self, queueLen: usize, timeout: u64) {
-        self.queueLen.store(queueLen, Ordering::Relaxed);
-        self.timeout.store(timeout, Ordering::Relaxed);
-    }
-
     pub async fn CleanTimeout(&self) {
         let mut q = self.queue.lock().await;
         loop {
             match q.front() {
                 None => break,
                 Some(first) => {
-                    if first.enqueueTime.Elapsed() as u64 > self.timeout.load(Ordering::Relaxed) {
+                    if first.enqueueTime.Elapsed() as u64 > first.timeout {
                         let item = q.pop_front().unwrap();
                         item.tx.send(Err(Error::Timeout)).ok();
                     } else {

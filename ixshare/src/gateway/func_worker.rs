@@ -706,6 +706,7 @@ pub struct FuncClientReq {
     pub funcName: String,
     pub keepalive: bool,
     pub enqueueTime: IxTimestamp,
+    pub timeout: u64,
     pub tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
 }
 

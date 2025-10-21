@@ -719,6 +719,7 @@ impl SchedulerHandler {
         // );
 
         if req.failworker {
+            error!("ProcessReturnWorkerReq return and kill failure pod {}", worker.pod.PodKey());
             match self.StopWorker(&worker.pod).await {
                 Ok(()) => (),
                 Err(e) => {

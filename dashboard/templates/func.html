@@ -509,7 +509,8 @@
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Inferx-Timeout': '12'
                 },
                 body: body,
                 signal
@@ -622,7 +623,8 @@
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Inferx-Timeout': '12'
                 },
                 body: JSON.stringify({
                     "prompt": prompt,
