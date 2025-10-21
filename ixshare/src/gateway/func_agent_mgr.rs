@@ -159,10 +159,11 @@ impl FuncAgentMgr {
         let (tx, rx) = oneshot::channel();
         agent.EnqReq(tenant, namespace, funcname, timestamp, tx)?;
         match rx.await {
-            Err(_) => {
+            Err(e) => {
                 return Err(Error::CommonError(format!(
-                    "funcworker fail ... {}",
-                    func.Id()
+                    "funcworker fail ... {} {:?}",
+                    func.Id(),
+                    e
                 )));
             }
             Ok(res) => match res {

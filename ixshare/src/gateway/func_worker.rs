@@ -53,6 +53,15 @@ pub enum HttpClientState {
     Success,
 }
 
+impl HttpClientState {
+    pub fn Fail(&self) -> bool {
+        match self {
+            Self::Fail => true,
+            Self::Success => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct FuncWorkerInner {
     pub closeNotify: Arc<Notify>,
@@ -78,7 +87,7 @@ pub struct FuncWorkerInner {
     pub ongoingReqCnt: AtomicUsize,
 
     pub reqQueue: mpsc::Sender<FuncClientReq>,
-    pub finishQueue: mpsc::Sender<HttpClientState>,
+    pub finishQueue: mpsc::Sender<HttpSender>,
     pub eventChann: mpsc::Sender<DeltaEvent>,
     pub funcClientCnt: AtomicUsize,
     pub funcAgent: FuncAgent,
@@ -133,7 +142,7 @@ impl FuncWorker {
         funcAgent: &FuncAgent,
     ) -> Result<Self> {
         let (tx, rx) = mpsc::channel::<FuncClientReq>(parallelLeve * 2);
-        let (finishTx, finishRx) = mpsc::channel::<HttpClientState>(parallelLeve * 2);
+        let (finishTx, finishRx) = mpsc::channel::<HttpSender>(parallelLeve * 2);
         let (etx, erx) = mpsc::channel(parallelLeve * 2);
 
         let connectPool = ConnectionPool::New(
@@ -142,7 +151,6 @@ impl FuncWorker {
             funcname,
             fprevision,
             endpoint.clone(),
-            1,
             finishTx.clone(),
         );
 
@@ -249,6 +257,11 @@ impl FuncWorker {
     }
 
     pub async fn ReturnWorker(&self, failworker: bool) -> Result<()> {
+        // error!(
+        //     "Return worker newconn {:?} resueconn {}",
+        //     self.connPool.newConn.load(Ordering::Relaxed),
+        //     self.connPool.reuseConn.load(Ordering::Relaxed)
+        // );
         let id = self.id.lock().unwrap().clone();
         return SchedulerClient {}
             .ReturnWorker(
@@ -290,7 +303,7 @@ impl FuncWorker {
         &self,
         reqQueueRx: mpsc::Receiver<FuncClientReq>,
         _eventQueueRx: mpsc::Receiver<DeltaEvent>,
-        idleClientRx: mpsc::Receiver<HttpClientState>,
+        idleClientRx: mpsc::Receiver<HttpSender>,
     ) -> Result<()> {
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
@@ -467,7 +480,8 @@ impl FuncWorker {
                                 None => {
                                     return Ok(())
                                 }
-                                Some(state) => {
+                                Some(sender) => {
+                                    let state = sender.HttpState();
                                     if state == HttpClientState::Fail {
                                         if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 { // fail 3 times
                                             self.FinishWorker();
@@ -486,6 +500,7 @@ impl FuncWorker {
                                     }
 
                                     self.funcAgent.dataNotify.notify_waiters();
+                                    self.connPool.ReturnSender(sender).await;
                                 }
                             }
                         }
@@ -529,9 +544,11 @@ pub struct ConnectionPoolInner {
     pub hostIpaddr: Mutex<IpAddress>,
     pub hostport: Mutex<u16>,
     pub endpoint: HttpEndpoint,
-    pub queueLen: usize,
-    pub finishQueue: mpsc::Sender<HttpClientState>,
+    pub finishQueue: mpsc::Sender<HttpSender>,
     pub joinset: TMutex<JoinSet<Result<QHttpCallClient>>>,
+    pub senders: TMutex<Vec<HttpSender>>,
+    pub newConn: AtomicUsize,
+    pub reuseConn: AtomicUsize,
 }
 
 #[derive(Debug, Clone)]
@@ -552,8 +569,7 @@ impl ConnectionPool {
         funcname: &str,
         revision: i64,
         endpoint: HttpEndpoint,
-        queueLen: usize,
-        finishQueue: mpsc::Sender<HttpClientState>,
+        finishQueue: mpsc::Sender<HttpSender>,
     ) -> Self {
         let joinset = JoinSet::new();
         let inner = ConnectionPoolInner {
@@ -566,9 +582,11 @@ impl ConnectionPool {
             hostIpaddr: Mutex::new(Default::default()),
             hostport: Mutex::new(0),
             endpoint: endpoint,
-            queueLen: queueLen,
             finishQueue: finishQueue,
             joinset: TMutex::new(joinset),
+            senders: TMutex::new(Vec::new()),
+            reuseConn: AtomicUsize::new(0),
+            newConn: AtomicUsize::new(0),
         };
 
         let pool = Self(Arc::new(inner));
@@ -581,11 +599,11 @@ impl ConnectionPool {
         *self.id.lock().unwrap() = id.to_owned();
         *self.hostIpaddr.lock().unwrap() = hostipaddr;
         *self.hostport.lock().unwrap() = hostport;
-        let mut joinset = self.joinset.lock().await;
-        for _i in 0..self.queueLen - 1 {
-            let clone = self.clone();
-            joinset.spawn(async move { clone.NewHttpCallClient().await });
-        }
+        // let mut joinset = self.joinset.lock().await;
+        // for _i in 0..self.queueLen - 1 {
+        //     let clone = self.clone();
+        //     joinset.spawn(async move { clone.NewHttpCallClient().await });
+        // }
     }
 
     pub fn FuncName(&self) -> String {
@@ -596,7 +614,25 @@ impl ConnectionPool {
         );
     }
 
+    pub async fn ReturnSender(&self, sender: HttpSender) {
+        let state = sender.HttpState();
+        if state == HttpClientState::Fail {
+            return;
+        }
+
+        self.senders.lock().await.push(sender);
+    }
+
     pub async fn GetConnect(&self) -> Result<QHttpCallClient> {
+        match self.senders.lock().await.pop() {
+            Some(sender) => {
+                self.reuseConn.fetch_add(1, Ordering::Relaxed);
+                return Ok(QHttpCallClient::New(self.finishQueue.clone(), sender));
+            }
+            None => (),
+        }
+
+        self.newConn.fetch_add(1, Ordering::Relaxed);
         match self.NewHttpCallClient().await {
             Err(Error::CommonError(str)) => {
                 return Err(Error::CommonError(format!(
@@ -608,31 +644,12 @@ impl ConnectionPool {
             Ok(c) => Ok(c),
             Err(e) => return Err(e),
         }
-
-        // let mut joinset = self.joinset.lock().await;
-        // let clone = self.clone();
-        // joinset.spawn(async move { clone.NewHttpCallClient().await });
-        // match joinset.join_next().await {
-        //     None => {
-        //         return Err(Error::CommonError(format!(
-        //             "Connection get None connection"
-        //         )))
-        //     }
-        //     Some(conn) => match conn {
-        //         Ok(c) => return c,
-        //         Err(e) => {
-        //             return Err(Error::CommonError(format!(
-        //                 "NewConnect fail with error {:?}",
-        //                 e
-        //             )));
-        //         }
-        //     },
-        // }
     }
 
     pub async fn NewHttpCallClient(&self) -> Result<QHttpCallClient> {
         let stream = self.ConnectPod().await?;
-        let client = QHttpCallClient::New(self.finishQueue.clone(), stream).await?;
+        let sender = HttpSender::New(stream).await?;
+        let client = QHttpCallClient::New(self.finishQueue.clone(), sender);
         return Ok(client);
     }
 
@@ -751,20 +768,77 @@ impl QHttpClient {
 }
 
 #[derive(Debug)]
-pub struct QHttpCallClient {
-    pub finishQueue: mpsc::Sender<HttpClientState>,
+pub struct HttpSender {
     sender: SendRequest<axum::body::Body>,
-    pub fail: AtomicBool,
+    pub fail: Arc<AtomicBool>,
 }
 
-impl Drop for QHttpCallClient {
-    fn drop(&mut self) {
-        let state = if self.fail.load(Ordering::SeqCst) {
+impl HttpSender {
+    pub async fn New(stream: TcpStream) -> Result<Self> {
+        let io = TokioIo::new(stream);
+        let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+        let fail = Arc::new(AtomicBool::new(false));
+        let failclone = fail.clone();
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                error!("QHttpCallClient::Error in connection: {}", e);
+                failclone.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let sender = HttpSender {
+            sender: sender,
+            fail: Arc::new(AtomicBool::new(false)),
+        };
+
+        return Ok(sender);
+    }
+
+    pub async fn Send(&mut self, req: Request<axum::body::Body>) -> Result<Response<Incoming>> {
+        let res = self.sender.send_request(req).await;
+        match res {
+            Err(e) => {
+                self.fail.store(true, Ordering::SeqCst);
+                return Err(Error::CommonError(format!(
+                    "QHttpCallClient::Error in sending: {}",
+                    e
+                )));
+            }
+            Ok(r) => {
+                let status = r.status();
+                if status != StatusCode::OK {
+                    self.fail.store(true, Ordering::SeqCst);
+                }
+                return Ok(r);
+            }
+        }
+    }
+
+    pub fn HttpState(&self) -> HttpClientState {
+        let state = if self.fail.load(Ordering::Relaxed) {
             HttpClientState::Fail
         } else {
             HttpClientState::Success
         };
-        match self.finishQueue.try_send(state) {
+        return state;
+    }
+
+    pub fn SetState(&self, state: HttpClientState) {
+        let fail = state.Fail();
+        self.fail.store(fail, Ordering::SeqCst);
+    }
+}
+
+#[derive(Debug)]
+pub struct QHttpCallClient {
+    pub finishQueue: mpsc::Sender<HttpSender>,
+    pub sender: Option<HttpSender>,
+}
+
+impl Drop for QHttpCallClient {
+    fn drop(&mut self) {
+        let sender = self.sender.take().unwrap();
+        match self.finishQueue.try_send(sender) {
             Err(_e) => {
                 //error!("QHttpCallClient send fail with error {:?}", _e);
             }
@@ -774,42 +848,15 @@ impl Drop for QHttpCallClient {
 }
 
 impl QHttpCallClient {
-    pub async fn New(
-        finishQueue: mpsc::Sender<HttpClientState>,
-        stream: TcpStream,
-    ) -> Result<Self> {
-        let io = TokioIo::new(stream);
-        let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                error!("QHttpCallClient::Error in connection: {}", e);
-            }
-        });
-        return Ok(Self {
+    pub fn New(finishQueue: mpsc::Sender<HttpSender>, sender: HttpSender) -> Self {
+        return Self {
             finishQueue: finishQueue,
-            sender: sender,
-            fail: AtomicBool::new(false),
-        });
+            sender: Some(sender),
+        };
     }
 
     pub async fn Send(&mut self, req: Request<axum::body::Body>) -> Result<Response<Incoming>> {
-        tokio::select! {
-            res = self.sender.send_request(req) => {
-                match res {
-                    Err(e) => {
-                        self.fail.store(true, Ordering::SeqCst);
-                        return Err(Error::CommonError(format!("QHttpCallClient::Error in sending: {}", e)));
-                    }
-                    Ok(r) => {
-                        let status = r.status();
-                        if status != StatusCode::OK {
-                            self.fail.store(true, Ordering::SeqCst);
-                        }
-                        return Ok(r);
-                    }
-                }
-            }
-        }
+        return self.sender.as_mut().unwrap().Send(req).await;
     }
 }
 
