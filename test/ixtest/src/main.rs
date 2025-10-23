@@ -121,7 +121,7 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
     }
 
     println!(
-        "\n=== Summary ===\n[200 OK & match]\t{}\n[mismatch]\t\t{}\n[fail]\t\t\t{}",
+        "[200 OK & match]:\t{}\t[mismatch]:\t\t{}\t[fail]:\t\t\t{}\t\n",
         success.load(Ordering::Relaxed),
         mismatch.load(Ordering::Relaxed),
         fail.load(Ordering::Relaxed),
