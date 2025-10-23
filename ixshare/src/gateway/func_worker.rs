@@ -405,6 +405,7 @@ impl FuncWorker {
                     unreachable!()
                 }
                 FuncWorkerState::Idle => {
+                    error!("FuncWorker return to idle {}/{}", self.funcname, &id);
                     tokio::select! {
                         _ = self.closeNotify.notified() => {
                             self.stop.store(false, Ordering::SeqCst);
@@ -440,6 +441,7 @@ impl FuncWorker {
                             }
                         }
                         _ = tokio::time::sleep(Duration::from_millis(self.keepaliveTime)) => {
+                            error!("FuncWorker idle timeout {}/{}", self.funcname, &id);
                             self.FinishWorker();
                             self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
                             break;

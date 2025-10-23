@@ -688,7 +688,7 @@ impl SchedulerHandler {
             &req.id,
         )?;
 
-        error!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
+        info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
             error!(
@@ -1266,9 +1266,8 @@ impl SchedulerHandler {
         match self.funcs.get(funcname) {
             None => (),
             Some(status) => {
-                // error!("ReadyPodCount pods {:?}", status.pods.keys());
                 for (_, pod) in &status.pods {
-                    if pod.State().IsReady() {
+                    if pod.State().IsResumed() {
                         count += 1;
                     }
                 }
@@ -1345,7 +1344,7 @@ impl SchedulerHandler {
         let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
-        error!(
+        info!(
             "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
             func.Id(),
             &self.idlePods
@@ -1370,10 +1369,10 @@ impl SchedulerHandler {
                             }
 
                             workids.push((*workid, pod.clone()));
-                            error!(
-                                "FindNode4Pod for resuming func {:?} with idle pod {:#?}",
+                            info!(
+                                "FindNode4Pod for resuming func {:?} with idle pod {:#?} workdis {:#?}",
                                 func.Id(),
-                                podKey
+                                podKey, workid,
                             );
                             nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
@@ -2268,6 +2267,10 @@ impl SchedulerHandler {
             .iter()
             .map(|(_, pod)| pod.clone())
             .collect();
+
+        for pod in &terminalPods {
+            pod.SetState(WorkerPodState::Terminating);
+        }
 
         let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
         let standbyResource = pod.pod.object.spec.allocResources.clone();

@@ -254,6 +254,9 @@ impl WorkerPod {
             WorkerPodState::Working(gatewayId) => {
                 unreachable!("WorkerPod::SetWorking gateway {}", gatewayId);
             }
+            WorkerPodState::Terminating => {
+                unreachable!("WorkerPod::SetWorking state WorkerPodState::Terminating");
+            }
             WorkerPodState::Init => {
                 returnId = 0;
             }

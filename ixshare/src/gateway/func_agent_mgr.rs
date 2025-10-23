@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use core::ops::Deref;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -378,22 +378,20 @@ impl FuncAgent {
             reqQueue.CleanTimeout().await;
             return WaitState::WaitSlot;
         }
+
         for worker in workers {
-            while worker.AvailableSlot() > 0 {
-                let req = match reqQueue.TryRecv().await {
-                    None => return WaitState::WaitReq,
-                    Some(req) => req,
-                };
-                // let total = self.lock().unwrap().totalSlot;
-                // error!(
-                //     "worker.AvailableSlot() {}/{}/{}",
-                //     worker.AvailableSlot(),
-                //     self.lock().unwrap().availableSlot,
-                //     total
-                // );
-                worker.AssignReq(req);
-                self.DecrSlot(1);
+            let slots = worker.AvailableSlot();
+            let mut reqs = reqQueue.TryRecvBatch(slots).await;
+            for _i in 0..slots {
+                match reqs.pop() {
+                    Some(req) => {
+                        worker.AssignReq(req);
+                        self.DecrSlot(1);
+                    }
+                    None => break,
+                }
             }
+            assert!(reqs.len() == 0);
         }
 
         return WaitState::WaitSlot;
@@ -456,6 +454,16 @@ impl FuncAgent {
                     } else {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
                     }
+
+                    loop {
+                        match reqQueueRx.try_recv() {
+                            Err(_) => break,
+                            Ok(req) => {
+                                self.activeReqCnt.fetch_add(1, Ordering::SeqCst);
+                                reqQueue.Send(req).await;
+                            }
+                        }
+                    }
                 }
                 _ = interval.tick() => {
                     // keepalive for each 500 ms
@@ -474,13 +482,13 @@ impl FuncAgent {
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 let workerId = worker.workerId.clone();
                                 let id = worker.id.lock().unwrap().clone();
-                                error!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{}/{:?} e {:?}", worker.funcname, worker.fprevision, id, e);
+                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{}/{:?} e {:?}", worker.funcname, worker.fprevision, id, e);
                                 worker.ReturnWorker(true).await.ok();
                                 self.workers.lock().unwrap().remove(&workerId);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 worker.ReturnWorker(false).await.ok();
-                                error!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.funcname, worker.id);
+                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.funcname, worker.id);
                                 let workerId = worker.workerId.clone();
                                 self.workers.lock().unwrap().remove(&workerId);
                             }
@@ -503,7 +511,7 @@ impl FuncAgent {
 
     pub fn ParallelLevel(&self) -> Result<usize> {
         let tenant = self.tenant.clone();
-        let mut level = self.FuncPolicy(&tenant)?.parallel;
+        let mut level = self.FuncPolicy(&tenant)?.parallel + 20;
         if level == 0 {
             level = DEFAULT_PARALLEL_LEVEL;
         }
@@ -524,13 +532,23 @@ impl FuncAgent {
                 }
 
                 let obj =
-                    GW_OBJREPO
+                    match GW_OBJREPO
                         .get()
                         .unwrap()
                         .funcpolicyMgr
-                        .Get(tenant, &l.namespace, &l.name)?;
+                        .Get(tenant, &l.namespace, &l.name)
+                    {
+                        Err(e) => {
+                            error!(
+                                "can't get funcPolicy {}/{}/{}, fallback to default error {:?}",
+                                tenant, &l.namespace, &l.name, e
+                            );
+                            FuncPolicySpec::default()
+                        }
+                        Ok(p) => p.object,
+                    };
 
-                return Ok(obj.object);
+                return Ok(obj);
             }
         }
     }
@@ -702,8 +720,22 @@ impl ClientReqQueue {
         }
     }
 
+    pub async fn TryRecvBatch(&self, cnt: usize) -> Vec<FuncClientReq> {
+        // self.CleanTimeout().await;
+        let mut q = self.reqQueue.lock().await;
+        let mut v = Vec::new();
+        for _i in 0..cnt {
+            match q.pop_first() {
+                None => return v,
+                Some((_, req)) => v.push(req),
+            }
+        }
+
+        return v;
+    }
+
     pub async fn TryRecv(&self) -> Option<FuncClientReq> {
-        self.CleanTimeout().await;
+        // self.CleanTimeout().await;
         match self.reqQueue.lock().await.pop_first() {
             None => return None,
             Some((_, v)) => return Some(v),

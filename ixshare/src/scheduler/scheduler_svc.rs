@@ -31,7 +31,7 @@ impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
     ) -> SResult<tonic::Response<na::LeaseWorkerResp>, tonic::Status> {
         let msg: na::LeaseWorkerReq = request.into_inner();
         let resp = SCHEDULER.LeaseWorker(msg.clone()).await.unwrap();
-        error!("lease_worker req {:?}/{}/{}", &msg, &resp.id, &resp.error);
+        info!("lease_worker req {:?}/{}/{}", &msg, &resp.id, &resp.error);
         return Ok(tonic::Response::new(resp));
     }
 
@@ -41,7 +41,7 @@ impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
     ) -> SResult<tonic::Response<na::ReturnWorkerResp>, tonic::Status> {
         let msg: na::ReturnWorkerReq = request.into_inner();
 
-        error!("return_worker req {:?}", &msg);
+        info!("return_worker req {:?}", &msg);
         let resp = SCHEDULER.ReturnWorker(msg).await.unwrap();
         return Ok(tonic::Response::new(resp));
     }
