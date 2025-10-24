@@ -236,7 +236,13 @@ impl FuncWorker {
         //     self.ongoingReqCnt.load(Ordering::Relaxed)
         // );
         self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
-        self.reqQueue.try_send(req).unwrap();
+        match self.reqQueue.try_send(req) {
+            Ok(_) => (),
+            Err(e) => {
+                let req = e.into_inner();
+                req.Send(Err(Error::ServiceUnaviable));
+            }
+        }
     }
 
     pub fn OngoingReq(&self) -> usize {
@@ -609,7 +615,7 @@ impl ConnectionPool {
         // }
     }
 
-    pub fn FuncName(&self) -> String {
+    pub fn PodName(&self) -> String {
         let id = self.id.lock().unwrap().clone();
         return format!(
             "{}/{}/{}/{}/{}",
@@ -640,7 +646,7 @@ impl ConnectionPool {
             Err(Error::CommonError(str)) => {
                 return Err(Error::CommonError(format!(
                     "Socket fail: {} {}",
-                    self.FuncName(),
+                    self.PodName(),
                     str
                 )));
             }
@@ -651,7 +657,7 @@ impl ConnectionPool {
 
     pub async fn NewHttpCallClient(&self) -> Result<QHttpCallClient> {
         let stream = self.ConnectPod().await?;
-        let sender = HttpSender::New(stream).await?;
+        let sender = HttpSender::New(&self.PodName(), stream).await?;
         let client = QHttpCallClient::New(self.finishQueue.clone(), sender);
         return Ok(client);
     }
@@ -773,12 +779,13 @@ impl QHttpClient {
 
 #[derive(Debug)]
 pub struct HttpSender {
+    pub podname: String,
     sender: SendRequest<axum::body::Body>,
     pub fail: Arc<AtomicBool>,
 }
 
 impl HttpSender {
-    pub async fn New(stream: TcpStream) -> Result<Self> {
+    pub async fn New(podname: &str, stream: TcpStream) -> Result<Self> {
         let io = TokioIo::new(stream);
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         let fail = Arc::new(AtomicBool::new(false));
@@ -791,6 +798,7 @@ impl HttpSender {
         });
 
         let sender = HttpSender {
+            podname: podname.to_owned(),
             sender: sender,
             fail: Arc::new(AtomicBool::new(false)),
         };
@@ -799,21 +807,34 @@ impl HttpSender {
     }
 
     pub async fn Send(&mut self, req: Request<axum::body::Body>) -> Result<Response<Incoming>> {
-        let res = self.sender.send_request(req).await;
-        match res {
-            Err(e) => {
+        let now = std::time::Instant::now();
+        tokio::select! {
+            res = self.sender.send_request(req) => {
+                match res {
+                    Err(e) => {
+                        self.fail.store(true, Ordering::SeqCst);
+                        return Err(Error::CommonError(format!(
+                            "QHttpCallClient::Error take {} ms in sending: {}",
+                            now.elapsed().as_millis(),
+                            e
+                        )));
+                    }
+                    Ok(r) => {
+                        let status = r.status();
+                        if status != StatusCode::OK {
+                            self.fail.store(true, Ordering::SeqCst);
+                        }
+                        return Ok(r);
+                    }
+                }
+            }
+            // if it takes more than 5 second to connect to instance, the instance is dead, need to kill it.
+            _ = tokio::time::sleep(Duration::from_millis(5000)) => {
                 self.fail.store(true, Ordering::SeqCst);
                 return Err(Error::CommonError(format!(
-                    "QHttpCallClient::Error in sending: {}",
-                    e
+                    "QHttpCallClient::Error IxTimeout take {} ms in sending",
+                    now.elapsed().as_millis()
                 )));
-            }
-            Ok(r) => {
-                let status = r.status();
-                if status != StatusCode::OK {
-                    self.fail.store(true, Ordering::SeqCst);
-                }
-                return Ok(r);
             }
         }
     }
@@ -861,6 +882,13 @@ impl QHttpCallClient {
 
     pub async fn Send(&mut self, req: Request<axum::body::Body>) -> Result<Response<Incoming>> {
         return self.sender.as_mut().unwrap().Send(req).await;
+    }
+
+    pub fn PodName(&self) -> String {
+        match &self.sender {
+            None => "unknown".to_owned(),
+            Some(s) => s.podname.clone(),
+        }
     }
 }
 

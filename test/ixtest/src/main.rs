@@ -1,10 +1,8 @@
 use std::{
-    env,
-    sync::{
+    collections::BTreeMap, env, sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
-    },
-    time::{Duration, Instant},
+    }, time::{Duration, Instant}
 };
 
 use reqwest::Client;
@@ -30,7 +28,8 @@ async fn main() {
 
 async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
     let url = format!(
-        "http://localhost:4000/funccall/public/{}/v1/completions",
+        // "http://localhost:4000/funccall/public/{}/v1/completions",
+        "http://localhost:31501/funccall/public/{}/v1/completions",
         model
     );
     println!(
@@ -62,8 +61,12 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                     "max_tokens": "10",
                     "model": model,
                     "stream": "false",
-                    "temperature": "0"
+                    "temperature": "0",
+                    "top_p": 1.0,
+                    "seed": 0
                 });
+
+                let mut output = BTreeMap::new();
 
                 match client.post(&url).json(&body).send().await {
                     Ok(resp) => {
@@ -82,8 +85,18 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                                     text
                                 } else {
                                     println!("Failed to extract text: {}", &resp);
+                                    mismatch.fetch_add(1, Ordering::Relaxed);
                                     continue;
                                 };
+
+                                match output.get_mut(text) {
+                                    Some(v) => {
+                                        *v += 1;
+                                    }   
+                                    None => {
+                                        output.insert(text.to_owned(), 1);
+                                    }
+                                }
 
                                 let text = text.to_owned();
 
@@ -93,19 +106,26 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                                 } else if Some(&text) == first.as_ref() {
                                     success.fetch_add(1, Ordering::Relaxed);
                                 } else {
-                                    println!("mismatch expect {:?}\n actual {:?}", first.as_ref(), &text);
+                                    // println!("mismatch expect {:?}\n actual {:?}", first.as_ref(), &text);
                                     mismatch.fetch_add(1, Ordering::Relaxed);
+                                }
+
+                                if output.len() > 1 {
+                                    println!("mismatch text {:?}", output);
                                 }
                             }
                             Ok(_) => {
+                                println!("status is {:?}", &status);
                                 fail.fetch_add(1, Ordering::Relaxed);
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                println!("resp.text error is {:?}", &e);
                                 fail.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        println!("client.post error is {:?}", &e);
                         fail.fetch_add(1, Ordering::Relaxed);
                     }
                 }

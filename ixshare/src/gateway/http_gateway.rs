@@ -746,12 +746,10 @@ async fn FuncCall(
 
     let timeoutSec = match &timeout_header {
         None => policy.queueTimeout,
-        Some(s) => {
-            match s.parse() {
-                Err(_) => policy.queueTimeout,
-                Ok(t) => policy.queueTimeout.min(t),
-            }
-        }
+        Some(s) => match s.parse() {
+            Err(_) => policy.queueTimeout,
+            Ok(t) => policy.queueTimeout.min(t),
+        },
     };
 
     let timeout = (timeoutSec * 1000.0) as u64;
@@ -775,7 +773,10 @@ async fn FuncCall(
                     error!("Http start fail with timeout {:?}", timeout);
                     StatusCode::GATEWAY_TIMEOUT
                 }
-                Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
+                Error::QueueFull => {
+                    error!("Http start fail with QueueFull");
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 e => {
                     error!("Http start fail with error {:?}", e);
                     StatusCode::INTERNAL_SERVER_ERROR
@@ -830,7 +831,7 @@ async fn FuncCall(
                 retry += 1;
                 error!(
                     "FuncCall fail {} retry {} with error {:?}",
-                    func.Id(),
+                    client.PodName(),
                     retry,
                     &e
                 );
@@ -845,6 +846,7 @@ async fn FuncCall(
                             let errcode = match &e {
                                 Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
                                 Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
+                                Error::ServiceUnaviable => StatusCode::SERVICE_UNAVAILABLE,
                                 e => {
                                     error!("Http start fail with error {:?}", e);
                                     StatusCode::INTERNAL_SERVER_ERROR
@@ -871,9 +873,10 @@ async fn FuncCall(
                     continue;
                 } else {
                     error!(
-                        "FuncCall retry finish fail {} retry {} with error {:?}",
-                        func.Id(),
+                        "FuncCall retry finish fail {} retry {} timeout {} with error {:?}",
+                        client.PodName(),
                         retry,
+                        timeout,
                         &e
                     );
                 }
@@ -895,8 +898,18 @@ async fn FuncCall(
                 ttftCtx.span().end();
                 return Ok(resp);
             }
-            Ok(r) => r,
+            Ok(r) => {
+                if retry > 0 {
+                    error!("FuncCall success {} with retry {}", func.Id(), retry + 1);
+                }
+                r
+            }
         };
+
+        let status = res.status();
+        if status != StatusCode::OK {
+            error!("Http call get fail status {:?}", status);
+        }
 
         break;
     }
