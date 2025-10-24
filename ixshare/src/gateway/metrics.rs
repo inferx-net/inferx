@@ -75,6 +75,7 @@ pub enum Status {
     NA,
     Success,
     ConnectFailure,
+    InvalidRequest,
     RequestFailure,
 }
 

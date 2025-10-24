@@ -669,6 +669,40 @@ async fn RetryGetClient(
     }
 }
 
+async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) -> Response<Body> {
+    labels.status = status;
+    GATEWAY_METRICS
+        .lock()
+        .await
+        .funccallcnt
+        .get_or_create(labels)
+        .inc();
+
+    // error!("Http call fail with error {:?}", &e);
+    let errcode = match &e {
+        Error::Timeout(timeout) => {
+            error!("Http start fail with timeout {:?}", timeout);
+            StatusCode::GATEWAY_TIMEOUT
+        }
+        Error::QueueFull => {
+            error!("Http start fail with QueueFull");
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        Error::Invalid => {
+            error!("Http start fail with bade request");
+            StatusCode::BAD_REQUEST
+        }
+        e => {
+            error!("Http start fail with error {:?}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    let body = Body::from(format!("service failure {:?}", &e));
+    let resp = Response::builder().status(errcode).body(body).unwrap();
+
+    return resp;
+}
+
 async fn FuncCall(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -680,8 +714,6 @@ async fn FuncCall(
     let mut ttftSpan = tracer.start("TTFT");
     ttftSpan.set_attribute(KeyValue::new("req", path.to_owned()));
     let ttftCtx = Context::current_with_span(ttftSpan);
-
-    let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
 
     let now = std::time::Instant::now();
 
@@ -753,59 +785,9 @@ async fn FuncCall(
     };
 
     let timeout = (timeoutSec * 1000.0) as u64;
-    let (mut client, keepalive) = match RetryGetClient(
-        &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
-    )
-    .await
-    {
-        Err(e) => {
-            labels.status = Status::ConnectFailure;
-            GATEWAY_METRICS
-                .lock()
-                .await
-                .funccallcnt
-                .get_or_create(&labels)
-                .inc();
-
-            // error!("Http call fail with error {:?}", &e);
-            let errcode = match &e {
-                Error::Timeout => {
-                    error!("Http start fail with timeout {:?}", timeout);
-                    StatusCode::GATEWAY_TIMEOUT
-                }
-                Error::QueueFull => {
-                    error!("Http start fail with QueueFull");
-                    StatusCode::SERVICE_UNAVAILABLE
-                }
-                e => {
-                    error!("Http start fail with error {:?}", e);
-                    StatusCode::INTERNAL_SERVER_ERROR
-                }
-            };
-            let body = Body::from(format!("service failure {:?}", &e));
-            let resp = Response::builder().status(errcode).body(body).unwrap();
-
-            return Ok(resp);
-        }
-        Ok(client) => client,
-    };
-
-    startupSpan.end();
 
     let uri = format!("http://127.0.0.1{}", remainPath); // &func.object.spec.endpoint.path);
     *req.uri_mut() = Uri::try_from(uri).unwrap();
-
-    let tcpConnLatency = now.elapsed().as_millis() as u64;
-    let start = std::time::Instant::now();
-
-    if !keepalive {
-        GATEWAY_METRICS
-            .lock()
-            .await
-            .funccallCsCnt
-            .get_or_create(&labels)
-            .inc();
-    }
 
     let mut res;
 
@@ -813,94 +795,76 @@ async fn FuncCall(
 
     // Collect the body bytes
     let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
-        Err(e) => {
-            let errcode = StatusCode::INTERNAL_SERVER_ERROR;
-            let body = Body::from(format!("service failure {:?}", &e));
-            let resp = Response::builder().status(errcode).body(body).unwrap();
+        Err(_e) => {
+            let resp = FailureResponse(Error::Invalid, &mut labels, Status::InvalidRequest).await;
             return Ok(resp);
         }
         Ok(b) => b,
     };
 
     let mut retry = 0;
+
+    let mut error = Error::Timeout(timeout);
+    let client;
+    let keepalive;
+    let mut tcpConnLatency;
+    let mut start;
     loop {
+        retry += 1;
+        if timestamp.Elapsed() > timeout {
+            let resp = FailureResponse(error, &mut labels, Status::RequestFailure).await;
+            ttftCtx.span().end();
+            return Ok(resp);
+        }
+
+        let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
+
+        let (mut tclient, tkeepalive) = match RetryGetClient(
+            &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
+        )
+        .await
+        {
+            Err(e) => {
+                let resp = FailureResponse(e, &mut labels, Status::ConnectFailure).await;
+                return Ok(resp);
+            }
+            Ok(client) => client,
+        };
+
+        tcpConnLatency = now.elapsed().as_millis() as u64;
+
+        if !tkeepalive {
+            GATEWAY_METRICS
+                .lock()
+                .await
+                .funccallCsCnt
+                .get_or_create(&labels)
+                .inc();
+        }
+
+        startupSpan.end();
+
+        start = std::time::Instant::now();
         let body = axum::body::Body::from(bytes.clone());
         let req = Request::from_parts(parts.clone(), body);
-        res = match client.Send(req).await {
+        res = match tclient.Send(req).await {
             Err(e) => {
-                retry += 1;
                 error!(
                     "FuncCall fail {} retry {} with error {:?}",
-                    client.PodName(),
+                    tclient.PodName(),
                     retry,
                     &e
                 );
-                if timestamp.Elapsed() < timeout {
-                    match RetryGetClient(
-                        &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
-                    )
-                    .await
-                    {
-                        Err(e) => {
-                            labels.status = Status::ConnectFailure;
-                            let errcode = match &e {
-                                Error::Timeout => StatusCode::GATEWAY_TIMEOUT,
-                                Error::QueueFull => StatusCode::SERVICE_UNAVAILABLE,
-                                Error::ServiceUnaviable => StatusCode::SERVICE_UNAVAILABLE,
-                                e => {
-                                    error!("Http start fail with error {:?}", e);
-                                    StatusCode::INTERNAL_SERVER_ERROR
-                                }
-                            };
-
-                            error!(
-                                "FuncCall fail {} retry connect {} with error {:?}",
-                                func.Id(),
-                                retry,
-                                &e
-                            );
-
-                            let body = Body::from(format!("service failure {:?}", &e));
-                            let resp = Response::builder().status(errcode).body(body).unwrap();
-
-                            return Ok(resp);
-                        }
-                        Ok((c, _)) => {
-                            client = c;
-                        }
-                    };
-
-                    continue;
-                } else {
-                    error!(
-                        "FuncCall retry finish fail {} retry {} timeout {} with error {:?}",
-                        client.PodName(),
-                        retry,
-                        timeout,
-                        &e
-                    );
-                }
-
-                let body = Body::from(format!("service failure {:?}", e));
-                let resp = Response::builder()
-                    .status(StatusCode::SERVICE_UNAVAILABLE)
-                    .body(body)
-                    .unwrap();
-
-                labels.status = Status::RequestFailure;
-                GATEWAY_METRICS
-                    .lock()
-                    .await
-                    .funccallcnt
-                    .get_or_create(&labels)
-                    .inc();
-
-                ttftCtx.span().end();
-                return Ok(resp);
+                error = e;
+                continue;
             }
             Ok(r) => {
-                if retry > 0 {
-                    error!("FuncCall success {} with retry {}", func.Id(), retry + 1);
+                if retry > 1 {
+                    error!(
+                        "FuncCall retry success {} with try round {}",
+                        func.Id(),
+                        retry
+                    );
                 }
                 r
             }
@@ -909,8 +873,11 @@ async fn FuncCall(
         let status = res.status();
         if status != StatusCode::OK {
             error!("Http call get fail status {:?}", status);
+            continue;
         }
 
+        client = tclient;
+        keepalive = tkeepalive;
         break;
     }
 

@@ -695,9 +695,10 @@ impl ClientReqQueue {
             match q.first_key_value() {
                 None => break,
                 Some((_, first)) => {
-                    if first.enqueueTime.Elapsed() as u64 > first.timeout {
+                    let timeout = first.timeout;
+                    if first.enqueueTime.Elapsed() as u64 > timeout {
                         let (_, item) = q.pop_first().unwrap();
-                        item.tx.send(Err(Error::Timeout)).ok();
+                        item.tx.send(Err(Error::Timeout(timeout))).ok();
                     } else {
                         break;
                     }

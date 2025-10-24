@@ -58,10 +58,12 @@ pub enum Error {
     IpNetworkError(ipnetwork::IpNetworkError),
     EncodeError(EncodeError),
     DecodeError(DecodeError),
-    Timeout,
+
+    Timeout(u64),
     QueueFull,
     ServiceUnaviable,
     Invalid,
+    
     MinRevsionErr(MinRevsionErr),
     NewKeyExistsErr(NewKeyExistsErr),
     DeleteRevNotMatchErr(DeleteRevNotMatchErr),
