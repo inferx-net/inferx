@@ -411,7 +411,12 @@ impl FuncWorker {
                     unreachable!()
                 }
                 FuncWorkerState::Idle => {
-                    error!("FuncWorker return to idle {}/{}", self.funcname, &id);
+                    error!(
+                        "FuncWorker return to idle {}/{} total req {}",
+                        self.funcname,
+                        &id,
+                        self.funcAgent.reqQueue.Count().await
+                    );
                     tokio::select! {
                         _ = self.closeNotify.notified() => {
                             self.stop.store(false, Ordering::SeqCst);

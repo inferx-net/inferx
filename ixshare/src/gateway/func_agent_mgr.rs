@@ -610,24 +610,24 @@ impl FuncAgent {
         statusUpdateTx.try_send(update).unwrap();
     }
 
-    pub fn IncrSlot(&self, cnt: usize) -> usize {
+    pub fn IncrSlot(&self, cnt: usize) -> isize {
         // error!(
         //     "IncrSlot cnt {} {} available {}",
         //     l.Key(),
         //     cnt,
         //     l.availableSlot
         // );
-        return self.availableSlot.fetch_add(cnt as isize, Ordering::SeqCst) as usize + cnt;
+        return self.availableSlot.fetch_add(cnt as isize, Ordering::SeqCst) + cnt as isize;
     }
 
-    pub fn DecrSlot(&self, cnt: usize) -> usize {
+    pub fn DecrSlot(&self, cnt: usize) -> isize {
         // error!(
         //     "DecrSlot cnt {} {} available {}",
         //     l.Key(),
         //     cnt,
         //     l.availableSlot
         // );
-        return self.availableSlot.fetch_sub(cnt as isize, Ordering::SeqCst) as usize - cnt;
+        return self.availableSlot.fetch_sub(cnt as isize, Ordering::SeqCst) - cnt as isize;
     }
 }
 
