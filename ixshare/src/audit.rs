@@ -674,10 +674,16 @@ impl SqlAudit {
         fprevision: i64,
         id: &str,
     ) -> Result<PodFailLog> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, log, exit_info from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {} and id = '{}'", 
+        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, createtime, log, exit_info from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {} and id = '{}'", 
             tenant, namespace, fpname, fprevision, id);
         let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
-        let log: PodFailLog = selectQuery.fetch_one(&self.pool).await?;
+        let log: PodFailLog = match selectQuery.fetch_one(&self.pool).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!("ReadPodFailLog error is {:#?}", &e);
+                return Err(e.into());
+            }
+        };
         return Ok(log);
     }
 }
