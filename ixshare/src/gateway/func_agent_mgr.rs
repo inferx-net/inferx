@@ -585,7 +585,7 @@ impl FuncAgent {
             &funcname,
             fprevision,
             parallelLevel,
-            keepaliveTime,
+            10.max(keepaliveTime), // keepalive must be larger than 10 ms
             endpoint,
             self,
         )

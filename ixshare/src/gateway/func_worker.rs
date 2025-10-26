@@ -49,7 +49,8 @@ pub const WORKER_PORT: u16 = 80;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HttpClientState {
-    Fail,
+    Fail = 0isize,
+    Clear,
     Success,
 }
 
@@ -57,7 +58,17 @@ impl HttpClientState {
     pub fn Fail(&self) -> bool {
         match self {
             Self::Fail => true,
+            Self::Clear => true,
             Self::Success => false,
+        }
+    }
+
+    fn FromIsize(value: isize) -> HttpClientState {
+        match value {
+            0 => HttpClientState::Fail,
+            1 => HttpClientState::Clear,
+            2 => HttpClientState::Success,
+            _ => unreachable!(),
         }
     }
 }
@@ -330,7 +341,7 @@ impl FuncWorker {
                     )));
                 return true;
             }
-        } else {
+        } else if state == HttpClientState::Success {
             // clear failure count
             self.failCount.store(0, Ordering::Relaxed);
         }
@@ -341,19 +352,12 @@ impl FuncWorker {
         }
 
         self.funcAgent.dataNotify.notify_waiters();
-        self.connPool.ReturnSender(sender).await;
-        return false;
-    }
 
-    pub fn WokerName(&self) -> String {
-        return format!(
-            "{}/{}/{}/{}/{}",
-            &self.tenant,
-            &self.namespace,
-            &self.funcname,
-            &self.id.load(Ordering::Relaxed),
-            self.workerId,
-        );
+        if state == HttpClientState::Success {
+            self.connPool.ReturnSender(sender).await;
+        }
+
+        return false;
     }
 
     pub async fn Process(
@@ -437,9 +441,23 @@ impl FuncWorker {
                     unreachable!()
                 }
                 FuncWorkerState::Idle => {
+                    // error!(
+                    //     "funcworker return 1 to idle {} isScaleInWorker {}",
+                    //     &self.WorkerName(),
+                    //     isScaleInWorker
+                    // );
+
+                    // let workername = self.WorkerName();
+                    // defer! {
+                    //     error!(
+                    //         "funcworker return 2 to idle {} isScaleInWorker {}",
+                    //         &workername,
+                    //         isScaleInWorker
+                    //     );
+                    // };
                     let mut interval =
                         tokio::time::interval(std::time::Duration::from_millis(self.keepaliveTime));
-
+                    interval.tick().await;
                     if isScaleInWorker {
                         loop {
                             tokio::select! {
@@ -449,6 +467,8 @@ impl FuncWorker {
                                 }
                                 _ = tokio::time::sleep(Duration::from_millis(1)) => {
                                     if self.funcAgent.NeedLastWorker() {
+                                        // error!("scalein worker 1 timeout {}/{:?}", self.WorkerName(), self.keepaliveTime);
+                                        // self.PrintCounts().await;
                                         self.SetState(FuncWorkerState::Processing);
                                         break;
                                     }
@@ -644,6 +664,10 @@ impl ConnectionPool {
         return pool;
     }
 
+    pub async fn Clear(&self) {
+        self.senders.lock().await.clear();
+    }
+
     pub async fn Init(&self, id: isize, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
         *self.ipAddr.lock().unwrap() = ipaddr;
         self.id.store(id, Ordering::SeqCst);
@@ -822,7 +846,8 @@ impl QHttpClient {
 pub struct HttpSender {
     pub podname: String,
     sender: SendRequest<axum::body::Body>,
-    pub fail: Arc<AtomicBool>,
+    pub fail: Arc<AtomicUsize>,
+    pub reuse: Arc<AtomicUsize>,
 }
 
 impl HttpSender {
@@ -841,7 +866,8 @@ impl HttpSender {
         let sender = HttpSender {
             podname: podname.to_owned(),
             sender: sender,
-            fail: Arc::new(AtomicBool::new(false)),
+            fail: Arc::new(AtomicUsize::new(HttpClientState::Success as usize)),
+            reuse: Arc::new(AtomicUsize::new(1)),
         };
 
         return Ok(sender);
@@ -853,17 +879,26 @@ impl HttpSender {
             res = self.sender.send_request(req) => {
                 match res {
                     Err(e) => {
-                        self.fail.store(true, Ordering::SeqCst);
+                        if e.is_canceled() {
+                            self.fail.store(HttpClientState::Clear as usize, Ordering::SeqCst);
+                        } else {
+                            self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
+                        }
+
+
                         return Err(Error::CommonError(format!(
-                            "QHttpCallClient::Error take {} ms in sending: {}",
+                            "QHttpCallClient::Error take {} ms reuse {} in sending: {}/{}/{}",
                             now.elapsed().as_millis(),
+                            self.reuse.load(Ordering::Relaxed),
+                            e.is_canceled(),
+                            e.is_closed(),
                             e
                         )));
                     }
                     Ok(r) => {
                         let status = r.status();
                         if status != StatusCode::OK {
-                            self.fail.store(true, Ordering::SeqCst);
+                            self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
                         return Ok(r);
                     }
@@ -871,7 +906,7 @@ impl HttpSender {
             }
             // if it takes more than 5 second to connect to instance, the instance is dead, need to kill it.
             _ = tokio::time::sleep(Duration::from_millis(5000)) => {
-                self.fail.store(true, Ordering::SeqCst);
+                self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                 return Err(Error::CommonError(format!(
                     "QHttpCallClient::Error IxTimeout take {} ms in sending",
                     now.elapsed().as_millis()
@@ -881,17 +916,8 @@ impl HttpSender {
     }
 
     pub fn HttpState(&self) -> HttpClientState {
-        let state = if self.fail.load(Ordering::Relaxed) {
-            HttpClientState::Fail
-        } else {
-            HttpClientState::Success
-        };
-        return state;
-    }
-
-    pub fn SetState(&self, state: HttpClientState) {
-        let fail = state.Fail();
-        self.fail.store(fail, Ordering::SeqCst);
+        let value = self.fail.load(Ordering::Relaxed);
+        return HttpClientState::FromIsize(value as isize);
     }
 }
 
@@ -915,6 +941,7 @@ impl Drop for QHttpCallClient {
 
 impl QHttpCallClient {
     pub fn New(finishQueue: mpsc::Sender<HttpSender>, sender: HttpSender) -> Self {
+        sender.reuse.fetch_add(1, Ordering::Relaxed);
         return Self {
             finishQueue: finishQueue,
             sender: Some(sender),

@@ -849,12 +849,12 @@ async fn FuncCall(
         let req = Request::from_parts(parts.clone(), body);
         res = match tclient.Send(req).await {
             Err(e) => {
-                error!(
-                    "FuncCall fail {} retry {} with error {:?}",
-                    tclient.PodName(),
-                    retry,
-                    &e
-                );
+                // error!(
+                //     "FuncCall fail {} retry {} with error {:?}",
+                //     tclient.PodName(),
+                //     retry,
+                //     &e
+                // );
                 error = e;
                 continue;
             }
