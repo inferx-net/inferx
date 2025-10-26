@@ -1345,7 +1345,7 @@ impl SchedulerHandler {
 
         // try to simulate killing idle pods and see whether can find good node
         info!(
-            "FindNode4Pod for resuming func {:?} with idle pods {:#?}",
+            "FindNode4Pod 1 for resuming func {:?} with idle pods {:#?}",
             func.Id(),
             &self.idlePods
         );
@@ -1370,7 +1370,7 @@ impl SchedulerHandler {
 
                             workids.push((*workid, pod.clone()));
                             info!(
-                                "FindNode4Pod for resuming func {:?} with idle pod {:#?} workdis {:#?}",
+                                "FindNode4Pod 2 for resuming 2 func {:?} with idle pod {:#?} workdis {:#?}",
                                 func.Id(),
                                 podKey, workid,
                             );

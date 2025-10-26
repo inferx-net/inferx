@@ -13,7 +13,7 @@
 // limitations under the Licens
 
 use core::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::response::Response;
@@ -67,14 +67,14 @@ pub struct FuncWorkerInner {
     pub closeNotify: Arc<Notify>,
     pub stop: AtomicBool,
 
-    pub workerId: String,
+    pub workerId: isize,
     pub workerName: String,
 
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
     pub fprevision: i64,
-    pub id: Mutex<String>,
+    pub id: AtomicIsize,
 
     pub ipAddr: Mutex<IpAddress>,
     pub hostIpaddr: Mutex<IpAddress>,
@@ -131,7 +131,7 @@ impl Deref for FuncWorker {
 
 impl FuncWorker {
     pub async fn New(
-        workerId: &str,
+        workerId: isize,
         tenant: &str,
         namespace: &str,
         funcname: &str,
@@ -158,12 +158,12 @@ impl FuncWorker {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
 
-            workerId: workerId.to_owned(),
+            workerId: workerId,
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
             funcname: funcname.to_owned(),
             fprevision: fprevision,
-            id: Mutex::new("".to_owned()),
+            id: AtomicIsize::new(-1),
             workerName: "".to_owned(), // todo: remove this
 
             ipAddr: Mutex::new(IpAddress::default()),
@@ -229,22 +229,6 @@ impl FuncWorker {
         }
     }
 
-    pub fn AssignReq(&self, req: FuncClientReq) {
-        // error!(
-        //     "AssignReq ongoingReqCnt ongoing {:?}/{:?}",
-        //     &self.workerId,
-        //     self.ongoingReqCnt.load(Ordering::Relaxed)
-        // );
-        self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
-        match self.reqQueue.try_send(req) {
-            Ok(_) => (),
-            Err(e) => {
-                let req = e.into_inner();
-                req.Send(Err(Error::ServiceUnaviable));
-            }
-        }
-    }
-
     pub fn OngoingReq(&self) -> usize {
         return self.ongoingReqCnt.load(Ordering::SeqCst);
     }
@@ -254,7 +238,7 @@ impl FuncWorker {
             Err(e) => {
                 error!(
                     "funcwork {} EnqEvent fail with error {:?}",
-                    self.id.lock().unwrap().clone(),
+                    self.id.load(Ordering::Relaxed),
                     e
                 );
             }
@@ -268,14 +252,14 @@ impl FuncWorker {
         //     self.connPool.newConn.load(Ordering::Relaxed),
         //     self.connPool.reuseConn.load(Ordering::Relaxed)
         // );
-        let id = self.id.lock().unwrap().clone();
+        let id = self.id.load(Ordering::Relaxed);
         return SchedulerClient {}
             .ReturnWorker(
                 &self.tenant,
                 &self.namespace,
                 &self.funcname,
                 self.fprevision,
-                &id,
+                &format!("{}", id),
                 failworker,
             )
             .await;
@@ -305,24 +289,64 @@ impl FuncWorker {
         self.SetState(FuncWorkerState::Finish);
     }
 
+    pub fn WorkerId(&self) -> isize {
+        return self.workerId;
+    }
+
+    // return is_fail
+    pub async fn HandleReturn(&self, sender: HttpSender) -> bool {
+        self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
+        let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
+        let state = sender.HttpState();
+        if state == HttpClientState::Fail {
+            if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 {
+                // fail 3 times
+                self.FinishWorker();
+                self.funcAgent
+                    .SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((
+                        self.clone(),
+                        Error::CommonError(format!("Http fail")),
+                    )));
+                return true;
+            }
+        } else {
+            // clear failure count
+            self.failCount.store(0, Ordering::Relaxed);
+        }
+
+        self.funcAgent.IncrSlot(1);
+        if ongoingReqCnt == 1 {
+            self.SetState(FuncWorkerState::Idle);
+        }
+
+        self.funcAgent.dataNotify.notify_waiters();
+        self.connPool.ReturnSender(sender).await;
+        return false;
+    }
+
+    pub fn WokerName(&self) -> String {
+        return format!(
+            "{}/{}/{}/{}/{}",
+            &self.tenant,
+            &self.namespace,
+            &self.funcname,
+            &self.id.load(Ordering::Relaxed),
+            self.workerId,
+        );
+    }
+
     pub async fn Process(
         &self,
-        reqQueueRx: mpsc::Receiver<FuncClientReq>,
+        _reqQueueRx: mpsc::Receiver<FuncClientReq>,
         _eventQueueRx: mpsc::Receiver<DeltaEvent>,
         idleClientRx: mpsc::Receiver<HttpSender>,
     ) -> Result<()> {
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
-        let mut reqQueueRx = reqQueueRx;
         self.SetState(FuncWorkerState::Init);
         let resp = match self.LeaseWorker().await {
             Err(e) => {
                 span.end();
-                // error!(
-                //     "Lease worker {} fail with error {:?}",
-                //     self.WorkerName(),
-                //     &e
-                // );
                 self.funcAgent
                     .startingSlot
                     .fetch_sub(self.parallelLevel, Ordering::SeqCst);
@@ -344,30 +368,6 @@ impl FuncWorker {
                     }
                 }
 
-                loop {
-                    match reqQueueRx.try_recv() {
-                        Ok(req) => {
-                            match &e {
-                                Error::SchedulerErr(s) => {
-                                    req.Send(Err(Error::SchedulerErr(s.clone())));
-                                }
-                                e => {
-                                    let err = Err(Error::CommonError(format!("{:?}", e)));
-                                    req.Send(err);
-                                }
-                            }
-
-                            // req.Send(Err(Error::CommonError(format!(
-                            //     "fail to run func {:?} with error {:?}",
-                            //     self.funcname, &err
-                            // ))));
-                        }
-                        Err(_) => {
-                            break;
-                        }
-                    }
-                }
-
                 return Ok(());
             }
             Ok(resp) => resp,
@@ -375,7 +375,7 @@ impl FuncWorker {
 
         span.end();
 
-        let id = resp.id;
+        let id: isize = resp.id.parse().unwrap();
         let ipaddr = resp.ipaddr;
         let keepalive = resp.keepalive;
         let hostipaddr = resp.hostipaddr;
@@ -388,14 +388,14 @@ impl FuncWorker {
             .totalSlot
             .fetch_add(self.parallelLevel, Ordering::SeqCst);
 
-        *self.id.lock().unwrap() = id.clone();
+        self.id.store(id, Ordering::SeqCst);
         *self.ipAddr.lock().unwrap() = IpAddress(ipaddr);
         self.keepalive.store(keepalive, Ordering::SeqCst);
         *self.hostIpaddr.lock().unwrap() = IpAddress(hostipaddr);
         *self.hostport.lock().unwrap() = hostport;
 
         self.connPool
-            .Init(&id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
+            .Init(id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
             .await;
 
         let mut idleClientRx = idleClientRx;
@@ -403,118 +403,133 @@ impl FuncWorker {
         self.funcAgent.IncrSlot(slots);
         self.funcAgent
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
-        self.SetState(FuncWorkerState::Idle);
+        self.SetState(FuncWorkerState::Processing);
+        let reqQueue = self.funcAgent.reqQueue.clone();
         loop {
+            let isScaleInWorker =
+                self.workerId == self.funcAgent.scaleInWorkerId.load(Ordering::Relaxed);
+
             let state = self.State();
             match state {
                 FuncWorkerState::Init | FuncWorkerState::Finish => {
                     unreachable!()
                 }
                 FuncWorkerState::Idle => {
-                    error!(
-                        "FuncWorker return to idle {}/{} total req {}",
-                        self.funcname,
-                        &id,
-                        self.funcAgent.reqQueue.Count().await
-                    );
-                    tokio::select! {
-                        _ = self.closeNotify.notified() => {
-                            self.stop.store(false, Ordering::SeqCst);
-                            // we clean all the waiting request
-                            //self.StopWorker().await?;
-                            return Ok(())
-                        }
-                        // _e = self.ProbeLiveness() => {
-                        //     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail(self.clone()));
-                        //     break;
-                        // }
-                        req = reqQueueRx.recv() => {
-                            match req {
-                                None => {
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_millis(self.keepaliveTime));
+
+                    if isScaleInWorker {
+                        loop {
+                            tokio::select! {
+                                _ = self.closeNotify.notified() => {
+                                    self.stop.store(false, Ordering::SeqCst);
                                     return Ok(())
                                 }
-                                Some(mut req) => {
-                                    self.SetState(FuncWorkerState::Processing);
-                                    let client = match self.NewHttpCallClient().await {
-                                        Err(e) => {
-                                            error!("Funcworker connect fail with error {:?}", &e);
-                                            let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
-                                            req.Send(Err(err));
-                                            self.FinishWorker();
-                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
-                                            break;
-                                        }
-                                        Ok(c) => c,
-                                    };
-                                    req.keepalive = self.keepalive.swap(true, Ordering::SeqCst);
-                                    req.Send(Ok(client));
+                                _ = tokio::time::sleep(Duration::from_millis(1)) => {
+                                    if self.funcAgent.NeedLastWorker() {
+                                        self.SetState(FuncWorkerState::Processing);
+                                        break;
+                                    }
                                 }
+                                _ = interval.tick() => {
+                                    self.FinishWorker();
+                                    self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
+                                    return Ok(())
+                                }
+
                             }
                         }
-                        _ = tokio::time::sleep(Duration::from_millis(self.keepaliveTime)) => {
-                            error!("FuncWorker idle timeout {}/{}", self.funcname, &id);
-                            self.FinishWorker();
-                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
-                            break;
-                        }
+                    } else {
+                        tokio::select! {
+                            _ = self.closeNotify.notified() => {
+                                self.stop.store(false, Ordering::SeqCst);
+                                // we clean all the waiting request
+                                //self.StopWorker().await?;
+                                return Ok(())
+                            }
+                            _ = reqQueue.WaitReq() => {
+                                self.SetState(FuncWorkerState::Processing);
+                            }
+                            _ = interval.tick() => {
+                                self.FinishWorker();
+                                self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
+                                break;
+                            }
 
+                        }
                     }
                 }
                 FuncWorkerState::Processing => {
-                    tokio::select! {
-                        _ = self.closeNotify.notified() => {
-                            self.stop.store(false, Ordering::SeqCst);
-                            //self.StopWorker().await?;
-                            return Ok(())
+                    while self.funcAgent.parallelLeve.load(Ordering::Relaxed)
+                        > self.ongoingReqCnt.load(Ordering::Relaxed)
+                    {
+                        let req = reqQueue.TryRecv().await;
+                        match req {
+                            None => break,
+                            Some(req) => {
+                                let client = match self.NewHttpCallClient().await {
+                                    Err(e) => {
+                                        error!("Funcworker connect fail with error {:?}", &e);
+                                        let err = Error::CommonError(format!(
+                                            "Funcworker connect fail with error {:?}",
+                                            &e
+                                        ));
+                                        req.Send(Err(err));
+                                        self.FinishWorker();
+                                        self.funcAgent.SendWorkerStatusUpdate(
+                                            WorkerUpdate::WorkerFail((self.clone(), e)),
+                                        );
+                                        break;
+                                    }
+                                    Ok(c) => c,
+                                };
+                                self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
+                                req.Send(Ok(client));
+                            }
                         }
-                        req = reqQueueRx.recv() => {
-                            match req {
-                                None => {
-                                    return Ok(())
-                                }
-                                Some(req) => {
-                                    let client = match self.NewHttpCallClient().await {
-                                        Err(e) => {
-                                            error!("Funcworker connect fail with error {:?}", &e);
-                                            let err = Error::CommonError(format!("Funcworker connect fail with error {:?}", &e));
-                                            req.Send(Err(err));
-                                            self.FinishWorker();
-                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), e)));
-                                            break;
+                    }
+
+                    if self.funcAgent.parallelLeve.load(Ordering::Relaxed)
+                        > self.ongoingReqCnt.load(Ordering::Relaxed)
+                    {
+                        tokio::select! {
+                            _ = self.closeNotify.notified() => {
+                                self.stop.store(false, Ordering::SeqCst);
+                                //self.StopWorker().await?;
+                                return Ok(())
+                            }
+                            _ = reqQueue.WaitReq() => {
+                            }
+                            httpstate = idleClientRx.recv() => {
+                                match httpstate {
+                                    None => {
+                                        return Ok(())
+                                    }
+                                    Some(sender) => {
+                                        if self.HandleReturn(sender).await {
+                                            return Ok(());
                                         }
-                                        Ok(c) => c,
-                                    };
-                                    req.Send(Ok(client));
+                                    }
                                 }
                             }
                         }
-                        httpstate = idleClientRx.recv() => {
-                            match httpstate {
-                                None => {
-                                    return Ok(())
-                                }
-                                Some(sender) => {
-                                    self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
-                                    let state = sender.HttpState();
-                                    if state == HttpClientState::Fail {
-                                        if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 { // fail 3 times
-                                            self.FinishWorker();
-                                            self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((self.clone(), Error::CommonError(format!("Http fail")))));
-                                            break;
+                    } else {
+                        tokio::select! {
+                            _ = self.closeNotify.notified() => {
+                                self.stop.store(false, Ordering::SeqCst);
+                                //self.StopWorker().await?;
+                                return Ok(())
+                            }
+                            httpstate = idleClientRx.recv() => {
+                                match httpstate {
+                                    None => {
+                                        return Ok(())
+                                    }
+                                    Some(sender) => {
+                                        if self.HandleReturn(sender).await {
+                                            return Ok(());
                                         }
-                                    } else {
-                                        // clear failure count
-                                        self.failCount.store(0, Ordering::Relaxed);
                                     }
-
-                                    self.funcAgent.IncrSlot(1);
-                                    let cnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
-                                    if cnt == 1 {
-                                        self.SetState(FuncWorkerState::Idle);
-                                    }
-
-                                    self.funcAgent.dataNotify.notify_waiters();
-                                    self.connPool.ReturnSender(sender).await;
                                 }
                             }
                         }
@@ -537,12 +552,13 @@ impl FuncWorker {
 
     pub fn WorkerName(&self) -> String {
         return format!(
-            "{}/{}/{}/{}/{:?}",
+            "{}/{}/{}/{}/{:?}/{}",
             &self.tenant,
             &self.namespace,
             &self.funcname,
             &self.fprevision,
-            self.id.lock()
+            self.id.load(Ordering::Relaxed),
+            self.workerId
         );
     }
 }
@@ -553,7 +569,7 @@ pub struct ConnectionPoolInner {
     pub namespace: String,
     pub funcname: String,
     pub revision: i64,
-    pub id: Mutex<String>,
+    pub id: AtomicIsize,
     pub ipAddr: Mutex<IpAddress>,
     pub hostIpaddr: Mutex<IpAddress>,
     pub hostport: Mutex<u16>,
@@ -591,7 +607,7 @@ impl ConnectionPool {
             namespace: namespace.to_owned(),
             funcname: funcname.to_owned(),
             revision: revision,
-            id: Mutex::new("".to_owned()),
+            id: AtomicIsize::new(-1),
             ipAddr: Mutex::new(IpAddress::default()),
             hostIpaddr: Mutex::new(Default::default()),
             hostport: Mutex::new(0),
@@ -608,9 +624,9 @@ impl ConnectionPool {
         return pool;
     }
 
-    pub async fn Init(&self, id: &str, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
+    pub async fn Init(&self, id: isize, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
         *self.ipAddr.lock().unwrap() = ipaddr;
-        *self.id.lock().unwrap() = id.to_owned();
+        self.id.store(id, Ordering::SeqCst);
         *self.hostIpaddr.lock().unwrap() = hostipaddr;
         *self.hostport.lock().unwrap() = hostport;
         // let mut joinset = self.joinset.lock().await;
@@ -621,10 +637,10 @@ impl ConnectionPool {
     }
 
     pub fn PodName(&self) -> String {
-        let id = self.id.lock().unwrap().clone();
+        let id = self.id.load(Ordering::Relaxed);
         return format!(
             "{}/{}/{}/{}/{}",
-            &self.tenant, &self.namespace, &self.funcname, self.revision, &id
+            &self.tenant, &self.namespace, &self.funcname, self.revision, id
         );
     }
 
