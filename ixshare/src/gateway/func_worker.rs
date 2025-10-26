@@ -277,7 +277,7 @@ impl FuncWorker {
             .await;
     }
 
-    pub fn FinishWorker(&self) {
+    pub async fn FinishWorker(&self) {
         self.funcAgent
             .totalSlot
             .fetch_sub(self.parallelLevel, Ordering::SeqCst);
@@ -286,11 +286,32 @@ impl FuncWorker {
         );
         let slot = self.AvailableSlot(); // need to dec the current connect when fail
         self.funcAgent.DecrSlot(slot);
+        self.funcAgent
+            .activeReqCnt
+            .fetch_sub(self.ongoingReqCnt.load(Ordering::SeqCst), Ordering::SeqCst);
+        // self.PrintCounts().await;
         self.SetState(FuncWorkerState::Finish);
     }
 
     pub fn WorkerId(&self) -> isize {
         return self.workerId;
+    }
+
+    pub async fn PrintCounts(&self) {
+        let activeReqCnt = self.funcAgent.ActiveReqCnt();
+        let ongoingReqCnt = self.OngoingReq();
+        let waitReqCnt = self.funcAgent.reqQueue.Count().await;
+        error!(
+            "PrintCounts activeReqCnt {}, ongoingReqCnt {} waitReqCnt {} workercount {}",
+            activeReqCnt,
+            ongoingReqCnt,
+            waitReqCnt,
+            self.funcAgent.workers.lock().unwrap().len()
+        );
+
+        if self.funcAgent.workers.lock().unwrap().len() == 1 {
+            assert!(activeReqCnt == waitReqCnt);
+        }
     }
 
     // return is_fail
@@ -301,7 +322,7 @@ impl FuncWorker {
         if state == HttpClientState::Fail {
             if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 {
                 // fail 3 times
-                self.FinishWorker();
+                self.FinishWorker().await;
                 self.funcAgent
                     .SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((
                         self.clone(),
@@ -412,6 +433,7 @@ impl FuncWorker {
             let state = self.State();
             match state {
                 FuncWorkerState::Init | FuncWorkerState::Finish => {
+                    error!("Get unexpected state {:?}", state);
                     unreachable!()
                 }
                 FuncWorkerState::Idle => {
@@ -432,7 +454,7 @@ impl FuncWorker {
                                     }
                                 }
                                 _ = interval.tick() => {
-                                    self.FinishWorker();
+                                    self.FinishWorker().await;
                                     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
                                     return Ok(())
                                 }
@@ -451,9 +473,9 @@ impl FuncWorker {
                                 self.SetState(FuncWorkerState::Processing);
                             }
                             _ = interval.tick() => {
-                                self.FinishWorker();
+                                self.FinishWorker().await;
                                 self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
-                                break;
+                                return Ok(())
                             }
 
                         }
@@ -467,6 +489,7 @@ impl FuncWorker {
                         match req {
                             None => break,
                             Some(req) => {
+                                self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
                                 let client = match self.NewHttpCallClient().await {
                                     Err(e) => {
                                         error!("Funcworker connect fail with error {:?}", &e);
@@ -475,15 +498,14 @@ impl FuncWorker {
                                             &e
                                         ));
                                         req.Send(Err(err));
-                                        self.FinishWorker();
+                                        self.FinishWorker().await;
                                         self.funcAgent.SendWorkerStatusUpdate(
                                             WorkerUpdate::WorkerFail((self.clone(), e)),
                                         );
-                                        break;
+                                        return Ok(());
                                     }
                                     Ok(c) => c,
                                 };
-                                self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
                                 req.Send(Ok(client));
                             }
                         }
@@ -537,8 +559,6 @@ impl FuncWorker {
                 }
             }
         }
-
-        return Ok(());
     }
 
     pub async fn NewHttpCallClient(&self) -> Result<QHttpCallClient> {

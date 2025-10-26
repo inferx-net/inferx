@@ -391,14 +391,14 @@ impl FuncAgent {
     pub async fn NeedNewWorker(&self) -> bool {
         let reqCnt = self.activeReqCnt.load(Ordering::Relaxed);
         let totalSlotCnt = self.TotalSlot();
-        let waitReqcnt = self.reqQueue.Count().await;
+        // let waitReqcnt = self.reqQueue.Count().await;
         match &*self.scaleoutPolicy.lock().unwrap() {
             ScaleOutPolicy::WaitQueueRatio(ratio) => {
                 if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
-                    error!(
-                        "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
-                        reqCnt, totalSlotCnt, waitReqcnt
-                    );
+                    // error!(
+                    //     "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
+                    //     reqCnt, totalSlotCnt, waitReqcnt
+                    // );
                     return true;
                 }
             }
