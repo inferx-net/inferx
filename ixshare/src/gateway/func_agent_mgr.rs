@@ -410,7 +410,7 @@ impl FuncAgent {
     pub fn NeedLastWorker(&self) -> bool {
         let reqCnt = self.activeReqCnt.load(Ordering::Relaxed);
         let totalSlotCnt = self.TotalSlot() - self.ParallelLevel();
-        return reqCnt >= totalSlotCnt;
+        return reqCnt > totalSlotCnt;
     }
 
     pub fn ActiveReqCnt(&self) -> usize {
@@ -435,8 +435,8 @@ impl FuncAgent {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
 
         loop {
-            let timeoutCnt = reqQueue.CleanTimeout().await;
-            self.activeReqCnt.fetch_sub(timeoutCnt, Ordering::SeqCst);
+            let timeoutReqCnt = reqQueue.CleanTimeout().await;
+            self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
             if self.NeedNewWorker().await {
                 if throttle.TryAcquire().await {
                     error!(
