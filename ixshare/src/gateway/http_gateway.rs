@@ -680,8 +680,8 @@ async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) 
 
     // error!("Http call fail with error {:?}", &e);
     let errcode = match &e {
-        Error::Timeout(timeout) => {
-            error!("Http start fail with timeout {:?}", timeout);
+        Error::Timeout(_timeout) => {
+            error!("Http start fail with timeout {:?}", _timeout);
             StatusCode::GATEWAY_TIMEOUT
         }
         Error::QueueFull => {

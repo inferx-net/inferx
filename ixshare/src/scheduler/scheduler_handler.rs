@@ -1267,6 +1267,11 @@ impl SchedulerHandler {
             None => (),
             Some(status) => {
                 for (_, pod) in &status.pods {
+                    // error!(
+                    //     "ReadyPodCount podname {:?}/{:?}",
+                    //     pod.pod.PodKey(),
+                    //     pod.State()
+                    // );
                     if pod.State().IsResumed() {
                         count += 1;
                     }
@@ -1345,9 +1350,10 @@ impl SchedulerHandler {
 
         // try to simulate killing idle pods and see whether can find good node
         info!(
-            "FindNode4Pod 1 for resuming func {:?} with idle pods {:#?}",
+            "FindNode4Pod 1 for resuming func {:?} with idle pods {:#?} nodeSnapshots is {:#?}",
             func.Id(),
-            &self.idlePods
+            &self.idlePods,
+            &nodeSnapshots
         );
 
         for (workid, podKey) in &self.idlePods {
@@ -1817,6 +1823,10 @@ impl SchedulerHandler {
             Some(fpStatus) => fpStatus.func.clone(),
         };
 
+        if func.object.status.state == FuncState::Fail {
+            return Ok(());
+        }
+
         let nodeStatus = match self.nodes.get(nodename) {
             None => return Ok(()),
             Some(n) => n,
@@ -2268,10 +2278,6 @@ impl SchedulerHandler {
             .map(|(_, pod)| pod.clone())
             .collect();
 
-        for pod in &terminalPods {
-            pod.SetState(WorkerPodState::Terminating);
-        }
-
         let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
         let standbyResource = pod.pod.object.spec.allocResources.clone();
         nodeResource.Add(&standbyResource)?;
@@ -2308,6 +2314,10 @@ impl SchedulerHandler {
                 return Err(e);
             }
             Ok(()) => (),
+        }
+
+        for pod in &terminalPods {
+            pod.SetState(WorkerPodState::Terminating);
         }
 
         for (workid, pod) in &terminateWorkers {

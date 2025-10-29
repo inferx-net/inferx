@@ -531,7 +531,9 @@ impl FuncWorker {
                         }
                     }
 
-                    if self.funcAgent.parallelLeve.load(Ordering::Relaxed)
+                    if self.ongoingReqCnt.load(Ordering::Relaxed) == 0 {
+                        self.SetState(FuncWorkerState::Idle);
+                    } else if self.funcAgent.parallelLeve.load(Ordering::Relaxed)
                         > self.ongoingReqCnt.load(Ordering::Relaxed)
                     {
                         tokio::select! {
@@ -885,7 +887,6 @@ impl HttpSender {
                             self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
 
-
                         return Err(Error::CommonError(format!(
                             "QHttpCallClient::Error take {} ms reuse {} in sending: {}/{}/{}",
                             now.elapsed().as_millis(),
@@ -905,7 +906,7 @@ impl HttpSender {
                 }
             }
             // if it takes more than 5 second to connect to instance, the instance is dead, need to kill it.
-            _ = tokio::time::sleep(Duration::from_millis(5000)) => {
+            _ = tokio::time::sleep(Duration::from_millis(10000)) => {
                 self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                 return Err(Error::CommonError(format!(
                     "QHttpCallClient::Error IxTimeout take {} ms in sending",
