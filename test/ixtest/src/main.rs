@@ -8,7 +8,9 @@ use std::{
 use reqwest::Client;
 use serde_json::json;
 use serde_json::Value;
-use tokio::time::sleep;
+use tokio::sync::Mutex;
+
+pub static REQ_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[tokio::main]
 async fn main() {
@@ -45,6 +47,7 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
     let mismatch = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
 
+    let joined: Arc<Mutex<BTreeMap<String, i32>>> = Arc::new(Mutex::new(BTreeMap::new()));
     for _ in 0..concurrency {
         let client = client.clone();
         let url = url.clone();
@@ -52,21 +55,23 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
         let fail = fail.clone();
         let mismatch = mismatch.clone();
 
+        let clone = joined.clone();
         let model = model.to_string();
         handles.push(tokio::spawn(async move {
             let mut first = None;
+            let mut output: BTreeMap<String, i32> = BTreeMap::new();
+
             while Instant::now() < stop_time {
+                let req_id = REQ_COUNT.fetch_add(1, Ordering::SeqCst);
                 let body = json!({
                     "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
-                    "max_tokens": "10",
+                    "max_tokens": "20",
                     "model": model,
                     "stream": "false",
                     "temperature": "0",
                     "top_p": 1.0,
                     "seed": 0
                 });
-
-                let mut output = BTreeMap::new();
 
                 match client.post(&url).json(&body).send().await {
                     Ok(resp) => {
@@ -109,13 +114,9 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                                     // println!("mismatch expect {:?}\n actual {:?}", first.as_ref(), &text);
                                     mismatch.fetch_add(1, Ordering::Relaxed);
                                 }
-
-                                if output.len() > 1 {
-                                    println!("mismatch text {:?}", output);
-                                }
                             }
-                            Ok(_) => {
-                                println!("status is {:?}", &status);
+                            Ok(resp) => {
+                                println!("status is {:?}, reqid is {}, resp is {}", &status, req_id, resp);
                                 fail.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(e) => {
@@ -131,19 +132,46 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                 }
 
                 // small pause between requests
-                sleep(Duration::from_millis(10)).await;
+                // sleep(Duration::from_millis(10)).await;
             }
+
+            let mut lock = clone.lock().await;
+            for (k, &c) in &output {
+                match lock.get_mut(k) {
+                    Some(v) => {
+                        *v += c;
+                    }   
+                    None => {
+                        lock.insert(k.to_owned(), c);
+                    }
+                }
+            }
+
+
         }));
     }
+
 
     for h in handles {
         let _ = h.await;
     }
 
+    // let lock = joined.lock().await;
+    // if lock.len() > 0 {
+    //     println!("output text {:#?}", &*lock);
+    // }
+
     println!(
-        "[200 OK & match]:\t{}\t[mismatch]:\t\t{}\t[fail]:\t\t\t{}\t\n",
-        success.load(Ordering::Relaxed),
+        "[200 OK]:\t{}\t[mismatch]:\t\t{}\t[fail]:\t\t\t{}\t\n",
+        success.load(Ordering::Relaxed) + mismatch.load(Ordering::Relaxed),
         mismatch.load(Ordering::Relaxed),
         fail.load(Ordering::Relaxed),
     );
+
+    println!(
+        "===================== model: {} Done ======================\n\n\n",
+        model
+    );
+    
+    
 }
