@@ -497,12 +497,12 @@ impl FuncAgent {
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 worker.ReturnWorker(true).await.ok();
-                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?}/{:?}", worker.funcname, worker.id, e);
+                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
                                 self.RemoveWorker(&worker);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 worker.ReturnWorker(false).await.ok();
-                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.funcname, worker.id);
+                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.WorkerName(), worker.id);
                                 self.RemoveWorker(&worker);
                             }
                             WorkerUpdate::WorkerLeaseFail((worker, _e)) => {

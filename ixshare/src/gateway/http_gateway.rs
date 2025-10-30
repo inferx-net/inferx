@@ -688,7 +688,7 @@ async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) 
             error!("Http start fail with QueueFull");
             StatusCode::SERVICE_UNAVAILABLE
         }
-        Error::Invalid => {
+        Error::BAD_REQUEST => {
             error!("Http start fail with bade request");
             StatusCode::BAD_REQUEST
         }
@@ -796,7 +796,8 @@ async fn FuncCall(
     // Collect the body bytes
     let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
         Err(_e) => {
-            let resp = FailureResponse(Error::Invalid, &mut labels, Status::InvalidRequest).await;
+            let resp =
+                FailureResponse(Error::BAD_REQUEST, &mut labels, Status::InvalidRequest).await;
             return Ok(resp);
         }
         Ok(b) => b,
@@ -871,8 +872,20 @@ async fn FuncCall(
         };
 
         let status = res.status();
-        if status != StatusCode::OK {
-            error!("Http call get fail status {:?}", status);
+        if status == StatusCode::BAD_REQUEST {
+            let text = String::from_utf8(bytes.to_vec()).ok();
+            error!("Get http bad request, the http req is {:?}", text);
+            // Convert to string
+            let resp =
+                FailureResponse(Error::BAD_REQUEST, &mut labels, Status::InvalidRequest).await;
+            ttftCtx.span().end();
+            return Ok(resp);
+        } else if status != StatusCode::OK {
+            error!(
+                "Http call get fail status {:?} for pod {}",
+                status,
+                tclient.PodName()
+            );
             continue;
         }
 

@@ -62,8 +62,8 @@ pub enum Error {
     Timeout(u64),
     QueueFull,
     ServiceUnaviable,
-    Invalid,
-    
+    BAD_REQUEST,
+
     MinRevsionErr(MinRevsionErr),
     NewKeyExistsErr(NewKeyExistsErr),
     DeleteRevNotMatchErr(DeleteRevNotMatchErr),

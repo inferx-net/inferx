@@ -898,7 +898,7 @@ impl HttpSender {
                     }
                     Ok(r) => {
                         let status = r.status();
-                        if status != StatusCode::OK {
+                        if status != StatusCode::OK || status != StatusCode::BAD_REQUEST {
                             self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
                         return Ok(r);
