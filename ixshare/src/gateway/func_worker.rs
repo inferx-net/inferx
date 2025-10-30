@@ -881,6 +881,7 @@ impl HttpSender {
             res = self.sender.send_request(req) => {
                 match res {
                     Err(e) => {
+                        // error!("HttpSender fail for pod {} with error {:?} is cancel {:?}", &self.podname, e, e.is_canceled());
                         if e.is_canceled() {
                             self.fail.store(HttpClientState::Clear as usize, Ordering::SeqCst);
                         } else {
@@ -898,7 +899,8 @@ impl HttpSender {
                     }
                     Ok(r) => {
                         let status = r.status();
-                        if status != StatusCode::OK || status != StatusCode::BAD_REQUEST {
+                        if status != StatusCode::OK && status != StatusCode::BAD_REQUEST {
+                            // error!("HttpSender fail for pod {} with error response {:?}", &self.podname, &status);
                             self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
                         return Ok(r);
