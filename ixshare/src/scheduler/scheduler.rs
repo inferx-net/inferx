@@ -242,14 +242,11 @@ impl WorkerPod {
         *self.workerState.lock().unwrap() = state;
     }
 
-    pub fn SetIdle(&self) -> u64 {
-        let returnId = IDLE_POD_SEQNUM.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.SetState(WorkerPodState::Idle(returnId));
-        return returnId;
+    pub fn SetIdle(&self) {
+        self.SetState(WorkerPodState::Idle);
     }
 
-    pub fn SetWorking(&self, gatewayId: i64) -> u64 {
-        let returnId;
+    pub fn SetWorking(&self, gatewayId: i64) {
         match *self.workerState.lock().unwrap() {
             WorkerPodState::Working(gatewayId) => {
                 unreachable!("WorkerPod::SetWorking gateway {}", gatewayId);
@@ -257,18 +254,13 @@ impl WorkerPod {
             WorkerPodState::Terminating => {
                 unreachable!("WorkerPod::SetWorking state WorkerPodState::Terminating");
             }
-            WorkerPodState::Init => {
-                returnId = 0;
-            }
+            WorkerPodState::Init => {}
             WorkerPodState::Resuming | WorkerPodState::Standby => {
                 unreachable!("WorkerPod::SetWorking Resuming");
             }
-            WorkerPodState::Idle(id) => {
-                returnId = id;
-            }
+            WorkerPodState::Idle => {}
         }
         *self.workerState.lock().unwrap() = WorkerPodState::Working(gatewayId);
-        return returnId;
     }
 
     pub fn New(pod: FuncPod) -> Self {

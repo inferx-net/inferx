@@ -473,7 +473,7 @@ pub struct SchedulerHandler {
 
     /********************idle pods ************************* */
     // returnId --> PodKey()
-    pub idlePods: BTreeMap<u64, String>,
+    pub idlePods: BTreeSet<String>,
 
     /********************stopping pods ************************* */
     pub stoppingPods: BTreeSet<String>,
@@ -537,9 +537,9 @@ impl SchedulerHandler {
             match state {
                 WorkerPodState::Working(gatewayId) => {
                     if timeoutGateways.contains(&gatewayId) {
-                        let returnId = worker.SetIdle();
+                        worker.SetIdle();
                         // how to handle the recovered failure gateway?
-                        self.idlePods.insert(returnId, worker.pod.PodKey());
+                        self.idlePods.insert(worker.pod.PodKey());
                     }
                 }
                 _ => (),
@@ -559,8 +559,8 @@ impl SchedulerHandler {
         for worker in &pods {
             let pod = &worker.pod;
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
-                let returnId = worker.SetWorking(req.gateway_id);
-                let remove = self.idlePods.remove(&returnId);
+                worker.SetWorking(req.gateway_id);
+                let remove = self.idlePods.remove(&worker.pod.PodKey());
                 error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
@@ -719,7 +719,10 @@ impl SchedulerHandler {
         // );
 
         if req.failworker {
-            error!("ProcessReturnWorkerReq return and kill failure pod {}", worker.pod.PodKey());
+            error!(
+                "ProcessReturnWorkerReq return and kill failure pod {}",
+                worker.pod.PodKey()
+            );
             match self.StopWorker(&worker.pod).await {
                 Ok(()) => (),
                 Err(e) => {
@@ -731,8 +734,8 @@ impl SchedulerHandler {
                 }
             }
         } else {
-            let returnId = worker.SetIdle();
-            self.idlePods.insert(returnId, worker.pod.PodKey());
+            worker.SetIdle();
+            self.idlePods.insert(worker.pod.PodKey());
         }
 
         let resp = na::ReturnWorkerResp {
@@ -1290,7 +1293,7 @@ impl SchedulerHandler {
         forStandby: bool,
         candidateNodes: &BTreeSet<String>,
         createSnapshot: bool,
-    ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
+    ) -> Result<(String, Vec<WorkerPod>, NodeResources)> {
         let mut nodeSnapshots = BTreeMap::new();
         let mut allocStates = BTreeMap::new();
 
@@ -1340,7 +1343,7 @@ impl SchedulerHandler {
             }
 
             allocStates.insert(nodename.clone(), state);
-            nodeSnapshots.insert(nodename.clone(), (nr, Vec::<(u64, WorkerPod)>::new()));
+            nodeSnapshots.insert(nodename.clone(), (nr, Vec::<WorkerPod>::new()));
         }
 
         let mut missWorkers = Vec::new();
@@ -1356,10 +1359,10 @@ impl SchedulerHandler {
             &nodeSnapshots
         );
 
-        for (workid, podKey) in &self.idlePods {
+        for podKey in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
-                    missWorkers.push(*workid);
+                    missWorkers.push(podKey.to_owned());
                     continue;
                 }
                 Some(pod) => {
@@ -1374,11 +1377,11 @@ impl SchedulerHandler {
                                 continue;
                             }
 
-                            workids.push((*workid, pod.clone()));
+                            workids.push(pod.clone());
                             info!(
-                                "FindNode4Pod 2 for resuming 2 func {:?} with idle pod {:#?} workdis {:#?}",
+                                "FindNode4Pod 2 for resuming 2 func {:?} with idle pod {:#?}",
                                 func.Id(),
-                                podKey, workid,
+                                podKey,
                             );
                             nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
@@ -1404,9 +1407,9 @@ impl SchedulerHandler {
             }
         }
 
-        for workerid in &missWorkers {
-            let pod = self.idlePods.remove(workerid);
-            error!("FindNode4Pod remove idlepod missing {:?}", &pod);
+        for podKey in &missWorkers {
+            self.idlePods.remove(podKey);
+            error!("FindNode4Pod remove idlepod missing {:?}", &podKey);
         }
 
         if findnodeName.is_none() {
@@ -1432,7 +1435,7 @@ impl SchedulerHandler {
     pub async fn GetBestResumeWorker(
         &mut self,
         fp: &Function,
-    ) -> Result<(WorkerPod, Vec<(u64, WorkerPod)>, NodeResources)> {
+    ) -> Result<(WorkerPod, Vec<WorkerPod>, NodeResources)> {
         let funcid = fp.Id();
 
         let pods = self.GetFuncPodsByKey(&funcid)?;
@@ -1698,11 +1701,11 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub fn VerifyMinReplicaPolicy(&self, pod: &WorkerPod, workids: &Vec<(u64, WorkerPod)>) -> bool {
+    pub fn VerifyMinReplicaPolicy(&self, pod: &WorkerPod, workids: &Vec<WorkerPod>) -> bool {
         let evictfuncname = pod.pod.FuncKey();
         let totalevictcnt = {
             let mut count = 0;
-            for (_, pod) in workids.clone() {
+            for pod in workids.clone() {
                 if &pod.pod.FuncKey() == &evictfuncname {
                     count += 1;
                 }
@@ -1726,14 +1729,14 @@ impl SchedulerHandler {
         available: &mut NodeResources,
         reqResource: &Resources,
         createSnapshot: bool,
-    ) -> Result<Vec<(u64, WorkerPod)>> {
-        let mut workids: Vec<(u64, WorkerPod)> = Vec::new();
+    ) -> Result<Vec<WorkerPod>> {
+        let mut workids: Vec<WorkerPod> = Vec::new();
         let mut missWorkers = Vec::new();
 
-        for (workid, podKey) in &self.idlePods {
+        for podKey in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
-                    missWorkers.push(*workid);
+                    missWorkers.push(podKey.to_owned());
                     continue;
                 }
                 Some(pod) => {
@@ -1745,7 +1748,7 @@ impl SchedulerHandler {
                         continue;
                     }
 
-                    workids.push((*workid, pod.clone()));
+                    workids.push(pod.clone());
                     available.Add(&pod.pod.object.spec.allocResources).unwrap();
                     if available.CanAlloc(&reqResource, createSnapshot).Ok() {
                         break;
@@ -1902,10 +1905,8 @@ impl SchedulerHandler {
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
         }
 
-        let terminatePods: Vec<WorkerPod> = terminateWorkers
-            .iter()
-            .map(|(_, pod)| pod.clone())
-            .collect();
+        let terminatePods: Vec<WorkerPod> =
+            terminateWorkers.iter().map(|pod| pod.clone()).collect();
 
         let id: u64 = match self
             .StartWorker(
@@ -1932,9 +1933,9 @@ impl SchedulerHandler {
 
         self.SetSnapshotStatus(funcId, nodename, SnapshotScheduleState::Scheduled);
 
-        for (workid, pod) in &terminateWorkers {
-            let remove = self.idlePods.remove(workid);
-            assert!(remove.is_some());
+        for pod in &terminateWorkers {
+            let remove = self.idlePods.remove(&pod.pod.PodKey());
+            assert!(remove);
             let podkey = pod.pod.PodKey();
             match self.pods.get(&podkey) {
                 None => unreachable!(),
@@ -2003,7 +2004,9 @@ impl SchedulerHandler {
         }
 
         match self.nodes.get(nodename) {
-            None => return Ok(()),
+            None => {
+                return Ok(());
+            }
             Some(ns) => {
                 // add another StandbyTask for the node
                 self.taskQueue
@@ -2273,10 +2276,7 @@ impl SchedulerHandler {
         let nodename = pod.pod.object.spec.nodename.clone();
         let id = pod.pod.object.spec.id.clone();
 
-        let terminalPods: Vec<WorkerPod> = terminateWorkers
-            .iter()
-            .map(|(_, pod)| pod.clone())
-            .collect();
+        let terminalPods: Vec<WorkerPod> = terminateWorkers.iter().map(|pod| pod.clone()).collect();
 
         let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
         let standbyResource = pod.pod.object.spec.allocResources.clone();
@@ -2320,9 +2320,9 @@ impl SchedulerHandler {
             pod.SetState(WorkerPodState::Terminating);
         }
 
-        for (workid, pod) in &terminateWorkers {
-            let remove = self.idlePods.remove(workid);
-            assert!(remove.is_some());
+        for pod in &terminateWorkers {
+            let remove = self.idlePods.remove(&pod.pod.PodKey());
+            assert!(remove);
             let podkey = pod.pod.PodKey();
             match self.pods.get(&podkey) {
                 None => unreachable!(),
@@ -2650,9 +2650,8 @@ impl SchedulerHandler {
         assert!(self.pods.insert(podKey.clone(), boxPod.clone()).is_none());
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
-            let returnId = boxPod.SetIdle();
-
-            self.idlePods.insert(returnId, boxPod.pod.PodKey());
+            boxPod.SetIdle();
+            self.idlePods.insert(boxPod.pod.PodKey());
         }
 
         match self.nodes.get_mut(&nodename) {

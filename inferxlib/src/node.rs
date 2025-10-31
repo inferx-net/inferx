@@ -50,22 +50,22 @@ pub enum WorkerPodState {
     Init,
     Standby,
     Resuming,
-    Idle(ReturnId), // no one leasing the worker, inner is return SeqId,
-    Working(i64),   // leased by one gateway, GatewayId
+    Idle,         // no one leasing the worker
+    Working(i64), // leased by one gateway, GatewayId
     Terminating,
 }
 
 impl WorkerPodState {
     pub fn IsIdle(&self) -> bool {
         match self {
-            Self::Idle(_) => return true,
+            Self::Idle => return true,
             _ => return false,
         }
     }
 
     pub fn IsResumed(&self) -> bool {
         match self {
-            Self::Idle(_) => return true,
+            Self::Idle => return true,
             Self::Working(_) => return true,
             Self::Resuming => return true,
             _ => return false,

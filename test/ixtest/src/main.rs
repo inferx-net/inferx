@@ -116,7 +116,7 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
                                 }
                             }
                             Ok(resp) => {
-                                println!("status is {:?}, reqid is {}, resp is {}", &status, req_id, resp);
+                                println!("status is {:?}, model is {} reqid is {}, resp is {}", &status, &model, req_id, resp);
                                 fail.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(e) => {
