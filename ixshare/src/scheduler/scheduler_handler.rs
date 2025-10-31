@@ -1905,9 +1905,6 @@ impl SchedulerHandler {
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
         }
 
-        let terminatePods: Vec<WorkerPod> =
-            terminateWorkers.iter().map(|pod| pod.clone()).collect();
-
         let id: u64 = match self
             .StartWorker(
                 &nodeAgentUrl,
@@ -1915,7 +1912,7 @@ impl SchedulerHandler {
                 &resources,
                 &resources,
                 na::CreatePodType::Snapshot,
-                &terminatePods,
+                &terminateWorkers,
             )
             .await
         {
@@ -2276,8 +2273,6 @@ impl SchedulerHandler {
         let nodename = pod.pod.object.spec.nodename.clone();
         let id = pod.pod.object.spec.id.clone();
 
-        let terminalPods: Vec<WorkerPod> = terminateWorkers.iter().map(|pod| pod.clone()).collect();
-
         let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
         let standbyResource = pod.pod.object.spec.allocResources.clone();
         nodeResource.Add(&standbyResource)?;
@@ -2305,7 +2300,7 @@ impl SchedulerHandler {
                 pod.pod.object.spec.fprevision,
                 &id,
                 &resources,
-                &terminalPods,
+                &terminateWorkers,
             )
             .await
         {
@@ -2316,7 +2311,7 @@ impl SchedulerHandler {
             Ok(()) => (),
         }
 
-        for pod in &terminalPods {
+        for pod in &terminateWorkers {
             pod.SetState(WorkerPodState::Terminating);
         }
 
