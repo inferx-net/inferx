@@ -352,7 +352,7 @@ impl FuncStatus {
             panic!("podkey is {}", &podKey);
         }
 
-        if pod.pod.object.status.state == PodState::Ready {
+        if pod.pod.object.status.state == PodState::Ready && pod.State().IsIdle() {
             loop {
                 match self.PopLeaseWorkerReq() {
                     Some((req, tx)) => {
@@ -691,7 +691,7 @@ impl SchedulerHandler {
         info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
-            error!(
+            panic!(
                 "ProcessReturnWorkerReq fail the {} state {:?}",
                 worker.pod.PodKey(),
                 worker.State()
@@ -723,14 +723,20 @@ impl SchedulerHandler {
                 "ProcessReturnWorkerReq return and kill failure pod {}",
                 worker.pod.PodKey()
             );
-            match self.StopWorker(&worker.pod).await {
-                Ok(()) => (),
-                Err(e) => {
-                    error!(
-                        "ProcessReturnWorkerReq kill failure pod: fail to stop func worker {:?} with error {:#?}",
-                        worker.pod.PodKey(),
-                        e
-                    );
+            let state = worker.State();
+            // the gateway might lease the failure pod again and return multiple times.
+            // we can't stopworker mutiple times. do some check.
+            if state != WorkerPodState::Terminating {
+                worker.SetState(WorkerPodState::Terminating);
+                match self.StopWorker(&worker.pod).await {
+                    Ok(()) => (),
+                    Err(e) => {
+                        error!(
+                            "ProcessReturnWorkerReq kill failure pod: fail to stop func worker {:?} with error {:#?}",
+                            worker.pod.PodKey(),
+                            e
+                        );
+                    }
                 }
             }
         } else {
