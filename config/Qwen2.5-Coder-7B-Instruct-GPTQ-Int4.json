@@ -1,34 +1,32 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "deepseek-ai",
-    "name": "DeepSeek-R1-Distill-Qwen-1.5B",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "/root/.cache/huggingface/git/DeepSeek-R1-Distill-Qwen-1.5B",
-                "--served-model-name",
-                "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-                "--disable-custom-all-reduce",
+                "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
                 "--trust-remote-code",
                 "--max-model-len",
-                "2000"
+                "2000",
+                "--tensor-parallel-size=1"
             ],
             "resources": {
-                "CPU": 20000,
-                "Mem": 60000,
+                "CPU": 10000,
+                "Mem": 23000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 13000
+                    "vRam": 13800
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",
@@ -48,10 +46,10 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "what is the integral of x^2 from 0 to 2?\nPlease reason step by step, and put your final answer within \\boxed{}.",
+                "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+                    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
                     "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"
@@ -63,10 +61,11 @@
                 "pinned": "File"
             },
             "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "default_funcpolicy"
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 2,
+                    "standby_per_node": 2,
+                    "parallel": 120
                 }
             }
         }
