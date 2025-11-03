@@ -263,7 +263,7 @@ impl GatewayConfig {
             gatewayPort: gatewayPort,
         };
 
-        error!("GatewayConfig is {:#?}", &ret);
+        info!("GatewayConfig is {:#?}", &ret);
 
         return ret;
     }

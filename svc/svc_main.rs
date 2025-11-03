@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
         }
         RunService::Gateway => {
             LOG.SetServiceName("Gateway");
-            error!("Gateway start ...");
+            info!("Gateway start ...");
             tokio::select! {
                 res = GatewaySvc(None) => {
                     info!("Gateway finish {:?}", res);
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         }
         RunService::StateSvc => {
             LOG.SetServiceName("StateSvc");
-            error!("StateSvc start ...");
+            info!("StateSvc start ...");
             tokio::select! {
                 res = StateService(None) => {
                     info!("stateservice finish {:?}", res);
@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
         }
         RunService::Scheduler => {
             LOG.SetServiceName("Scheduler");
-            error!("Scheduler start ...");
+            info!("Scheduler start ...");
             tokio::select! {
                 res = SchedulerSvc() => {
                     info!("schedulerFuture finish {:?}", res);

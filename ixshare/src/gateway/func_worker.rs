@@ -13,7 +13,7 @@
 // limitations under the Licens
 
 use core::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::response::Response;
@@ -73,6 +73,15 @@ impl HttpClientState {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct PerfStat {
+    pub newConn: AtomicU64,
+    pub reuseConn: AtomicU64,
+    pub connTime: AtomicU64,
+    pub readQueueTime: AtomicU64,
+    pub processTime: AtomicU64,
+}
+
 #[derive(Debug)]
 pub struct FuncWorkerInner {
     pub closeNotify: Arc<Notify>,
@@ -107,6 +116,7 @@ pub struct FuncWorkerInner {
 
     pub connPool: ConnectionPool,
     pub failCount: AtomicUsize,
+    pub perfStat: PerfStat,
 }
 
 impl Drop for FuncWorkerInner {
@@ -195,6 +205,7 @@ impl FuncWorker {
             state: Mutex::new(FuncWorkerState::Init),
             connPool: connectPool,
             failCount: AtomicUsize::new(0),
+            perfStat: PerfStat::default(),
         };
 
         let worker = Self(Arc::new(inner));
@@ -263,6 +274,13 @@ impl FuncWorker {
         //     self.connPool.newConn.load(Ordering::Relaxed),
         //     self.connPool.reuseConn.load(Ordering::Relaxed)
         // );
+
+        info!(
+            "return worker {:?} the perf {:#?}",
+            self.WorkerName(),
+            &self.perfStat
+        );
+
         let id = self.id.load(Ordering::Relaxed);
         return SchedulerClient {}
             .ReturnWorker(
@@ -328,10 +346,10 @@ impl FuncWorker {
     // return is_fail
     pub async fn HandleReturn(&self, sender: HttpSender) -> bool {
         self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
-        let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::SeqCst);
+        let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::Relaxed);
         let state = sender.HttpState();
         if state == HttpClientState::Fail {
-            if self.failCount.fetch_add(1, Ordering::SeqCst) == 3 {
+            if self.failCount.fetch_add(1, Ordering::Relaxed) == 3 {
                 // fail 3 times
                 self.FinishWorker().await;
                 self.funcAgent
@@ -351,7 +369,9 @@ impl FuncWorker {
             self.SetState(FuncWorkerState::Idle);
         }
 
-        self.funcAgent.dataNotify.notify_waiters();
+        let gap = sender.startTime.lock().unwrap().elapsed().as_micros() as u64;
+
+        self.perfStat.processTime.fetch_add(gap, Ordering::SeqCst);
 
         if state == HttpClientState::Success {
             self.connPool.ReturnSender(sender).await;
@@ -502,32 +522,30 @@ impl FuncWorker {
                     }
                 }
                 FuncWorkerState::Processing => {
-                    while self.funcAgent.parallelLeve.load(Ordering::Relaxed)
-                        > self.ongoingReqCnt.load(Ordering::Relaxed)
-                    {
-                        let req = reqQueue.TryRecv().await;
-                        match req {
-                            None => break,
-                            Some(req) => {
-                                self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
-                                let client = match self.NewHttpCallClient().await {
-                                    Err(e) => {
-                                        error!("Funcworker connect fail with error {:?}", &e);
-                                        let err = Error::CommonError(format!(
-                                            "Funcworker connect fail with error {:?}",
-                                            &e
-                                        ));
-                                        req.Send(Err(err));
-                                        self.FinishWorker().await;
-                                        self.funcAgent.SendWorkerStatusUpdate(
-                                            WorkerUpdate::WorkerFail((self.clone(), e)),
-                                        );
-                                        return Ok(());
-                                    }
-                                    Ok(c) => c,
-                                };
-                                req.Send(Ok(client));
-                            }
+                    let cnt = self.funcAgent.parallelLeve.load(Ordering::Relaxed)
+                        - self.ongoingReqCnt.load(Ordering::Relaxed);
+
+                    if cnt > 0 {
+                        let reqs = reqQueue.TryRecvBatch(cnt).await;
+                        for req in reqs {
+                            self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
+                            let client = match self.NewHttpCallClient().await {
+                                Err(e) => {
+                                    error!("Funcworker connect fail with error {:?}", &e);
+                                    let err = Error::CommonError(format!(
+                                        "Funcworker connect fail with error {:?}",
+                                        &e
+                                    ));
+                                    req.Send(Err(err));
+                                    self.FinishWorker().await;
+                                    self.funcAgent.SendWorkerStatusUpdate(
+                                        WorkerUpdate::WorkerFail((self.clone(), e)),
+                                    );
+                                    return Ok(());
+                                }
+                                Ok(c) => c,
+                            };
+                            req.Send(Ok(client));
                         }
                     }
 
@@ -553,6 +571,12 @@ impl FuncWorker {
                                         if self.HandleReturn(sender).await {
                                             return Ok(());
                                         }
+
+                                        // while let Ok(sender) = idleClientRx.try_recv() {
+                                        //     if self.HandleReturn(sender).await {
+                                        //         return Ok(());
+                                        //     }
+                                        // }
                                     }
                                 }
                             }
@@ -573,6 +597,12 @@ impl FuncWorker {
                                         if self.HandleReturn(sender).await {
                                             return Ok(());
                                         }
+
+                                        // while let Ok(sender) = idleClientRx.try_recv() {
+                                        //     if self.HandleReturn(sender).await {
+                                        //         return Ok(());
+                                        //     }
+                                        // }
                                     }
                                 }
                             }
@@ -850,6 +880,7 @@ pub struct HttpSender {
     sender: SendRequest<axum::body::Body>,
     pub fail: Arc<AtomicUsize>,
     pub reuse: Arc<AtomicUsize>,
+    pub startTime: Mutex<std::time::Instant>,
 }
 
 impl HttpSender {
@@ -870,9 +901,14 @@ impl HttpSender {
             sender: sender,
             fail: Arc::new(AtomicUsize::new(HttpClientState::Success as usize)),
             reuse: Arc::new(AtomicUsize::new(1)),
+            startTime: Mutex::new(std::time::Instant::now()),
         };
 
         return Ok(sender);
+    }
+
+    pub fn ResetTime(&self) {
+        *self.startTime.lock().unwrap() = std::time::Instant::now();
     }
 
     pub async fn Send(&mut self, req: Request<axum::body::Body>) -> Result<Response<Incoming>> {
@@ -945,6 +981,7 @@ impl Drop for QHttpCallClient {
 impl QHttpCallClient {
     pub fn New(finishQueue: mpsc::Sender<HttpSender>, sender: HttpSender) -> Self {
         sender.reuse.fetch_add(1, Ordering::Relaxed);
+        sender.ResetTime();
         return Self {
             finishQueue: finishQueue,
             sender: Some(sender),

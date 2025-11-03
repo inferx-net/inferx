@@ -248,8 +248,8 @@ impl WorkerPod {
 
     pub fn SetWorking(&self, gatewayId: i64) {
         match *self.workerState.lock().unwrap() {
-            WorkerPodState::Working(gatewayId) => {
-                unreachable!("WorkerPod::SetWorking gateway {}", gatewayId);
+            WorkerPodState::Working(oldgatewayId) => {
+                error!("WorkerPod::SetWorking old gateway {} new gateway {}", oldgatewayId, gatewayId);
             }
             WorkerPodState::Terminating => {
                 unreachable!("WorkerPod::SetWorking state WorkerPodState::Terminating");

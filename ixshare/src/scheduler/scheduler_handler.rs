@@ -680,13 +680,22 @@ impl SchedulerHandler {
         req: na::ReturnWorkerReq,
         tx: Sender<na::ReturnWorkerResp>,
     ) -> Result<()> {
-        let worker = self.GetFuncPod(
+        let worker = match self.GetFuncPod(
             &req.tenant,
             &req.namespace,
             &req.funcname,
             req.fprevision,
             &req.id,
-        )?;
+        ) {
+            Err(e) => {
+                error!(
+                    "ProcessReturnWorkerReq can't find pod {:#?} with error e {:?}",
+                    req, e
+                );
+                return Ok(());
+            }
+            Ok(w) => w,
+        };
 
         info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
@@ -771,7 +780,7 @@ impl SchedulerHandler {
     pub fn GetFuncPodsByKey(&self, fpkey: &str) -> Result<Vec<WorkerPod>> {
         match self.funcs.get(fpkey) {
             None => {
-                error!("get pods key is {} keys {:#?}", &fpkey, self.funcs.keys());
+                // error!("get function key is {} keys {:#?}", &fpkey, self.funcs.keys());
                 return Ok(Vec::new());
             }
             Some(fpStatus) => {
@@ -1345,6 +1354,12 @@ impl SchedulerHandler {
 
             let state = nr.CanAlloc(&req, createSnapshot);
             if state.Ok() {
+                info!(
+                    "FindNode4Pod 1 for resuming func {:?} with nr {:#?}",
+                    func.Id(),
+                    &nr
+                );
+
                 return Ok((nodename.clone(), Vec::new(), nr));
             }
 
@@ -1359,7 +1374,7 @@ impl SchedulerHandler {
 
         // try to simulate killing idle pods and see whether can find good node
         info!(
-            "FindNode4Pod 1 for resuming func {:?} with idle pods {:#?} nodeSnapshots is {:#?}",
+            "FindNode4Pod 2 for resuming func {:?} with idle pods {:#?} nodeSnapshots is {:#?}",
             func.Id(),
             &self.idlePods,
             &nodeSnapshots
@@ -1420,12 +1435,12 @@ impl SchedulerHandler {
 
         if findnodeName.is_none() {
             error!(
-                "can find enough resource for {}, nodes state {:#?}",
+                "can't find enough resource for {}, nodes state {:#?}",
                 func.Key(),
                 allocStates.values()
             );
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "can find enough resource for {}, nodes state {:#?}",
+                "can't find enough resource for {}, nodes state {:#?}",
                 func.Key(),
                 allocStates.values()
             )));
@@ -2296,6 +2311,17 @@ impl SchedulerHandler {
             naUrl = nodeStatus.node.NodeAgentUrl();
         }
 
+        let mut terminatePods = Vec::new();
+        for w in &terminateWorkers {
+            terminatePods.push(w.pod.PodKey());
+        }
+
+        info!(
+            "ResumePod pod {} with terminating {:#?}",
+            pod.pod.PodKey(),
+            &terminatePods
+        );
+
         pod.SetState(WorkerPodState::Resuming);
         match self
             .ResumeWorker(
@@ -2343,6 +2369,11 @@ impl SchedulerHandler {
             let standbyResource = pod.pod.object.spec.allocResources.clone();
             nodeStatus.FreeResource(&standbyResource, &fp.name)?;
             nodeStatus.available.Sub(&resources)?;
+            info!(
+                "After ResumePod pod {} the node resource is {:#?}",
+                pod.pod.PodKey(),
+                &nodeStatus.available
+            );
         }
 
         let podKey = FuncPod::FuncPodKey(

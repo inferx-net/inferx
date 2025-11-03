@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use core::ops::Deref;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -487,8 +487,6 @@ impl FuncAgent {
                 }
                 // trigger timeout checkout
                 _ = time::sleep(Duration::from_millis(10)) => {}
-                // some data available
-                _ = self.dataNotify.notified() => (),
                 stateUpdate = workerStateUpdateRx.recv() => {
                     if let Some(update) = stateUpdate {
                         match update {
@@ -658,7 +656,8 @@ impl IxTimestamp {
 
 #[derive(Debug)]
 pub struct ClientReqQueuInner {
-    pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
+    // pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
+    pub reqQueue: TMutex<VecDeque<FuncClientReq>>,
     pub queueLen: AtomicUsize,
     pub notify: Arc<Notify>,
 }
@@ -677,7 +676,8 @@ impl Deref for ClientReqQueue {
 impl ClientReqQueue {
     pub fn New(queueLen: usize) -> Self {
         let inner = ClientReqQueuInner {
-            reqQueue: TMutex::new(BTreeMap::new()),
+            reqQueue: TMutex::new(VecDeque::new()),
+            // reqQueue: TMutex::new(BTreeMap::new()),
             queueLen: AtomicUsize::new(queueLen),
             notify: Arc::new(Notify::new()),
         };
@@ -692,7 +692,7 @@ impl ClientReqQueue {
     pub async fn WaitReq(&self) {
         loop {
             let notified = self.notify.notified();
-            if self.reqQueue.lock().await.len() > 0 {
+            if !self.reqQueue.lock().await.is_empty() {
                 return;
             }
             notified.await;
@@ -702,9 +702,10 @@ impl ClientReqQueue {
     pub async fn Recv(&self) -> FuncClientReq {
         loop {
             let notified = self.notify.notified();
-            match self.reqQueue.lock().await.pop_first() {
+            // match self.reqQueue.lock().await.pop_first() {
+            match self.reqQueue.lock().await.pop_back() {
                 None => (),
-                Some(r) => return r.1,
+                Some(r) => return r,
             }
             notified.await;
         }
@@ -714,12 +715,12 @@ impl ClientReqQueue {
         let mut q = self.reqQueue.lock().await;
         let mut count = 0;
         loop {
-            match q.first_key_value() {
+            match q.back() {
                 None => break,
-                Some((_, first)) => {
+                Some(first) => {
                     let timeout = first.timeout;
                     if first.enqueueTime.Elapsed() as u64 > timeout {
-                        let (_, item) = q.pop_first().unwrap();
+                        let item = q.pop_back().unwrap();
                         count += 1;
                         item.tx.send(Err(Error::Timeout(timeout))).ok();
                     } else {
@@ -739,9 +740,11 @@ impl ClientReqQueue {
             return false;
         }
 
-        q.insert(req.enqueueTime.clone(), req);
+        // q.insert(req.enqueueTime.clone(), req);
+        q.push_front(req);
         if q.len() == 1 {
-            self.notify.notify_waiters();
+            // self.notify.notify_waiters();
+            self.notify.notify_one();
         }
 
         return true;
@@ -752,9 +755,9 @@ impl ClientReqQueue {
         let mut q = self.reqQueue.lock().await;
         let mut v = Vec::new();
         for _i in 0..cnt {
-            match q.pop_first() {
+            match q.pop_back() {
                 None => return v,
-                Some((_, req)) => v.push(req),
+                Some(req) => v.push(req),
             }
         }
 
@@ -763,9 +766,9 @@ impl ClientReqQueue {
 
     pub async fn TryRecv(&self) -> Option<FuncClientReq> {
         // self.CleanTimeout().await;
-        match self.reqQueue.lock().await.pop_first() {
+        match self.reqQueue.lock().await.pop_back() {
             None => return None,
-            Some((_, v)) => return Some(v),
+            Some(v) => return Some(v),
         }
     }
 }

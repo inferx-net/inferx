@@ -911,7 +911,7 @@ async fn FuncCall(
 
     let mut bytecnt = 0;
 
-    let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
+    let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(4096);
     let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
     tokio::spawn(async move {
         defer!(drop(client));
