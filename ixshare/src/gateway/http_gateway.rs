@@ -68,6 +68,7 @@ use super::func_agent_mgr::FuncAgentMgr;
 use super::func_agent_mgr::IxTimestamp;
 use super::func_agent_mgr::GW_OBJREPO;
 use super::func_worker::QHttpCallClient;
+use super::func_worker::RETRYABLE_HTTP_STATUS;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
@@ -688,9 +689,9 @@ async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) 
             error!("Http start fail with QueueFull");
             StatusCode::SERVICE_UNAVAILABLE
         }
-        Error::BAD_REQUEST => {
-            error!("Http start fail with bade request");
-            StatusCode::BAD_REQUEST
+        Error::BAD_REQUEST(code) => {
+            error!("Http start fail with bad request");
+            *code
         }
         e => {
             error!("Http start fail with error {:?}", e);
@@ -796,8 +797,12 @@ async fn FuncCall(
     // Collect the body bytes
     let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
         Err(_e) => {
-            let resp =
-                FailureResponse(Error::BAD_REQUEST, &mut labels, Status::InvalidRequest).await;
+            let resp = FailureResponse(
+                Error::BAD_REQUEST(StatusCode::BAD_REQUEST),
+                &mut labels,
+                Status::InvalidRequest,
+            )
+            .await;
             return Ok(resp);
         }
         Ok(b) => b,
@@ -872,21 +877,28 @@ async fn FuncCall(
         };
 
         let status = res.status();
-        if status == StatusCode::BAD_REQUEST {
-            let text = String::from_utf8(bytes.to_vec()).ok();
-            error!("Get http bad request, the http req is {:?}", text);
-            // Convert to string
-            let resp =
-                FailureResponse(Error::BAD_REQUEST, &mut labels, Status::InvalidRequest).await;
-            ttftCtx.span().end();
-            return Ok(resp);
-        } else if status != StatusCode::OK {
-            error!(
-                "Http call get fail status {:?} for pod {}",
-                status,
-                tclient.PodName()
-            );
-            continue;
+
+        if status != StatusCode::OK {
+            let needRetry = RETRYABLE_HTTP_STATUS.contains(&(status.as_u16()));
+
+            if needRetry {
+                error!(
+                    "Http call get fail status {:?} for pod {}",
+                    status,
+                    tclient.PodName()
+                );
+                continue;
+            } else {
+                // let text = String::from_utf8(bytes.to_vec()).ok();
+                let resp = FailureResponse(
+                    Error::BAD_REQUEST(status),
+                    &mut labels,
+                    Status::InvalidRequest,
+                )
+                .await;
+                ttftCtx.span().end();
+                return Ok(resp);
+            }
         }
 
         client = tclient;

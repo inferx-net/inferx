@@ -26,6 +26,9 @@ use tokio::task::JoinSet;
 use tokio::time;
 use tokio::time::Duration;
 
+use once_cell::sync::Lazy;
+use std::collections::HashSet;
+
 use http_body_util::Empty;
 use hyper::body::{Bytes, Incoming};
 use hyper::client::conn::http1::SendRequest;
@@ -46,6 +49,19 @@ use super::scheduler_client::SchedulerClient;
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
 pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
 pub const WORKER_PORT: u16 = 80;
+
+pub static RETRYABLE_HTTP_STATUS: Lazy<HashSet<u16>> = Lazy::new(|| {
+    [
+        408, // Request Timeout
+        429, // Too Many Requests
+        500, // Internal Server Error
+        502, // Bad Gateway
+        503, // Service Unavailable
+        504, // Gateway Timeout
+    ]
+    .into_iter()
+    .collect()
+});
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HttpClientState {
@@ -935,8 +951,8 @@ impl HttpSender {
                     }
                     Ok(r) => {
                         let status = r.status();
-                        if status != StatusCode::OK && status != StatusCode::BAD_REQUEST {
-                            // error!("HttpSender fail for pod {} with error response {:?}", &self.podname, &status);
+                        if RETRYABLE_HTTP_STATUS.contains(&(status.as_u16())) {
+                            error!("HttpSender fail for pod {} with error response {:?}", &self.podname, &status);
                             self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
                         return Ok(r);
