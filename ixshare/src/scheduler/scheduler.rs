@@ -230,6 +230,15 @@ pub struct WorkerPodInner {
     pub workerState: Mutex<WorkerPodState>,
 }
 
+#[derive(Debug)]
+pub enum SetIdleSource {
+    New,
+    UpdatePod,
+    ProcessGatewayTimeout,
+    ProcessReturnWorkerReq,
+    AddPod,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerPod(pub Arc<WorkerPodInner>);
 
@@ -242,14 +251,19 @@ impl WorkerPod {
         *self.workerState.lock().unwrap() = state;
     }
 
-    pub fn SetIdle(&self) {
+    pub fn SetIdle(&self, src: SetIdleSource) {
+        error!("Set pod {} Idle src {:?}", self.pod.PodKey(), src);
         self.SetState(WorkerPodState::Idle);
     }
 
     pub fn SetWorking(&self, gatewayId: i64) {
+        error!("Set pod {} working", self.pod.PodKey());
         match *self.workerState.lock().unwrap() {
             WorkerPodState::Working(oldgatewayId) => {
-                error!("WorkerPod::SetWorking old gateway {} new gateway {}", oldgatewayId, gatewayId);
+                error!(
+                    "WorkerPod::SetWorking old gateway {} new gateway {}",
+                    oldgatewayId, gatewayId
+                );
             }
             WorkerPodState::Terminating => {
                 unreachable!("WorkerPod::SetWorking state WorkerPodState::Terminating");
@@ -277,7 +291,7 @@ impl WorkerPod {
         // );
 
         if ret.pod.object.status.state == PodState::Ready {
-            ret.SetIdle();
+            ret.SetIdle(SetIdleSource::New);
         }
 
         if ret.pod.object.status.state == PodState::Standby {

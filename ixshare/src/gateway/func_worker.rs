@@ -588,11 +588,11 @@ impl FuncWorker {
                                             return Ok(());
                                         }
 
-                                        // while let Ok(sender) = idleClientRx.try_recv() {
-                                        //     if self.HandleReturn(sender).await {
-                                        //         return Ok(());
-                                        //     }
-                                        // }
+                                        while let Ok(sender) = idleClientRx.try_recv() {
+                                            if self.HandleReturn(sender).await {
+                                                return Ok(());
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -614,11 +614,11 @@ impl FuncWorker {
                                             return Ok(());
                                         }
 
-                                        // while let Ok(sender) = idleClientRx.try_recv() {
-                                        //     if self.HandleReturn(sender).await {
-                                        //         return Ok(());
-                                        //     }
-                                        // }
+                                        while let Ok(sender) = idleClientRx.try_recv() {
+                                            if self.HandleReturn(sender).await {
+                                                return Ok(());
+                                            }
+                                        }
                                     }
                                 }
                             }

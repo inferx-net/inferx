@@ -47,6 +47,7 @@ use crate::metastore::unique_id::UID;
 use crate::na::RemoveSnapshotReq;
 use crate::na::TerminatePodReq;
 use crate::peer_mgr::PeerMgr;
+use crate::scheduler::scheduler::SetIdleSource;
 use crate::scheduler::scheduler::SCHEDULER_CONFIG;
 use inferxlib::data_obj::DeltaEvent;
 use inferxlib::data_obj::EventType;
@@ -419,7 +420,7 @@ impl FuncStatus {
                         }
                     }
                     None => {
-                        pod.SetIdle();
+                        pod.SetIdle(SetIdleSource::UpdatePod);
                         break;
                     }
                 }
@@ -537,7 +538,7 @@ impl SchedulerHandler {
             match state {
                 WorkerPodState::Working(gatewayId) => {
                     if timeoutGateways.contains(&gatewayId) {
-                        worker.SetIdle();
+                        worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
                         // how to handle the recovered failure gateway?
                         self.idlePods.insert(worker.pod.PodKey());
                     }
@@ -749,7 +750,7 @@ impl SchedulerHandler {
                 }
             }
         } else {
-            worker.SetIdle();
+            worker.SetIdle(SetIdleSource::ProcessReturnWorkerReq);
             self.idlePods.insert(worker.pod.PodKey());
         }
 
@@ -2682,7 +2683,7 @@ impl SchedulerHandler {
         assert!(self.pods.insert(podKey.clone(), boxPod.clone()).is_none());
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
-            boxPod.SetIdle();
+            boxPod.SetIdle(SetIdleSource::AddPod);
             self.idlePods.insert(boxPod.pod.PodKey());
         }
 
