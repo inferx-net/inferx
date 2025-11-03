@@ -20,10 +20,6 @@ use std::result::Result as SResult;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
-use futures::StreamExt;
-use http_body_util::StreamBody;
-use hyper::body::Incoming;
-
 use opentelemetry::global::ObjectSafeSpan;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::Tracer;
@@ -54,7 +50,7 @@ use hyper::{StatusCode, Uri};
 
 use tokio::sync::mpsc;
 
-use crate::audit::SqlAudit;
+use crate::audit::{ReqAudit, SqlAudit, REQ_AUDIT_AGENT};
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
@@ -816,7 +812,7 @@ async fn FuncCall(
 
     let mut error = Error::Timeout(timeout);
     let client;
-    let _keepalive;
+    let keepalive;
     let mut tcpConnLatency;
     let mut start;
     loop {
@@ -906,9 +902,11 @@ async fn FuncCall(
         }
 
         client = tclient;
-        _keepalive = tkeepalive;
+        keepalive = tkeepalive;
         break;
     }
+
+    let mut first = true;
 
     labels.status = Status::Success;
     GATEWAY_METRICS
@@ -923,104 +921,100 @@ async fn FuncCall(
         kvs.push((k.clone(), v.clone()));
     }
 
-    let upstream_body = res.into_body();
+    let mut bytecnt = 0;
 
-    let mut upstream_stream = upstream_body.into_data_stream();
-    let first_chunkRes = upstream_stream.next().await;
+    let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(4096);
+    let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
+    tokio::spawn(async move {
+        defer!(drop(client));
+        loop {
+            let frame = res.frame().await;
+            let mut ttft = 0;
+            if first {
+                ttft = start.elapsed().as_millis() as u64;
+                ttftTx.send(ttft).await.ok();
 
-    let first_chunk = match first_chunkRes {
-        Some(Err(e)) => {
-            // Upstream returned an error, return a simple error body
-            error!("Upstream error: {:?}", e);
-            let error_body = format!("Upstream error: {:?}", e);
-            let resp = Response::builder()
-                .status(502) // Bad Gateway
-                .header("Content-Type", "text/plain")
-                .body(Body::from(error_body))
-                .unwrap();
-            ttftCtx.span().end();
-            return Ok(resp);
-        }
-        None => {
-            // Upstream finished immediately without sending any data
-            let error_body = "Upstream empty".to_string();
-            let resp = Response::builder()
-                .status(502)
-                .header("Content-Type", "text/plain")
-                .body(Body::from(error_body))
-                .unwrap();
-            ttftCtx.span().end();
-            return Ok(resp);
-        }
-        Some(Ok(c)) => c,
-    };
+                ttftCtx.span().end();
+                first = false;
 
-    ttftCtx.span().end();
-
-    let ttft = start.elapsed().as_millis() as u64;
-    let val = HeaderValue::from_str(&format!("{}", ttft)).unwrap();
-
-    let rest_stream = futures::stream::once(async { Ok(first_chunk) }).chain(upstream_stream);
-
-    let tclient = Some(client);
-    let total_bytes = 0usize;
-
-    use futures::stream::StreamExt;
-    use std::pin::Pin;
-    use tokio_stream::Stream;
-
-    let pinned_stream: Pin<Box<dyn Stream<Item = SResult<Bytes, hyper::Error>> + Send>> =
-        Box::pin(rest_stream);
-
-    let counting_stream = futures::stream::unfold(
-        (pinned_stream, tclient, total_bytes),
-        |(mut stream, mut client_opt, total_bytes)| async move {
-            match stream.next().await {
-                Some(Ok(bytes)) => {
-                    let len = bytes.len();
-                    let total_bytes = total_bytes + len;
-
-                    Some((Ok(bytes), (stream, client_opt, total_bytes)))
-                }
-                Some(Err(e)) => {
-                    drop(client_opt.take());
-                    Some((Err(e), (stream, client_opt, total_bytes)))
-                }
-                None => {
-                    drop(client_opt.take());
-                    None
+                let total = ttft + tcpConnLatency;
+                if !keepalive {
+                    GATEWAY_METRICS
+                        .lock()
+                        .await
+                        .funccallCsTtft
+                        .get_or_create(&labels)
+                        .observe(total as f64 / 1000.0);
+                } else {
+                    GATEWAY_METRICS
+                        .lock()
+                        .await
+                        .funccallTtft
+                        .get_or_create(&labels)
+                        .observe(total as f64);
                 }
             }
-        },
-    );
 
-    let body = Body::from_stream(StreamBody::new(counting_stream));
+            let bytes = match frame {
+                None => {
+                    let latency = start.elapsed();
+                    REQ_AUDIT_AGENT.Audit(ReqAudit {
+                        tenant: tenant.clone(),
+                        namespace: namespace.clone(),
+                        fpname: funcname.clone(),
+                        keepalive: keepalive,
+                        ttft: ttft as i32,
+                        latency: latency.as_millis() as i32,
+                    });
+                    return;
+                }
+                Some(b) => match b {
+                    Ok(b) => b,
+                    Err(e) => {
+                        error!(
+                            "PostCall for path {}/{}/{} len {} get error {:?}",
+                            tenant, namespace, funcname, bytecnt, e
+                        );
+                        return;
+                    }
+                },
+            };
+            let bytes: Bytes = bytes.into_data().unwrap();
+            bytecnt += bytes.len();
+
+            match tx.send(Ok(bytes)).await {
+                Err(_) => {
+                    // error!("PostCall sendbytes fail with channel unexpected closed");
+                    return;
+                }
+                Ok(()) => (),
+            }
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let body = http_body_util::StreamBody::new(stream);
+
+    let body = axum::body::Body::from_stream(body);
+
     let mut resp = Response::new(body);
 
     for (k, v) in kvs {
         resp.headers_mut().insert(k, v);
     }
 
-    resp.headers_mut()
-        .insert("TTFT_LATENCY_HEADER", val.clone());
     let val = HeaderValue::from_str(&format!("{}", tcpConnLatency)).unwrap();
-    resp.headers_mut()
-        .insert("TCPCONN_LATENCY_HEADER", val.clone());
+    resp.headers_mut().insert("TCPCONN_LATENCY_HEADER", val);
+
+    match ttftRx.recv().await {
+        Some(ttft) => {
+            let val = HeaderValue::from_str(&format!("{}", ttft)).unwrap();
+            resp.headers_mut().insert("TTFT_LATENCY_HEADER", val);
+        }
+        None => (),
+    };
 
     return Ok(resp);
-}
-
-async fn forward(res: hyper::Response<Incoming>) -> Response {
-    let upstream_body = res.into_body();
-
-    let transformed = upstream_body.into_data_stream().map(|chunk| match chunk {
-        Ok(bytes) => Ok(bytes),
-        Err(e) => Err(e),
-    });
-
-    // Wrap the stream for Axum body
-    let body = Body::from_stream(StreamBody::new(transformed));
-    Response::new(body)
 }
 
 pub const TCPCONN_LATENCY_HEADER: &'static str = "X-TcpConn-Latency";

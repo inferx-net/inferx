@@ -28,7 +28,7 @@ log = "0.4.17"
 log4rs = "1"
 const_format = "0.2.30"
 ipnetwork = "0.20.0"
-chrono = "0.4.24"
+chrono = { version = "0.4", features = ["serde"] }
 once_cell = "1.17.1"
 async-trait = "0.1.77"
 scopeguard = { version = "^1.1.0", default-features = false }
@@ -36,9 +36,7 @@ spin = "0.9.5"
 etcd-client = "0.12.4"
 rand = "0.8.5"
 libc = "0.2.94"
-axum = "0.7.4"
 pyo3 = { version = "0.20", features = ["extension-module"] }
-hyper = { version = "1.0.0", features = ["full"] }
 nix = "0.23.1"
 tokio-util = "0.7.11"
 sysinfo = "0.31.4"
@@ -47,8 +45,11 @@ errno = "0.2.4"
 libloading = "0.8.6"
 crossbeam-channel = "0.5"
 
+axum = "0.7.4"
+hyper = { version = "1.7", features = ["full"] }
 hyper-util = { version = "0.1.3", features = ["full"] }
 http-body-util = "0.1"
+
 dns-lookup = "2.0.4"
 tower = "0.4.13"
 sqlx = { version = "0.8.2", features = [ "runtime-tokio-rustls", "postgres", "macros", "chrono"] }

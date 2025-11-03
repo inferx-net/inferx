@@ -252,7 +252,12 @@ impl WorkerPod {
     }
 
     pub fn SetIdle(&self, src: SetIdleSource) {
-        error!("Set pod {} Idle src {:?}", self.pod.PodKey(), src);
+        error!(
+            "Set pod {} Idle from {:?} src {:?}",
+            self.pod.PodKey(),
+            self.State(),
+            src
+        );
         self.SetState(WorkerPodState::Idle);
     }
 
