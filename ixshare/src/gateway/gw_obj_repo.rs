@@ -430,7 +430,7 @@ impl GwObjRepo {
                 Ok(s) => s,
             };
             info!(
-                "********************EventType::InitState scheduler set url {}...************",
+                "***EventType::InitState scheduler set url {}...************",
                 SchedulerInfo.SchedulerUrl()
             );
             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
@@ -549,7 +549,7 @@ impl GwObjRepo {
                         }
                         SchedulerInfo::KEY => {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
-                            info!("********************EventType::ListDone scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
+                            info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
                             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
                         }
                         FuncPolicy::KEY => {

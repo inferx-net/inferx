@@ -60,7 +60,7 @@ impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
     }
 }
 
-pub async fn RunSchedulerSvc() -> Result<()> {
+pub async fn SchedulerGrpcSvc() -> Result<()> {
     let svc = SchedulerSvc {};
 
     let svcAddr = format!("0.0.0.0:{}", SCHEDULER_CONFIG.schedulerPort);
