@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: gateway
-          image: inferx/inferx_platform:v0.1.4
+          image: inferx/inferx_platform:${VERSION}
           imagePullPolicy: IfNotPresent
           livenessProbe:          # <-- Kubernetes keepalive check
             httpGet:
@@ -31,7 +31,9 @@ spec:
           - name: POD_IP
             valueFrom:
               fieldRef:
-                fieldPath: status.podIP          
+                fieldPath: status.podIP  
+          - name: ENABLE_TRACER
+            value: "true"        
           - name: RUN_SERVICE
             value: "Gateway"
           - name: INFERX_ADMIN_APIKEY
@@ -55,6 +57,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: gateway
+  labels:
+    app: gateway
 spec:
   type: NodePort
   selector:

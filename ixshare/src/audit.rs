@@ -12,19 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::result::Result as SResult;
+
 use crate::common::*;
 use crate::peer_mgr::NA_CONFIG;
+use crate::scheduler::scheduler::SnapshotScheduleState;
 
+use chrono::Local;
+use serde::{Deserializer, Serializer};
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgConnectOptions;
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::ConnectOptions;
 use sqlx::FromRow;
+use sqlx::Row;
 use std::ops::Deref;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
@@ -32,6 +41,12 @@ use tokio::sync::Notify;
 lazy_static::lazy_static! {
     pub static ref POD_AUDIT_AGENT: PodAuditAgent = PodAuditAgent::New();
     pub static ref REQ_AUDIT_AGENT: ReqAuditAgent = ReqAuditAgent::New();
+}
+
+#[derive(Debug, Clone)]
+pub enum AuditRecord {
+    PodAudit(PodAudit),
+    SnapshotScheduleAudit(SnapshotScheduleAudit),
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +68,7 @@ pub struct PodAuditAgentInner {
     pub closeNotify: Arc<Notify>,
     pub stop: AtomicBool,
 
-    pub tx: mpsc::Sender<PodAudit>,
+    pub tx: mpsc::Sender<AuditRecord>,
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +84,7 @@ impl Deref for PodAuditAgent {
 
 impl PodAuditAgent {
     pub fn New() -> Self {
-        let (tx, rx) = mpsc::channel::<PodAudit>(300);
+        let (tx, rx) = mpsc::channel::<AuditRecord>(300);
 
         let inner = PodAuditAgentInner {
             closeNotify: Arc::new(Notify::new()),
@@ -92,15 +107,77 @@ impl PodAuditAgent {
         return Ok(());
     }
 
-    pub fn Audit(&self, msg: PodAudit) {
-        self.tx.try_send(msg).unwrap();
+    pub fn AuditPod(&self, msg: PodAudit) {
+        self.tx.try_send(AuditRecord::PodAudit(msg)).unwrap();
+    }
+
+    pub fn AuditSnapshotSchedule(&self, msg: SnapshotScheduleAudit) {
+        self.tx
+            .try_send(AuditRecord::SnapshotScheduleAudit(msg))
+            .unwrap();
     }
 
     pub fn Enable() -> bool {
         return NA_CONFIG.auditdbAddr.len() > 0;
     }
 
-    pub async fn Process(&self, mut rx: mpsc::Receiver<PodAudit>) -> Result<()> {
+    pub async fn HandleMsg(&self, sqlaudit: &SqlAudit, msg: AuditRecord) -> Result<()> {
+        match msg {
+            AuditRecord::PodAudit(msg) => {
+                match sqlaudit
+                    .PodAudit(
+                        &msg.tenant,
+                        &msg.namespace,
+                        &msg.fpname,
+                        msg.fprevision,
+                        &msg.id,
+                        &msg.nodename,
+                        &msg.action,
+                        &msg.state,
+                    )
+                    .await
+                {
+                    Err(e) => {
+                        error!("audit PodAudit fail with {:?}", e);
+                    }
+                    _ => (),
+                }
+                if msg.log.len() > 0 {
+                    match sqlaudit
+                        .AddFailPod(
+                            &msg.tenant,
+                            &msg.namespace,
+                            &msg.fpname,
+                            msg.fprevision,
+                            &msg.id,
+                            &msg.state,
+                            &msg.nodename,
+                            &msg.log,
+                            &msg.exitInfo,
+                        )
+                        .await
+                    {
+                        Err(e) => {
+                            error!("audit AddFailPod fail with {:?}", e);
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            AuditRecord::SnapshotScheduleAudit(msg) => {
+                match sqlaudit.CreateSnapshotScheduleRecord(&msg).await {
+                    Err(e) => {
+                        error!("audit SnapshotScheduleAudit fail with {:?}", e);
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn Process(&self, mut rx: mpsc::Receiver<AuditRecord>) -> Result<()> {
         let addr = NA_CONFIG.auditdbAddr.clone();
         if addr.len() == 0 {
             // auditdb is not enabled
@@ -116,20 +193,7 @@ impl PodAuditAgent {
                 }
                 msg = rx.recv() => {
                     if let Some(msg) = msg {
-                        match sqlaudit.PodAudit(&msg.tenant, &msg.namespace, &msg.fpname, msg.fprevision, &msg.id, &msg.nodename, &msg.action, &msg.state).await {
-                            Err(e)=> {
-                                error!("audit PodAudit fail with {:?}", e);
-                            }
-                            _ => ()
-                        }
-                        if msg.log.len() > 0 {
-                            match sqlaudit.AddFailPod(&msg.tenant, &msg.namespace, &msg.fpname, msg.fprevision, &msg.id, &msg.state, &msg.nodename, &msg.log, &msg.exitInfo).await {
-                                Err(e) => {
-                                    error!("audit AddFailPod fail with {:?}", e);
-                                }
-                                _ => ()
-                            }
-                        }
+                        self.HandleMsg(&sqlaudit, msg).await?;
                     } else {
                         break;
                     }
@@ -137,6 +201,73 @@ impl PodAuditAgent {
             }
         }
         unimplemented!()
+    }
+}
+
+pub struct FuncId {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub revision: i64,
+}
+
+impl FuncId {
+    pub fn New(funcId: &str) -> Result<Self> {
+        let parts = funcId.split("/").collect::<Vec<&str>>();
+        if parts.len() != 4 {
+            return Err(Error::CommonError(format!(
+                "FuncId new fail with id {}",
+                funcId
+            )));
+        }
+
+        let revision: i64 = match parts[3].parse() {
+            Err(_) => {
+                return Err(Error::CommonError(format!(
+                    "FuncId new fail with id {} revision invalid {}",
+                    funcId, parts[3]
+                )));
+            }
+            Ok(r) => r,
+        };
+
+        return Ok(Self {
+            tenant: parts[0].to_owned(),
+            namespace: parts[1].to_owned(),
+            funcname: parts[2].to_owned(),
+            revision: revision,
+        });
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SnapshotScheduleAudit {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub revision: i64,
+    pub nodename: String,
+    pub state: String,
+    pub detail: String,
+    // #[serde(with = "crate::audit::datetime_local")]
+    pub updatetime: chrono::DateTime<chrono::Utc>,
+}
+
+impl SnapshotScheduleAudit {
+    pub fn New(funcId: &str, nodename: &str, state: &SnapshotScheduleState) -> Result<Self> {
+        let id = FuncId::New(funcId)?;
+        let audit = Self {
+            tenant: id.tenant,
+            namespace: id.namespace,
+            funcname: id.funcname,
+            revision: id.revision,
+            nodename: nodename.to_owned(),
+            state: state.StateName(),
+            detail: state.Detail(),
+            updatetime: SystemTime::now().into(),
+        };
+
+        return Ok(audit);
     }
 }
 
@@ -171,7 +302,7 @@ impl Deref for ReqAuditAgent {
 
 impl ReqAuditAgent {
     pub fn New() -> Self {
-        let (tx, rx) = mpsc::channel::<ReqAudit>(30);
+        let (tx, rx) = mpsc::channel::<ReqAudit>(300);
 
         let inner = ReqAuditAgentInner {
             closeNotify: Arc::new(Notify::new()),
@@ -194,8 +325,13 @@ impl ReqAuditAgent {
         return Ok(());
     }
 
-    pub fn Audit(&self, msg: ReqAudit) {
-        self.tx.try_send(msg).unwrap();
+    pub fn Audit(&self, _msg: ReqAudit) {
+        // match self.tx.try_send(msg) {
+        //     Ok(()) => (),
+        //     Err(e) => {
+        //         error!("ReqAuditAgent: fail to send audit log {:?}", &e);
+        //     }
+        // }
     }
 
     pub fn Enable() -> bool {
@@ -279,6 +415,76 @@ impl SqlAudit {
             .execute(&self.pool)
             .await?;
         return Ok(());
+    }
+
+    pub async fn CreateSnapshotScheduleRecord(&self, audit: &SnapshotScheduleAudit) -> Result<()> {
+        let query = r#"
+                            INSERT INTO SnapshotScheduleAudit 
+                                (tenant, namespace, funcname, revision, nodename, state, detail, updatetime)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                            ON CONFLICT (tenant, namespace, funcname, revision, nodename, state)
+                            DO UPDATE SET
+                                detail = EXCLUDED.detail,
+                                updatetime = NOW()
+                            "#;
+        let _result = sqlx::query(query)
+            .bind(&audit.tenant)
+            .bind(&audit.namespace)
+            .bind(&audit.funcname)
+            .bind(audit.revision)
+            .bind(&audit.nodename)
+            .bind(&audit.state)
+            .bind(&audit.detail)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
+    }
+
+    pub async fn ReadSnapshotScheduleRecords(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        revision: i64,
+    ) -> Result<Vec<SnapshotScheduleAudit>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT tenant, namespace, funcname, revision, nodename,
+                   state, detail, updatetime
+            FROM SnapshotScheduleAudit
+            WHERE tenant = $1
+              AND namespace = $2
+              AND funcname = $3
+              AND revision = $4
+            ORDER BY updatetime;
+            "#,
+        )
+        .bind(tenant)
+        .bind(namespace)
+        .bind(funcname)
+        .bind(revision)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let result = rows
+            .into_iter()
+            .map(|row| {
+                // let datetime: NaiveDateTime = row.get("updatetime");
+                // let utctime = DateTime::<Utc>::from_naive_utc_and_offset(datetime, Utc);
+                SnapshotScheduleAudit {
+                    tenant: row.get("tenant"),
+                    namespace: row.get("namespace"),
+                    funcname: row.get("funcname"),
+                    revision: row.get("revision"),
+                    nodename: row.get("nodename"),
+                    state: row.get("state"),
+                    detail: row.get("detail"),
+                    updatetime: row.get("updatetime"), // converts to SystemTime
+                }
+            })
+            .collect();
+
+        Ok(result)
     }
 
     pub async fn CreatePod(
@@ -431,7 +637,7 @@ impl SqlAudit {
         id: &str,
     ) -> Result<Vec<PodAuditLog>> {
         let query = format!(
-            "SELECT state, to_char(updatetime, 'YYYY/MM/DD HH24:MI:SS') as updatetime FROM podaudit where tenant = '{}' and namespace='{}' \
+            "SELECT state, updatetime FROM podaudit where tenant = '{}' and namespace='{}' \
          and fpname='{}' and fprevision='{}' and id='{}' order by updatetime;",
             tenant, namespace, fpname, fprevision, id
         );
@@ -447,11 +653,16 @@ impl SqlAudit {
         fpname: &str,
         fprevision: i64,
     ) -> Result<Vec<PodFailLog>> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, '' as log, exit_info \
+        let query = format!("select tenant, namespace, fpname, fprevision, id, state, createtime, nodename, '' as log, exit_info \
          from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {}", 
             tenant, namespace, fpname, fprevision);
         let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
-        let logs: Vec<PodFailLog> = selectQuery.fetch_all(&self.pool).await?;
+        let logs: Vec<PodFailLog> = match selectQuery.fetch_all(&self.pool).await {
+            Err(e) => {
+                return Err(e.into());
+            }
+            Ok(l) => l,
+        };
         return Ok(logs);
     }
 
@@ -463,10 +674,16 @@ impl SqlAudit {
         fprevision: i64,
         id: &str,
     ) -> Result<PodFailLog> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, log, exit_info from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {} and id = '{}'", 
+        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, createtime, log, exit_info from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {} and id = '{}'", 
             tenant, namespace, fpname, fprevision, id);
         let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
-        let log: PodFailLog = selectQuery.fetch_one(&self.pool).await?;
+        let log: PodFailLog = match selectQuery.fetch_one(&self.pool).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!("ReadPodFailLog error is {:#?}", &e);
+                return Err(e.into());
+            }
+        };
         return Ok(log);
     }
 }
@@ -480,8 +697,7 @@ pub struct PodFailLog {
     pub id: String,
     pub state: String,
     pub nodename: String,
-    // #[serde(skip_serializing)]
-    // pub createtime: sqlx::types::time::OffsetDateTime,
+    pub createtime: chrono::DateTime<chrono::Utc>,
     pub log: String,
     pub exit_info: String,
 }
@@ -489,5 +705,26 @@ pub struct PodFailLog {
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PodAuditLog {
     pub state: String,
-    pub updatetime: String,
+    pub updatetime: chrono::DateTime<chrono::Utc>,
+}
+
+pub mod datetime_local {
+    use super::*;
+
+    pub fn serialize<S>(dt: &DateTime<Utc>, serializer: S) -> SResult<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let local_dt = dt.with_timezone(&Local);
+        serializer.serialize_str(&local_dt.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> SResult<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let parsed = DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+        Ok(parsed.with_timezone(&Utc))
+    }
 }

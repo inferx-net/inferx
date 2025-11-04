@@ -108,7 +108,6 @@ impl ContainerSnapshot {
             memory: self.info.StandbyMemory(),
             cacheMemory: self.info.StandyCacheMemory(),
             gpu: GPUResource::default(),
-            parallel: DEFAULT_PARALLEL_LEVEL
         };
     }
 

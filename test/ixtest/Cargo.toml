@@ -1,0 +1,9 @@
+[package]
+name = "ixtest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "deflate", "stream"] }
+serde_json = "1.0"

@@ -13,6 +13,10 @@
 // limitations under the License.
 
 use core::ops::Deref;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicyMgr;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
+use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use inferxlib::obj_mgr::tenant_mgr::TenantMgr;
 use serde::{Deserialize, Serialize};
@@ -100,6 +104,7 @@ pub struct GwObjRepoInner {
     pub namespaceMgr: NamespaceMgr,
     pub podMgr: PodMgr,
     pub snapshotMgr: FuncSnapshotMgr,
+    pub funcpolicyMgr: FuncPolicyMgr,
 
     pub factory: InformerFactory,
 
@@ -110,6 +115,7 @@ pub struct GwObjRepoInner {
     pub podListDone: AtomicBool,
     pub snapshotListDone: AtomicBool,
     pub schedulerListDone: AtomicBool,
+    pub funcpolicyListDone: AtomicBool,
     pub listDone: AtomicBool,
 
     pub funcAgentMgr: Mutex<Option<FuncAgentMgr>>,
@@ -124,6 +130,7 @@ enum ListType {
     // node,
     scheduler,
     snapshot,
+    funcpolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +169,9 @@ impl GwObjRepo {
         // scheduler
         factory.AddInformer(SchedulerInfo::KEY, &ListOption::default())?;
 
+        // funcpolicy
+        factory.AddInformer(FuncPolicy::KEY, &ListOption::default())?;
+
         let inner = GwObjRepoInner {
             nodeMgr: NodeMgr::default(),
             tenantMgr: TenantMgr::default(),
@@ -169,6 +179,7 @@ impl GwObjRepo {
             namespaceMgr: NamespaceMgr::default(),
             podMgr: PodMgr::default(),
             snapshotMgr: FuncSnapshotMgr::default(),
+            funcpolicyMgr: FuncPolicyMgr::default(),
             factory: factory,
 
             tenantListDone: AtomicBool::new(false),
@@ -178,6 +189,7 @@ impl GwObjRepo {
             nodeListDone: AtomicBool::new(false),
             snapshotListDone: AtomicBool::new(false),
             schedulerListDone: AtomicBool::new(false),
+            funcpolicyListDone: AtomicBool::new(false),
             listDone: AtomicBool::new(false),
             funcAgentMgr: Mutex::new(None),
         };
@@ -186,6 +198,30 @@ impl GwObjRepo {
         mgr.factory.AddEventHandler(Arc::new(mgr.clone())).await?;
 
         return Ok(mgr);
+    }
+
+    pub fn FuncPolicy(&self, func: &Function) -> FuncPolicySpec {
+        let p = &func.object.spec.policy;
+        match p {
+            ObjRef::Obj(p) => return p.clone(),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return FuncPolicySpec::default();
+                    // return Err(Error::CommonError(format!(
+                    //     "FuncStatus::FuncPolicy for policy {} fail invalic link type {}",
+                    //     l.Key(),
+                    //     l.objType
+                    // )));
+                }
+
+                match self.funcpolicyMgr.Get(&func.tenant, &l.namespace, &l.name) {
+                    Err(_) => {
+                        return FuncPolicySpec::default();
+                    }
+                    Ok(p) => return p.object,
+                }
+            }
+        }
     }
 
     pub const LEASE_TTL: i64 = 1; // seconds
@@ -260,6 +296,10 @@ impl GwObjRepo {
             ListType::snapshot => {
                 self.snapshotListDone
                     .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            ListType::funcpolicy => {
+                self.funcpolicyListDone
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             } // ListType::node => {
               //     self.nodeListDone
               //         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -280,6 +320,9 @@ impl GwObjRepo {
                 .load(std::sync::atomic::Ordering::Relaxed)
             && self
                 .schedulerListDone
+                .load(std::sync::atomic::Ordering::Relaxed)
+            && self
+                .funcpolicyListDone
                 .load(std::sync::atomic::Ordering::Relaxed)
         // && self.nodeListDone.load(std::sync::atomic::Ordering::Relaxed)
         {
@@ -379,7 +422,13 @@ impl GwObjRepo {
     // after ListDone, process all objs in a batch
     pub fn InitState(&self) -> Result<()> {
         for s in self.factory.GetInformer(SchedulerInfo::KEY)?.store.List() {
-            let SchedulerInfo = SchedulerInfo::FromDataObject(s)?;
+            let SchedulerInfo = match SchedulerInfo::FromDataObject(s.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", s, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             info!(
                 "********************EventType::InitState scheduler set url {}...************",
                 SchedulerInfo.SchedulerUrl()
@@ -388,28 +437,69 @@ impl GwObjRepo {
         }
 
         for ns in self.factory.GetInformer(Node::KEY)?.store.List() {
-            let spec: Node = Node::FromDataObject(ns)?;
+            let spec: Node = match Node::FromDataObject(ns.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", ns, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             self.nodeMgr.Add(spec)?;
         }
 
         for ns in self.factory.GetInformer(Tenant::KEY)?.store.List() {
-            let spec: Tenant = Tenant::FromDataObject(ns)?;
+            let spec = match Tenant::FromDataObject(ns.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", ns, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             self.tenantMgr.Add(spec)?;
         }
 
         for ns in self.factory.GetInformer(Namespace::KEY)?.store.List() {
-            let spec: Namespace = Namespace::FromDataObject(ns)?;
+            let spec = match Namespace::FromDataObject(ns.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", ns, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             self.namespaceMgr.Add(spec)?;
         }
 
         for fp in self.factory.GetInformer(Function::KEY)?.store.List() {
-            let func = fp.To::<FuncObject>()?;
+            let func = match fp.To::<FuncObject>() {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", fp, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             self.AddFunc(func)?;
         }
 
         for pod in self.factory.GetInformer(FuncPod::KEY)?.store.List() {
-            let podDef = FuncPod::FromDataObject(pod)?;
+            let podDef = match FuncPod::FromDataObject(pod.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", pod, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
             self.podMgr.Add(podDef)?;
+        }
+
+        for s in self.factory.GetInformer(FuncPolicy::KEY)?.store.List() {
+            let policy = match FuncPolicy::FromDataObject(s.clone()) {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", s, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
+            self.funcpolicyMgr.Add(policy)?;
         }
 
         for snapshot in self
@@ -462,7 +552,10 @@ impl GwObjRepo {
                             info!("********************EventType::ListDone scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
                             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
                         }
-
+                        FuncPolicy::KEY => {
+                            let p = FuncPolicy::FromDataObject(obj)?;
+                            self.funcpolicyMgr.Add(p)?;
+                        }
                         _ => {
                             return Err(Error::CommonError(format!(
                                 "NamespaceMgr::ProcessDeltaEvent {:?}",
@@ -502,6 +595,11 @@ impl GwObjRepo {
                         ContainerSnapshot::KEY => {
                             let snapshot = FuncSnapshot::FromDataObject(obj)?;
                             self.snapshotMgr.Update(snapshot)?;
+                            // self.FuncAgentMgr().FuncPodEventHandler(event.clone())?;
+                        }
+                        FuncPolicy::KEY => {
+                            let p = FuncPolicy::FromDataObject(obj)?;
+                            self.funcpolicyMgr.Update(p)?;
                             // self.FuncAgentMgr().FuncPodEventHandler(event.clone())?;
                         }
                         _ => {
@@ -548,6 +646,10 @@ impl GwObjRepo {
                             info!("********************EventType::Deleted scheduler removed ...************");
                             *SCHEDULER_URL.lock().unwrap() = None;
                         }
+                        FuncPolicy::KEY => {
+                            let p = FuncPolicy::FromDataObject(obj)?;
+                            self.funcpolicyMgr.Remove(p)?;
+                        }
                         _ => {
                             return Err(Error::CommonError(format!(
                                 "NamespaceMgr::ProcessDeltaEvent {:?}",
@@ -579,7 +681,11 @@ impl GwObjRepo {
                     }
                     ContainerSnapshot::KEY => {
                         self.SetListDone(ListType::snapshot);
-                    } // NodeInfo::KEY => {
+                    }
+                    FuncPolicy::KEY => {
+                        self.SetListDone(ListType::funcpolicy);
+                    }
+                    // NodeInfo::KEY => {
                     //     self.SetListDone(ListType::node);
                     // }
                     _ => {
@@ -632,6 +738,34 @@ impl GwObjRepo {
         return Ok(funcbriefs);
     }
 
+    pub fn ListReadyPods(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+    ) -> Result<Vec<FuncReadyPod>> {
+        let podPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
+        let pods = self
+            .podMgr
+            .GetObjectsByPrefix(tenant, namespace, &podPrefix)?;
+        let mut filterPods = Vec::new();
+        for p in pods {
+            if p.object.status.state == PodState::Ready {
+                let readyPod = FuncReadyPod {
+                    tenant: p.tenant.clone(),
+                    namespace: p.namespace.clone(),
+                    funcname: p.name.clone(),
+                    fprevision: p.revision,
+                    id: p.object.spec.id,
+                };
+
+                filterPods.push(readyPod);
+            }
+        }
+
+        return Ok(filterPods);
+    }
+
     pub fn GetFuncDetail(
         &self,
         tenant: &str,
@@ -639,6 +773,14 @@ impl GwObjRepo {
         funcname: &str,
     ) -> Result<FuncDetail> {
         let func = self.GetFunc(tenant, namespace, funcname)?;
+
+        let policy = match &func.object.spec.policy {
+            ObjRef::Link(l) => match self.funcpolicyMgr.Get(tenant, &l.namespace, &l.name) {
+                Ok(p) => p.object,
+                _ => FuncPolicySpec::default(),
+            },
+            ObjRef::Obj(o) => o.clone(),
+        };
 
         let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, funcname);
         let snapshots = self
@@ -668,6 +810,7 @@ impl GwObjRepo {
             sampleRestCall: sampleRestCall,
             pods: filterPods,
             isAdmin: false,
+            policy: policy,
         });
     }
 
@@ -719,11 +862,26 @@ pub struct FuncDetail {
     pub sampleRestCall: String,
     pub pods: Vec<FuncPod>,
     pub isAdmin: bool,
+    pub policy: FuncPolicySpec,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct FuncReadyPod {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub fprevision: i64,
+    pub id: String,
 }
 
 impl EventHandler for GwObjRepo {
     fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
-        self.ProcessDeltaEvent(event).unwrap();
+        match self.ProcessDeltaEvent(event) {
+            Err(e) => {
+                error!("GwObjRepo::Process fail with error {:?}", e);
+            }
+            Ok(()) => (),
+        }
     }
 }
 
@@ -747,7 +905,9 @@ impl NamespaceStore {
 
     pub async fn UpdateNamespace(&self, namespace: &Namespace) -> Result<()> {
         let namespaceObj = namespace.DataObject();
-        self.store.Update(namespace.revision, &namespaceObj).await?;
+        self.store
+            .Update(namespace.revision, &namespaceObj, 0)
+            .await?;
         return Ok(());
     }
 
@@ -755,7 +915,7 @@ impl NamespaceStore {
         let mut namespace = namespace.clone();
         namespace.object.status.disable = true;
         self.store
-            .Update(namespace.revision, &namespace.DataObject())
+            .Update(namespace.revision, &namespace.DataObject(), 0)
             .await?;
         return Ok(());
     }
@@ -768,7 +928,7 @@ impl NamespaceStore {
 
     pub async fn UpdateFunc(&self, func: &Function) -> Result<()> {
         let obj = func.DataObject();
-        self.store.Update(func.revision, &obj).await?;
+        self.store.Update(func.revision, &obj, 0).await?;
         return Ok(());
     }
 

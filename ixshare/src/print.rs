@@ -27,6 +27,7 @@ use std::os::unix::io::IntoRawFd;
 lazy_static! {
     pub static ref LOG: Log = Log::New();
     pub static ref START_TIME: i64 = Utc::now().timestamp_millis();
+    pub static ref LOG_MONITOR: LogMonitor = LogMonitor::New();
 }
 
 #[inline(always)]
@@ -74,6 +75,60 @@ pub const TIME_FORMAT: &str = "%H:%M:%S%.3f";
 
 pub const MEMORY_LEAK_LOG: bool = false;
 
+pub struct LogMonitor {
+    pub watcher: notify::RecommendedWatcher,
+    pub dummy: i32,
+}
+
+impl LogMonitor {
+    pub fn New() -> Self {
+        use notify::Watcher;
+
+        println!("Log start to watch ... start monitor");
+        let log_path = std::path::PathBuf::from(LOG_FILE_DEFAULT);
+        let log_dir = log_path.parent().unwrap();
+        // start inotify watcher
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
+                Ok(event) => {
+                    let reopen = match &event.kind {
+                        notify::EventKind::Remove(_) => event
+                            .paths
+                            .iter()
+                            .any(|p| p == std::path::Path::new(LOG_FILE_DEFAULT)),
+                        _ => false,
+                    };
+
+                    if reopen {
+                        println!("Log Monitor get log removal event {:?}", &event);
+                        let file = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(LOG_FILE_DEFAULT)
+                            .expect("Log Open fail");
+                        let newfd = file.into_raw_fd();
+                        LOG.ResetFd(newfd);
+                    }
+                }
+                Err(e) => eprintln!("watch error: {:?}", e),
+            })
+            .unwrap();
+
+        watcher
+            .watch(&log_dir, notify::RecursiveMode::NonRecursive)
+            .unwrap();
+
+        return Self {
+            watcher: watcher,
+            dummy: 0,
+        };
+    }
+
+    pub fn Touch(&self) -> i32 {
+        return self.dummy;
+    }
+}
+
 #[inline]
 pub fn Timestamp() -> i64 {
     // let tsc = RawRdtsc();
@@ -105,6 +160,10 @@ impl Log {
             .open(RAWLOG_FILE_DEFAULT)
             .expect("Log Open fail");
 
+        println!("Log start to watch ...");
+        // Log::Monitor();
+        LOG_MONITOR.Touch();
+
         return Self {
             fd: AtomicI32::new(file.into_raw_fd()),
             rawfd: AtomicI32::new(rawfile.into_raw_fd()),
@@ -113,6 +172,14 @@ impl Log {
             processid: AtomicI32::new(std::process::id() as _),
             serviceName: RwLock::new("".to_owned()),
         };
+    }
+
+    pub fn ResetFd(&self, newfd: i32) {
+        let oldfd = self.Logfd();
+        self.fd.store(newfd, Ordering::SeqCst);
+        unsafe {
+            libc::close(oldfd);
+        }
     }
 
     pub fn SetServiceName(&self, name: &str) {

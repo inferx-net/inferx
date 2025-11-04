@@ -67,7 +67,7 @@ pub struct StateSvcRegister {
 }
 
 impl StateSvcRegister {
-    pub const LEASE_TTL: i64 = 5; // seconds
+    pub const LEASE_TTL: i64 = 20; // seconds
 
     pub async fn New(addresses: &[String], name: &str, svcIp: &str, port: u16) -> Result<Self> {
         let mut etcdAddresses = Vec::new();

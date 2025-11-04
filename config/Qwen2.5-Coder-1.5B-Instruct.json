@@ -9,18 +9,19 @@
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                "--gpu-memory-utilization",
+                "0.70",
                 "--max-model-len",
                 "1000"
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 30000,
+                "Mem": 24000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 12000
-                },
-                "parallel": 10
+                    "vRam": 13000
+                }
             },
             "envs": [
                 [
@@ -30,6 +31,14 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
+                ],
+                [
+                    "VLLM_USE_GPU_MEMORY_RESERVATION",
+                    "True"
                 ]
             ],
             "mounts": [
@@ -57,7 +66,14 @@
             "standby": {
                 "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "Mem"
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
             }
         }
     }

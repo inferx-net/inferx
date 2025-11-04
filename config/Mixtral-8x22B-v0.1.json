@@ -1,0 +1,66 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "mistralai",
+    "name": "Mixtral-8x22B-v0.1",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.9.0",
+            "commands": [
+                "--model",
+                "mistralai/Mixtral-8x22B-v0.1",
+                "--gpu-memory-utilization",
+                "0.95",
+                "--max-model-len",
+                "1200",
+                "--tensor-parallel-size=4"
+            ],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 100000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 4,
+                    "vRam": 72100
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "I like traveling by train because",
+                "path": "v1/completions",
+                "body": {
+                    "model": "mistralai/Mixtral-8x22B-v0.1",
+                    "max_tokens": "1000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "Mem"
+            }
+        }
+    }
+}

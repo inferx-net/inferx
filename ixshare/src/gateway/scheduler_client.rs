@@ -50,6 +50,7 @@ impl SchedulerClient {
         funcname: &str,
         fprevision: i64,
         id: &str,
+        failworker: bool,
     ) -> Result<()> {
         let schedulerUrl = match SCHEDULER_URL.lock().unwrap().clone() {
             None => {
@@ -68,6 +69,7 @@ impl SchedulerClient {
             funcname: funcname.to_owned(),
             fprevision: fprevision,
             id: id.to_owned(),
+            failworker: failworker,
         };
 
         let request = tonic::Request::new(req);

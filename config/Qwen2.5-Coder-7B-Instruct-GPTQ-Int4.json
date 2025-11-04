@@ -1,0 +1,73 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.9.0",
+            "commands": [
+                "--model",
+                "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+                "--trust-remote-code",
+                "--max-model-len",
+                "2000",
+                "--tensor-parallel-size=1"
+            ],
+            "resources": {
+                "CPU": 10000,
+                "Mem": 23000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 13800
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
+                "path": "v1/completions",
+                "body": {
+                    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+                    "max_tokens": "1000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 2,
+                    "standby_per_node": 2,
+                    "parallel": 120
+                }
+            }
+        }
+    }
+}

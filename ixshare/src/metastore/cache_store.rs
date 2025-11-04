@@ -268,7 +268,7 @@ impl CacheStore {
                     return Ok(())
                 }
                 _ = tokio::time::sleep(until.duration_since(time)) => {
-                    return Err(Error::Timeout)
+                    return Err(Error::Timeout(3000))
                 }
             }
         }

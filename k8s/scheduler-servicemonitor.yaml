@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: scheduler
+  namespace: monitor                # must match Prometheus namespace
+  labels:
+    release: prometheus        # must match Prometheus label
+spec:
+  selector:
+    matchLabels:
+      app: scheduler                  # must match your Service labels
+  namespaceSelector:
+    matchNames:
+      - default                     # where your gateway Service actually runs
+  endpoints:
+    - port: http                    # must match Service port name
+      path: /metrics
+      interval: 15s

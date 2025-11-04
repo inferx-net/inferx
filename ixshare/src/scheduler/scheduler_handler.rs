@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use inferxlib::data_obj::ObjRef;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -24,18 +29,25 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use inferxlib::node::WorkerPodState;
+use inferxlib::obj_mgr::node_mgr::NAState;
 use inferxlib::resource::StandbyType;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
 use tokio::time::Interval;
 
+use crate::audit::SnapshotScheduleAudit;
+use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
+use crate::gateway::metrics::Nodelabel;
+use crate::gateway::metrics::PodLabels;
+use crate::gateway::metrics::SCHEDULER_METRICS;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
 use crate::na::RemoveSnapshotReq;
 use crate::na::TerminatePodReq;
 use crate::peer_mgr::PeerMgr;
+use crate::scheduler::scheduler::SetIdleSource;
 use crate::scheduler::scheduler::SCHEDULER_CONFIG;
 use inferxlib::data_obj::DeltaEvent;
 use inferxlib::data_obj::EventType;
@@ -53,6 +65,11 @@ use crate::na::Kv;
 use inferxlib::obj_mgr::node_mgr::Node;
 use inferxlib::resource::Resources;
 
+use super::scheduler::BiIndex;
+use super::scheduler::SchedTask;
+use super::scheduler::SnapshotScheduleInfo;
+use super::scheduler::SnapshotScheduleState;
+use super::scheduler::TaskQueue;
 use super::scheduler::WorkerPod;
 
 lazy_static::lazy_static! {
@@ -112,6 +129,7 @@ pub struct NodeStatus {
 
     pub pods: BTreeMap<String, WorkerPod>,
     pub createTime: Instant,
+    pub state: NAState,
 }
 
 impl NodeStatus {
@@ -127,6 +145,7 @@ impl NodeStatus {
 
         // error!("NodeStatus total {:#?}, availabe {:#?}", &total, &available);
 
+        let state = node.object.state;
         return Ok(Self {
             node: node,
             total: total,
@@ -134,6 +153,7 @@ impl NodeStatus {
             pendingPods: BTreeMap::new(),
             pods: pods,
             createTime: std::time::Instant::now(),
+            state: state,
         });
     }
 
@@ -232,6 +252,50 @@ impl NodeStatus {
     }
 }
 
+pub trait ResourceAlloc {
+    fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> AllocState;
+    fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources>;
+}
+
+impl ResourceAlloc for NodeResources {
+    fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> AllocState {
+        return AllocState {
+            cpu: self.cpu >= req.cpu,
+            memory: self.memory >= req.memory,
+            cacheMem: self.cacheMemory >= req.cacheMemory,
+            gpuType: self.gpuType.CanAlloc(&req.gpu.type_),
+            gpu: self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some(),
+        };
+    }
+
+    fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
+        let state = self.CanAlloc(req, createSnapshot);
+        if !state.Ok() {
+            return Err(Error::ScheduleFail(state));
+        }
+
+        self.memory -= req.memory;
+        self.cacheMemory -= req.cacheMemory;
+        let gpus = self.gpus.Alloc(&req.gpu, createSnapshot)?;
+
+        return Ok(NodeResources {
+            nodename: self.nodename.clone(),
+            cpu: req.cpu,
+            memory: req.memory,
+            cacheMemory: req.cacheMemory,
+            gpuType: self.gpuType.clone(),
+            gpus: gpus,
+            maxContextCnt: self.maxContextCnt,
+        });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LeaseReq {
+    pub req: na::LeaseWorkerReq,
+    pub time: SystemTime,
+}
+
 #[derive(Debug)]
 pub struct FuncStatus {
     pub func: Function,
@@ -240,7 +304,7 @@ pub struct FuncStatus {
     // podname --> PendingPod
     pub pendingPods: BTreeMap<String, PendingPod>,
 
-    pub leaseWorkerReqs: VecDeque<(na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)>,
+    pub leaseWorkerReqs: VecDeque<(LeaseReq, Sender<na::LeaseWorkerResp>)>,
 }
 
 impl FuncStatus {
@@ -254,12 +318,14 @@ impl FuncStatus {
     }
 
     pub fn PushLeaseWorkerReq(&mut self, req: na::LeaseWorkerReq, tx: Sender<na::LeaseWorkerResp>) {
+        let req = LeaseReq {
+            req: req,
+            time: SystemTime::now(),
+        };
         self.leaseWorkerReqs.push_back((req, tx));
     }
 
-    pub fn PopLeaseWorkerReq(
-        &mut self,
-    ) -> Option<(na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)> {
+    pub fn PopLeaseWorkerReq(&mut self) -> Option<(LeaseReq, Sender<na::LeaseWorkerResp>)> {
         return self.leaseWorkerReqs.pop_front();
     }
 
@@ -280,18 +346,55 @@ impl FuncStatus {
         return Ok(());
     }
 
-    pub fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
+    pub async fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
         let podKey = pod.pod.PodKey();
         if self.pods.insert(podKey.clone(), pod.clone()).is_none() {
             error!("podkey is {}", &podKey);
             panic!("podkey is {}", &podKey);
         }
 
-        if pod.pod.object.status.state == PodState::Ready {
+        if pod.pod.object.status.state == PodState::Ready && pod.State().IsIdle() {
             loop {
                 match self.PopLeaseWorkerReq() {
                     Some((req, tx)) => {
+                        let elapsed = req.time.elapsed().unwrap().as_millis();
+
+                        let req = &req.req;
                         pod.SetWorking(req.gateway_id); // first time get ready, we don't need to remove it from idlePods in scheduler
+
+                        let labels = PodLabels {
+                            tenant: req.tenant.clone(),
+                            namespace: req.namespace.clone(),
+                            funcname: req.funcname.clone(),
+                            revision: req.fprevision,
+                            nodename: pod.pod.object.spec.nodename.clone(),
+                        };
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .podLeaseCnt
+                            .get_or_create(&labels)
+                            .inc();
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .coldStartPodLatency
+                            .get_or_create(&labels)
+                            .observe(elapsed as f64 / 1000.0);
+
+                        let nodelabel = Nodelabel {
+                            nodename: pod.pod.object.spec.nodename.clone(),
+                        };
+
+                        let gpuCnt = pod.pod.object.spec.reqResources.gpu.gpuCount;
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGPU
+                            .get_or_create(&nodelabel)
+                            .inc_by(gpuCnt as i64);
 
                         let peer = match PEER_MGR.LookforPeer(pod.pod.object.spec.ipAddr) {
                             Ok(p) => p,
@@ -317,7 +420,7 @@ impl FuncStatus {
                         }
                     }
                     None => {
-                        pod.SetIdle();
+                        pod.SetIdle(SetIdleSource::UpdatePod);
                         break;
                     }
                 }
@@ -371,22 +474,30 @@ pub struct SchedulerHandler {
 
     /********************idle pods ************************* */
     // returnId --> PodKey()
-    pub idlePods: BTreeMap<u64, String>,
+    pub idlePods: BTreeSet<String>,
 
     /********************stopping pods ************************* */
     pub stoppingPods: BTreeSet<String>,
 
     // temp pods storage when the func is not ready
-    // package name -> <Podid --> WorkerPod>
-    pub packagePods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
+    // funcname name -> <Podid --> WorkerPod>
+    pub funcPods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
+
+    // Snapshot schedule state, id1: funcid, id2: nodename
+    pub SnapshotSched: BiIndex<SnapshotScheduleInfo>,
+
+    pub funcpolicy: BTreeMap<String, FuncPolicySpec>,
 
     pub nodeListDone: bool,
     pub funcListDone: bool,
     pub funcPodListDone: bool,
     pub snapshotListDone: bool,
+    pub funcpolicyDone: bool,
     pub listDone: bool,
 
     pub nextWorkId: AtomicU64,
+
+    pub taskQueue: TaskQueue,
 }
 
 impl SchedulerHandler {
@@ -427,9 +538,9 @@ impl SchedulerHandler {
             match state {
                 WorkerPodState::Working(gatewayId) => {
                     if timeoutGateways.contains(&gatewayId) {
-                        let returnId = worker.SetIdle();
+                        worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
                         // how to handle the recovered failure gateway?
-                        self.idlePods.insert(returnId, worker.pod.PodKey());
+                        self.idlePods.insert(worker.pod.PodKey());
                     }
                 }
                 _ => (),
@@ -449,8 +560,9 @@ impl SchedulerHandler {
         for worker in &pods {
             let pod = &worker.pod;
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
-                let returnId = worker.SetWorking(req.gateway_id);
-                self.idlePods.remove(&returnId);
+                worker.SetWorking(req.gateway_id);
+                let remove = self.idlePods.remove(&worker.pod.PodKey());
+                error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -458,6 +570,34 @@ impl SchedulerHandler {
                         return Err(e);
                     }
                 };
+
+                let labels = PodLabels {
+                    tenant: req.tenant.clone(),
+                    namespace: req.namespace.clone(),
+                    funcname: req.funcname.clone(),
+                    revision: req.fprevision,
+                    nodename: pod.object.spec.nodename.clone(),
+                };
+
+                SCHEDULER_METRICS
+                    .lock()
+                    .await
+                    .podLeaseCnt
+                    .get_or_create(&labels)
+                    .inc();
+
+                let nodelabel = Nodelabel {
+                    nodename: pod.object.spec.nodename.clone(),
+                };
+
+                let gpuCnt = pod.object.spec.reqResources.gpu.gpuCount;
+
+                SCHEDULER_METRICS
+                    .lock()
+                    .await
+                    .usedGPU
+                    .get_or_create(&nodelabel)
+                    .inc_by(gpuCnt as i64);
 
                 let resp = na::LeaseWorkerResp {
                     error: String::new(),
@@ -472,11 +612,55 @@ impl SchedulerHandler {
             }
         }
 
-        let key = format!(
+        let funcname = format!(
             "{}/{}/{}/{}",
             &req.tenant, &req.namespace, &req.funcname, req.fprevision
         );
-        match self.ResumePod(&key).await {
+
+        let fp = match self.funcs.get(&funcname) {
+            None => {
+                let resp = na::LeaseWorkerResp {
+                    error: format!(
+                        "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                        funcname,
+                        self.funcs.keys(),
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Err(Error::NotExist(format!(
+                    "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                    funcname,
+                    self.funcs.keys(),
+                )));
+            }
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        let policy = self.FuncPolicy(&req.tenant, &fp.object.spec.policy);
+
+        let readyCnt = self.ReadyPodCount(&funcname);
+
+        if policy.maxReplica <= readyCnt as u64 {
+            let resp = na::LeaseWorkerResp {
+                error: format!(
+                    "ProcessLeaseWorkerReq can't create pod for func {} as reach max_replica limitation {} ready pod count {}",
+                    funcname,
+                    policy.maxReplica,
+                    readyCnt
+                ),
+                ..Default::default()
+            };
+            tx.send(resp).unwrap();
+            return Err(Error::NotExist(format!(
+                "ProcessLeaseWorkerReq can't create pod for func {} as reach max_replica limitation {} ready pod count {}",
+                funcname,
+                policy.maxReplica,
+                readyCnt
+            )));
+        }
+
+        match self.ResumePod(&funcname).await {
             Err(e) => {
                 let resp = na::LeaseWorkerResp {
                     error: format!("{:?}", e),
@@ -485,7 +669,7 @@ impl SchedulerHandler {
                 tx.send(resp).unwrap();
             }
             Ok(_) => {
-                self.PushLeaseWorkerReq(&key, req, tx)?;
+                self.PushLeaseWorkerReq(&funcname, req, tx)?;
             }
         }
 
@@ -497,21 +681,46 @@ impl SchedulerHandler {
         req: na::ReturnWorkerReq,
         tx: Sender<na::ReturnWorkerResp>,
     ) -> Result<()> {
-        let worker = self.GetFuncPod(
+        let worker = match self.GetFuncPod(
             &req.tenant,
             &req.namespace,
             &req.funcname,
             req.fprevision,
             &req.id,
-        )?;
+        ) {
+            Err(e) => {
+                error!(
+                    "ProcessReturnWorkerReq can't find pod {:#?} with error e {:?}",
+                    req, e
+                );
+                return Ok(());
+            }
+            Ok(w) => w,
+        };
+
+        info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
+            // when the scheduler restart, this issue will happen, fix this.
             error!(
-                "ProcessReturnWorkerReq fail the {} state {:?}",
+                "ProcessReturnWorkerReq fail the {} state {:?}, likely there is scheduler restart",
                 worker.pod.PodKey(),
                 worker.State()
             );
         }
+
+        let nodelabel = Nodelabel {
+            nodename: worker.pod.object.spec.nodename.clone(),
+        };
+
+        let gpuCnt = worker.pod.object.spec.reqResources.gpu.gpuCount;
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .usedGPU
+            .get_or_create(&nodelabel)
+            .dec_by(gpuCnt as i64);
 
         // in case the gateway dead and recover and try to return an out of date pod
         // assert!(
@@ -519,8 +728,33 @@ impl SchedulerHandler {
         //     "the state is {:?}",
         //     worker.State()
         // );
-        let returnId = worker.SetIdle();
-        self.idlePods.insert(returnId, worker.pod.PodKey());
+
+        if req.failworker {
+            error!(
+                "ProcessReturnWorkerReq return and kill failure pod {}",
+                worker.pod.PodKey()
+            );
+            let state = worker.State();
+            // the gateway might lease the failure pod again and return multiple times.
+            // we can't stopworker mutiple times. do some check.
+            if state != WorkerPodState::Terminating {
+                worker.SetState(WorkerPodState::Terminating);
+                match self.StopWorker(&worker.pod).await {
+                    Ok(()) => (),
+                    Err(e) => {
+                        error!(
+                            "ProcessReturnWorkerReq kill failure pod: fail to stop func worker {:?} with error {:#?}",
+                            worker.pod.PodKey(),
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            worker.SetIdle(SetIdleSource::ProcessReturnWorkerReq);
+            self.idlePods.insert(worker.pod.PodKey());
+        }
+
         let resp = na::ReturnWorkerResp {
             error: "".to_owned(),
         };
@@ -548,7 +782,7 @@ impl SchedulerHandler {
     pub fn GetFuncPodsByKey(&self, fpkey: &str) -> Result<Vec<WorkerPod>> {
         match self.funcs.get(fpkey) {
             None => {
-                error!("get pods key is {} keys {:#?}", &fpkey, self.funcs.keys());
+                // error!("get function key is {} keys {:#?}", &fpkey, self.funcs.keys());
                 return Ok(Vec::new());
             }
             Some(fpStatus) => {
@@ -627,7 +861,13 @@ impl SchedulerHandler {
 
     pub fn UpdateSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
-        assert!(self.snapshots.contains_key(&funckey));
+        if !self.snapshots.contains_key(&funckey) {
+            error!(
+                "UpdateSnapshot get snapshot will non exist funckey {}",
+                funckey
+            );
+            return Ok(());
+        }
 
         self.snapshots
             .get_mut(&funckey)
@@ -728,8 +968,25 @@ impl SchedulerHandler {
         interval: &mut Interval,
     ) -> Result<()> {
         tokio::select! {
-            _ = closeNotfiy.notified() => {
-                return Err(Error::ProcessDone);
+            biased;
+            m = msgRx.recv() => {
+                if let Some(msg) = m {
+                    match msg {
+                        WorkerHandlerMsg::LeaseWorker((m, tx)) => {
+                            self.ProcessLeaseWorkerReq(m, tx).await?;
+                        }
+                        WorkerHandlerMsg::ReturnWorker((m, tx)) => {
+                            self.ProcessReturnWorkerReq(m, tx).await.ok();
+                        }
+                        WorkerHandlerMsg::RefreshGateway(m) => {
+                            self.ProcessRefreshGateway(m).await?;
+                        }
+                        _ => ()
+                    }
+                } else {
+                    error!("scheduler msgRx read fail...");
+                    return Err(Error::ProcessDone);
+                }
             }
             _ = interval.tick() => {
                 if self.listDone {
@@ -751,7 +1008,8 @@ impl SchedulerHandler {
                                     let funcid = func.Id();
                                     self.AddFunc(func)?;
                                     if self.listDone {
-                                        self.ProcessAddFunc(&funcid).await?;
+                                        self.ProcessAddFunc(&funcid).await;
+                                        self.taskQueue.AddFunc(&funcid);
                                     }
                                 }
                                 Node::KEY => {
@@ -773,7 +1031,7 @@ impl SchedulerHandler {
                                         }
                                         Ok(()) => (),
                                     };
-                                    self.AddNode(node)?;
+                                    self.AddNode(node).await?;
 
                                 }
                                 FuncPod::KEY => {
@@ -783,6 +1041,11 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.AddSnapshot(&snapshot)?;
+                                }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.insert(key, policy.object);
                                 }
                                 _ => {
                                 }
@@ -800,9 +1063,14 @@ impl SchedulerHandler {
                                     let fpId = spec.Id();
                                     self.AddFunc(spec)?;
                                     if self.listDone {
-                                        self.ProcessAddFunc(&fpId).await?;
+                                        self.ProcessAddFunc(&fpId).await;
+                                        self.taskQueue.AddFunc(&fpId);
                                     }
-
+                                }
+                                Node::KEY => {
+                                    let node = Node::FromDataObject(obj)?;
+                                    error!("Update node {:?}", &node);
+                                    self.UpdateNode(node)?;
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
@@ -811,6 +1079,11 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
+                                }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.insert(key, policy.object);
                                 }
                                 _ => {
                                 }
@@ -829,7 +1102,7 @@ impl SchedulerHandler {
                                     let node = Node::FromDataObject(obj)?;
                                     let cidr = ipnetwork::Ipv4Network::from_str(&node.object.cidr).unwrap();
                                     PEER_MGR.RemovePeer(cidr.ip().into()).unwrap();
-                                    self.RemoveNode(node)?;
+                                    self.RemoveNode(node).await?;
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
@@ -838,9 +1111,11 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.RemoveSnapshot(&snapshot).await?;
-
-
-
+                                }
+                                FuncPolicy::KEY => {
+                                    let policy = FuncPolicy::FromDataObject(obj)?;
+                                    let key = policy.Key();
+                                    self.funcpolicy.remove(&key);
                                 }
                                 _ => {
                                 }
@@ -860,6 +1135,9 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     self.ListDone(ListType::Snapshot).await?;
                                 }
+                                FuncPolicy::KEY => {
+                                    self.ListDone(ListType::Funcpolicy).await?;
+                                }
                                 _ => {
                                     error!("SchedulerHandler get unexpect list done {}", &obj.objType);
                                 }
@@ -878,25 +1156,20 @@ impl SchedulerHandler {
                     return Err(Error::ProcessDone);
                 }
             }
-            m = msgRx.recv() => {
-                if let Some(msg) = m {
-                    match msg {
-                        WorkerHandlerMsg::LeaseWorker((m, tx)) => {
-                            self.ProcessLeaseWorkerReq(m, tx).await?;
-                        }
-                        WorkerHandlerMsg::ReturnWorker((m, tx)) => {
-                            self.ProcessReturnWorkerReq(m, tx).await.ok();
-                        }
-                        WorkerHandlerMsg::RefreshGateway(m) => {
-                            self.ProcessRefreshGateway(m).await?;
-                        }
-                        _ => ()
+            t = self.taskQueue.Next() => {
+                let task = match t {
+                    None => {
+                        return Ok(());
                     }
-                } else {
-                    error!("scheduler msgRx read fail...");
-                    return Err(Error::ProcessDone);
-                }
+                    Some(t) => t
+                };
+
+                self.ProcessTask(&task).await?;
             }
+            _ = closeNotfiy.notified() => {
+                return Err(Error::ProcessDone);
+            }
+
         }
 
         return Ok(());
@@ -1008,6 +1281,27 @@ impl SchedulerHandler {
         return snapshot.ReadyCacheMemory();
     }
 
+    pub fn ReadyPodCount(&self, funcname: &str) -> usize {
+        let mut count = 0;
+        match self.funcs.get(funcname) {
+            None => (),
+            Some(status) => {
+                for (_, pod) in &status.pods {
+                    // error!(
+                    //     "ReadyPodCount podname {:?}/{:?}",
+                    //     pod.pod.PodKey(),
+                    //     pod.State()
+                    // );
+                    if pod.State().IsResumed() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
+
     // find a node to run the pod (snapshot or standy resume), if there is no enough free resource, add list of evaction pods
     // ret ==> (node, evacation pods)
     pub async fn FindNode4Pod(
@@ -1016,12 +1310,42 @@ impl SchedulerHandler {
         forStandby: bool,
         candidateNodes: &BTreeSet<String>,
         createSnapshot: bool,
-    ) -> Result<(String, Vec<WorkerPod>)> {
+    ) -> Result<(String, Vec<WorkerPod>, NodeResources)> {
         let mut nodeSnapshots = BTreeMap::new();
+        let mut allocStates = BTreeMap::new();
 
         // go through candidate list to look for node has enough free resource, if so return
         for nodename in candidateNodes {
-            let nr = self.nodes.get(nodename).unwrap().available.clone();
+            let node = self.nodes.get(nodename).unwrap();
+
+            if Self::PRINT_SCHEDER_INFO {
+                error!("FindNode4Pod 1 ns is {:#?}", &node.available);
+            }
+
+            if !createSnapshot {
+                let mut standbyPod = 0;
+                for (podname, pod) in &node.pods {
+                    if pod.pod.object.status.state != PodState::Standby {
+                        continue;
+                    }
+
+                    if pod.pod.FuncKey() != func.Id() {
+                        continue;
+                    }
+
+                    if node.pendingPods.contains_key(podname) {
+                        continue;
+                    }
+
+                    standbyPod += 1;
+                }
+
+                if standbyPod == 0 {
+                    continue;
+                }
+            }
+
+            let nr = node.available.clone();
             let contextCount = nr.maxContextCnt;
             let req = if !forStandby {
                 // snapshot need to take whole gpu
@@ -1029,100 +1353,112 @@ impl SchedulerHandler {
             } else {
                 self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
             };
-            if nr.CanAlloc(&req, createSnapshot) {
-                return Ok((nodename.clone(), Vec::new()));
+
+            let state = nr.CanAlloc(&req, createSnapshot);
+            if state.Ok() {
+                info!(
+                    "FindNode4Pod 1 for resuming func {:?} with nr {:#?}",
+                    func.Id(),
+                    &nr
+                );
+
+                return Ok((nodename.clone(), Vec::new(), nr));
             }
-            nodeSnapshots.insert(nodename.clone(), (nr, Vec::new()));
+
+            allocStates.insert(nodename.clone(), state);
+            nodeSnapshots.insert(nodename.clone(), (nr, Vec::<WorkerPod>::new()));
         }
 
         let mut missWorkers = Vec::new();
 
         let mut findnodeName = None;
-        let mut contextCount = 0;
+        let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
-        for (workid, podKey) in &self.idlePods {
+        info!(
+            "FindNode4Pod 2 for resuming func {:?} with idle pods {:#?} nodeSnapshots is {:#?}",
+            func.Id(),
+            &self.idlePods,
+            &nodeSnapshots
+        );
+
+        for podKey in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
-                    missWorkers.push(*workid);
+                    missWorkers.push(podKey.to_owned());
                     continue;
                 }
-                Some(pod) => match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
-                    None => (),
-                    Some((nr, workids)) => {
-                        workids.push(*workid);
-                        nr.Add(&pod.pod.object.spec.allocResources).unwrap();
-
-                        let req = if !forStandby {
-                            func.object.spec.SnapshotResource(nr.maxContextCnt)
-                        } else {
-                            self.ReqResumeResource(
-                                &func.object.spec.RunningResource(),
-                                &func.Id(),
-                                &pod.pod.object.spec.nodename,
-                            )
-                        };
-                        if nr.CanAlloc(&req, createSnapshot) {
-                            findnodeName = Some(pod.pod.object.spec.nodename.clone());
-                            if !forStandby {
-                                contextCount = nr.maxContextCnt;
+                Some(pod) => {
+                    // we won't kill another same func instance to start a new one
+                    if pod.pod.FuncKey() == func.Id() {
+                        continue;
+                    }
+                    match nodeSnapshots.get_mut(&pod.pod.object.spec.nodename) {
+                        None => (),
+                        Some((nr, workids)) => {
+                            if !self.VerifyMinReplicaPolicy(pod, &workids) {
+                                continue;
                             }
+
+                            workids.push(pod.clone());
+                            info!(
+                                "FindNode4Pod 2 for resuming 2 func {:?} with idle pod {:#?}",
+                                func.Id(),
+                                podKey,
+                            );
+                            nr.Add(&pod.pod.object.spec.allocResources).unwrap();
+
+                            let req = if !forStandby {
+                                func.object.spec.SnapshotResource(nr.maxContextCnt)
+                            } else {
+                                self.ReqResumeResource(
+                                    &func.object.spec.RunningResource(),
+                                    &func.Id(),
+                                    &pod.pod.object.spec.nodename,
+                                )
+                            };
+                            let state = nr.CanAlloc(&req, createSnapshot);
+                            if state.Ok() {
+                                findnodeName = Some(pod.pod.object.spec.nodename.clone());
+                                nodeResource = nr.clone();
+                                break;
+                            }
+                            allocStates.insert(pod.pod.object.spec.nodename.clone(), state);
                         }
                     }
-                },
+                }
             }
         }
 
-        for workerid in &missWorkers {
-            self.idlePods.remove(workerid);
+        for podKey in &missWorkers {
+            self.idlePods.remove(podKey);
+            error!("FindNode4Pod remove idlepod missing {:?}", &podKey);
         }
 
         if findnodeName.is_none() {
+            error!(
+                "can't find enough resource for {}, nodes state {:#?}",
+                func.Key(),
+                allocStates.values()
+            );
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "can find enough resource for {}",
-                func.Key()
+                "can't find enough resource for {}, nodes state {:#?}",
+                func.Key(),
+                allocStates.values()
             )));
         }
 
         let nodename = findnodeName.unwrap();
 
-        let req = if !forStandby {
-            func.object.spec.SnapshotResource(contextCount)
-        } else {
-            // func.object.spec.AllResources()
-            self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
-        };
+        let (_, workids) = nodeSnapshots.get(&nodename).unwrap().clone();
 
-        let mut pods = Vec::new();
-        let (_, workdis) = nodeSnapshots.get(&nodename).unwrap().clone();
-        for workid in &workdis {
-            match self.idlePods.remove(workid) {
-                None => unreachable!(),
-                Some(podkey) => match self.pods.get(&podkey) {
-                    None => unreachable!(),
-                    Some(pod) => {
-                        let nodename = pod.pod.object.spec.nodename.clone();
-                        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                        self.stoppingPods.insert(podkey.clone());
-
-                        nodeStatus
-                            .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-                        pods.push(pod.clone());
-                        if nodeStatus.available.CanAlloc(&req, createSnapshot) {
-                            break;
-                        }
-                    }
-                },
-            }
-        }
-
-        return Ok((nodename, pods));
+        return Ok((nodename, workids, nodeResource));
     }
 
     pub async fn GetBestResumeWorker(
         &mut self,
         fp: &Function,
-    ) -> Result<(WorkerPod, Vec<WorkerPod>)> {
+    ) -> Result<(WorkerPod, Vec<WorkerPod>, NodeResources)> {
         let funcid = fp.Id();
 
         let pods = self.GetFuncPodsByKey(&funcid)?;
@@ -1149,15 +1485,20 @@ impl SchedulerHandler {
             )));
         }
 
-        let (nodename, terminalpods) = self.FindNode4Pod(fp, true, &nodes, false).await?;
+        let (nodename, termimalworkers, nodeResource) =
+            self.FindNode4Pod(fp, true, &nodes, false).await?;
 
         for worker in &pods {
             if worker.pod.object.status.state != PodState::Standby {
                 continue;
             }
 
+            if worker.State() != WorkerPodState::Standby {
+                continue;
+            }
+
             if &worker.pod.object.spec.nodename == &nodename {
-                return Ok((worker.clone(), terminalpods));
+                return Ok((worker.clone(), termimalworkers, nodeResource));
             }
         }
 
@@ -1167,13 +1508,22 @@ impl SchedulerHandler {
         )));
     }
 
+    pub fn IsNodeReady(&self, nodename: &str) -> bool {
+        match self.nodes.get(nodename) {
+            None => return false,
+            Some(ns) => {
+                return ns.state == NAState::NodeAgentAvaiable;
+            }
+        }
+    }
+
     pub fn GetSnapshotNodes(&self, funcid: &str) -> BTreeSet<String> {
         let mut nodes = BTreeSet::new();
         match self.snapshots.get(funcid) {
             None => return nodes,
             Some(ns) => {
-                for (n, _) in ns {
-                    nodes.insert(n.to_owned());
+                for (nodename, _) in ns {
+                    nodes.insert(nodename.to_owned());
                 }
                 return nodes;
             }
@@ -1195,6 +1545,17 @@ impl SchedulerHandler {
         let mut nodes = BTreeSet::new();
 
         for (_, ns) in &self.nodes {
+            if Self::PRINT_SCHEDER_INFO {
+                error!(
+                    "GetSnapshotCandidateNodes 1 {:?}/{:?}",
+                    ns.state, &ns.available
+                );
+            }
+
+            if ns.state != NAState::NodeAgentAvaiable {
+                continue;
+            }
+
             // wait 5 sec to sync the snapshot information
             if std::time::Instant::now().duration_since(ns.createTime)
                 < std::time::Duration::from_secs(5)
@@ -1216,7 +1577,7 @@ impl SchedulerHandler {
                 match self.nodes.get(&ns.node.name) {
                     None => (),
                     Some(ns) => {
-                        if ns.total.CanAlloc(&func.object.spec.resources, true) {
+                        if ns.total.CanAlloc(&func.object.spec.resources, true).Ok() {
                             nodes.insert(ns.node.name.clone());
                         }
                     }
@@ -1227,29 +1588,26 @@ impl SchedulerHandler {
         return nodes;
     }
 
-    pub async fn GetBestNodeToSnapshot(
-        &mut self,
-        func: &Function,
-    ) -> Result<(String, Vec<WorkerPod>)> {
-        let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
-        if snapshotCandidateNodes.len() == 0 {
-            return Err(Error::SchedulerErr(format!(
-                "GetBestNodeToSnapshot can't schedule {}, no enough resource",
-                func.Id(),
-            )));
-        }
+    // pub async fn GetBestNodeToSnapshot(
+    //     &mut self,
+    //     func: &Function,
+    // ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
+    //     let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
+    //     if snapshotCandidateNodes.len() == 0 {
+    //         return Err(Error::SchedulerErr(format!(
+    //             "GetBestNodeToSnapshot can't schedule {}, no enough resource",
+    //             func.Id(),
+    //         )));
+    //     }
 
-        let (nodename, pods) = self
-            .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
-            .await?;
+    //     let (nodename, workers, nodeResource) = self
+    //         .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
+    //         .await?;
 
-        return Ok((nodename, pods));
-    }
+    //     return Ok((nodename, workers, nodeResource));
+    // }
 
     pub async fn GetBestNodeToRestore(&mut self, fp: &Function) -> Result<String> {
-        use rand::prelude::SliceRandom;
-        use rand::thread_rng;
-
         let funcid = fp.Id();
         let pods = self.GetFuncPodsByKey(&funcid)?;
         let mut existnodes = BTreeSet::new();
@@ -1258,7 +1616,10 @@ impl SchedulerHandler {
             // error!("GetBestNodeToRestore id {} state {}", &funcid, podstate);
             // the pod reach ready state, create another standby pod
             if podstate != PodState::Ready {
-                existnodes.insert(pod.pod.object.spec.nodename.clone());
+                let nodename = pod.pod.object.spec.nodename.clone();
+                if self.IsNodeReady(&nodename) {
+                    existnodes.insert(pod.pod.object.spec.nodename.clone());
+                }
             }
         }
 
@@ -1266,9 +1627,12 @@ impl SchedulerHandler {
         match self.snapshots.get(&funcid) {
             None => (),
             Some(set) => {
-                for (n, _) in set {
-                    if !existnodes.contains(n) {
-                        res.push(n.to_owned());
+                for (nodename, _) in set {
+                    if !self.IsNodeReady(nodename) {
+                        continue;
+                    }
+                    if !existnodes.contains(nodename) {
+                        res.push(nodename.to_owned());
                     }
                 }
             }
@@ -1290,9 +1654,12 @@ impl SchedulerHandler {
     }
 
     pub async fn RefreshScheduling(&mut self) -> Result<()> {
-        let funcids: Vec<String> = self.funcs.keys().cloned().collect();
+        let mut funcids: Vec<String> = self.funcs.keys().cloned().collect();
+        funcids.shuffle(&mut thread_rng());
         for fpId in &funcids {
-            self.ProcessAddFunc(fpId).await.ok();
+            if self.ProcessAddFunc(fpId).await {
+                break;
+            }
         }
 
         return Ok(());
@@ -1314,13 +1681,498 @@ impl SchedulerHandler {
         }
     }
 
-    pub async fn ProcessAddFunc(&mut self, funcid: &str) -> Result<()> {
+    pub fn InitSnapshotTask(&self) -> Result<()> {
+        for (funcId, _) in &self.funcs {
+            for (nodename, _) in &self.nodes {
+                self.taskQueue.AddSnapshotTask(nodename, funcId);
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
+        use tokio::time::{sleep, Duration};
+        match task {
+            SchedTask::AddNode(nodename) => {
+                // wait until all info of the node be synced
+                // todo: can't block main thread
+                sleep(Duration::from_secs(3)).await;
+                for (funcId, _) in &self.funcs {
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                }
+                self.taskQueue
+                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
+            }
+            SchedTask::AddFunc(funcId) => {
+                for (nodename, _) in &self.nodes {
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                }
+            }
+            SchedTask::SnapshotTask(p) => {
+                self.TryCreateSnapshotOnNode(&p.funcId, &p.nodename)
+                    .await
+                    .ok();
+            }
+            SchedTask::StandbyTask(nodename) => {
+                self.TryCreateStandbyOnNode(&nodename).await.ok();
+            }
+
+            _ => (),
+        }
+
+        return Ok(());
+    }
+
+    pub fn VerifyMinReplicaPolicy(&self, pod: &WorkerPod, workids: &Vec<WorkerPod>) -> bool {
+        let evictfuncname = pod.pod.FuncKey();
+        let totalevictcnt = {
+            let mut count = 0;
+            for pod in workids.clone() {
+                if &pod.pod.FuncKey() == &evictfuncname {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        let policy = self.FuncPolicy(&pod.pod.tenant, &pod.pod.object.spec.funcspec.policy);
+
+        if self.ReadyPodCount(&evictfuncname) - totalevictcnt <= policy.minReplica as usize {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn TryFreeResources(
+        &mut self,
+        nodename: &str,
+        funcId: &str,
+        available: &mut NodeResources,
+        reqResource: &Resources,
+        createSnapshot: bool,
+    ) -> Result<Vec<WorkerPod>> {
+        let mut workids: Vec<WorkerPod> = Vec::new();
+        let mut missWorkers = Vec::new();
+
+        for podKey in &self.idlePods {
+            match self.pods.get(podKey) {
+                None => {
+                    missWorkers.push(podKey.to_owned());
+                    continue;
+                }
+                Some(pod) => {
+                    if &pod.pod.object.spec.nodename != nodename {
+                        continue;
+                    }
+
+                    if !self.VerifyMinReplicaPolicy(pod, &workids) {
+                        continue;
+                    }
+
+                    workids.push(pod.clone());
+                    available.Add(&pod.pod.object.spec.allocResources).unwrap();
+                    if available.CanAlloc(&reqResource, createSnapshot).Ok() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for workerid in &missWorkers {
+            let pod = self.idlePods.remove(workerid);
+            error!("FindNode4Pod remove idlepod missing {:?}", &pod);
+        }
+
+        let state = available.CanAlloc(&reqResource, createSnapshot);
+        if !state.Ok() {
+            return Err(Error::SchedulerNoEnoughResource(format!(
+                "Node {} has no enough free resource to run {} {:?}",
+                nodename, funcId, state
+            )));
+        }
+
+        return Ok(workids);
+    }
+
+    pub fn SetSnapshotStatus(
+        &mut self,
+        funcId: &str,
+        nodename: &str,
+        state: SnapshotScheduleState,
+    ) {
+        let update = self.SnapshotSched.Set(
+            funcId,
+            nodename,
+            SnapshotScheduleInfo::New(funcId, nodename, state.clone()),
+        );
+
+        if update {
+            match SnapshotScheduleAudit::New(funcId, nodename, &state) {
+                Err(e) => {
+                    error!("SetSnapshotStatus fail with {:?}", e);
+                }
+                Ok(a) => {
+                    POD_AUDIT_AGENT.AuditSnapshotSchedule(a);
+                }
+            }
+        }
+    }
+
+    pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
+        match self.snapshots.get(funcId) {
+            None => (),
+            Some(ss) => {
+                match ss.get(nodename) {
+                    Some(_) => {
+                        // there is snapshot on the node
+                        return Ok(());
+                    }
+                    None => (),
+                }
+            }
+        }
+
+        match self.pendingsnapshots.get(funcId) {
+            None => (),
+            Some(m) => {
+                if m.contains(nodename) {
+                    // doing snapshot in the node
+                    return Ok(());
+                }
+            }
+        }
+
+        let func = match self.funcs.get(funcId) {
+            None => return Ok(()),
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        if func.object.status.state == FuncState::Fail {
+            return Ok(());
+        }
+
+        let nodeStatus = match self.nodes.get(nodename) {
+            None => return Ok(()),
+            Some(n) => n,
+        };
+
+        let spec = &func.object.spec;
+        if !nodeStatus.node.object.blobStoreEnable {
+            if spec.standby.gpuMem == StandbyType::Blob
+                || spec.standby.PageableMem() == StandbyType::Blob
+                || spec.standby.pinndMem == StandbyType::Blob
+            {
+                self.SetSnapshotStatus(
+                    funcId,
+                    nodename,
+                    SnapshotScheduleState::Cannot(format!("NodAgent doesn't support blob")),
+                );
+                return Err(Error::SchedulerNoEnoughResource(
+                    "NodAgent doesn't support blob".to_owned(),
+                ));
+            }
+        }
+
+        if nodeStatus.state != NAState::NodeAgentAvaiable {
+            self.taskQueue.AddSnapshotTask(nodename, funcId);
+
+            return Err(Error::SchedulerNoEnoughResource(
+                "NodAgent node ready".to_owned(),
+            ));
+        }
+
+        let contextCount = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+        let reqResource = func.object.spec.SnapshotResource(contextCount).clone();
+
+        let state = nodeStatus.total.CanAlloc(&reqResource, true);
+        if !state.Ok() {
+            self.SetSnapshotStatus(
+                funcId,
+                nodename,
+                SnapshotScheduleState::Cannot(format!("has no enough resource to run {:?}", state)),
+            );
+            return Err(Error::SchedulerNoEnoughResource(format!(
+                "Node {} has no enough resource to run {}",
+                nodename, funcId
+            )));
+        }
+        let mut nodeResources: NodeResources = nodeStatus.available.clone();
+
+        let terminateWorkers =
+            match self.TryFreeResources(nodename, funcId, &mut nodeResources, &reqResource, true) {
+                Err(Error::SchedulerNoEnoughResource(s)) => {
+                    self.SetSnapshotStatus(
+                        funcId,
+                        nodename,
+                        SnapshotScheduleState::Waiting(format!("Resource is busy")),
+                    );
+                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                    return Err(Error::SchedulerNoEnoughResource(s));
+                }
+                Err(e) => return Err(e),
+                Ok(t) => t,
+            };
+
+        let resources;
+        let nodeAgentUrl;
+
+        {
+            let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+            let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+            let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+            // resources =
+            //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
+            resources = nodeResources.Alloc(&snapshotResource, true)?;
+            nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+        }
+
+        let id: u64 = match self
+            .StartWorker(
+                &nodeAgentUrl,
+                &func,
+                &resources,
+                &resources,
+                na::CreatePodType::Snapshot,
+                &terminateWorkers,
+            )
+            .await
+        {
+            Err(e) => {
+                self.SetSnapshotStatus(
+                    funcId,
+                    nodename,
+                    SnapshotScheduleState::ScheduleFail(format!("snapshoting sched fail {:?}", &e)),
+                );
+                self.taskQueue.AddSnapshotTask(nodename, funcId);
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        self.SetSnapshotStatus(funcId, nodename, SnapshotScheduleState::Scheduled);
+
+        for pod in &terminateWorkers {
+            let remove = self.idlePods.remove(&pod.pod.PodKey());
+            assert!(remove);
+            let podkey = pod.pod.PodKey();
+            match self.pods.get(&podkey) {
+                None => unreachable!(),
+                Some(pod) => {
+                    let nodename = pod.pod.object.spec.nodename.clone();
+                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                    self.stoppingPods.insert(podkey.clone());
+
+                    nodeStatus
+                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+                }
+            }
+        }
+
+        let podKey = FuncPod::FuncPodKey(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            func.Version(),
+            &format!("{id}"),
+        );
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, funcId, &resources);
+        let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+
+        let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+        let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
+        nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", "", true)?;
+
+        self.funcs
+            .get_mut(funcId)
+            .unwrap()
+            .AddPendingPod(&pendingPod)?;
+
+        self.AddPendingSnapshot(funcId, &nodename);
+        return Ok(());
+    }
+
+    pub fn FuncPolicy(&self, tenant: &str, p: &ObjRef<FuncPolicySpec>) -> FuncPolicySpec {
+        match p {
+            ObjRef::Obj(p) => return p.clone(),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return FuncPolicySpec::default();
+                    // return Err(Error::CommonError(format!(
+                    //     "FuncStatus::FuncPolicy for policy {} fail invalic link type {}",
+                    //     l.Key(),
+                    //     l.objType
+                    // )));
+                }
+
+                match self.funcpolicy.get(&l.Key(tenant)) {
+                    None => {
+                        return FuncPolicySpec::default();
+                    }
+                    Some(p) => return p.clone(),
+                }
+            }
+        }
+    }
+
+    pub async fn TryCreateStandbyOnNode(&mut self, nodename: &str) -> Result<()> {
+        if !self.nodes.contains_key(nodename) {
+            return Ok(());
+        }
+
+        match self.nodes.get(nodename) {
+            None => {
+                return Ok(());
+            }
+            Some(ns) => {
+                // add another StandbyTask for the node
+                self.taskQueue
+                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
+                if ns.pendingPods.len() > 0 {
+                    return Ok(());
+                }
+            }
+        }
+
+        let mut funcPodCnt = BTreeMap::new();
+        for (funcId, m) in &self.snapshots {
+            if m.contains_key(nodename) {
+                funcPodCnt.insert(funcId.to_owned(), 0);
+            }
+        }
+
+        for (_, pod) in &self.pods {
+            if &pod.pod.object.spec.nodename != nodename {
+                continue;
+            }
+
+            let funcId = pod.pod.FuncKey();
+            let state = pod.pod.object.status.state;
+
+            if state.BlockStandby() {
+                // avoid conflict
+                return Ok(());
+            }
+
+            if state != PodState::Standby {
+                continue;
+            }
+
+            match funcPodCnt.get(&funcId) {
+                None => {
+                    continue;
+                }
+                Some(c) => {
+                    funcPodCnt.insert(funcId, *c + 1);
+                }
+            }
+        }
+
+        let mut needStandby = Vec::new();
+        for (funcId, &cnt) in &funcPodCnt {
+            let func = match self.funcs.get(funcId) {
+                None => continue,
+                Some(f) => f,
+            };
+
+            let tenant = func.func.tenant.clone();
+
+            let policy = self.FuncPolicy(&tenant, &func.func.object.spec.policy);
+
+            if policy.standbyPerNode > cnt {
+                needStandby.push(funcId.to_owned());
+            }
+        }
+
+        if needStandby.len() == 0 {
+            return Ok(());
+        }
+
+        {
+            let mut rng = thread_rng();
+            needStandby.shuffle(&mut rng);
+        }
+
+        let funcId = &needStandby[0];
+        let nodename = nodename.to_owned();
+        let allocResources;
+        let nodeAgentUrl;
+        let resourceQuota;
+
+        let function = match self.funcs.get(funcId) {
+            None => return Ok(()),
+            Some(f) => f.func.clone(),
+        };
+
+        let standbyResource = self.StandyResource(funcId, &nodename);
+        {
+            let nodeStatus = match self.nodes.get_mut(&nodename) {
+                None => return Ok(()), // the node information is not synced
+                Some(ns) => ns,
+            };
+
+            allocResources =
+                nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcId, false)?;
+            resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
+            nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+        }
+
+        let id = match self
+            .StartWorker(
+                &nodeAgentUrl,
+                &function,
+                &allocResources,
+                &resourceQuota,
+                na::CreatePodType::Restore,
+                &Vec::new(),
+            )
+            .await
+        {
+            Err(e) => {
+                let nodeStatus = match self.nodes.get_mut(&nodename) {
+                    None => return Ok(()), // the node information is not synced
+                    Some(ns) => ns,
+                };
+                let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
+                nodeStatus.FreeResource(&resourceQuota, "")?;
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        let podKey = FuncPod::FuncPodKey(
+            &function.tenant,
+            &function.namespace,
+            &function.name,
+            function.Version(),
+            &format!("{id}"),
+        );
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, &funcId, &allocResources);
+        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+
+        self.funcs
+            .get_mut(funcId)
+            .unwrap()
+            .AddPendingPod(&pendingPod)?;
+
+        return Ok(());
+    }
+
+    // return whether we prewarm a
+    pub async fn ProcessAddFunc(&mut self, funcid: &str) -> bool {
+        // the func is doing something, skip this round
+        if self.funcPods.contains_key(funcid) {
+            return false;
+        }
+
         let func = match self.funcs.get(funcid) {
             None => {
-                return Err(Error::NotExist(format!(
-                    "ProcessAddFunc can't find funcpcakge with id {}",
-                    funcid
-                )));
+                return false;
             }
             Some(fpStatus) => fpStatus.func.clone(),
         };
@@ -1328,181 +2180,33 @@ impl SchedulerHandler {
         let funcState = func.object.status.state;
 
         if funcState == FuncState::Fail {
-            return Ok(());
+            return false;
         }
 
-        self.TryCreateSnapshot(funcid, &func).await?;
-        self.TryCreateStandbyPod(funcid).await?;
-        return Ok(());
-    }
-
-    pub async fn TryCreateStandbyPod(&mut self, funcid: &str) -> Result<()> {
-        let nodes = self.GetReadySnapshotNodes(funcid)?;
-
-        if nodes.len() == 0 {
-            // no checkpoint
-            return Ok(());
-        }
-
-        let needRestore; // whether need to create new standby pod
-        let function = match self.funcs.get(funcid) {
-            None => {
-                return Err(Error::NotExist(format!(
-                    "ProcessAddFunc can't find funcpcakge with id {}",
-                    funcid
-                )))
-            }
-            Some(funcStatus) => {
-                let pendingCnt = funcStatus.pendingPods.len();
-                let podcnt = funcStatus.pendingPods.len() + funcStatus.pods.len();
-
-                let keepaliveCnt = 2;
-                needRestore = (pendingCnt == 0) && (podcnt < keepaliveCnt);
-
-                // error!(
-                //     "TryRetorePod pendingCnt {} podcnt {} needRestore {} keepaliveCnt {} for {}",
-                //     pendingCnt, podcnt, needRestore, keepaliveCnt, fpKey
-                // );
-                funcStatus.func.clone()
-            }
-        };
-
-        if needRestore {
-            let nodename = self.GetBestNodeToRestore(&function).await?;
-            let allocResources; // = NodeResources::default();
-            let nodeAgentUrl;
-            let resourceQuota;
-
-            {
-                let standbyResource = self.StandyResource(funcid, &nodename);
-                let nodeStatus = match self.nodes.get_mut(&nodename) {
-                    None => return Ok(()), // the node information is not synced
-                    Some(ns) => ns,
-                };
-
-                allocResources =
-                    nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcid, false)?;
-                resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
-                nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
-            }
-
-            let id = self
-                .StartWorker(
-                    &nodeAgentUrl,
-                    &function,
-                    &allocResources,
-                    &resourceQuota,
-                    na::CreatePodType::Restore,
-                    &Vec::new(),
-                )
-                .await?;
-
-            let podKey = FuncPod::FuncPodKey(
-                &function.tenant,
-                &function.namespace,
-                &function.name,
-                function.Version(),
-                &format!("{id}"),
-            );
-
-            let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &allocResources);
-            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-            nodeStatus.AddPendingPod(&pendingPod)?;
-
-            self.funcs
-                .get_mut(funcid)
-                .unwrap()
-                .AddPendingPod(&pendingPod)?;
-        }
-
-        return Ok(());
-    }
-
-    pub const MAX_SNAPSHOT_PER_FUNC: usize = 3;
-
-    pub async fn TryCreateSnapshot(&mut self, funcid: &str, func: &Function) -> Result<()> {
-        let nodes = self.GetSnapshotNodes(funcid);
-        if nodes.len() > Self::MAX_SNAPSHOT_PER_FUNC {
-            return Ok(());
-        }
-
-        if !self.HasPendingSnapshot(funcid) {
-            let (nodename, terminatePods) = match self.GetBestNodeToSnapshot(&func).await {
-                Ok(ret) => ret,
+        let policy = self.FuncPolicy(&func.tenant, &func.object.spec.policy);
+        if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
+            match self.ResumePod(&funcid).await {
                 Err(e) => {
-                    if nodes.len() > 0 {
-                        return Ok(());
-                    }
-
-                    return Err(e);
+                    error!(
+                        "ProcessAddFunc Prewarm one pod fail for func {} error {:?}",
+                        funcid, e
+                    );
+                    return false;
                 }
-            };
-
-            // error!(
-            //     "TryCreateSnapshot 2 name {} nodes.len() {}",
-            //     &nodename,
-            //     nodes.len()
-            // );
-            let resources;
-            let nodeAgentUrl;
-
-            {
-                let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
-                let snapshotResource = func.object.spec.SnapshotResource(contextCnt);
-                resources =
-                    nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
-                nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+                Ok(_) => {
+                    error!("Prewarm one pod for func {}", funcid);
+                    return true;
+                }
             }
-
-            let id = match self
-                .StartWorker(
-                    &nodeAgentUrl,
-                    &func,
-                    &resources,
-                    &resources,
-                    na::CreatePodType::Snapshot,
-                    &terminatePods,
-                )
-                .await
-            {
-                Err(e) => {
-                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    nodeStatus.FreeResource(&resources, &func.Id())?;
-                    return Err(e);
-                }
-                Ok(a) => a,
-            };
-
-            let podKey = FuncPod::FuncPodKey(
-                &func.tenant,
-                &func.namespace,
-                &func.name,
-                func.Version(),
-                &format!("{id}"),
-            );
-
-            let pendingPod = PendingPod::New(&nodename, &podKey, &funcid, &resources);
-            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-            nodeStatus.AddPendingPod(&pendingPod)?;
-
-            self.funcs
-                .get_mut(funcid)
-                .unwrap()
-                .AddPendingPod(&pendingPod)?;
-
-            self.AddPendingSnapshot(funcid, &nodename);
         }
 
-        return Ok(());
+        return false;
     }
+
+    pub const PRINT_SCHEDER_INFO: bool = false;
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
         let pods = self.GetFuncPods(&spec.tenant, &spec.namespace, &spec.name, spec.Version())?;
-
-        if pods.len() == 0 {
-            return Ok(());
-        }
 
         for pod in &pods {
             let pod = &pod.pod;
@@ -1518,7 +2222,6 @@ impl SchedulerHandler {
                 }
             }
         }
-
         self.RemoveSnapshotByFunckey(&spec.Key()).await?;
 
         return Ok(());
@@ -1583,35 +2286,92 @@ impl SchedulerHandler {
             Some(fpStatus) => fpStatus.func.clone(),
         };
 
-        let (pod, terminatePods) = self.GetBestResumeWorker(&fp).await?;
-        let resources;
+        let (pod, terminateWorkers, mut nodeResource) = self.GetBestResumeWorker(&fp).await?;
         let naUrl;
         let nodename = pod.pod.object.spec.nodename.clone();
         let id = pod.pod.object.spec.id.clone();
 
+        let readyResource = self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
+        let standbyResource = pod.pod.object.spec.allocResources.clone();
+        nodeResource.Add(&standbyResource)?;
+        let resources = nodeResource.Alloc(&readyResource, false)?;
+
         {
-            let readyResource =
-                self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
+            // let readyResource =
+            //     self.ReadyResource(&fp.object.spec.RunningResource(), fpKey, &nodename);
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
 
-            let standbyResource = pod.pod.object.spec.allocResources.clone();
+            // let standbyResource = pod.pod.object.spec.allocResources.clone();
 
-            nodeStatus.FreeResource(&standbyResource, &fp.name)?;
-            resources = nodeStatus.AllocResource(&readyResource, "ResumePod", &id, false)?;
+            // nodeStatus.FreeResource(&standbyResource, &fp.name)?;
+            // resources = nodeStatus.AllocResource(&readyResource, "ResumePod", &id, false)?;
             naUrl = nodeStatus.node.NodeAgentUrl();
         }
 
-        self.ResumeWorker(
-            &naUrl,
-            &pod.pod.tenant,
-            &pod.pod.namespace,
-            &pod.pod.object.spec.funcname,
-            pod.pod.object.spec.fprevision,
-            &id,
-            &resources,
-            &terminatePods,
-        )
-        .await?;
+        let mut terminatePods = Vec::new();
+        for w in &terminateWorkers {
+            terminatePods.push(w.pod.PodKey());
+        }
+
+        info!(
+            "ResumePod pod {} with terminating {:#?}",
+            pod.pod.PodKey(),
+            &terminatePods
+        );
+
+        pod.SetState(WorkerPodState::Resuming);
+        match self
+            .ResumeWorker(
+                &naUrl,
+                &pod.pod.tenant,
+                &pod.pod.namespace,
+                &pod.pod.object.spec.funcname,
+                pod.pod.object.spec.fprevision,
+                &id,
+                &resources,
+                &terminateWorkers,
+            )
+            .await
+        {
+            Err(e) => {
+                pod.SetState(WorkerPodState::Standby);
+                return Err(e);
+            }
+            Ok(()) => (),
+        }
+
+        for pod in &terminateWorkers {
+            pod.SetState(WorkerPodState::Terminating);
+        }
+
+        for pod in &terminateWorkers {
+            let remove = self.idlePods.remove(&pod.pod.PodKey());
+            assert!(remove);
+            let podkey = pod.pod.PodKey();
+            match self.pods.get(&podkey) {
+                None => unreachable!(),
+                Some(pod) => {
+                    let nodename = pod.pod.object.spec.nodename.clone();
+                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                    self.stoppingPods.insert(podkey.clone());
+
+                    nodeStatus
+                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
+                }
+            }
+        }
+
+        {
+            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+            let standbyResource = pod.pod.object.spec.allocResources.clone();
+            nodeStatus.FreeResource(&standbyResource, &fp.name)?;
+            nodeStatus.available.Sub(&resources)?;
+            info!(
+                "After ResumePod pod {} the node resource is {:#?}",
+                pod.pod.PodKey(),
+                &nodeStatus.available
+            );
+        }
 
         let podKey = FuncPod::FuncPodKey(
             &fp.tenant,
@@ -1703,74 +2463,6 @@ impl SchedulerHandler {
 
         return Ok(id);
     }
-
-    // pub async fn HibernateWorker(
-    //     &self,
-    //     naUrl: &str,
-    //     tenant: &str,
-    //     namespace: &str,
-    //     funcname: &str,
-    //     fprevision: i64,
-    //     id: &str,
-    // ) -> Result<()> {
-    //     let mut client =
-    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-    //             .await?;
-
-    //     let request = tonic::Request::new(na::HibernatePodReq {
-    //         tenant: tenant.to_owned(),
-    //         namespace: namespace.to_owned(),
-    //         funcname: funcname.to_owned(),
-    //         fprevision: fprevision,
-    //         id: id.to_owned(),
-    //         hibernate_type: 1,
-    //     });
-    //     let response = client.hibernate_pod(request).await?;
-    //     let resp = response.into_inner();
-    //     if resp.error.len() != 0 {
-    //         error!(
-    //             "Scheduler: Fail to Hibernate worker {} {} {} {}",
-    //             namespace, funcname, id, resp.error
-    //         );
-    //     }
-
-    //     return Ok(());
-    // }
-
-    // pub async fn WakeupWorker(
-    //     &self,
-    //     naUrl: &str,
-    //     tenant: &str,
-    //     namespace: &str,
-    //     funcname: &str,
-    //     fprevsion: i64,
-    //     id: &str,
-    //     allocResources: &NodeResources,
-    // ) -> Result<()> {
-    //     let mut client =
-    //         na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-    //             .await?;
-
-    //     let request = tonic::Request::new(na::WakeupPodReq {
-    //         tenant: tenant.to_owned(),
-    //         namespace: namespace.to_owned(),
-    //         funcname: funcname.to_owned(),
-    //         fprevision: fprevsion,
-    //         id: id.to_owned(),
-    //         hibernate_type: 1,
-    //         alloc_resources: serde_json::to_string(allocResources).unwrap(),
-    //     });
-    //     let response = client.wakeup_pod(request).await?;
-    //     let resp = response.into_inner();
-    //     if resp.error.len() != 0 {
-    //         error!(
-    //             "Scheduler: Fail to Wakeup worker {} {} {} {}",
-    //             namespace, funcname, id, resp.error
-    //         );
-    //     }
-
-    //     return Ok(());
-    // }
 
     pub async fn ResumeWorker(
         &self,
@@ -1888,12 +2580,14 @@ impl SchedulerHandler {
             ListType::FuncPod => self.funcPodListDone = true,
             ListType::Node => self.nodeListDone = true,
             ListType::Snapshot => self.snapshotListDone = true,
+            ListType::Funcpolicy => self.funcpolicyDone = true,
         }
 
         if self.nodeListDone && self.funcListDone && self.funcPodListDone && self.snapshotListDone {
             self.listDone = true;
 
             self.RefreshScheduling().await?;
+            self.InitSnapshotTask()?;
 
             return Ok(true);
         }
@@ -1901,13 +2595,26 @@ impl SchedulerHandler {
         return Ok(false);
     }
 
-    pub fn AddNode(&mut self, node: Node) -> Result<()> {
+    pub async fn AddNode(&mut self, node: Node) -> Result<()> {
         info!("add node {:#?}", &node);
 
         let nodeName = node.name.clone();
         if self.nodes.contains_key(&nodeName) {
             return Err(Error::Exist(format!("NodeMgr::add {}", nodeName)));
         }
+
+        let nodelabel = Nodelabel {
+            nodename: nodeName.clone(),
+        };
+
+        let gpuCnt = node.object.resources.gpus.Gpus().len();
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .totalGPU
+            .get_or_create(&nodelabel)
+            .inc_by(gpuCnt as i64);
 
         let total = node.object.resources.clone();
         let pods = match self.nodePods.remove(&nodeName) {
@@ -1916,14 +2623,44 @@ impl SchedulerHandler {
         };
         let nodeStatus = NodeStatus::New(node, total, pods)?;
 
-        self.nodes.insert(nodeName, nodeStatus);
+        self.nodes.insert(nodeName.clone(), nodeStatus);
+        self.taskQueue.AddNode(&nodeName);
 
         return Ok(());
     }
 
-    pub fn RemoveNode(&mut self, node: Node) -> Result<()> {
+    pub fn UpdateNode(&mut self, node: Node) -> Result<()> {
+        let nodeName = node.name.clone();
+        if !self.nodes.contains_key(&nodeName) {
+            return Err(Error::NotExist(format!("NodeMgr::UpdateNode {}", nodeName)));
+        }
+
+        error!("UpdateNode the node is {:#?}", &node);
+
+        let ns = self.nodes.get_mut(&nodeName).unwrap();
+        ns.state = node.object.state;
+        ns.node = node;
+
+        return Ok(());
+    }
+
+    pub async fn RemoveNode(&mut self, node: Node) -> Result<()> {
         info!("remove node {}", &node.name);
         let key = node.name.clone();
+
+        let nodelabel = Nodelabel {
+            nodename: key.clone(),
+        };
+
+        let gpuCnt = node.object.resources.gpus.Gpus().len();
+
+        SCHEDULER_METRICS
+            .lock()
+            .await
+            .totalGPU
+            .get_or_create(&nodelabel)
+            .dec_by(gpuCnt as i64);
+
         if !self.nodes.contains_key(&key) {
             return Err(Error::NotExist(format!("NodeMgr::Remove {}", key)));
         }
@@ -1938,13 +2675,12 @@ impl SchedulerHandler {
         let nodename = pod.object.spec.nodename.clone();
         let fpKey = pod.FuncKey();
 
-        let boxPod: WorkerPod = pod.into();
+        let boxPod: WorkerPod = WorkerPod::New(pod);
         assert!(self.pods.insert(podKey.clone(), boxPod.clone()).is_none());
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
-            let returnId = boxPod.SetIdle();
-
-            self.idlePods.insert(returnId, boxPod.pod.PodKey());
+            boxPod.SetIdle(SetIdleSource::AddPod);
+            self.idlePods.insert(boxPod.pod.PodKey());
         }
 
         match self.nodes.get_mut(&nodename) {
@@ -1964,11 +2700,11 @@ impl SchedulerHandler {
         }
 
         match self.funcs.get_mut(&fpKey) {
-            None => match self.packagePods.get_mut(&fpKey) {
+            None => match self.funcPods.get_mut(&fpKey) {
                 None => {
                     let mut pods = BTreeMap::new();
                     pods.insert(podKey, boxPod);
-                    self.packagePods.insert(fpKey, pods);
+                    self.funcPods.insert(fpKey, pods);
                 }
                 Some(pods) => {
                     pods.insert(podKey, boxPod);
@@ -1985,7 +2721,7 @@ impl SchedulerHandler {
         let nodeName = pod.object.spec.nodename.clone();
         let funcKey = pod.FuncKey();
 
-        let boxPod: WorkerPod = pod.into();
+        let boxPod: WorkerPod = WorkerPod::New(pod);
 
         let oldPod = self
             .pods
@@ -2009,18 +2745,18 @@ impl SchedulerHandler {
         }
 
         match self.funcs.get_mut(&funcKey) {
-            None => match self.packagePods.get_mut(&funcKey) {
+            None => match self.funcPods.get_mut(&funcKey) {
                 None => {
                     let mut pods = BTreeMap::new();
                     pods.insert(podKey, boxPod);
-                    self.packagePods.insert(funcKey, pods);
+                    self.funcPods.insert(funcKey, pods);
                 }
                 Some(pods) => {
                     pods.insert(podKey, boxPod);
                 }
             },
             Some(fpStatus) => {
-                fpStatus.UpdatePod(&boxPod)?;
+                fpStatus.UpdatePod(&boxPod).await?;
             }
         }
 
@@ -2053,20 +2789,23 @@ impl SchedulerHandler {
                             if func.object.status.snapshotingFailureCnt >= 3 {
                                 func.object.status.state = FuncState::Fail;
                             }
+
+                            let client = GetClient().await.unwrap();
+
+                            // update the func
+                            client.Update(&func.DataObject(), 0).await.unwrap();
                         }
                         CreatePodType::Restore => {
                             func.object.status.resumingFailureCnt += 1;
                             // if func.object.status.resumingFailureCnt >= 3 {
                             //     func.object.status.state = FuncState::Fail;
                             // }
+
+                            // restore failure update will lead all pod reset
+                            // todo: put the resumingFailureCnt in another database
                         }
                         _ => (),
                     }
-
-                    let client = GetClient().await.unwrap();
-
-                    // update the func
-                    client.Update(&func.DataObject(), 0).await.unwrap();
                 }
             }
         } else {
@@ -2109,7 +2848,7 @@ impl SchedulerHandler {
             return Err(Error::Exist(format!("FuncMgr::add {}", fpId)));
         }
 
-        let pods = match self.packagePods.remove(&fpId) {
+        let pods = match self.funcPods.remove(&fpId) {
             None => BTreeMap::new(),
             Some(pods) => pods,
         };
@@ -2143,6 +2882,7 @@ pub enum ListType {
     FuncPod,
     Func,
     Snapshot,
+    Funcpolicy,
 }
 
 pub async fn GetClient() -> Result<CacherClient> {

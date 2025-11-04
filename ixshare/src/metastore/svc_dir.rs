@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::result::Result as SResult;
@@ -23,11 +24,11 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
+use crate::ixmeta;
 use crate::metastore::cache_store::CacheStore;
 use crate::metastore::cache_store::ChannelRev;
 use crate::metastore::obj::ToObject;
 use crate::metastore::selection_predicate::*;
-use crate::ixmeta;
 use inferxlib::data_obj::*;
 
 #[derive(Debug, Default, Clone)]
@@ -85,16 +86,93 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
 
     async fn create(
         &self,
-        _request: Request<ixmeta::CreateRequestMessage>,
+        request: Request<ixmeta::CreateRequestMessage>,
     ) -> SResult<Response<ixmeta::CreateResponseMessage>, Status> {
-        unimplemented!()
+        let req = request.get_ref();
+
+        let mut dataobj: DataObject<Value> = match &req.obj {
+            None => {
+                return Ok(Response::new(ixmeta::CreateResponseMessage {
+                    error: format!("create error: invalid request"),
+                    revision: 0,
+                }))
+            }
+            Some(o) => o.into(),
+        };
+
+        let version = self.write().unwrap().channelRev.Next();
+        dataobj.channelRev = version;
+        dataobj.revision = version;
+
+        let cacher = match self.GetCacher(&dataobj.objType) {
+            None => {
+                return Ok(Response::new(ixmeta::CreateResponseMessage {
+                    error: format!("svcdir get doesn't support obj type {}", &dataobj.objType),
+                    revision: 0,
+                }))
+            }
+            Some(c) => c,
+        };
+
+        match cacher.Add(&dataobj) {
+            Err(e) => {
+                return Ok(Response::new(ixmeta::CreateResponseMessage {
+                    error: format!("svcdir fail to add obj with error {:?}", e),
+                    revision: 0,
+                }));
+            }
+            Ok(_) => {
+                return Ok(Response::new(ixmeta::CreateResponseMessage {
+                    error: "".into(),
+                    revision: self.read().unwrap().channelRev.Current(),
+                }));
+            }
+        }
     }
 
     async fn update(
         &self,
-        _request: Request<ixmeta::UpdateRequestMessage>,
+        request: Request<ixmeta::UpdateRequestMessage>,
     ) -> SResult<Response<ixmeta::UpdateResponseMessage>, Status> {
-        unimplemented!()
+        let req = request.get_ref();
+        let mut dataobj: DataObject<Value> = match &req.obj {
+            None => {
+                return Ok(Response::new(ixmeta::UpdateResponseMessage {
+                    error: format!("update error: invalid request"),
+                    revision: 0,
+                }))
+            }
+            Some(o) => o.into(),
+        };
+
+        let version = self.write().unwrap().channelRev.Next();
+        dataobj.channelRev = version;
+        dataobj.revision = version;
+
+        let cacher = match self.GetCacher(&dataobj.objType) {
+            None => {
+                return Ok(Response::new(ixmeta::UpdateResponseMessage {
+                    error: format!("svcdir get doesn't support obj type {}", &dataobj.objType),
+                    revision: 0,
+                }))
+            }
+            Some(c) => c,
+        };
+
+        match cacher.Update(&dataobj) {
+            Err(e) => {
+                return Ok(Response::new(ixmeta::UpdateResponseMessage {
+                    error: format!("svcdir fail to update obj with error {:?}", e),
+                    revision: 0,
+                }));
+            }
+            Ok(_) => {
+                return Ok(Response::new(ixmeta::UpdateResponseMessage {
+                    error: "".into(),
+                    revision: self.read().unwrap().channelRev.Current(),
+                }));
+            }
+        }
     }
 
     async fn uid(
@@ -106,9 +184,60 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
 
     async fn delete(
         &self,
-        _request: Request<ixmeta::DeleteRequestMessage>,
+        request: Request<ixmeta::DeleteRequestMessage>,
     ) -> SResult<Response<ixmeta::DeleteResponseMessage>, Status> {
-        unimplemented!()
+        let req = request.get_ref();
+
+        let cacher = match self.GetCacher(&req.obj_type) {
+            None => {
+                return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                    error: format!("statesvc doesn't support obj type {}", &req.obj_type),
+                    revision: 0,
+                }))
+            }
+            Some(c) => c,
+        };
+
+        let key = format!(
+            "{}/{}/{}/{}",
+            &req.obj_type, &req.tenant, &req.namespace, &req.name
+        );
+
+        let _version = self.write().unwrap().channelRev.Next();
+
+        match cacher
+            .Get(&req.tenant, &req.namespace, &req.name, req.expect_rev)
+            .await
+        {
+            Err(e) => {
+                return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                    error: format!("Fail: {:?}", e),
+                    revision: 0,
+                }))
+            }
+            Ok(o) => match o {
+                None => {
+                    return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                        error: format!("delete object {:?} Fail not exist", &key),
+                        revision: 0,
+                    }));
+                }
+                Some(obj) => match cacher.Remove(&obj) {
+                    Err(e) => {
+                        return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                            error: format!("svcdir fail to delete obj with error {:?}", e),
+                            revision: 0,
+                        }));
+                    }
+                    Ok(_) => {
+                        return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                            error: "".into(),
+                            revision: self.read().unwrap().channelRev.Current(),
+                        }));
+                    }
+                },
+            },
+        }
     }
 
     async fn get(

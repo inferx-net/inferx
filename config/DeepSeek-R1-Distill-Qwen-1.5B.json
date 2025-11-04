@@ -58,9 +58,16 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
             }
         }
     }

@@ -29,7 +29,35 @@ service NodeAgentService {
   rpc ReadPodLog(ReadPodLogReq) returns (ReadPodLogResp) {}
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
 }
+
+service IxProxyService {
+  rpc CreatePodSandbox(CreatePodSandboxReq) returns (CreatePodSandboxResp) {}
+  rpc RemovePodSandbox(RemovePodSandboxReq) returns (RemovePodSandboxResp) {}
+}
+
 ///////////////////////////////////////////////////////////////////////
+
+message CreatePodSandboxReq {
+  string tenant = 1;
+  string namespace = 2;
+  string funcname = 3;
+  int64  fprevision = 4;
+  string id = 5;
+  string uid = 6;
+}
+
+message CreatePodSandboxResp {
+  string error = 1;
+  int32  ipaddr = 2;
+}
+
+message RemovePodSandboxReq {
+  string uid = 1;
+}
+
+message RemovePodSandboxResp {
+  string error = 1;
+}
 
 message RemoveSnapshotReq {
   string funckey = 1;
@@ -62,6 +90,7 @@ message ReturnWorkerReq {
   string funcname = 3;
   int64 fprevision = 4;
   string id = 5;
+  bool  failworker = 6;
 }
 
 message ReturnWorkerResp {

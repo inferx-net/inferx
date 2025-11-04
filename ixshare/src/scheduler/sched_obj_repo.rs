@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use core::ops::Deref;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicyMgr;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -38,6 +40,7 @@ pub struct SchedObjRepoInner {
 
     pub funcMgr: FuncMgr,
     pub podMgr: PodMgr,
+    pub funcpolicyMgr: FuncPolicyMgr,
 
     pub factory: InformerFactory,
     pub listDone: bool,
@@ -70,12 +73,16 @@ impl SchedObjRepo {
         // snapshot
         factory.AddInformer(ContainerSnapshot::KEY, &ListOption::default())?;
 
+        // funcpolicy
+        factory.AddInformer(FuncPolicy::KEY, &ListOption::default())?;
+
         let notify = Arc::new(Notify::new());
 
         let inner = SchedObjRepoInner {
             notify: notify,
             funcMgr: FuncMgr::default(),
             podMgr: PodMgr::default(),
+            funcpolicyMgr: FuncPolicyMgr::default(),
             factory: factory,
             listDone: false,
         };
@@ -153,6 +160,10 @@ impl SchedObjRepo {
                     let podDef = FuncPod::FromDataObject(obj)?;
                     self.podMgr.Add(podDef)?;
                 }
+                FuncPolicy::KEY => {
+                    let p = FuncPolicy::FromDataObject(obj)?;
+                    self.funcpolicyMgr.Add(p)?;
+                }
                 Node::KEY => {}
                 ContainerSnapshot::KEY => {
                     // let snapshot = FuncSnapshot::FromDataObject(obj)?;
@@ -174,6 +185,10 @@ impl SchedObjRepo {
                     let podDef = FuncPod::FromDataObject(obj)?;
                     self.podMgr.Update(podDef)?;
                 }
+                FuncPolicy::KEY => {
+                    let p = FuncPolicy::FromDataObject(obj)?;
+                    self.funcpolicyMgr.Update(p)?;
+                }
                 Node::KEY => {}
                 _ => {
                     return Err(Error::CommonError(format!(
@@ -190,6 +205,10 @@ impl SchedObjRepo {
                 FuncPod::KEY => {
                     let podDef = FuncPod::FromDataObject(obj)?;
                     self.podMgr.Remove(podDef)?;
+                }
+                FuncPolicy::KEY => {
+                    let p = FuncPolicy::FromDataObject(obj)?;
+                    self.funcpolicyMgr.Remove(p)?;
                 }
                 Node::KEY => {}
                 _ => {
@@ -214,8 +233,12 @@ impl SchedObjRepo {
 
 impl EventHandler for SchedObjRepo {
     fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
-        // self.ProcessDeltaEvent(event).unwrap();
-        SCHEDULER.ProcessDeltaEvent(event).unwrap();
+        match SCHEDULER.ProcessDeltaEvent(event) {
+            Err(e) => {
+                error!("SchedObjRepo::handler fail {:?}", e);
+            }
+            Ok(()) => (),
+        }
     }
 }
 
@@ -239,7 +262,9 @@ impl NamespaceStore {
 
     pub async fn UpdateNamespace(&self, namespace: &Namespace) -> Result<()> {
         let namespaceObj = namespace.DataObject();
-        self.store.Update(namespace.revision, &namespaceObj).await?;
+        self.store
+            .Update(namespace.revision, &namespaceObj, 0)
+            .await?;
         return Ok(());
     }
 
@@ -247,7 +272,7 @@ impl NamespaceStore {
         let mut namespace = namespace.clone();
         namespace.object.status.disable = true;
         self.store
-            .Update(namespace.revision, &namespace.DataObject())
+            .Update(namespace.revision, &namespace.DataObject(), 0)
             .await?;
         return Ok(());
     }
@@ -260,7 +285,7 @@ impl NamespaceStore {
 
     pub async fn UpdateFunc(&self, func: &Function) -> Result<()> {
         let obj = func.DataObject();
-        self.store.Update(func.revision, &obj).await?;
+        self.store.Update(func.revision, &obj, 0).await?;
         return Ok(());
     }
 

@@ -20,8 +20,11 @@ use crate::data_obj::*;
 use crate::resource;
 use crate::resource::*;
 
-pub const FUNCPOD_TYPE: &str = "funcpod_type.qservice.io";
-pub const FUNCPOD_FUNCNAME: &str = "fun_name.qservice.io";
+use super::funcpolicy_mgr::FuncPolicy;
+use super::funcpolicy_mgr::FuncPolicySpec;
+
+pub const FUNCPOD_TYPE: &str = "funcpod_type.inferx.io";
+pub const FUNCPOD_FUNCNAME: &str = "fun_name.inferx.io";
 pub const FUNCPOD_PROMPT: &str = "prompt";
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -96,6 +99,30 @@ impl Default for SampleCall {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleConfig {
+    #[serde(rename = "min_replica")]
+    pub minReplica: u64,
+    #[serde(rename = "max_replica")]
+    pub maxReplica: u64,
+    #[serde(rename = "standby_per_node")]
+    pub standbyPerNode: u64,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        return Self {
+            minReplica: 0,
+            maxReplica: 10,
+            standbyPerNode: 1,
+        };
+    }
+}
+
+pub fn DefaultScheduleConfig() -> ScheduleConfig {
+    return ScheduleConfig::default();
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
     #[serde(rename = "text2text")]
     Text2Text,
@@ -136,10 +163,17 @@ pub struct FuncSpec {
 
     #[serde(rename = "sample_query")]
     pub sampleCall: SampleCall,
+
+    #[serde(default = "FuncpolicyDefault")]
+    pub policy: ObjRef<FuncPolicySpec>,
 }
 
 fn PromptDefault() -> String {
     return "Seattle is a".to_owned();
+}
+
+fn FuncpolicyDefault() -> ObjRef<FuncPolicySpec> {
+    return ObjRef::Obj(FuncPolicySpec::default());
 }
 
 impl FuncSpec {
@@ -180,6 +214,7 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             probe: HttpEndpoint::default(),
             sampleCall: SampleCall::default(),
+            policy: Default::default(),
         };
     }
 }

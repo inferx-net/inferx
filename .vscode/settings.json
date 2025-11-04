@@ -2,6 +2,7 @@
   "rust-analyzer.linkedProjects": [
     "Cargo.toml",
     "ixshare/Cargo.toml",
-    "inferxlib/Cargo.toml"
+    "inferxlib/Cargo.toml",
+    "test/ixtest/Cargo.toml"
   ]
 }

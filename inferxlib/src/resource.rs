@@ -402,7 +402,6 @@ pub struct NodeResources {
     pub gpus: GPUResourceMap,
     #[serde(rename = "MaxContextPerGPU", default)]
     pub maxContextCnt: u64,
-
 }
 
 impl NodeResources {
@@ -450,35 +449,11 @@ impl NodeResources {
         };
     }
 
-    pub fn CanAlloc(&self, req: &Resources, createSnapshot: bool) -> bool {
-        let canAlloc = self.cpu >= req.cpu
-            && self.memory >= req.memory
-            && self.cacheMemory >= req.cacheMemory
-            && self.gpuType.CanAlloc(&req.gpu.type_)
-            && self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
-
-        if !canAlloc {
-            let _cpu = self.cpu >= req.cpu;
-            let _memory = self.memory >= req.memory;
-            let _cacheMemory = self.cacheMemory >= req.cacheMemory;
-            let _gpuType = self.gpuType.CanAlloc(&req.gpu.type_);
-            let _gpus = self.gpus.CanAlloc(&req.gpu, createSnapshot).is_some();
-
-            if !_memory {
-                error!(
-                    "self.memory is {} required memory is {}",
-                    self.memory, req.memory
-                );
-            }
-
-            error!("CanAlloc fail cpu:{_cpu} memory:{_memory}, cacheMemory:{_cacheMemory}, gpuType:{_gpuType}, gpus:{_gpus}");
-        }
-
-        return canAlloc;
-    }
-
     pub fn Sub(&mut self, other: &Self) -> Result<()> {
-        // error!("NodeResources sub \n curr is {:?} \n sub {:?}", self, other);
+        // error!(
+        //     "NodeResources sub  curr is {:?} sub {:?}",
+        //     self.cacheMemory, other.cacheMemory
+        // );
         // self.cpu -= other.cpu;
         self.memory -= other.memory;
         self.cacheMemory -= other.cacheMemory;
@@ -500,36 +475,12 @@ impl NodeResources {
         };
     }
 
-    pub fn Alloc(&mut self, req: &Resources, createSnapshot: bool) -> Result<NodeResources> {
-        if !self.CanAlloc(req, createSnapshot) {
-            error!(
-                "NodeResources::alloc fail available {:#?} require {:#?} for createSnapshot {}",
-                self, req, createSnapshot
-            );
-            return Err(Error::SchedulerNoEnoughResource(format!(
-                "NodeResources::alloc fail available {:?} require {:?}",
-                self, req
-            )));
-        }
-
-        // we don't allc/free cpu resource, assume there are enough cpu resource
-        // self.cpu -= req.cpu;
-        self.memory -= req.memory;
-        self.cacheMemory -= req.cacheMemory;
-        let gpus = self.gpus.Alloc(&req.gpu, createSnapshot)?;
-
-        return Ok(NodeResources {
-            nodename: self.nodename.clone(),
-            cpu: req.cpu,
-            memory: req.memory,
-            cacheMemory: req.cacheMemory,
-            gpuType: self.gpuType.clone(),
-            gpus: gpus,
-            maxContextCnt: self.maxContextCnt,
-        });
-    }
-
     pub fn Add(&mut self, free: &NodeResources) -> Result<()> {
+        // error!(
+        //     "NodeResources Add curr is {:?} sub {:?}",
+        //     self.cacheMemory, free.cacheMemory
+        // );
+
         assert!(self.gpuType == free.gpuType);
         self.gpus.Add(&free.gpus);
         // self.cpu += free.cpu;
@@ -556,8 +507,6 @@ pub struct Resources {
     pub cacheMemory: u64,
     #[serde(rename = "GPU")]
     pub gpu: GPUResource,
-    #[serde(default = "default_parallel", rename = "parallel")]
-    pub parallel: usize,
 }
 
 fn default_parallel() -> usize {
@@ -571,7 +520,6 @@ impl Default for Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: GPUResource::default(),
-            parallel: DEFAULT_PARALLEL_LEVEL,
         }
     }
 }
@@ -585,8 +533,6 @@ impl Resources {
         if self.memory == 0 {
             self.memory = 500; // default 500 MB
         }
-
-        self.parallel = DEFAULT_PARALLEL_LEVEL;
     }
 
     pub fn GPUResource(&self) -> Self {
@@ -595,7 +541,6 @@ impl Resources {
             memory: 0,
             cacheMemory: 0,
             gpu: self.gpu.clone(),
-            parallel: self.parallel,
         };
     }
 
@@ -760,7 +705,7 @@ pub struct Standby {
     #[serde(default, rename = "gpu")]
     pub gpuMem: StandbyType,
     #[serde(default, rename = "pageable")]
-    pageableMem: StandbyType,
+    pub pageableMem: StandbyType,
     #[serde(default, rename = "pinned")]
     pub pinndMem: StandbyType,
 }

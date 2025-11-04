@@ -15,6 +15,8 @@
 import json
 import os
 import time
+from datetime import datetime, timezone
+import pytz
 
 import requests
 import markdown
@@ -397,6 +399,18 @@ def getpodaudit(tenant: str, namespace: str, fpname: str, fprevision: int, id: s
 
     return logs
 
+def GetSnapshotAudit(tenant: str, namespace: str, funcname: str, revision: int):
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/SnapshotSchedule/{}/{}/{}/{}/".format(
+        apihostaddr, tenant, namespace, funcname, revision
+    )
+    resp = requests.get(url, headers=headers)
+    fails = json.loads(resp.content)
+    return fails
 
 def GetFailLogs(tenant: str, namespace: str, funcname: str, revision: int):
     access_token = session.get('access_token', '')
@@ -409,6 +423,7 @@ def GetFailLogs(tenant: str, namespace: str, funcname: str, revision: int):
     )
     resp = requests.get(url, headers=headers)
     fails = json.loads(resp.content)
+
     return fails
 
 
@@ -422,6 +437,7 @@ def GetFailLog(tenant: str, namespace: str, funcname: str, revision: int, id: st
         apihostaddr, tenant, namespace, funcname, revision, id
     )
     resp = requests.get(url)
+    
     fail = json.loads(resp.content)
     fail["log"] = fail["log"].replace("\n", "<br>")
     return fail["log"]
@@ -776,7 +792,18 @@ def GetFunc():
     isAdmin = func["isAdmin"]
 
     version = func["func"]["object"]["spec"]["version"]
+    funcpolicy = func["policy"]
     fails = GetFailLogs(tenant, namespace, name, version)
+    snapshotaudit = GetSnapshotAudit(tenant, namespace, name, version)
+
+    local_tz = pytz.timezone("America/Los_Angeles")  # or use tzlocal.get_localzone()
+    for a in snapshotaudit:
+        dt = datetime.fromisoformat(a["updatetime"].replace("Z", "+00:00"))
+        a["updatetime"] = dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+
+    for a in fails:
+        dt = datetime.fromisoformat(a["createtime"].replace("Z", "+00:00"))
+        a["createtime"] = dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
 
     # Convert Python dictionary to pretty JSON string
     funcspec = json.dumps(func["func"]["object"]["spec"], indent=4)
@@ -788,10 +815,12 @@ def GetFunc():
         name=name,
         func=func,
         fails=fails,
+        snapshotaudit=snapshotaudit,
         funcspec=funcspec,
         apiType=apiType,
         map=map,
         isAdmin=isAdmin,
+        funcpolicy=funcpolicy,
         path=sample["path"]
     )
 
@@ -855,7 +884,11 @@ def GetPod():
     log = readpodlog(tenant, namespace, funcname, version, id)
 
     audits = getpodaudit(tenant, namespace, funcname, version, id)
-
+    local_tz = pytz.timezone("America/Los_Angeles")  # or use tzlocal.get_localzone()
+    for a in audits:
+        dt = datetime.fromisoformat(a["updatetime"].replace("Z", "+00:00"))
+        a["updatetime"] = dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+        
     funcs = listfuncs(tenant, namespace)
     return render_template(
         "pod.html",

@@ -8,7 +8,7 @@ CREATE TABLE Pod (
     id              VARCHAR NOT NULL,
     nodename        VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id)
 );
 
@@ -22,7 +22,7 @@ CREATE TABLE PodAudit (
     nodename        VARCHAR NOT NULL,
     action          VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id, updatetime)
 );
 
@@ -35,7 +35,7 @@ CREATE TABLE PodFailLog (
     id              VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
     nodename        VARCHAR NOT NULL,
-    createtime      TIMESTAMP,
+    createtime      TIMESTAMPTZ,
     log             VARCHAR NOT NULL,
     exit_info       VARCHAR NOT NULL,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, id)
@@ -48,7 +48,7 @@ CREATE TABLE FuncState (
     fpname          VARCHAR NOT NULL,
     fprevision      bigint,
     state           VARCHAR NOT NULL,
-    updatetime      TIMESTAMP,
+    updatetime      TIMESTAMPTZ,
     PRIMARY KEY(tenant, namespace, fpname, fprevision, updatetime)
 );
 
@@ -61,6 +61,22 @@ CREATE TABLE ReqAudit (
     ttft            int,            -- Time to First Token
     latency         int
 );
+
+-- DROP TABLE SnapshotScheduleAudit;
+CREATE TABLE SnapshotScheduleAudit (
+    tenant          VARCHAR NOT NULL,
+    namespace       VARCHAR NOT NULL,
+    funcname        VARCHAR NOT NULL,
+    revision        bigint,
+    nodename        VARCHAR NOT NULL,
+    state           VARCHAR NOT NULL,
+    detail          VARCHAR NOT NULL,
+    updatetime      TIMESTAMPTZ,
+    PRIMARY KEY(tenant, namespace, funcname, revision, nodename, state)
+);
+
+-- CREATE INDEX idx_snapshot_audit
+-- ON SnapshotScheduleAudit (tenant, namespace, funcname, revision, nodename);
 
 CREATE OR REPLACE FUNCTION notification_trigger() RETURNS TRIGGER AS 
 $$

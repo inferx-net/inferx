@@ -6,7 +6,9 @@
 
 <style>
     /* Global border for all outer tables */
-    table, th, td {
+    table,
+    th,
+    td {
         border: 1px solid black;
         border-collapse: collapse;
     }
@@ -24,6 +26,7 @@
         font-size: 90%;
         border: none;
     }
+
     .inner-resource-table th,
     .inner-resource-table td {
         border: 1px solid black;
@@ -122,133 +125,138 @@
     <tr>
         <td>{{ pod["tenant"] }}</td>
         <td>{{ pod["namespace"] }}</td>
-        <td><a href="{{ hosturl }}pod?tenant={{ pod["tenant"] }}&&namespace={{ pod["namespace"] }}&&name={{ pod["name"]
+        <td><a href="{{ hosturl }}pod?tenant={{ pod[" tenant"] }}&&namespace={{ pod["namespace"] }}&&name={{ pod["name"]
                 }}">{{
                 pod["name"] }}</a></td>
         <td>{{ pod["object"]["status"]["state"] }}</td>
 
         <style>
-        .req-resource-cell {
-            padding: 0;
-            border: none !important;
-            vertical-align: top;
-            height: 100%;
-        }
+            .req-resource-cell {
+                padding: 0;
+                border: none !important;
+                vertical-align: top;
+                height: 100%;
+            }
 
-        .sliced-grid {
-            display: grid;
-            grid-template-columns: auto auto;
-            grid-template-rows: repeat(7, 1fr);
-            height: 100%;        /* fill entire td height */
-            align-items: stretch; /* stretch each row fully */
-        }
+            .sliced-grid {
+                display: grid;
+                grid-template-columns: auto auto;
+                grid-template-rows: repeat(7, 1fr);
+                height: 100%;
+                /* fill entire td height */
+                align-items: stretch;
+                /* stretch each row fully */
+            }
 
-        .sliced-grid > div {
-            padding: 4px 6px;
-            box-sizing: border-box;
-            border-bottom: 1px solid black;
-            display: flex;
-            align-items: center; /* center content vertically inside stretched div */
-            height: 100%;        /* stretch div to fill grid row height */
-        }
+            .sliced-grid>div {
+                padding: 4px 6px;
+                box-sizing: border-box;
+                border-bottom: 1px solid black;
+                display: flex;
+                align-items: center;
+                /* center content vertically inside stretched div */
+                height: 100%;
+                /* stretch div to fill grid row height */
+            }
 
 
-        .sliced-grid > div.key {
-            font-weight: 600;
-            text-align: right;
-            padding-right: 8px;
-            border-right: 1px solid black;
-        }
+            .sliced-grid>div.key {
+                font-weight: 600;
+                text-align: right;
+                padding-right: 8px;
+                border-right: 1px solid black;
+            }
 
-        .sliced-grid > div.value {
-            font-weight: 400;
-            text-align: left;
-            padding-left: 8px;
-        }
+            .sliced-grid>div.value {
+                font-weight: 400;
+                text-align: left;
+                padding-left: 8px;
+            }
 
-        .sliced-grid > div:last-child,
-        .sliced-grid > div:nth-last-child(2) {
-            border-bottom: none;
-        }
+            .sliced-grid>div:last-child,
+            .sliced-grid>div:nth-last-child(2) {
+                border-bottom: none;
+            }
 
-        /* Remove any global rule removing bottom border from last items */
-        .sliced-grid > div:last-child,
-        .sliced-grid > div:nth-last-child(2) {
-            border-bottom: none; /* or remove this rule entirely */
-        }
+            /* Remove any global rule removing bottom border from last items */
+            .sliced-grid>div:last-child,
+            .sliced-grid>div:nth-last-child(2) {
+                border-bottom: none;
+                /* or remove this rule entirely */
+            }
 
-        /* Add bottom border only inside these specific columns */
-        .alloc-resource-cell .sliced-grid > div:last-child,
-        .alloc-resource-cell .sliced-grid > div:nth-last-child(2),
-        .gpu-resource-cell .sliced-grid > div:last-child,
-        .gpu-resource-cell .sliced-grid > div:nth-last-child(2) {
-            border-bottom: 1px solid black !important;
-        }
+            /* Add bottom border only inside these specific columns */
+            .alloc-resource-cell .sliced-grid>div:last-child,
+            .alloc-resource-cell .sliced-grid>div:nth-last-child(2),
+            .gpu-resource-cell .sliced-grid>div:last-child,
+            .gpu-resource-cell .sliced-grid>div:nth-last-child(2) {
+                border-bottom: 1px solid black !important;
+            }
 
-        tr {
-            height: 100%; /* Allow full height stretching */
-        }
-
+            tr {
+                height: 100%;
+                /* Allow full height stretching */
+            }
         </style>
 
         <td class="req-resource-cell">
-        <div class="sliced-grid">
-            <div class="key">CPU</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["CPU"] }}</div>
+            <div class="sliced-grid">
+                <div class="key">CPU</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["CPU"] }}</div>
 
-            <div class="key">Mem</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["Mem"] }}</div>
+                <div class="key">Mem</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["Mem"] }}</div>
 
-            <div class="key">CacheMem</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["CacheMem"] }}</div>
+                <div class="key">CacheMem</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["CacheMem"] }}</div>
 
-            <div class="key">GPU Type</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Type"] }}</div>
+                <div class="key">GPU Type</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Type"] }}</div>
 
-            <div class="key">GPU Count</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Count"] }}</div>
+                <div class="key">GPU Count</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Count"] }}</div>
 
-            <div class="key">GPU vRam</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["vRam"] }}</div>
+                <div class="key">GPU vRam</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["vRam"] }}</div>
 
-            <div class="key">GPU Contexts</div>
-            <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["contextCount"] }}</div>
-        </div>
+                <div class="key">GPU Contexts</div>
+                <div class="value">{{ pod["object"]["spec"]["reqResources"]["GPU"]["contextCount"] }}</div>
+            </div>
         </td>
 
-        <td class = "alloc-resource-cell">
-        <div class="sliced-grid">
-            <div class="key">Node Name</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</div>
+        <td class="alloc-resource-cell">
+            <div class="sliced-grid">
+                <div class="key">Node Name</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</div>
 
-            <div class="key">CPU</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["CPU"] }}</div>
+                <div class="key">CPU</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["CPU"] }}</div>
 
-            <div class="key">Memory</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["Mem"] }}</div>
+                <div class="key">Memory</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["Mem"] }}</div>
 
-            <div class="key">Cache Memory</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["CacheMem"] }}</div>
-        </div>
+                <div class="key">Cache Memory</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["CacheMem"] }}</div>
+            </div>
         </td>
 
-        <td class = "gpu-resource-cell">
-        <div class="sliced-grid">
-            <div class="key">GPU Type</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUType"] }}</div>
+        <td class="gpu-resource-cell">
+            <div class="sliced-grid">
+                <div class="key">GPU Type</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUType"] }}</div>
 
-            <div class="key">vRam</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</div>
+                <div class="key">vRam</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</div>
 
-            <div class="key">Slot Size</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["slotSize"] }}</div>
+                <div class="key">Slot Size</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["slotSize"] }}</div>
 
-            <div class="key">Total Slot Count</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["totalSlotCnt"] }}</div>
+                <div class="key">Total Slot Count</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["totalSlotCnt"] }}</div>
 
-            <div class="key">Max Context Per GPU</div>
-            <div class="value">{{ pod["object"]["spec"]["allocResources"]["MaxContextPerGPU"] }}</div>
-        </div>
+                <div class="key">Max Context Per GPU</div>
+                <div class="value">{{ pod["object"]["spec"]["allocResources"]["MaxContextPerGPU"] }}</div>
+            </div>
         </td>
 
     </tr>
@@ -265,6 +273,7 @@
         <th>model name</th>
         <th>revision</th>
         <th>id</th>
+        <th>create time</th>
         <th>exit info</th>
         <th>state</th>
     </tr>
@@ -275,9 +284,38 @@
         <td>{{ fail["fpname"] }}</td>
         <td>{{ fail["fprevision"] }}</td>
         <td>{{ fail["id"] }}</td>
+        <td>{{ fail["createtime"] }}</td>
         <td>{{ fail["exit_info"] }}</td>
         <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
                 fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+{% if snapshotaudit %}
+<h2>Snapshot History</h2>
+<table style="width:100%">
+    <tr>
+        <th>tenant</th>
+        <th>namespace</th>
+        <th>model name</th>
+        <th>revision</th>
+        <th>nodename</th>
+        <th>state</th>
+        <th>detail</th>
+        <th>updatetime</th>
+    </tr>
+    {% for audit in snapshotaudit %}
+    <tr>
+        <td>{{ audit["tenant"] }}</td>
+        <td>{{ audit["namespace"] }}</td>
+        <td>{{ audit["funcname"] }}</td>
+        <td>{{ audit["revision"] }}</td>
+        <td>{{ audit["nodename"] }}</td>
+        <td>{{ audit["state"] }}</td>
+        <td>{{ audit["detail"] }}</td>
+        <td>{{ audit["updatetime"] }}</td>
     </tr>
     {% endfor %}
 </table>
@@ -291,6 +329,9 @@
 {% endif %}
 <br />
 <textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
+
+<h2>FuncPolicy</h2>
+<textarea id="FuncPolicy" rows="5" cols="120">{{ funcpolicy }}</textarea>
 
 <script>
     const tenant = {{ tenant | tojson }};
@@ -468,7 +509,8 @@
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Inferx-Timeout': '12'
                 },
                 body: body,
                 signal
@@ -581,7 +623,8 @@
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Inferx-Timeout': '12'
                 },
                 body: JSON.stringify({
                     "prompt": prompt,

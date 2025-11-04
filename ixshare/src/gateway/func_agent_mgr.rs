@@ -14,12 +14,16 @@
 
 use core::ops::Deref;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use inferxlib::resource::DEFAULT_PARALLEL_LEVEL;
-use tokio::sync::oneshot;
+use inferxlib::data_obj::ObjRef;
+use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec, ScaleOutPolicy};
+use once_cell::sync::OnceCell;
 use tokio::sync::{mpsc, Notify};
+use tokio::sync::{oneshot, Mutex as TMutex};
+use tokio::time;
 
 use crate::audit::SqlAudit;
 use crate::common::*;
@@ -29,6 +33,13 @@ use inferxlib::obj_mgr::func_mgr::*;
 
 use super::func_worker::*;
 use super::gw_obj_repo::GwObjRepo;
+
+pub static GW_OBJREPO: OnceCell<GwObjRepo> = OnceCell::new();
+
+static TIMESTAMP_COUNT: AtomicU64 = AtomicU64::new(0);
+lazy_static::lazy_static! {
+    pub static ref TIMESTAMP_START: std::time::Instant = std::time::Instant::now();
+}
 
 pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     use crate::gateway::func_agent_mgr::FuncAgentMgr;
@@ -67,6 +78,8 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         sqlAudit: sqlaudit,
         client: client,
     };
+
+    GW_OBJREPO.set(objRepo.clone()).unwrap();
 
     let handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
@@ -127,32 +140,38 @@ impl FuncAgentMgr {
         tenant: &str,
         namespace: &str,
         funcname: &str,
-    ) -> Result<(QHttpCallClient, bool, Function)> {
-        let func = self.objRepo.GetFunc(tenant, namespace, funcname)?;
+        func: &Function,
+        timeout: u64,
+        timestamp: IxTimestamp,
+    ) -> Result<(QHttpCallClient, bool)> {
         let agent = {
             let funcId = func.Id();
             let mut inner = self.agents.lock().unwrap();
             match inner.get(&funcId) {
                 Some(agent) => agent.clone(),
                 None => {
-                    let agent = FuncAgent::New(&func);
+                    let agent = FuncAgent::New(func);
                     inner.insert(funcId, agent.clone());
                     agent
                 }
             }
         };
         let (tx, rx) = oneshot::channel();
-        agent.EnqReq(tenant, namespace, funcname, tx);
+        agent.EnqReq(tenant, namespace, funcname, timestamp, timeout, tx)?;
         match rx.await {
-            Err(_) => {
-                return Err(Error::CommonError(format!("funcworker fail ...")));
+            Err(e) => {
+                return Err(Error::CommonError(format!(
+                    "funcworker fail ... {} {:?}",
+                    func.Id(),
+                    e
+                )));
             }
             Ok(res) => match res {
                 Err(e) => {
                     return Err(e);
                 }
                 Ok((client, keepalive)) => {
-                    return Ok((client, keepalive, func));
+                    return Ok((client, keepalive));
                 }
             },
         };
@@ -173,8 +192,14 @@ pub enum WorkerState {
 pub enum WorkerUpdate {
     Ready(FuncWorker), // parallel level
     WorkerFail((FuncWorker, Error)),
-    RequestDone(FuncWorker),
+    WorkerLeaseFail((FuncWorker, Error)),
     IdleTimeout(FuncWorker),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum WaitState {
+    WaitReq,
+    WaitSlot,
 }
 
 #[derive(Debug)]
@@ -188,19 +213,29 @@ pub struct FuncAgentInner {
     pub func: Function,
     pub funcVersion: i64,
 
-    pub waitingReqs: VecDeque<FuncClientReq>,
+    pub scaleoutPolicy: Mutex<ScaleOutPolicy>,
+    pub scaleinTimeout: AtomicU64,
+    pub parallelLeve: AtomicUsize,
+
+    pub reqQueue: ClientReqQueue,
+    pub dataNotify: Arc<Notify>,
+
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
-    pub availableSlot: usize,
-    pub startingSlot: usize,
-    pub workers: BTreeMap<String, FuncWorker>,
-    pub nextWorkerId: u64,
-    pub nextReqId: u64,
+
+    pub availableSlot: Arc<AtomicIsize>,
+    pub totalSlot: Arc<AtomicUsize>,
+    pub startingSlot: Arc<AtomicUsize>,
+    pub activeReqCnt: AtomicUsize,
+
+    pub workers: Mutex<BTreeMap<isize, FuncWorker>>,
+    pub nextWorkerId: AtomicIsize,
+    pub scaleInWorkerId: AtomicIsize,
 }
 
 impl FuncAgentInner {
     pub fn AvailableWorker(&self) -> Option<FuncWorker> {
-        for (_, worker) in &self.workers {
+        for (_, worker) in &*self.workers.lock().unwrap() {
             if worker.AvailableSlot() > 0 {
                 return Some(worker.clone());
             }
@@ -213,49 +248,60 @@ impl FuncAgentInner {
         return format!("{}/{}/{}", &self.tenant, &self.namespace, &self.funcName);
     }
 
-    pub fn RemoveWorker(&mut self, worker: &FuncWorker) -> Result<()> {
-        self.workers.remove(&worker.workerId);
-        return Ok(());
+    pub fn AddWorker(&self, worker: &FuncWorker) {
+        self.workers
+            .lock()
+            .unwrap()
+            .insert(worker.WorkerId(), worker.clone());
+
+        self.scaleInWorkerId
+            .store(self.ScaleInWorkerId(), Ordering::SeqCst);
     }
 
-    pub fn NextWorkerId(&mut self) -> u64 {
-        self.nextWorkerId += 1;
-        return self.nextWorkerId;
+    pub fn RemoveWorker(&self, worker: &FuncWorker) {
+        self.workers.lock().unwrap().remove(&worker.WorkerId());
+        self.scaleInWorkerId
+            .store(self.ScaleInWorkerId(), Ordering::SeqCst);
     }
 
-    pub fn AssignReq(&mut self, req: FuncClientReq) {
-        for (_, worker) in &self.workers {
-            if worker.AvailableSlot() > 0 {
-                worker.AssignReq(req);
-                self.availableSlot -= 1;
-                return;
-            }
+    pub fn NextWorkerId(&self) -> isize {
+        return self.nextWorkerId.fetch_add(1, Ordering::SeqCst) + 1;
+    }
+
+    pub fn ScaleInWorkerId(&self) -> isize {
+        let lock = self.workers.lock().unwrap();
+        if lock.len() <= 1 {
+            return -1;
         }
 
-        panic!("funcagentmgr fail to assign req {:?}", &req);
-    }
-
-    pub fn NextReqId(&mut self) -> u64 {
-        self.nextReqId += 1;
-        return self.nextReqId;
+        if let Some(workerId) = lock.keys().next() {
+            return *workerId;
+        } else {
+            return -1;
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FuncAgent(Arc<Mutex<FuncAgentInner>>);
+pub struct FuncAgent(Arc<FuncAgentInner>);
 
 impl Deref for FuncAgent {
-    type Target = Arc<Mutex<FuncAgentInner>>;
+    type Target = Arc<FuncAgentInner>;
 
-    fn deref(&self) -> &Arc<Mutex<FuncAgentInner>> {
+    fn deref(&self) -> &Arc<FuncAgentInner> {
         &self.0
     }
 }
 
 impl FuncAgent {
     pub fn New(func: &Function) -> Self {
-        let (rtx, rrx) = mpsc::channel(30);
-        let (wtx, wrx) = mpsc::channel(30);
+        let policy = GW_OBJREPO.get().unwrap().FuncPolicy(func);
+
+        let queueLen = policy.queueLen;
+
+        let reqQueue = ClientReqQueue::New(queueLen);
+        let (rtx, rrx) = mpsc::channel(1000);
+        let (wtx, wrx) = mpsc::channel(100);
         let inner = FuncAgentInner {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
@@ -264,17 +310,25 @@ impl FuncAgent {
             funcName: func.name.to_owned(),
             funcVersion: func.Version(),
             func: func.clone(),
-            waitingReqs: VecDeque::new(),
             reqQueueTx: rtx,
             workerStateUpdateTx: wtx,
-            availableSlot: 0,
-            startingSlot: 0,
-            workers: BTreeMap::new(),
-            nextWorkerId: 0,
-            nextReqId: 0,
+            totalSlot: Arc::new(AtomicUsize::new(0)),
+            availableSlot: Arc::new(AtomicIsize::new(0)),
+            startingSlot: Arc::new(AtomicUsize::new(0)),
+            activeReqCnt: AtomicUsize::new(0),
+            workers: Mutex::new(BTreeMap::new()),
+            nextWorkerId: AtomicIsize::new(0),
+            scaleInWorkerId: AtomicIsize::new(-1),
+
+            reqQueue: reqQueue,
+            dataNotify: Arc::new(Notify::new()),
+
+            scaleoutPolicy: Mutex::new(policy.scaleoutPolicy),
+            scaleinTimeout: AtomicU64::new((policy.scaleinTimeout * 1000.0) as u64),
+            parallelLeve: AtomicUsize::new(policy.parallel),
         };
 
-        let ret = Self(Arc::new(Mutex::new(inner)));
+        let ret = Self(Arc::new(inner));
 
         let clone = ret.clone();
         tokio::spawn(async move {
@@ -284,32 +338,87 @@ impl FuncAgent {
         return ret;
     }
 
+    pub fn TotalSlot(&self) -> usize {
+        // let totalSlot = self.totalSlot.load(Ordering::SeqCst);
+        // return totalSlot + self.startingSlot.load(Ordering::SeqCst);
+        return self.workers.lock().unwrap().len() * self.ParallelLevel();
+    }
+
+    pub fn UpdatePolicy(&self) {
+        let policy = GW_OBJREPO.get().unwrap().FuncPolicy(&self.func);
+
+        *self.scaleoutPolicy.lock().unwrap() = policy.scaleoutPolicy;
+        self.scaleinTimeout
+            .store((policy.scaleinTimeout * 1000.0) as u64, Ordering::Relaxed);
+        self.parallelLeve.store(policy.parallel, Ordering::Relaxed);
+    }
+
     pub fn EnqReq(
         &self,
         tenant: &str,
         namespace: &str,
         funcname: &str,
+        timestamp: IxTimestamp,
+        timeout: u64,
         tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
-    ) {
+    ) -> Result<()> {
         let funcReq = FuncClientReq {
-            reqId: self.lock().unwrap().NextReqId(),
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
             funcName: funcname.to_owned(),
             keepalive: true,
+            timeout: timeout,
+            enqueueTime: timestamp,
             tx: tx,
         };
-        self.lock().unwrap().reqQueueTx.try_send(funcReq).unwrap();
+        match self.reqQueueTx.try_send(funcReq) {
+            Err(_e) => {
+                return Err(Error::CommonError("FuncAgent Queue is full".to_owned()));
+            }
+            Ok(_) => return Ok(()),
+        }
     }
 
     pub async fn Close(&self) {
-        let closeNotify = self.lock().unwrap().closeNotify.clone();
+        let closeNotify = self.closeNotify.clone();
         closeNotify.notify_one();
     }
 
     pub fn FuncKey(&self) -> String {
-        let inner = self.lock().unwrap();
-        return inner.Key();
+        return self.Key();
+    }
+
+    pub async fn NeedNewWorker(&self) -> bool {
+        let reqCnt = self.activeReqCnt.load(Ordering::Relaxed);
+        let totalSlotCnt = self.TotalSlot();
+        // let waitReqcnt = self.reqQueue.Count().await;
+        match &*self.scaleoutPolicy.lock().unwrap() {
+            ScaleOutPolicy::WaitQueueRatio(ratio) => {
+                if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
+                    // error!(
+                    //     "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
+                    //     reqCnt, totalSlotCnt, waitReqcnt
+                    // );
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    pub fn NeedLastWorker(&self) -> bool {
+        let reqCnt = self.activeReqCnt.load(Ordering::Relaxed);
+        let totalSlotCnt = self.TotalSlot() - self.ParallelLevel();
+        return reqCnt > totalSlotCnt;
+    }
+
+    pub fn ActiveReqCnt(&self) -> usize {
+        return self.activeReqCnt.load(Ordering::Relaxed);
+    }
+
+    pub async fn WaitReqCnt(&self) -> usize {
+        return self.reqQueue.Count().await;
     }
 
     pub async fn Process(
@@ -320,103 +429,84 @@ impl FuncAgent {
         let mut reqQueueRx = reqQueueRx;
         let mut workerStateUpdateRx = workerStateUpdateRx;
 
-        let closeNotify = self.lock().unwrap().closeNotify.clone();
+        let closeNotify = self.closeNotify.clone();
+        let reqQueue = self.reqQueue.clone();
+        let throttle = Throttle::New(2, 2, Duration::from_secs(1)).await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
 
         loop {
+            let timeoutReqCnt = reqQueue.CleanTimeout().await;
+            self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
+            if self.NeedNewWorker().await {
+                if throttle.TryAcquire().await {
+                    error!(
+                        "create new worker {} activereqcnt {} waitreqcnt {}",
+                        self.FuncKey(),
+                        self.ActiveReqCnt(),
+                        self.WaitReqCnt().await
+                    );
+                    match self.NewWorker().await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            error!("Func Create New Worker fail {:?} for {}", e, self.Key())
+                        }
+                    }
+                }
+            }
+
             // let key = self.lock().unwrap().Key();
             tokio::select! {
                 _ = closeNotify.notified() => {
-                    self.lock().unwrap().stop.store(false, Ordering::SeqCst);
+                    self.stop.store(false, Ordering::SeqCst);
                     break;
                 }
                 workReq = reqQueueRx.recv() => {
                     if let Some(req) = workReq {
-                        self.ProcessReq(req).await;
+                        if reqQueue.Send(req).await {
+                            self.activeReqCnt.fetch_add(1, Ordering::SeqCst);
+                        }
+                        // self.ProcessReq(req).await;
                     } else {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
                     }
+
+                    loop {
+                        match reqQueueRx.try_recv() {
+                            Err(_) => break,
+                            Ok(req) => {
+                                if reqQueue.Send(req).await {
+                                    self.activeReqCnt.fetch_add(1, Ordering::SeqCst);
+                                }
+                            }
+                        }
+                    }
                 }
+                _ = interval.tick() => {
+                    // keepalive for each 500 ms
+                    self.UpdatePolicy();
+                }
+                // trigger timeout checkout
+                _ = time::sleep(Duration::from_millis(10)) => {}
                 stateUpdate = workerStateUpdateRx.recv() => {
                     if let Some(update) = stateUpdate {
                         match update {
-                            WorkerUpdate::Ready(worker) => {
-                                let slot = worker.AvailableSlot();
-                                let oldslot = worker.contributeSlot.swap(slot, Ordering::SeqCst);
-                                assert!(oldslot == 0);
-                                self.IncrSlot(slot);
-                                self.TryProcessOneReq();
-                            }
-                            WorkerUpdate::RequestDone(_worker) => {
-                                self.IncrSlot(1);
-                                self.TryProcessOneReq();
+                            WorkerUpdate::Ready(_worker) => {
+                                // worker.SetState(FuncWorkerState::Processing);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
-                                let slot = worker.AvailableSlot();
-                                self.DecrSlot(slot);
-                                let workerId = worker.workerId.clone();
-                                worker.ReturnWorker().await.ok();
-
-
-                                let funckey = self.FuncKey();
-
-                                loop {
-                                    match reqQueueRx.try_recv() {
-                                        Ok(req) => {
-                                            match &e {
-                                                Error::SchedulerErr(s) => {
-                                                    req.Send(Err(Error::SchedulerErr(s.clone())));
-                                                }
-                                                e => {
-                                                    let err = Err(Error::CommonError(format!(
-                                                            "fail to run func {:?} with error {:?}", &funckey, e
-                                                        )));
-                                                    req.Send(err);
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("WorkerUpdate::WorkerFail fail3 {:?}", e);
-
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                loop {
-                                    match self.lock().unwrap().waitingReqs.pop_back() {
-                                        Some(req) => {
-                                            match &e {
-                                                Error::SchedulerErr(s) => {
-                                                    req.Send(Err(Error::SchedulerErr(s.clone())));
-                                                }
-                                                e => {
-                                                    let err = Err(Error::CommonError(format!(
-                                                            "fail to run func {:?} with error {:?}", &funckey, e
-                                                        )));
-                                                    req.Send(err);
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                self.lock().unwrap().workers.remove(&workerId);
+                                worker.ReturnWorker(true).await.ok();
+                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
+                                self.RemoveWorker(&worker);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
-                                // there is race condition there might be new request coming after work idle timeout and before funcagent return the worker
-                                // need to check whether the work get new requests.
-                                if worker.OngoingReq() == 0 {
-                                    let slot = worker.contributeSlot.swap(0, Ordering::SeqCst);
-                                    let _ = self.DecrSlot(slot);
-                                    worker.Close().await;
-                                    worker.ReturnWorker().await.ok();
-                                    let workerId = worker.workerId.clone();
-                                    self.lock().unwrap().workers.remove(&workerId);
-                                }
+                                worker.ReturnWorker(false).await.ok();
+                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.WorkerName(), worker.id);
+                                self.RemoveWorker(&worker);
                             }
+                            WorkerUpdate::WorkerLeaseFail((worker, _e)) => {
+                                self.RemoveWorker(&worker);
+                            }
+
                         }
                     } else {
                         unreachable!("FuncAgent::Process reqQueueRx closed");
@@ -429,19 +519,47 @@ impl FuncAgent {
     }
 
     pub fn ParallelLevel(&self) -> usize {
-        let mut level = self.lock().unwrap().func.object.spec.resources.parallel;
-        if level == 0 {
-            level = DEFAULT_PARALLEL_LEVEL;
-        }
+        return self.parallelLeve.load(Ordering::Relaxed);
+    }
 
-        return level;
+    pub fn FuncPolicy(&self, tenant: &str) -> Result<FuncPolicySpec> {
+        match &self.func.object.spec.policy {
+            ObjRef::Obj(p) => return Ok(p.clone()),
+            ObjRef::Link(l) => {
+                if l.objType != FuncPolicy::KEY {
+                    return Err(Error::CommonError(format!(
+                        "GetFuncPolicy for func {} fail invalic link type {}",
+                        self.FuncKey(),
+                        &l.objType
+                    )));
+                }
+
+                let obj =
+                    match GW_OBJREPO
+                        .get()
+                        .unwrap()
+                        .funcpolicyMgr
+                        .Get(tenant, &l.namespace, &l.name)
+                    {
+                        Err(e) => {
+                            error!(
+                                "can't get funcPolicy {}/{}/{}, fallback to default error {:?}",
+                                tenant, &l.namespace, &l.name, e
+                            );
+                            FuncPolicySpec::default()
+                        }
+                        Ok(p) => p.object,
+                    };
+
+                return Ok(obj);
+            }
+        }
     }
 
     pub async fn NewWorker(&self) -> Result<()> {
-        let keepaliveTime = 10; // 10 millisecond self.lock().unwrap().func.spec.keepalivePolicy.keepaliveTime;
+        let keepaliveTime = self.scaleinTimeout.load(Ordering::Relaxed);
 
-        let workerId = self.lock().unwrap().NextWorkerId();
-        let workderId = format!("{}", workerId);
+        let workerId = self.NextWorkerId();
 
         let tenant;
         let namespace;
@@ -449,25 +567,23 @@ impl FuncAgent {
         let fprevision;
         let endpoint;
         {
-            let inner = self.lock().unwrap();
-
-            tenant = inner.tenant.clone();
-            namespace = inner.namespace.clone();
-            funcname = inner.funcName.clone();
-            fprevision = inner.funcVersion;
-            endpoint = inner.func.object.spec.endpoint.clone();
+            tenant = self.tenant.clone();
+            namespace = self.namespace.clone();
+            funcname = self.funcName.clone();
+            fprevision = self.funcVersion;
+            endpoint = self.func.object.spec.endpoint.clone();
         }
 
-        let parallelLevel = self.lock().unwrap().func.object.spec.resources.parallel;
-        self.lock().unwrap().startingSlot += self.ParallelLevel();
+        let parallelLevel = self.ParallelLevel();
+        self.startingSlot.fetch_add(parallelLevel, Ordering::SeqCst);
         match FuncWorker::New(
-            &workderId,
+            workerId,
             &tenant,
             &namespace,
             &funcname,
             fprevision,
             parallelLevel,
-            keepaliveTime,
+            10.max(keepaliveTime), // keepalive must be larger than 10 ms
             endpoint,
             self,
         )
@@ -481,84 +597,295 @@ impl FuncAgent {
                 return Err(e);
             }
             Ok(worker) => {
-                self.lock()
-                    .unwrap()
-                    .workers
-                    .insert(workderId, worker.clone());
-
+                self.AddWorker(&worker);
                 return Ok(());
             }
         };
     }
 
     pub fn SendWorkerStatusUpdate(&self, update: WorkerUpdate) {
-        let statusUpdateTx = self.lock().unwrap().workerStateUpdateTx.clone();
+        let statusUpdateTx = self.workerStateUpdateTx.clone();
         statusUpdateTx.try_send(update).unwrap();
     }
 
-    pub fn IncrSlot(&self, cnt: usize) -> usize {
-        let mut l = self.lock().unwrap();
-        l.availableSlot += cnt;
-        return l.availableSlot;
+    pub fn IncrSlot(&self, cnt: usize) -> isize {
+        // error!(
+        //     "IncrSlot cnt {} {} available {}",
+        //     l.Key(),
+        //     cnt,
+        //     l.availableSlot
+        // );
+        return self.availableSlot.fetch_add(cnt as isize, Ordering::SeqCst) + cnt as isize;
     }
 
-    pub fn DecrSlot(&self, cnt: usize) -> usize {
-        let mut l = self.lock().unwrap();
-        l.availableSlot -= cnt;
-        return l.availableSlot;
+    pub fn DecrSlot(&self, cnt: usize) -> isize {
+        // error!(
+        //     "DecrSlot cnt {} {} available {}",
+        //     l.Key(),
+        //     cnt,
+        //     l.availableSlot
+        // );
+        return self.availableSlot.fetch_sub(cnt as isize, Ordering::SeqCst) - cnt as isize;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
+pub struct IxTimestamp {
+    pub count: u64,
+    pub ms: u64,
+}
+
+impl Default for IxTimestamp {
+    fn default() -> Self {
+        return Self::New();
+    }
+}
+
+impl IxTimestamp {
+    pub fn New() -> Self {
+        return Self {
+            count: TIMESTAMP_COUNT.fetch_add(1, Ordering::SeqCst),
+            ms: TIMESTAMP_START.elapsed().as_millis() as u64,
+        };
     }
 
-    pub fn TryProcessOneReq(&self) {
-        let mut inner = self.lock().unwrap();
-        if inner.availableSlot == 0 {
-            return;
-        }
+    pub fn Elapsed(&self) -> u64 {
+        return TIMESTAMP_START.elapsed().as_millis() as u64 - self.ms;
+    }
+}
 
-        match inner.waitingReqs.pop_front() {
-            None => {
+#[derive(Debug)]
+pub struct ClientReqQueuInner {
+    // pub reqQueue: TMutex<BTreeMap<IxTimestamp, FuncClientReq>>,
+    pub reqQueue: TMutex<VecDeque<FuncClientReq>>,
+    pub queueLen: AtomicUsize,
+    pub notify: Arc<Notify>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientReqQueue(Arc<ClientReqQueuInner>);
+
+impl Deref for ClientReqQueue {
+    type Target = Arc<ClientReqQueuInner>;
+
+    fn deref(&self) -> &Arc<ClientReqQueuInner> {
+        &self.0
+    }
+}
+
+impl ClientReqQueue {
+    pub fn New(queueLen: usize) -> Self {
+        let inner = ClientReqQueuInner {
+            reqQueue: TMutex::new(VecDeque::new()),
+            // reqQueue: TMutex::new(BTreeMap::new()),
+            queueLen: AtomicUsize::new(queueLen),
+            notify: Arc::new(Notify::new()),
+        };
+
+        return Self(Arc::new(inner));
+    }
+
+    pub async fn Count(&self) -> usize {
+        return self.reqQueue.lock().await.len();
+    }
+
+    pub async fn WaitReq(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if !self.reqQueue.lock().await.is_empty() {
                 return;
             }
-            Some(req) => {
-                for (_, worker) in &inner.workers {
-                    if worker.AvailableSlot() > 0 {
-                        worker.AssignReq(req);
-                        inner.availableSlot -= 1;
+            notified.await;
+        }
+    }
+
+    pub async fn Recv(&self) -> FuncClientReq {
+        loop {
+            let notified = self.notify.notified();
+            // match self.reqQueue.lock().await.pop_first() {
+            match self.reqQueue.lock().await.pop_back() {
+                None => (),
+                Some(r) => return r,
+            }
+            notified.await;
+        }
+    }
+
+    pub async fn CleanTimeout(&self) -> usize {
+        let mut q = self.reqQueue.lock().await;
+        let mut count = 0;
+        loop {
+            match q.back() {
+                None => break,
+                Some(first) => {
+                    let timeout = first.timeout;
+                    if first.enqueueTime.Elapsed() as u64 > timeout {
+                        let item = q.pop_back().unwrap();
+                        count += 1;
+                        item.tx.send(Err(Error::Timeout(timeout))).ok();
+                    } else {
                         break;
                     }
                 }
             }
         }
+
+        return count;
     }
 
-    pub async fn ProcessReq(&self, req: FuncClientReq) {
-        if self.lock().unwrap().availableSlot == 0 {
-            let mut needNewWorker = false;
+    pub async fn Send(&self, req: FuncClientReq) -> bool {
+        let mut q = self.reqQueue.lock().await;
+        if q.len() >= self.queueLen.load(Ordering::Relaxed) {
+            req.tx.send(Err(Error::QueueFull)).unwrap();
+            return false;
+        }
+
+        // q.insert(req.enqueueTime.clone(), req);
+        q.push_front(req);
+        if q.len() == 1 {
+            // self.notify.notify_waiters();
+            self.notify.notify_one();
+        }
+
+        return true;
+    }
+
+    pub async fn TryRecvBatch(&self, cnt: usize) -> Vec<FuncClientReq> {
+        // self.CleanTimeout().await;
+        let mut q = self.reqQueue.lock().await;
+        let mut v = Vec::new();
+        for _i in 0..cnt {
+            match q.pop_back() {
+                None => return v,
+                Some(req) => v.push(req),
+            }
+        }
+
+        return v;
+    }
+
+    pub async fn TryRecv(&self) -> Option<FuncClientReq> {
+        // self.CleanTimeout().await;
+        match self.reqQueue.lock().await.pop_back() {
+            None => return None,
+            Some(v) => return Some(v),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ProcessSlotInner {
+    pub slots: AtomicUsize,
+    pub notify: Notify,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ProcessSlot(Arc<ProcessSlotInner>);
+
+impl Deref for ProcessSlot {
+    type Target = Arc<ProcessSlotInner>;
+
+    fn deref(&self) -> &Arc<ProcessSlotInner> {
+        &self.0
+    }
+}
+
+impl ProcessSlot {
+    pub fn Dec(&self) {
+        self.DecBy(1);
+    }
+
+    pub fn Inc(&self) {
+        self.IncBy(1);
+    }
+
+    pub fn IncBy(&self, count: usize) {
+        self.slots.fetch_add(count, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn DecBy(&self, count: usize) {
+        self.slots.fetch_sub(count, Ordering::SeqCst);
+    }
+
+    pub fn Count(&self) -> usize {
+        return self.slots.load(Ordering::SeqCst);
+    }
+
+    pub async fn Wait(&self) {
+        self.notify.notified().await;
+    }
+}
+
+#[derive(Debug)]
+pub struct ThrottleInner {
+    tokens: TMutex<usize>,
+    capacity: usize,
+    refill_interval: Duration,
+    notify: Notify,
+}
+
+#[derive(Debug, Clone)]
+pub struct Throttle(Arc<ThrottleInner>);
+
+impl Deref for Throttle {
+    type Target = Arc<ThrottleInner>;
+
+    fn deref(&self) -> &Arc<ThrottleInner> {
+        &self.0
+    }
+}
+
+impl Throttle {
+    pub async fn New(initial: usize, capacity: usize, refill_interval: Duration) -> Self {
+        let throttle = Self(Arc::new(ThrottleInner {
+            tokens: TMutex::new(initial.min(capacity)),
+            capacity,
+            refill_interval,
+            notify: Notify::new(),
+        }));
+
+        // Start background refill task
+        Self::Refill(throttle.clone()).await;
+        throttle
+    }
+
+    async fn Refill(throttle: Self) {
+        tokio::spawn(async move {
+            let mut ticker = time::interval(throttle.refill_interval);
+            loop {
+                ticker.tick().await;
+                let mut tokens = throttle.tokens.lock().await;
+                if *tokens < throttle.capacity {
+                    *tokens += 1;
+                    throttle.notify.notify_one();
+                }
+            }
+        });
+    }
+
+    /// Acquire a token (wait if none available)
+    pub async fn Acquire(&self) {
+        loop {
             {
-                let mut inner = self.lock().unwrap();
-                inner.waitingReqs.push_back(req);
-
-                if inner.waitingReqs.len() > inner.startingSlot {
-                    needNewWorker = true;
+                let mut tokens = self.tokens.lock().await;
+                if *tokens > 0 {
+                    *tokens -= 1;
+                    return;
                 }
             }
+            self.notify.notified().await;
+        }
+    }
 
-            if needNewWorker {
-                match self.NewWorker().await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        let req = self.lock().unwrap().waitingReqs.pop_front();
-
-                        if let Some(req) = req {
-                            match req.tx.send(Err(e)) {
-                                Err(e) => error!("send response to client fail with error {:?}", e),
-                                Ok(_) => (),
-                            }
-                        }
-                    }
-                }
-            }
+    /// Try to acquire a token immediately (non-blocking)
+    pub async fn TryAcquire(&self) -> bool {
+        let mut tokens = self.tokens.lock().await;
+        if *tokens > 0 {
+            *tokens -= 1;
+            true
         } else {
-            self.lock().unwrap().AssignReq(req);
+            false
         }
     }
 }

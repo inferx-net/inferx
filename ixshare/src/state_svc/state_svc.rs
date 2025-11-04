@@ -15,6 +15,7 @@
 use std::result::Result as SResult;
 use std::sync::Arc;
 
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::selector::Selector;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -38,6 +39,7 @@ use crate::metastore::unique_id::Uid;
 use crate::node_config::StateSvcConfig;
 use crate::node_config::NODE_CONFIG;
 use crate::pgsql::listener::Listener;
+use crate::scheduler::scheduler_register::SchedulerInfo;
 use crate::state_svc::statesvc_register::StateSvcRegister;
 use inferxlib::data_obj::*;
 use inferxlib::obj_mgr::func_mgr::FuncMgr;
@@ -53,7 +55,14 @@ use inferxlib::obj_mgr::tenant_mgr::TenantObject;
 lazy_static::lazy_static! {
     #[derive(Debug)]
     pub static ref STATESVC_CONFIG: StateSvcConfig = StateSvcConfig::New(&NODE_CONFIG);
-    pub static ref ETCD_OBJECTS: Vec<&'static str> = vec![Node::KEY, Namespace::KEY, Function::KEY, Tenant::KEY, "scheduler"];
+    pub static ref ETCD_OBJECTS: Vec<&'static str> = vec![
+        Node::KEY,
+        Namespace::KEY,
+        Function::KEY,
+        Tenant::KEY,
+        FuncPolicy::KEY,
+        SchedulerInfo::KEY,
+    ];
 }
 
 pub const VERSION: &str = "0.1";
@@ -338,7 +347,7 @@ impl ixmeta::ix_meta_service_server::IxMetaService for StateSvc {
             Ok(()) => (),
         }
 
-        let o = match self.store.Update(req.expect_rev, &dataobj).await {
+        let o = match self.store.Update(req.expect_rev, &dataobj, 0).await {
             Err(e) => {
                 return Ok(Response::new(ixmeta::UpdateResponseMessage {
                     error: format!("create error: {:?}", e),
@@ -655,6 +664,7 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
     let stateSvcRegister =
         StateSvcRegister::New(&STATESVC_CONFIG.etcdAddrs, "ss", "0.0.0.0", 8890).await?;
 
+    error!("StateService 1");
     let nodeagentAggrStore = IxAggrStore::New(&stateSvc.svcDir.ChannelRev()).await?;
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.NodeStore());
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.PodStore());
@@ -663,10 +673,12 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
         .AddCacher(nodeagentAggrStore.SnapshotStore());
     let nodeagentAggrStoreFuture = nodeagentAggrStore.Process();
     let stateSvcAddr = format!("0.0.0.0:{}", STATESVC_CONFIG.stateSvcPort);
+    error!("StateService 2");
     let stateSvcFuture = Server::builder()
         .add_service(IxMetaServiceServer::new(stateSvc.clone()))
         .add_service(ReqWatchingServiceServer::new(stateSvc.clone()))
         .serve(stateSvcAddr.parse().unwrap());
+    error!("StateService 3");
     match notify {
         Some(n) => {
             n.notify_waiters();

@@ -16,11 +16,11 @@
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 40000,
+                "Mem": 30000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13800
+                    "vRam": 13000
                 }
             },
             "envs": [
@@ -58,7 +58,15 @@
             "standby": {
                 "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "Mem"
+                "pinned": "File"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 1,
+                    "standby_per_node": 1,
+                    "parallel": 200
+                }
             }
         }
     }

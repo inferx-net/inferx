@@ -31,7 +31,7 @@ lazy_static::lazy_static! {
     #[derive(Debug)]
     pub static ref NODE_CONFIG: NodeConfig = {
         let args : Vec<String> = std::env::args().collect();
-        error!("NODE_CONFIG args is {:?}", &args);
+        info!("NODE_CONFIG args is {:?}", &args);
         let configfilePath = if args.len() == 1 {
             "/opt/inferx/config/node.json"
         } else {
@@ -263,7 +263,7 @@ impl GatewayConfig {
             gatewayPort: gatewayPort,
         };
 
-        error!("GatewayConfig is {:#?}", &ret);
+        info!("GatewayConfig is {:#?}", &ret);
 
         return ret;
     }
@@ -509,13 +509,13 @@ impl NodeAgentConfig {
                     }
                     Some(s) => {
                         let res = s / 1024u64.pow(2);
-                        if res * 2 > resources.allocMemory {
+                        if res > resources.allocMemory {
                             error!(
-                                "CACHE_MEMORY {} MB can't exceed half of ALLOC_MEMORY {} MB",
+                                "CACHE_MEMORY {} MB can't exceed ALLOC_MEMORY {} MB",
                                 res, resources.allocMemory
                             );
                             panic!(
-                                "CACHE_MEMORY {} MB can't exceed half of ALLOC_MEMORY {} MB",
+                                "CACHE_MEMORY {} MB can't exceed ALLOC_MEMORY {} MB",
                                 res, resources.allocMemory
                             );
                         }
@@ -623,6 +623,17 @@ impl NodeAgentConfig {
                 }
             }
             Err(_) => resources.maxContextPerGPU,
+        };
+
+        resources.contextOverhead = match std::env::var("CONTEXT_OVERHEAD") {
+            Ok(s) => {
+                info!("get context_overhead from env CONTEXT_OVERHEAD: {}", &s);
+                match s.parse::<u64>() {
+                    Err(_) => resources.contextOverhead,
+                    Ok(c) => c,
+                }
+            }
+            Err(_) => resources.contextOverhead,
         };
 
         let stateSvcAddrs = match std::env::var("STATESVC_ADDR") {

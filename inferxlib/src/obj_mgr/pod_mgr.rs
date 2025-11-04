@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use super::funcsnapshot_mgr::*;
@@ -28,6 +29,19 @@ use crate::resource::Standby;
 
 use super::func_mgr::FuncSpec;
 use super::func_mgr::HttpEndpoint;
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+pub struct IdxList {
+    pub list: Vec<u16>,
+    pub size: u64,
+}
+
+impl IdxList {
+    pub fn Clear(&mut self) {
+        self.list.clear();
+        self.size = 0;
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum CreatePodType {
@@ -67,6 +81,7 @@ pub struct FuncPodSpec {
 
     //pub status: PodStatus,
     pub host_ip: String,
+    pub host_port: u16,
     pub pod_ip: String,
     pub pod_ips: Vec<String>,
 
@@ -77,6 +92,10 @@ pub struct FuncPodSpec {
 
     pub standby: Standby,
     pub snapshotStandbyInfo: SnapshotStandyInfo,
+
+    pub cudaHostMemIdxList: IdxList,
+    pub hostMemIdxList: IdxList,
+    pub gpuMemSlots: BTreeMap<i32, IdxList>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -143,6 +162,22 @@ impl FuncPod {
         );
     }
 
+    pub fn Uid(&self) -> Result<uuid::Uuid> {
+        match uuid::Uuid::parse_str(&self.object.spec.uid) {
+            Ok(u) => {
+                return Ok(u);
+            }
+            Err(e) => {
+                return Err(Error::CommonError(format!(
+                    "FuncPod {} get invalid uid {} error {:?}",
+                    self.FuncKey(),
+                    &self.object.spec.uid,
+                    e
+                )))
+            }
+        }
+    }
+
     pub fn ImageName(&self) -> String {
         return self.object.spec.containers[0].image.clone();
     }
@@ -162,14 +197,6 @@ impl FuncPod {
     pub fn ResumeRestore(&mut self, resources: &NodeResources) -> Result<()> {
         self.object.spec.allocResources = resources.clone();
         return Ok(());
-    }
-
-    pub fn MemHibernateDone(&mut self) -> Result<()> {
-        return self
-            .object
-            .spec
-            .allocResources
-            .Sub(&self.object.spec.allocResources.GPUResource());
     }
 
     pub fn MemWakeup(&mut self, gpuResources: GPUResourceMap) -> Result<()> {
@@ -198,8 +225,6 @@ pub enum PodState {
     Loading,
     // scheduler enable the pod to serve new requests
     Ready,
-    // a state preserved for use to draining requests
-    Draining,
     // a state nodeagent is killing the pod
     Terminating,
     // a normal pod exit status when nodemgr request to terminate
@@ -223,16 +248,8 @@ pub enum PodState {
     //
     ResumeDone,
 
-    // Start to hibernate the XPU HBM data to DRAM
-    MemHibernating,
     // Finish to hibernate the XPU HBM data to DRAM
     MemHibernated,
-    // Start to hibernate the Container state to Disk
-    DiskHibernating,
-    // finish to hibernate the Container state to Disk
-    DiskHibernated,
-    // transition state between MemHibernated to Running
-    Waking,
     // transition state between Snapshot to Snapshoted
     Snapshoting,
 
@@ -243,5 +260,16 @@ pub enum PodState {
 impl Default for PodState {
     fn default() -> Self {
         return Self::Init;
+    }
+}
+
+impl PodState {
+    pub fn BlockStandby(&self) -> bool {
+        match self {
+            Self::Restoring => return true,
+            Self::Creating => return true,
+            Self::Resuming => return true,
+            _ => return false,
+        }
     }
 }

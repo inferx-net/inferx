@@ -1,4 +1,4 @@
-// Copyright (c) 2025 InferX Authors /  
+// Copyright (c) 2025 InferX Authors /
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ pub enum Error {
     SchedulerErr(String),
     BollardErr(bollard::errors::Error),
     SchedulerNoEnoughResource(String),
+    ScheduleFail(AllocState),
     SysError(i32),
     SocketClose,
     NotExist(String),
@@ -57,7 +58,12 @@ pub enum Error {
     IpNetworkError(ipnetwork::IpNetworkError),
     EncodeError(EncodeError),
     DecodeError(DecodeError),
-    Timeout,
+
+    Timeout(u64),
+    QueueFull,
+    ServiceUnaviable,
+    BAD_REQUEST(http::status::StatusCode),
+
     MinRevsionErr(MinRevsionErr),
     NewKeyExistsErr(NewKeyExistsErr),
     DeleteRevNotMatchErr(DeleteRevNotMatchErr),
@@ -71,7 +77,7 @@ pub enum Error {
     TokioOneshotError(tokio::sync::oneshot::error::RecvError),
     SqlxError(sqlx::Error),
     AddControlMessageError(tokio_seqpacket::ancillary::AddControlMessageError),
-    SqliteErr(rusqlite::Error),
+    // SqliteErr(rusqlite::Error),
     KeycloakError(keycloak::KeycloakError),
 }
 
@@ -93,11 +99,26 @@ impl From<InferxLibError> for Error {
     }
 }
 
-impl From<rusqlite::Error> for Error {
-    fn from(item: rusqlite::Error) -> Self {
-        return Self::SqliteErr(item);
+#[derive(Debug, Default)]
+pub struct AllocState {
+    pub cpu: bool,
+    pub memory: bool,
+    pub cacheMem: bool,
+    pub gpuType: bool,
+    pub gpu: bool,
+}
+
+impl AllocState {
+    pub fn Ok(&self) -> bool {
+        return self.cpu && self.memory && self.cacheMem && self.gpuType && self.gpu;
     }
 }
+
+// impl From<rusqlite::Error> for Error {
+//     fn from(item: rusqlite::Error) -> Self {
+//         return Self::SqliteErr(item);
+//     }
+// }
 
 impl From<keycloak::KeycloakError> for Error {
     fn from(item: keycloak::KeycloakError) -> Self {
@@ -269,6 +290,26 @@ impl IpAddress {
     pub fn ToIpv4Addr(&self) -> Ipv4Addr {
         let bytes = self.AsBytes();
         return Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]);
+    }
+
+    pub fn FromString(s: &str) -> Result<Self> {
+        let ipv4: Ipv4Addr = match s.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                return Err(Error::CommonError(format!(
+                    "IpAddress fail to parse {} with error {:?}",
+                    s, e
+                )));
+            }
+        };
+
+        return Ok(Self::New(&ipv4.octets()));
+    }
+
+    pub fn ToString(&self) -> String {
+        let ipv4 = Ipv4Addr::from(self.0);
+        let ipStr = ipv4.to_string();
+        return ipStr;
     }
 }
 

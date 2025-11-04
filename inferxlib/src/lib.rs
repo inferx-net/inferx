@@ -6,7 +6,7 @@
 #![allow(unused_imports)]
 
 #[macro_use]
-extern crate log;
+pub mod print;
 
 pub mod common;
 pub mod data_obj;

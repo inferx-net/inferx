@@ -15,10 +15,9 @@ spec:
     spec:
       nodeSelector:
         inferx_nodeType: inferx_blob      
-      hostPID: true
       containers:
         - name: nodeagent
-          image: inferx/inferx_na:v0.1.4
+          image: inferx/inferx_na:${VERSION}
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -39,40 +38,15 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: spec.nodeName
-          - name: ALLOC_MEMORY_2M
-            valueFrom:
-              resourceFieldRef:
-                containerName: nodeagent
-                resource: requests.hugepages-2Mi 
-          - name: ALLOC_MEMORY
-            valueFrom:
-              resourceFieldRef:
-                containerName: nodeagent
-                resource: requests.memory                
-          - name: CACHE_MEMORY
-            value: "55Gi"
-          - name: ENABLE_2MB_PAGE
-            value: "true"             
-          - name: ALLOC_CPU
-            valueFrom:
-              resourceFieldRef:
-                containerName: nodeagent
-                resource: requests.cpu                            
-          - name: ENALBE_BLOB
-            value: "true"
-          - name: BLOB_BUFF
-            value: "4Gi"
-          - name: GPU_MAP
-            value: "0,1"
           resources:
             requests:
-              cpu: "20"               
-              memory: "180Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "60Gi"       # HugePages request
+              cpu: "15"               
+              memory: "60Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "1Gi"       # HugePages request
             limits:
               cpu: "20"               
-              memory: "180Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "60Gi" 
+              memory: "100Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "1Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
@@ -85,8 +59,8 @@ spec:
             #   name: opt-inferx
             - mountPath: /opt/inferx/config
               name: opt-inferx-config
-            # - mountPath: /opt/inferx/bin
-            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
@@ -103,6 +77,8 @@ spec:
             #   name: docker-mnt
             - name: dind
               mountPath: /var/lib/docker
+            - name: opt-inferx-run
+              mountPath: /opt/inferx/run
       volumes:
         - name: run-udev
           hostPath:
@@ -147,6 +123,9 @@ spec:
         - name: dind
           hostPath:
             path: /opt/inferx/dind
+        - name: opt-inferx-run
+          hostPath:
+            path: /opt/inferx/run
       restartPolicy: Always
 ---
 apiVersion: apps/v1
@@ -166,7 +145,6 @@ spec:
     spec:
       nodeSelector:
         inferx_nodeType: inferx_file      
-      hostPID: true
       # initContainers:
       #   - name: wait-for-dependencies
       #     image: busybox
@@ -180,7 +158,7 @@ spec:
       #       ]
       containers:
         - name: nodeagent
-          image: inferx/inferx_na:v0.1.4
+          image: inferx/inferx_na:${VERSION}
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -193,6 +171,8 @@ spec:
             value: "http://statesvc:1237"
           - name: RUN_SERVICE
             value: "NodeAgent"
+          - name: ENABLE_COREDUMP
+            value: "false"
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -205,31 +185,33 @@ spec:
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: requests.memory                
+                resource: limits.memory                
           - name: ALLOC_MEMORY_2M
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: requests.hugepages-2Mi   
+                resource: limits.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "50Gi"
+            value: "30Gi"
           - name: ENABLE_2MB_PAGE
-            value: "false"              
+            value: "false"  
+          - name: CONTEXT_OVERHEAD
+            value: "500"         
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: requests.cpu                            
+                resource: limits.cpu                            
           - name: ENALBE_BLOB
             value: "false"                     
           resources:
             requests:
-              cpu: "20"
-              memory: "180Gi"              # Regular memory request (RAM)
+              cpu: "15"
+              memory: "40Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
             limits:
               cpu: "20"
-              memory: "180Gi"              # Regular memory request (RAM)
+              memory: "100Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
@@ -243,8 +225,8 @@ spec:
             #   name: opt-inferx
             # - mountPath: /opt/inferx/config
             #   name: opt-inferx-config
-            # - mountPath: /opt/inferx/bin
-            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
@@ -261,6 +243,8 @@ spec:
               name: docker-mnt
             - name: dind
               mountPath: /var/lib/docker
+            - name: opt-inferx-run
+              mountPath: /opt/inferx/run
       volumes:
         - name: run-udev
           hostPath:
@@ -304,4 +288,7 @@ spec:
         - name: dind
           hostPath:
             path: /opt/inferx/dind
+        - name: opt-inferx-run
+          hostPath:
+            path: /opt/inferx/run
       restartPolicy: Always
