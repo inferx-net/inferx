@@ -701,8 +701,9 @@ impl SchedulerHandler {
         info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
-            panic!(
-                "ProcessReturnWorkerReq fail the {} state {:?}",
+            // when the scheduler restart, this issue will happen, fix this.
+            error!(
+                "ProcessReturnWorkerReq fail the {} state {:?}, likely there is scheduler restart",
                 worker.pod.PodKey(),
                 worker.State()
             );
@@ -2207,10 +2208,6 @@ impl SchedulerHandler {
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
         let pods = self.GetFuncPods(&spec.tenant, &spec.namespace, &spec.name, spec.Version())?;
 
-        if pods.len() == 0 {
-            return Ok(());
-        }
-
         for pod in &pods {
             let pod = &pod.pod;
 
@@ -2225,7 +2222,6 @@ impl SchedulerHandler {
                 }
             }
         }
-
         self.RemoveSnapshotByFunckey(&spec.Key()).await?;
 
         return Ok(());
