@@ -44,7 +44,7 @@ use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
 
 use super::func_agent_mgr::{FuncAgent, IxTimestamp, WorkerUpdate};
-use super::scheduler_client::SchedulerClient;
+use super::scheduler_client::SCHEDULER_CLIENT;
 
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
 pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
@@ -298,7 +298,7 @@ impl FuncWorker {
         );
 
         let id = self.id.load(Ordering::Relaxed);
-        return SchedulerClient {}
+        return SCHEDULER_CLIENT
             .ReturnWorker(
                 &self.tenant,
                 &self.namespace,
@@ -312,7 +312,7 @@ impl FuncWorker {
 
     // return: (workerId, IPAddr, Keepalive)
     pub async fn LeaseWorker(&self) -> Result<LeaseWorkerResp> {
-        return SchedulerClient {}
+        return SCHEDULER_CLIENT
             .LeaseWorker(
                 &self.tenant,
                 &self.namespace,

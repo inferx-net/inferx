@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Notify;
 
+use crate::gateway::scheduler_client::SCHEDULER_CLIENT;
 use crate::metastore::informer::EventHandler;
 use crate::metastore::informer_factory::InformerFactory;
 use crate::metastore::selection_predicate::ListOption;
@@ -433,6 +434,17 @@ impl GwObjRepo {
                 "***EventType::InitState scheduler set url {}...************",
                 SchedulerInfo.SchedulerUrl()
             );
+
+            tokio::task::block_in_place(|| {
+                // block_in_place allows a sync block inside async context
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    SCHEDULER_CLIENT
+                        .Connect(&SchedulerInfo.SchedulerUrl())
+                        .await
+                })
+            })?;
+
             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
         }
 
@@ -550,6 +562,15 @@ impl GwObjRepo {
                         SchedulerInfo::KEY => {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
                             info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
+                            tokio::task::block_in_place(|| {
+                                // block_in_place allows a sync block inside async context
+                                let rt = tokio::runtime::Handle::current();
+                                rt.block_on(async {
+                                    SCHEDULER_CLIENT
+                                        .Connect(&SchedulerInfo.SchedulerUrl())
+                                        .await
+                                })
+                            })?;
                             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
                         }
                         FuncPolicy::KEY => {
@@ -644,6 +665,9 @@ impl GwObjRepo {
                         }
                         SchedulerInfo::KEY => {
                             info!("********************EventType::Deleted scheduler removed ...************");
+                            tokio::runtime::Handle::current().block_on(async {
+                                return SCHEDULER_CLIENT.Disconnect().await;
+                            });
                             *SCHEDULER_URL.lock().unwrap() = None;
                         }
                         FuncPolicy::KEY => {
