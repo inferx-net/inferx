@@ -431,10 +431,24 @@ impl GwObjRepo {
                 Ok(s) => s,
             };
 
-            SCHEDULER_CLIENT
+            info!(
+                "********************EventType::InitState scheduler set url {}...************",
+                SchedulerInfo.SchedulerUrl()
+            );
+
+            match SCHEDULER_CLIENT
                 .Connect(&SchedulerInfo.SchedulerUrl())
-                .await?;
-            *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
+                .await
+            {
+                Err(e) => {
+                    info!(
+                        "EventType::InitState scheduler set url {}, connect fail with error {:?}",
+                        SchedulerInfo.SchedulerUrl(),
+                        e
+                    );
+                }
+                Ok(_) => (),
+            }
         }
 
         for ns in self.factory.GetInformer(Node::KEY)?.store.List() {
@@ -554,7 +568,6 @@ impl GwObjRepo {
                             SCHEDULER_CLIENT
                                 .Connect(&SchedulerInfo.SchedulerUrl())
                                 .await?;
-                            *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
@@ -648,8 +661,6 @@ impl GwObjRepo {
                         }
                         SchedulerInfo::KEY => {
                             SCHEDULER_CLIENT.Disconnect().await;
-
-                            *SCHEDULER_URL.lock().unwrap() = None;
                             info!("********************EventType::Deleted scheduler removed ...************3");
                         }
                         FuncPolicy::KEY => {
