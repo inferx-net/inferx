@@ -223,8 +223,10 @@ impl StateSvc {
     }
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for StateSvc {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         match self.ProcessDeltaEvent(event) {
             Err(e) => {
                 error!(

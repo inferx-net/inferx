@@ -67,8 +67,10 @@ pub struct Scheduler {
     pub msgRx: Mutex<Option<mpsc::Receiver<WorkerHandlerMsg>>>,
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for Scheduler {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         self.ProcessDeltaEvent(event).unwrap();
     }
 }
@@ -106,6 +108,28 @@ impl Scheduler {
             .unwrap();
 
         return Ok(resp);
+    }
+
+    pub async fn ConnectScheduler(&self, req: na::ConnectReq) -> Result<na::ConnectResp> {
+        let (tx, rx) = oneshot::channel();
+
+        self.msgTx
+            .try_send(WorkerHandlerMsg::ConnectScheduler((req, tx)))
+            .unwrap();
+
+        match rx.await {
+            Err(e) => {
+                error!("ConnectScheduler fail with RevcError");
+                return Ok(na::ConnectResp {
+                    error: format!("Internal Error: {:?}", e),
+                    ..Default::default()
+                });
+            }
+            Ok(resp) => {
+                //error!("LeaseWorker response {:?}", &resp);
+                return Ok(resp);
+            }
+        }
     }
 
     pub async fn LeaseWorker(&self, req: na::LeaseWorkerReq) -> Result<na::LeaseWorkerResp> {

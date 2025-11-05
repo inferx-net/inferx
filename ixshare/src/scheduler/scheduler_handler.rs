@@ -441,6 +441,7 @@ impl FuncStatus {
 pub enum WorkerHandlerMsg {
     StartWorker(na::CreateFuncPodReq),
     StopWorker(na::TerminatePodReq),
+    ConnectScheduler((na::ConnectReq, Sender<na::ConnectResp>)),
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
     RefreshGateway(na::RefreshGatewayReq),
@@ -546,6 +547,50 @@ impl SchedulerHandler {
                 _ => (),
             }
         }
+
+        return Ok(());
+    }
+
+    pub async fn ProcessConnectReq(
+        &self,
+        req: na::ConnectReq,
+        tx: Sender<na::ConnectResp>,
+    ) -> Result<()> {
+        let gatewayId = req.gateway_id;
+        let mut pods = Vec::new();
+        for w in &req.workers {
+            let pod =
+                match self.GetFuncPod(&w.tenant, &w.namespace, &w.funcname, w.fprevision, &w.id) {
+                    Err(_e) => {
+                        error!("ProcessConnectReq get non-exist pod {:?}", w);
+                        continue;
+                    }
+                    Ok(p) => p,
+                };
+
+            if pod.State() != WorkerPodState::Working(gatewayId) {
+                let resp = na::ConnectResp {
+                    error: format!(
+                        "ProcessConnectReq the leasing worker {:?} has been reassigned, likely the scheduler restarted and the gateway doesn't connect ontime",
+                        w
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Ok(());
+            }
+
+            pods.push(pod);
+        }
+
+        for pod in &pods {
+            pod.SetWorking(gatewayId);
+        }
+
+        let resp = na::ConnectResp {
+            error: String::new(),
+        };
+        tx.send(resp).ok();
 
         return Ok(());
     }
@@ -972,6 +1017,9 @@ impl SchedulerHandler {
             m = msgRx.recv() => {
                 if let Some(msg) = m {
                     match msg {
+                        WorkerHandlerMsg::ConnectScheduler((m, tx)) => {
+                            self.ProcessConnectReq(m, tx).await?;
+                        }
                         WorkerHandlerMsg::LeaseWorker((m, tx)) => {
                             self.ProcessLeaseWorkerReq(m, tx).await?;
                         }

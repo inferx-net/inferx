@@ -49,8 +49,10 @@ impl Deref for AggregateClient {
     }
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for AggregateClient {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         match event.type_ {
             EventType::Added => {
                 self.aggregateCacher.Add(&event.obj).unwrap();
@@ -102,7 +104,7 @@ impl AggregateClient {
             &self.namespace,
             &ListOption::default(),
         )?;
-        informer.AddEventHandler(Arc::new(self.clone()))?;
+        informer.AddEventHandler(Arc::new(self.clone())).await?;
         tokio::select! {
             _ = self.closeNotify.notified() => {
                 if self.closed.swap(true, Ordering::SeqCst) == false {

@@ -86,7 +86,10 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    SCHEDULER_CLIENT.RefreshGateway().await.ok();
+                    tokio::select! {
+                        _ = SCHEDULER_CLIENT.RefreshGateway() => (),
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    }
                 }
             }
         }

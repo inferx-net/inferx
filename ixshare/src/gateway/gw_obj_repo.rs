@@ -421,7 +421,7 @@ impl GwObjRepo {
         return Ok(ret);
     }
     // after ListDone, process all objs in a batch
-    pub fn InitState(&self) -> Result<()> {
+    pub async fn InitState(&self) -> Result<()> {
         for s in self.factory.GetInformer(SchedulerInfo::KEY)?.store.List() {
             let SchedulerInfo = match SchedulerInfo::FromDataObject(s.clone()) {
                 Err(e) => {
@@ -430,21 +430,10 @@ impl GwObjRepo {
                 }
                 Ok(s) => s,
             };
-            info!(
-                "***EventType::InitState scheduler set url {}...************",
-                SchedulerInfo.SchedulerUrl()
-            );
 
-            tokio::task::block_in_place(|| {
-                // block_in_place allows a sync block inside async context
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    SCHEDULER_CLIENT
-                        .Connect(&SchedulerInfo.SchedulerUrl())
-                        .await
-                })
-            })?;
-
+            SCHEDULER_CLIENT
+                .Connect(&SchedulerInfo.SchedulerUrl())
+                .await?;
             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
         }
 
@@ -527,7 +516,7 @@ impl GwObjRepo {
         return Ok(());
     }
 
-    pub fn ProcessDeltaEvent(&self, event: &DeltaEvent) -> Result<()> {
+    pub async fn ProcessDeltaEvent(&self, event: &DeltaEvent) -> Result<()> {
         let obj = event.obj.clone();
         match &event.type_ {
             EventType::Added => {
@@ -562,15 +551,9 @@ impl GwObjRepo {
                         SchedulerInfo::KEY => {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
                             info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
-                            tokio::task::block_in_place(|| {
-                                // block_in_place allows a sync block inside async context
-                                let rt = tokio::runtime::Handle::current();
-                                rt.block_on(async {
-                                    SCHEDULER_CLIENT
-                                        .Connect(&SchedulerInfo.SchedulerUrl())
-                                        .await
-                                })
-                            })?;
+                            SCHEDULER_CLIENT
+                                .Connect(&SchedulerInfo.SchedulerUrl())
+                                .await?;
                             *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
                         }
                         FuncPolicy::KEY => {
@@ -664,11 +647,10 @@ impl GwObjRepo {
                             self.snapshotMgr.Remove(snapshot)?;
                         }
                         SchedulerInfo::KEY => {
-                            info!("********************EventType::Deleted scheduler removed ...************");
-                            tokio::runtime::Handle::current().block_on(async {
-                                return SCHEDULER_CLIENT.Disconnect().await;
-                            });
+                            SCHEDULER_CLIENT.Disconnect().await;
+
                             *SCHEDULER_URL.lock().unwrap() = None;
+                            info!("********************EventType::Deleted scheduler removed ...************3");
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
@@ -721,7 +703,7 @@ impl GwObjRepo {
                 };
 
                 if self.ListDone() {
-                    self.InitState()?;
+                    self.InitState().await?;
                 }
             }
             _o => {
@@ -898,11 +880,16 @@ pub struct FuncReadyPod {
     pub id: String,
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for GwObjRepo {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
-        match self.ProcessDeltaEvent(event) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+        match self.ProcessDeltaEvent(event).await {
             Err(e) => {
-                error!("GwObjRepo::Process fail with error {:?}", e);
+                error!(
+                    "GwObjRepo::Process fail for event {:?} with error {:?}",
+                    event, e
+                );
             }
             Ok(()) => (),
         }

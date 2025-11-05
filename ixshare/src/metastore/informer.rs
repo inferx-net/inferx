@@ -14,9 +14,11 @@
 
 use core::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::RwLock;
 use std::time::Duration;
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
+use tokio::sync::RwLock;
+
+use async_trait::async_trait;
 
 use tokio::sync::Notify;
 
@@ -28,8 +30,9 @@ use super::store::ThreadSafeStore;
 use crate::common::*;
 use inferxlib::data_obj::*;
 
+#[async_trait]
 pub trait EventHandler: Debug + Send + Sync {
-    fn handle(&self, store: &ThreadSafeStore, event: &DeltaEvent);
+    async fn handle(&self, store: &ThreadSafeStore, event: &DeltaEvent);
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +83,7 @@ impl Informer {
         return Ok(());
     }
 
-    pub fn AddEventHandler(&self, h: Arc<dyn EventHandler>) -> Result<u64> {
+    pub async fn AddEventHandler(&self, h: Arc<dyn EventHandler>) -> Result<u64> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(Error::CommonError("the informer is closed".to_owned()));
         }
@@ -96,16 +99,16 @@ impl Informer {
                 oldObj: None,
             };
 
-            h.handle(&self.store, &event);
+            h.handle(&self.store, &event).await;
         }
 
-        self.handlers.write().unwrap().insert(id, h.clone());
+        self.handlers.write().await.insert(id, h.clone());
 
         return Ok(id);
     }
 
-    pub fn RemoveEventHandler(&mut self, id: u64) -> Option<Arc<dyn EventHandler>> {
-        return self.handlers.write().unwrap().remove(&id);
+    pub async fn RemoveEventHandler(&mut self, id: u64) -> Option<Arc<dyn EventHandler>> {
+        return self.handlers.write().await.remove(&id);
     }
 
     pub async fn GetClient(&self) -> Option<CacherClient> {
@@ -314,9 +317,9 @@ impl Informer {
     }
 
     pub async fn Distribute(&self, event: &DeltaEvent) {
-        let handlers = self.handlers.read().unwrap();
+        let handlers = self.handlers.read().await;
         for h in handlers.values().into_iter() {
-            h.handle(&self.store, event)
+            h.handle(&self.store, event).await
         }
     }
 }
