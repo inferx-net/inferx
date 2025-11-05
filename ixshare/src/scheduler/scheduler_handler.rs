@@ -568,11 +568,14 @@ impl SchedulerHandler {
                     Ok(p) => p,
                 };
 
-            if pod.State() != WorkerPodState::Working(gatewayId) {
+            if pod.State() != WorkerPodState::Idle
+                && pod.State() != WorkerPodState::Working(gatewayId)
+            // the scheduler lose connect and reconnect, will it happend
+            {
                 let resp = na::ConnectResp {
                     error: format!(
-                        "ProcessConnectReq the leasing worker {:?} has been reassigned, likely the scheduler restarted and the gateway doesn't connect ontime",
-                        w
+                        "ProcessConnectReq the leasing worker {:?} has been reassigned, state {:?} expect idle or {:?} \n likely the scheduler restarted and the gateway doesn't connect ontime",
+                        w, pod.State(), gatewayId
                     ),
                     ..Default::default()
                 };
