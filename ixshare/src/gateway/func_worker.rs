@@ -291,11 +291,11 @@ impl FuncWorker {
         //     self.connPool.reuseConn.load(Ordering::Relaxed)
         // );
 
-        info!(
-            "return worker {:?} the perf {:#?}",
-            self.WorkerName(),
-            &self.perfStat
-        );
+        // info!(
+        //     "return worker {:?} the perf {:#?}",
+        //     self.WorkerName(),
+        //     &self.perfStat
+        // );
 
         let id = self.id.load(Ordering::Relaxed);
         return SCHEDULER_CLIENT

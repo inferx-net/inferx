@@ -106,6 +106,7 @@ impl ContainerSnapshot {
         return Resources {
             cpu: 0,
             memory: self.info.StandbyMemory(),
+            readyMemory: 0,
             cacheMemory: self.info.StandyCacheMemory(),
             gpu: GPUResource::default(),
         };

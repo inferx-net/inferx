@@ -823,7 +823,7 @@ async fn FuncCall(
             return Ok(resp);
         }
 
-        let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
+        // let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
 
         let (mut tclient, tkeepalive) = match RetryGetClient(
             &gw, &tenant, &namespace, &funcname, &func, timeout, timestamp,
@@ -848,7 +848,7 @@ async fn FuncCall(
                 .inc();
         }
 
-        startupSpan.end();
+        // startupSpan.end();
 
         start = std::time::Instant::now();
         let body = axum::body::Body::from(bytes.clone());

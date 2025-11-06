@@ -237,6 +237,11 @@ impl NodeStatus {
         return Ok(res);
     }
 
+    pub fn ReadyResourceQuota(&self, req: &Resources) -> Result<NodeResources> {
+        let res = self.available.ReadyResourceQuota(req);
+        return Ok(res);
+    }
+
     pub fn ResourceQuota(&self, req: &Resources) -> Result<NodeResources> {
         let res = self.available.ResourceQuota(req);
         return Ok(res);
@@ -1288,7 +1293,13 @@ impl SchedulerHandler {
         let mut readyResource = funcResource.clone();
 
         readyResource.cacheMemory = cacheMemory;
-        readyResource.memory -= cacheMemory;
+
+        if readyResource.readyMemory > 0 {
+            readyResource.memory = readyResource.readyMemory;
+        } else {
+            readyResource.memory -= cacheMemory;
+        }
+
         readyResource.gpu.contextCount = 1;
         return readyResource;
     }
@@ -2167,7 +2178,7 @@ impl SchedulerHandler {
 
             allocResources =
                 nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcId, false)?;
-            resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
+            resourceQuota = nodeStatus.ReadyResourceQuota(&function.object.spec.resources)?;
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
         }
 
