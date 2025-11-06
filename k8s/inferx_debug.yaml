@@ -1,120 +1,31 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: inferx-debugone
+  name: inferx-debug
 spec:
+  nodeSelector:
+    inferx_storage: data 
   tolerations:
     - key: "node.coreweave.cloud/reserved"
       operator: "Exists"
-      effect: "NoExecute" 
-  containers: 
-    - name: gpu-detector
-      image: nvidia/cuda:12.5.1-cudnn-devel-ubuntu20.04
-      imagePullPolicy: IfNotPresent
-      securityContext:
-        privileged: false
-      resources:
-        limits:
-          nvidia.com/gpu: 2 # request 2 GPUs
-      command: ["/bin/bash", "-c"]
-      args:
-        - |
-          mkdir -p /gpu-info
-          nvidia-smi --query-gpu=uuid --format=csv,noheader > /gpu-info/allocated_gpus.txt
-          # Keep alive until main container finishes
-          tail -f /dev/null
-      volumeMounts:
-        - name: gpu-info
-          mountPath: /gpu-info
+      effect: "NoExecute"             
+  containers:
     - name: debug
-      image: inferx/inferx_one:v0.1.2
-      imagePullPolicy: Always
+      image: ubuntu:22.04
       command: ["sleep", "infinity"]
       securityContext:
         privileged: true
-      env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: POD_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
-        - name: INFERX_ADMIN_APIKEY
-          value: "87831cdb-d07a-4dc1-9de0-fb232c9bf286"
-        - name: ALLOC_MEMORY
-          value: "180Gi"
-        - name: ALLOC_CPU
-          value: "24"
-        - name: CACHE_MEMORY
-          value: "40Gi"
-        - name: ENABLE_2MB_PAGE
-          value: "false"
-        - name: ENALBE_BLOB
-          value: "false"
-        - name: BLOB_BUFF
-          value: "4Gi"
-      resources:
-        limits:
-          nvidia.com/gpu: 2 # use all available GPUs
-          cpu: "20"
       volumeMounts:
-        - name: gpu-info
-          mountPath: /gpu-info  
-        - name: run-udev
-          mountPath: /run/udev
-        - name: hugepages
-          mountPath: /dev/hugepages
-        - name: dshm
-          mountPath: /dev/shm
-        - name: inferx-opt
-          mountPath: /opt/inferx/
-        - mountPath: /opt/inferx/cache   
-          name: model-storage
-        - name: certs
-          mountPath: /etc/letsencrypt/
-        - name: dind
-          mountPath: /var/lib/docker
-        - name: runc
-          mountPath: /var/run/docker/runtime-runc/moby/
         - name: host-root
-          mountPath: /host
+          mountPath: /opt/inferx
+        - mountPath: /opt/cache   
+          name: model-storage
   volumes:
-    - name: gpu-info
-      emptyDir: {}  
     - name: model-storage
       persistentVolumeClaim:
         claimName: modelstore
-    - name: run-udev
-      hostPath:
-        path: /run/udev
-    - name: hugepages
-      hostPath:
-        path: /dev/hugepages
-    - name: shm
-      hostPath:
-        path: /dev/shm
-    - name: dshm
-      emptyDir:
-        medium: Memory
-        sizeLimit: 60Gi
-    - name: inferx-opt
-      hostPath:
-        path: /opt/inferx/
-    - name: cache
-      hostPath:
-        path: /opt/inferx/cache/
-    - name: certs
-      hostPath:
-        path: /etc/letsencrypt/
-    - name: dind
-      hostPath:
-        path: /opt/inferx/dind
-    - name: runc
-      hostPath:
-        path: /var/run/docker/runtime-runc/moby/
     - name: host-root
       hostPath:
-        path: /
-
+        path: /opt/inferx
+        type: Directory
+  restartPolicy: Never
