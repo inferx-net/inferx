@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta5
+VERSION := v0.1.5.beta10
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -143,7 +143,7 @@ runkblob:
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) sudo kubectl apply -f k8s/secretdb.yaml
+	VERSION=$(VERSION) envsubst < k8s/secretdb.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
@@ -175,7 +175,7 @@ stopgateway:
 	sudo kubectl delete deployment gateway
 
 runscheduler:
-	sudo kubectl apply -f k8s/scheduler.yaml
+	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 
 stopscheduler:
 	sudo kubectl delete deployment scheduler
