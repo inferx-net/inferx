@@ -42,7 +42,7 @@ use crate::node_config::NODE_CONFIG;
 use crate::scheduler::sched_obj_repo::SchedObjRepo;
 use crate::scheduler::scheduler_http::SchedulerHttpSrv;
 use crate::scheduler::scheduler_register::SchedulerRegister;
-use crate::scheduler::scheduler_svc::RunSchedulerSvc;
+use crate::scheduler::scheduler_svc::SchedulerGrpcSvc;
 use inferxlib::data_obj::DeltaEvent;
 
 use super::scheduler_handler::SchedulerHandler;
@@ -67,8 +67,10 @@ pub struct Scheduler {
     pub msgRx: Mutex<Option<mpsc::Receiver<WorkerHandlerMsg>>>,
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for Scheduler {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         self.ProcessDeltaEvent(event).unwrap();
     }
 }
@@ -106,6 +108,28 @@ impl Scheduler {
             .unwrap();
 
         return Ok(resp);
+    }
+
+    pub async fn ConnectScheduler(&self, req: na::ConnectReq) -> Result<na::ConnectResp> {
+        let (tx, rx) = oneshot::channel();
+
+        self.msgTx
+            .try_send(WorkerHandlerMsg::ConnectScheduler((req, tx)))
+            .unwrap();
+
+        match rx.await {
+            Err(e) => {
+                error!("ConnectScheduler fail with RevcError");
+                return Ok(na::ConnectResp {
+                    error: format!("Internal Error: {:?}", e),
+                    ..Default::default()
+                });
+            }
+            Ok(resp) => {
+                //error!("LeaseWorker response {:?}", &resp);
+                return Ok(resp);
+            }
+        }
     }
 
     pub async fn LeaseWorker(&self, req: na::LeaseWorkerReq) -> Result<na::LeaseWorkerResp> {
@@ -178,17 +202,33 @@ pub async fn SchedulerSvc() -> Result<()> {
 
     SCHED_OBJREPO.set(objRepo.clone()).unwrap();
 
-    let schedulerSvcFuture = RunSchedulerSvc();
+    tokio::spawn(async move {
+        match SchedulerProcess().await {
+            Err(e) => {
+                error!("scheduler SchedulerProcess crash {:?}", e);
+                panic!("scheduler SchedulerProcess crash {:?}", e);
+            }
+            Ok(()) => {
+                info!("scheduler SchedulerProcess exiting");
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        match SCHEDULER.StartProcess().await {
+            Err(e) => {
+                error!("scheduler StartProcess crash {:?}", e);
+                panic!("scheduler StartProcess crash {:?}", e);
+            }
+            Ok(()) => {
+                info!("scheduler StartProcess exiting");
+            }
+        }
+    });
 
     tokio::select! {
         res = objRepo.Process() => {
             info!("SchedObjRepo finish {:?}", res);
-        }
-        res  = schedulerSvcFuture => {
-            info!("schedulersvc finish {:?}", res);
-        }
-        res  = SchedulerProcess() => {
-            info!("schedulerRegister finish {:?}", res);
         }
         res = SchedulerHttpSrv() => {
             info!("SchedulerHttpSrv finish {:?}", res);
@@ -208,18 +248,14 @@ pub async fn SchedulerProcess() -> Result<()> {
 
     let leaseId = schedulerRegister.CreateObject().await?;
 
-    let handle = tokio::spawn(async move {
-        tokio::select! {
-            res = SCHEDULER.StartProcess() => {
-                info!("SCHEDULER process finish {:?}", res);
-            }
-            res  = schedulerRegister.Process(leaseId) => {
-                info!("schedulerRegister finish {:?}", res);
-            }
+    tokio::select! {
+        res  = SchedulerGrpcSvc() => {
+            info!("schedulersvc finish {:?}", res);
         }
-    });
-
-    let _ = handle.await;
+        res  = schedulerRegister.Process(leaseId) => {
+            info!("schedulerRegister finish {:?}", res);
+        }
+    }
 
     return Ok(());
 }

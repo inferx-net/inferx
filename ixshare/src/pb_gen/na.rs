@@ -55,6 +55,37 @@ pub struct RemoveSnapshotResp {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WorkerId {
+    #[prost(string, tag = "1")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(int64, tag = "4")]
+    pub fprevision: i64,
+    #[prost(string, tag = "5")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectReq {
+    #[prost(int64, tag = "1")]
+    pub gateway_id: i64,
+    #[prost(message, repeated, tag = "2")]
+    pub workers: ::prost::alloc::vec::Vec<WorkerId>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LeaseWorkerReq {
     #[prost(string, tag = "1")]
     pub tenant: ::prost::alloc::string::String,
@@ -756,6 +787,25 @@ pub mod scheduler_service_client {
             self.inner = self.inner.accept_compressed(encoding);
             self
         }
+        pub async fn connect_scheduler(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ConnectReq>,
+        ) -> Result<tonic::Response<super::ConnectResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.SchedulerService/ConnectScheduler",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
         pub async fn lease_worker(
             &mut self,
             request: impl tonic::IntoRequest<super::LeaseWorkerReq>,
@@ -1097,6 +1147,10 @@ pub mod scheduler_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with SchedulerServiceServer.
     #[async_trait]
     pub trait SchedulerService: Send + Sync + 'static {
+        async fn connect_scheduler(
+            &self,
+            request: tonic::Request<super::ConnectReq>,
+        ) -> Result<tonic::Response<super::ConnectResp>, tonic::Status>;
         async fn lease_worker(
             &self,
             request: tonic::Request<super::LeaseWorkerReq>,
@@ -1169,6 +1223,46 @@ pub mod scheduler_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
+                "/na.SchedulerService/ConnectScheduler" => {
+                    #[allow(non_camel_case_types)]
+                    struct ConnectSchedulerSvc<T: SchedulerService>(pub Arc<T>);
+                    impl<
+                        T: SchedulerService,
+                    > tonic::server::UnaryService<super::ConnectReq>
+                    for ConnectSchedulerSvc<T> {
+                        type Response = super::ConnectResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ConnectReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move {
+                                (*inner).connect_scheduler(request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ConnectSchedulerSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/na.SchedulerService/LeaseWorker" => {
                     #[allow(non_camel_case_types)]
                     struct LeaseWorkerSvc<T: SchedulerService>(pub Arc<T>);

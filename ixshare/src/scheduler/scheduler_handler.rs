@@ -237,6 +237,11 @@ impl NodeStatus {
         return Ok(res);
     }
 
+    pub fn ReadyResourceQuota(&self, req: &Resources) -> Result<NodeResources> {
+        let res = self.available.ReadyResourceQuota(req);
+        return Ok(res);
+    }
+
     pub fn ResourceQuota(&self, req: &Resources) -> Result<NodeResources> {
         let res = self.available.ResourceQuota(req);
         return Ok(res);
@@ -441,6 +446,7 @@ impl FuncStatus {
 pub enum WorkerHandlerMsg {
     StartWorker(na::CreateFuncPodReq),
     StopWorker(na::TerminatePodReq),
+    ConnectScheduler((na::ConnectReq, Sender<na::ConnectResp>)),
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
     RefreshGateway(na::RefreshGatewayReq),
@@ -546,6 +552,53 @@ impl SchedulerHandler {
                 _ => (),
             }
         }
+
+        return Ok(());
+    }
+
+    pub async fn ProcessConnectReq(
+        &self,
+        req: na::ConnectReq,
+        tx: Sender<na::ConnectResp>,
+    ) -> Result<()> {
+        let gatewayId = req.gateway_id;
+        let mut pods = Vec::new();
+        for w in &req.workers {
+            let pod =
+                match self.GetFuncPod(&w.tenant, &w.namespace, &w.funcname, w.fprevision, &w.id) {
+                    Err(_e) => {
+                        error!("ProcessConnectReq get non-exist pod {:?}", w);
+                        continue;
+                    }
+                    Ok(p) => p,
+                };
+
+            if pod.State() != WorkerPodState::Idle
+                && pod.State() != WorkerPodState::Working(gatewayId)
+            // the scheduler lose connect and reconnect, will it happend
+            {
+                let resp = na::ConnectResp {
+                    error: format!(
+                        "ProcessConnectReq the leasing worker {:?} has been reassigned, state {:?} expect idle or {:?} \n likely the scheduler restarted and the gateway doesn't connect ontime",
+                        w, pod.State(), gatewayId
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Ok(());
+            }
+
+            pods.push(pod);
+        }
+
+        for pod in &pods {
+            pod.SetWorking(gatewayId);
+        }
+
+        let resp = na::ConnectResp {
+            error: String::new(),
+        };
+        tx.send(resp).ok();
 
         return Ok(());
     }
@@ -972,6 +1025,9 @@ impl SchedulerHandler {
             m = msgRx.recv() => {
                 if let Some(msg) = m {
                     match msg {
+                        WorkerHandlerMsg::ConnectScheduler((m, tx)) => {
+                            self.ProcessConnectReq(m, tx).await?;
+                        }
                         WorkerHandlerMsg::LeaseWorker((m, tx)) => {
                             self.ProcessLeaseWorkerReq(m, tx).await?;
                         }
@@ -1237,7 +1293,13 @@ impl SchedulerHandler {
         let mut readyResource = funcResource.clone();
 
         readyResource.cacheMemory = cacheMemory;
-        readyResource.memory -= cacheMemory;
+
+        if readyResource.readyMemory > 0 {
+            readyResource.memory = readyResource.readyMemory;
+        } else {
+            readyResource.memory -= cacheMemory;
+        }
+
         readyResource.gpu.contextCount = 1;
         return readyResource;
     }
@@ -2116,7 +2178,7 @@ impl SchedulerHandler {
 
             allocResources =
                 nodeStatus.AllocResource(&standbyResource, "CreateStandby", funcId, false)?;
-            resourceQuota = nodeStatus.ResourceQuota(&function.object.spec.resources)?;
+            resourceQuota = nodeStatus.ReadyResourceQuota(&function.object.spec.resources)?;
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
         }
 

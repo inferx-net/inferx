@@ -25,6 +25,20 @@ pub struct SchedulerSvc {}
 
 #[tonic::async_trait]
 impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
+    async fn connect_scheduler(
+        &self,
+        request: tonic::Request<na::ConnectReq>,
+    ) -> SResult<tonic::Response<na::ConnectResp>, tonic::Status> {
+        let msg = request.into_inner();
+        info!("connect_scheduler req {:?}", &msg);
+        let resp = SCHEDULER.ConnectScheduler(msg.clone()).await.unwrap();
+        if resp.error.len() != 0 {
+            error!("connect_scheduler done req fail {:?}/{}", &msg, &resp.error);
+        }
+
+        return Ok(tonic::Response::new(resp));
+    }
+
     async fn lease_worker(
         &self,
         request: tonic::Request<na::LeaseWorkerReq>,
@@ -60,7 +74,7 @@ impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
     }
 }
 
-pub async fn RunSchedulerSvc() -> Result<()> {
+pub async fn SchedulerGrpcSvc() -> Result<()> {
     let svc = SchedulerSvc {};
 
     let svcAddr = format!("0.0.0.0:{}", SCHEDULER_CONFIG.schedulerPort);

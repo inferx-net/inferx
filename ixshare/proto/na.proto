@@ -17,6 +17,7 @@ syntax = "proto3";
 package na;
 
 service SchedulerService {
+  rpc ConnectScheduler(ConnectReq)  returns (ConnectResp) {}
   rpc LeaseWorker(LeaseWorkerReq) returns (LeaseWorkerResp) {}
   rpc ReturnWorker(ReturnWorkerReq) returns (ReturnWorkerResp) {}
   rpc RefreshGateway(RefreshGatewayReq) returns (RefreshGatewayResp) {}
@@ -64,6 +65,23 @@ message RemoveSnapshotReq {
 }
 
 message RemoveSnapshotResp {
+  string error = 1;
+}
+
+message WorkerId {
+  string tenant = 1;
+  string namespace = 2;
+  string funcname = 3;
+  int64 fprevision = 4;
+  string id = 5;
+}
+
+message ConnectReq {
+  int64  gateway_id = 1;
+  repeated WorkerId workers = 2;
+}
+
+message ConnectResp {
   string error = 1;
 }
 

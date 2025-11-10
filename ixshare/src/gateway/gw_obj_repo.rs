@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Notify;
 
+use crate::gateway::scheduler_client::SCHEDULER_CLIENT;
 use crate::metastore::informer::EventHandler;
 use crate::metastore::informer_factory::InformerFactory;
 use crate::metastore::selection_predicate::ListOption;
@@ -420,7 +421,7 @@ impl GwObjRepo {
         return Ok(ret);
     }
     // after ListDone, process all objs in a batch
-    pub fn InitState(&self) -> Result<()> {
+    pub async fn InitState(&self) -> Result<()> {
         for s in self.factory.GetInformer(SchedulerInfo::KEY)?.store.List() {
             let SchedulerInfo = match SchedulerInfo::FromDataObject(s.clone()) {
                 Err(e) => {
@@ -429,11 +430,25 @@ impl GwObjRepo {
                 }
                 Ok(s) => s,
             };
+
             info!(
                 "********************EventType::InitState scheduler set url {}...************",
                 SchedulerInfo.SchedulerUrl()
             );
-            *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
+
+            match SCHEDULER_CLIENT
+                .Connect(&SchedulerInfo.SchedulerUrl())
+                .await
+            {
+                Err(e) => {
+                    info!(
+                        "EventType::InitState scheduler set url {}, connect fail with error {:?}",
+                        SchedulerInfo.SchedulerUrl(),
+                        e
+                    );
+                }
+                Ok(_) => (),
+            }
         }
 
         for ns in self.factory.GetInformer(Node::KEY)?.store.List() {
@@ -515,7 +530,7 @@ impl GwObjRepo {
         return Ok(());
     }
 
-    pub fn ProcessDeltaEvent(&self, event: &DeltaEvent) -> Result<()> {
+    pub async fn ProcessDeltaEvent(&self, event: &DeltaEvent) -> Result<()> {
         let obj = event.obj.clone();
         match &event.type_ {
             EventType::Added => {
@@ -549,8 +564,10 @@ impl GwObjRepo {
                         }
                         SchedulerInfo::KEY => {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
-                            info!("********************EventType::ListDone scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
-                            *SCHEDULER_URL.lock().unwrap() = Some(SchedulerInfo.SchedulerUrl());
+                            info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
+                            SCHEDULER_CLIENT
+                                .Connect(&SchedulerInfo.SchedulerUrl())
+                                .await?;
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
@@ -643,8 +660,8 @@ impl GwObjRepo {
                             self.snapshotMgr.Remove(snapshot)?;
                         }
                         SchedulerInfo::KEY => {
-                            info!("********************EventType::Deleted scheduler removed ...************");
-                            *SCHEDULER_URL.lock().unwrap() = None;
+                            SCHEDULER_CLIENT.Disconnect().await;
+                            info!("********************EventType::Deleted scheduler removed ...************3");
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
@@ -697,7 +714,7 @@ impl GwObjRepo {
                 };
 
                 if self.ListDone() {
-                    self.InitState()?;
+                    self.InitState().await?;
                 }
             }
             _o => {
@@ -874,11 +891,16 @@ pub struct FuncReadyPod {
     pub id: String,
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for GwObjRepo {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
-        match self.ProcessDeltaEvent(event) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+        match self.ProcessDeltaEvent(event).await {
             Err(e) => {
-                error!("GwObjRepo::Process fail with error {:?}", e);
+                error!(
+                    "GwObjRepo::Process fail for event {:?} with error {:?}",
+                    event, e
+                );
             }
             Ok(()) => (),
         }

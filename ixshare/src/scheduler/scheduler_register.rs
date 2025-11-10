@@ -20,7 +20,8 @@ use tokio::sync::Notify;
 
 use crate::common::*;
 use crate::etcd::etcd_store::EtcdStore;
-use inferxlib::data_obj::DataObject;
+use crate::metastore::selection_predicate::SelectionPredicate;
+use inferxlib::data_obj::{DataObject, EventType};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SchedulerInfo {
@@ -82,7 +83,7 @@ pub struct SchedulerRegister {
 }
 
 impl SchedulerRegister {
-    pub const LEASE_TTL: i64 = 5; // seconds
+    pub const LEASE_TTL: i64 = 1; // seconds
 
     pub async fn New(addresses: &[String], svcIp: &str, port: u16) -> Result<Self> {
         let mut etcdAddresses = Vec::new();
@@ -103,22 +104,53 @@ impl SchedulerRegister {
         });
     }
 
-    pub async fn CreateObject(&self) -> Result<i64> {
-        let leaseId = self.store.LeaseGrant(Self::LEASE_TTL).await?;
+    pub async fn WaitForLeaderLoss(&self) -> Result<()> {
+        let (mut w, r) = self.store.Watch(
+            &self.info.DataObject().StoreKey(),
+            0,
+            SelectionPredicate::default(),
+        )?;
 
         loop {
+            tokio::select! {
+                processResult = w.Processing() => {
+                    processResult?;
+                }
+                event = r.GetNextEvent() => {
+                    match event {
+                        None => break,
+                        Some(event) => {
+                            match event.type_ {
+                                EventType::Deleted => return Ok(()),
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn CreateObject(&self) -> Result<i64> {
+        loop {
+            let leaseId = self.store.LeaseGrant(Self::LEASE_TTL).await?;
             match self.store.Create(&self.info.DataObject(), leaseId).await {
-                Ok(_) => return Ok(leaseId),
+                Ok(_) => {
+                    info!("scheduler get leader {:#?}", &self.info);
+                    return Ok(leaseId);
+                }
                 Err(_) => (),
             }
 
-            self.store.LeaseKeepalive(leaseId).await?;
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            self.WaitForLeaderLoss().await?;
+            error!("lead scheduler loss {:?}", &self.info);
         }
     }
 
     pub async fn Process(&self, leaseId: i64) -> Result<()> {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
 
         loop {
             tokio::select! {

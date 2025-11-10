@@ -112,7 +112,7 @@ impl InformerFactory {
     pub async fn AddEventHandler(&self, h: Arc<dyn EventHandler>) -> Result<()> {
         let inner = self.read().unwrap();
         for (_, i) in &inner.informers {
-            i.AddEventHandler(h.clone())?;
+            i.AddEventHandler(h.clone()).await?;
         }
 
         return Ok(());

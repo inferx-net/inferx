@@ -462,6 +462,23 @@ impl NodeResources {
         return Ok(());
     }
 
+    pub fn ReadyResourceQuota(&self, resource: &Resources) -> Self {
+        let memory = if resource.readyMemory > 0 {
+            resource.readyMemory
+        } else {
+            resource.memory
+        };
+        return Self {
+            nodename: self.nodename.clone(),
+            cpu: resource.cpu,
+            memory: memory,
+            cacheMemory: resource.cacheMemory,
+            gpuType: self.gpuType.clone(),
+            gpus: GPUResourceMap::default(),
+            maxContextCnt: self.maxContextCnt,
+        };
+    }
+
     // use for restore a container, the container will set the cgroup with required resource but not allocated
     pub fn ResourceQuota(&self, resource: &Resources) -> Self {
         return Self {
@@ -502,7 +519,9 @@ pub struct Resources {
     #[serde(rename = "CPU")]
     pub cpu: u64, // 1/1000 CPU cores
     #[serde(rename = "Mem")]
-    pub memory: u64, // MB memory
+    pub memory: u64, // MB memory usage in Snapshoting
+    #[serde(default, rename = "ReadyMem")]
+    pub readyMemory: u64,
     #[serde(default, rename = "CacheMem")]
     pub cacheMemory: u64,
     #[serde(rename = "GPU")]
@@ -518,6 +537,7 @@ impl Default for Resources {
         Self {
             cpu: 0,
             memory: 0,
+            readyMemory: 0,
             cacheMemory: 0,
             gpu: GPUResource::default(),
         }
@@ -539,6 +559,7 @@ impl Resources {
         return Self {
             cpu: 0,
             memory: 0,
+            readyMemory: 0,
             cacheMemory: 0,
             gpu: self.gpu.clone(),
         };

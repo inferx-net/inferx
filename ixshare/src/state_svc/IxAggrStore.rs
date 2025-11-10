@@ -91,7 +91,7 @@ impl IxAggrStore {
             &ListOption::default(),
         )?;
 
-        informer.AddEventHandler(Arc::new(self.clone()))?;
+        informer.AddEventHandler(Arc::new(self.clone())).await?;
         let notify = Arc::new(Notify::new());
         informer.Process(notify).await?;
         return Ok(());
@@ -173,8 +173,10 @@ impl IxAggrStore {
     }
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for IxAggrStore {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         let listdone = self.lock().unwrap().listDone;
         if listdone {
             match &event.type_ {

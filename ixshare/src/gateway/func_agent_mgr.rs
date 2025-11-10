@@ -27,7 +27,7 @@ use tokio::time;
 
 use crate::audit::SqlAudit;
 use crate::common::*;
-use crate::gateway::scheduler_client::SchedulerClient;
+use crate::gateway::scheduler_client::SCHEDULER_CLIENT;
 use crate::scheduler::scheduler_handler::GetClient;
 use inferxlib::obj_mgr::func_mgr::*;
 
@@ -83,11 +83,13 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
 
     let handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
-        let schedulerClient = SchedulerClient {};
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    schedulerClient.RefreshGateway().await.ok();
+                    tokio::select! {
+                        _ = SCHEDULER_CLIENT.RefreshGateway() => (),
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    }
                 }
             }
         }

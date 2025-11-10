@@ -231,8 +231,10 @@ impl SchedObjRepo {
     }
 }
 
+use async_trait::async_trait;
+#[async_trait]
 impl EventHandler for SchedObjRepo {
-    fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+    async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
         match SCHEDULER.ProcessDeltaEvent(event) {
             Err(e) => {
                 error!("SchedObjRepo::handler fail {:?}", e);

@@ -131,6 +131,14 @@ pub type FuncPod = DataObject<FuncPodObject>;
 impl FuncPod {
     pub const KEY: &'static str = "pod";
 
+    pub fn GpuAllocs(&self) -> BTreeMap<i32, u64> {
+        let mut alloc = BTreeMap::new();
+        for (id, k) in &self.object.spec.gpuMemSlots {
+            alloc.insert(*id, k.list.len() as u64);
+        }
+        return alloc;
+    }
+
     pub fn FuncPodKey(
         tenant: &str,
         namespace: &str,
