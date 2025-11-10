@@ -73,6 +73,11 @@ impl CacherClient {
         return Ok(Self(Arc::new(TMutex::new(inner))));
     }
 
+    pub async fn GetAddr(&self) -> Result<String> {
+        let mut inner = self.lock().await;
+        return inner.GetAddr().await;
+    }
+
     pub async fn Create(&self, obj: &DataObject<Value>) -> Result<i64> {
         let mut inner = self.lock().await;
         return inner.Create(obj).await;
@@ -162,6 +167,17 @@ impl CacherClientInner {
 
         let client = IxMetaServiceClient::new(channel);
         return Ok(Self { client: client });
+    }
+
+    pub async fn GetAddr(&mut self) -> Result<String> {
+        let req = GetAddrReqMessage {};
+        let mut response = self.client.get_addr(Request::new(req)).await?;
+        let resp = response.get_mut();
+        if resp.error.len() == 0 {
+            return Ok(format!("http://{}:{}", &resp.svc_ip, resp.port));
+        }
+
+        return Err(Error::CommonError(resp.error.clone()));
     }
 
     pub async fn Create(&mut self, obj: &DataObject<Value>) -> Result<i64> {
