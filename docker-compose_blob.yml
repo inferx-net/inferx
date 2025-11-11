@@ -12,7 +12,7 @@ services:
       - /opt/inferx/:/opt/inferx/
       - /run/udev:/run/udev
   secret_db:
-    image: postgres:14.5
+    image: inferx/inferx_postgres:${Version}
     restart: unless-stopped
     container_name: secret_db
     environment:
@@ -20,13 +20,14 @@ services:
       - POSTGRES_PASSWORD=123456
       - POSTGRES_DB=secretdb
       - PGDATA=/data/postgres
+      - INIT_SQL=secret.sql 
     ports:
       - '5431:5432'
     volumes:
-      - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
+      # - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres_secret:/data/postgres
   db:
-    image: postgres:14.5
+    image: inferx/inferx_postgres:${Version}
     restart: unless-stopped
     container_name: db
     environment:
@@ -34,10 +35,10 @@ services:
       - POSTGRES_PASSWORD=123456
       - POSTGRES_DB=auditdb
       - PGDATA=/data/postgres
+      - INIT_SQL=create_table.sql 
     ports:
       - '5432:5432'
     volumes:
-      - /opt/inferx/config/create_table.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres:/data/postgres
   etcd:
     image: quay.io/coreos/etcd:v3.5.13
@@ -61,6 +62,7 @@ services:
     image: inferx/inferx_platform:${Version}
     restart: always
     container_name: inferx_platform
+    cpus: 20
     network_mode: "host"
     environment:
       - NODE_NAME=${HOSTNAME}
@@ -84,38 +86,30 @@ services:
         condition: service_started
       keycloak:
         condition: service_started
-      spdk:
-        condition: service_started
       secret_db:
         condition: service_started
     volumes:
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log
       - /etc/letsencrypt/:/etc/letsencrypt/
-  inferx_runtime:
+    # command:
+    #   - /opt/inferx/config/node1.json
+  inferx_nodeagent:
     image: inferx/inferx_na:${Version}
-    shm_size: '2gb'
     restart: always
     container_name: inferx_na
     privileged: true
     user: root
+    cpus: 20
     network_mode: "host"
     environment:
-      - NODE_NAME=${HOSTNAME}
-      - POD_IP=${LOCAL_IP}
-      - ALLOC_CPU=24
-      - ALLOC_MEMORY=180Gi
-      - CACHE_MEMORY=50Gi
-      - ENABLE_2MB_PAGE=true
-      - ENALBE_BLOB=true
-      - BLOB_BUFF=4Gi
-      - PEER_LOAD=true
-      - CONTEXT_COUNT=1
-      # - CUDA_VISIBLE_DEVICES=0,1
-      - ETCD_ADDR=http://localhost:2379
       - STATESVC_ADDR=http://localhost:1237
+      - RUN_SERVICE=NodeAgent
+      - POD_IP=${LOCAL_IP}
+      - NODE_NAME=${HOSTNAME}
+      - ETCD_ADDR=http://localhost:2379
       - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
-    pid: "host" 
+    pid: "host"
     depends_on:
       db:
         condition: service_started
@@ -123,22 +117,83 @@ services:
         condition: service_started
       keycloak:
         condition: service_started
-      spdk:
-        condition: service_started
       secret_db:
         condition: service_started
     volumes:
-      # - /opt/inferx/bin:/opt/inferx/bin
-      - /opt/inferx/config:/opt/inferx/config
+      - /opt/inferx/bin:/opt/inferx/bin
+      # - /opt/inferx/config:/opt/inferx/config
       - /opt/inferx/data:/opt/inferx/data
       - /opt/inferx/log:/opt/inferx/log
       - /opt/inferx/cache:/opt/inferx/cache
       - /opt/inferx/snapshot:/opt/inferx/snapshot
       - /opt/inferx/work:/opt/inferx/work
+      - /opt/inferx/run:/opt/inferx/run
+      # - /opt/inferx/:/opt/inferx/
       - /opt/inferx/dind:/var/lib/docker
       - /run/udev:/run/udev
       - /dev/hugepages:/dev/hugepages
       - /etc/letsencrypt/:/etc/letsencrypt/
+      # - /var/lib/docker/:/var/lib/docker/
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all # alternatively, use `count: all` for all GPUs
+              capabilities: [ gpu ]
+  inferx_ixproxy:
+    image: inferx/inferx_na:${Version}
+    restart: always
+    container_name: inferx_proxy
+    privileged: true
+    user: root
+    cpus: 20
+    network_mode: "host"
+    environment:
+      - STATESVC_ADDR=http://localhost:1237
+      - RUN_SERVICE=IxProxy
+      - POD_IP=${LOCAL_IP}
+      - NODE_NAME=${HOSTNAME}
+      - ALLOC_MEMORY=180Gi
+      - ALLOC_MEMORY_2M=30Gi
+      - CACHE_MEMORY=20Gi
+      - ENABLE_2MB_PAGE=true
+      - CONTEXT_OVERHEAD=800
+      - CONTEXT_COUNT=1
+      - ALLOC_CPU=24
+      - ENALBE_BLOB=true
+      - ETCD_ADDR=http://localhost:2379
+      - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+    pid: "host"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:1240" ]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_started
+      etcd:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      secret_db:
+        condition: service_started
+    volumes:
+      - /opt/inferx/bin:/opt/inferx/bin
+      # - /opt/inferx/config:/opt/inferx/config
+      - /opt/inferx/data:/opt/inferx/data
+      - /opt/inferx/log:/opt/inferx/log
+      - /opt/inferx/cache:/opt/inferx/cache
+      - /opt/inferx/snapshot:/opt/inferx/snapshot
+      - /opt/inferx/work:/opt/inferx/work
+      - /opt/inferx/run:/opt/inferx/run
+      # - /opt/inferx/:/opt/inferx/
+      - /opt/inferx/dind:/var/lib/docker
+      - /run/udev:/run/udev
+      - /dev/hugepages:/dev/hugepages
+      - /etc/letsencrypt/:/etc/letsencrypt/
+      # - /var/lib/docker/:/var/lib/docker/
     deploy:
       resources:
         reservations:
