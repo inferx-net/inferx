@@ -2,36 +2,43 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+    "name": "Hermes-2-Pro-Llama-3-8B-AWQ",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
-                "--trust-remote-code",
+                "solidrust/Hermes-2-Pro-Llama-3-8B-AWQ",
+                "--disable-custom-all-reduce",
+                "--quantization",
+                "awq",
                 "--max-model-len",
-                "2000",
-                "--tensor-parallel-size=1"
+                "8192",
+                "--enable-chunked-prefill",
+                "--enable-prefix-caching"
             ],
             "resources": {
-                "CPU": 10000,
-                "Mem": 23000,
+                "CPU": 12000,
+                "Mem": 24000,
                 "ReadyMem": 3000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 13800
+                    "vRam": 13000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
-                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
                 ],
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
                 ]
             ],
             "mounts": [
@@ -47,11 +54,11 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
-                    "max_tokens": "1000",
+                    "model": "solidrust/Hermes-2-Pro-Llama-3-8B-AWQ",
+                    "max_tokens": "8000",
                     "temperature": "0",
                     "stream": "true"
                 }
@@ -59,14 +66,13 @@
             "standby": {
                 "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "File"
+                "pinned": "Mem"
             },
             "policy": {
-                "Obj": {
-                    "min_replica": 0,
-                    "max_replica": 2,
-                    "standby_per_node": 2,
-                    "parallel": 120
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
                 }
             }
         }
