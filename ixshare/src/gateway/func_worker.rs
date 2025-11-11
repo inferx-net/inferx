@@ -367,6 +367,7 @@ impl FuncWorker {
         if state == HttpClientState::Fail {
             if self.failCount.fetch_add(1, Ordering::Relaxed) == 3 {
                 // fail 3 times
+                error!("Pod failed 3 times: {:?}", self.WorkerName());
                 self.FinishWorker().await;
                 self.funcAgent
                     .SendWorkerStatusUpdate(WorkerUpdate::WorkerFail((
@@ -937,6 +938,7 @@ impl HttpSender {
                         if e.is_canceled() {
                             self.fail.store(HttpClientState::Clear as usize, Ordering::SeqCst);
                         } else {
+                            error!("HttpSender fail for pod {} with error {:?}", &self.podname, e);
                             self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
                         }
 
@@ -960,13 +962,13 @@ impl HttpSender {
                 }
             }
             // if it takes more than 5 second to connect to instance, the instance is dead, need to kill it.
-            _ = tokio::time::sleep(Duration::from_millis(10000)) => {
-                self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
-                return Err(Error::CommonError(format!(
-                    "QHttpCallClient::Error IxTimeout take {} ms in sending",
-                    now.elapsed().as_millis()
-                )));
-            }
+            // _ = tokio::time::sleep(Duration::from_millis(10000)) => {
+            //     self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
+            //     return Err(Error::CommonError(format!(
+            //         "QHttpCallClient::Error IxTimeout take {} ms in sending",
+            //         now.elapsed().as_millis()
+            //     )));
+            // }
         }
     }
 
