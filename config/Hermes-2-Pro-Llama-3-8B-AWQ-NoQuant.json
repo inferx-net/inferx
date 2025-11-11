@@ -1,0 +1,85 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.9.0",
+            "commands": [
+                "--model",
+                "solidrust/Hermes-2-Pro-Llama-3-8B-AWQ",
+                "--served-model-name",
+                "nousresearch/hermes-2-pro-llama-3-8b",
+                "--disable-log-requests",
+                "--max-model-len",
+                "8192",
+                "--gpu-memory-utilization",
+                "0.8",
+                "--enable-chunked-prefill",
+                "--enable-prefix-caching"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 40000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
+                ],
+                [
+                    "VLLM_USE_GPU_MEMORY_RESERVATION",
+                    "True"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "write a quick sort algorithm.",
+                "path": "v1/completions",
+                "body": {
+                    "model": "nousresearch/hermes-2-pro-llama-3-8b",
+                    "max_tokens": "8000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}

@@ -40,7 +40,7 @@ spec:
                 fieldPath: spec.nodeName
           resources:
             requests:
-              cpu: "15"               
+              cpu: "5"               
               memory: "60Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "1Gi"       # HugePages request
             limits:
@@ -206,12 +206,12 @@ spec:
             value: "false"                     
           resources:
             requests:
-              cpu: "15"
-              memory: "40Gi"              # Regular memory request (RAM)
+              cpu: "5"
+              memory: "20Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
             limits:
-              cpu: "20"
-              memory: "100Gi"              # Regular memory request (RAM)
+              cpu: "10"
+              memory: "80Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:

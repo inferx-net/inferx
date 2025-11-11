@@ -35,6 +35,8 @@ helm install --wait gpu-operator \
 
 echo "[✓] K3s with Docker runtime and NVIDIA GPU Operator installed successfully."
 
+kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 kubectl create namespace monitor

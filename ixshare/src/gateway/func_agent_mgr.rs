@@ -440,6 +440,7 @@ impl FuncAgent {
             let timeoutReqCnt = reqQueue.CleanTimeout().await;
             self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
             if self.NeedNewWorker().await {
+                error!("FuncAgent::Process, 1");
                 if throttle.TryAcquire().await {
                     error!(
                         "create new worker {} activereqcnt {} waitreqcnt {}",
@@ -490,10 +491,12 @@ impl FuncAgent {
                 // trigger timeout checkout
                 _ = time::sleep(Duration::from_millis(10)) => {}
                 stateUpdate = workerStateUpdateRx.recv() => {
+                    error!("FuncAgent::Process, 2");
                     if let Some(update) = stateUpdate {
                         match update {
                             WorkerUpdate::Ready(_worker) => {
                                 // worker.SetState(FuncWorkerState::Processing);
+                                error!("FuncAgent::Process, WorkerUpdate::Ready(_worker)");
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
                                 worker.ReturnWorker(true).await.ok();

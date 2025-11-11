@@ -3,7 +3,7 @@ export KEYCLOAK_URL="http://localhost:1260/authn"
 export INFX_GATEWAY_URL="http://89.169.103.52:31501"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 
-export INFX_GATEWAY_URL="http://89.169.109.4:31501"
+export INFX_GATEWAY_URL="http://89.169.111.128:31501"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 
 
@@ -44,6 +44,12 @@ google/gemma-7b-it
 #######################################################
 /opt/inferx/bin/ixctl create Qwen_namespace.json
 
+/opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ.json
+/opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant.json
+
+/opt/inferx/bin/ixctl update Hermes-2-Pro-Llama-3-8B-AWQ.json
+/opt/inferx/bin/ixctl update Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant.json
+
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-1.5B-Instruct.json
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-3B.json
 /opt/inferx/bin/ixctl create Qwen2.5-1.5B.json
@@ -71,6 +77,9 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl create Qwen3-235B-A22B-Thinking-2507.json
 
+/opt/inferx/bin/ixctl delete function public Qwen Hermes-2-Pro-Llama-3-8B-AWQ
+/opt/inferx/bin/ixctl delete function public Qwen Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant
+/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct

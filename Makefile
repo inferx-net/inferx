@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta10
+VERSION := v0.1.5.beta11qq
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -136,10 +136,10 @@ stopdash:
 
 runkblob:
 	-sudo rm /opt/inferx/log/*.log
-	sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
-	sudo kubectl apply -f k8s/scheduler-servicemonitor.yaml
-	sudo kubectl apply -f k8s/spdk.yaml
-	sudo kubectl apply -f k8s/jaeger.yaml
+	# sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
+	# sudo kubectl apply -f k8s/scheduler-servicemonitor.yaml
+	# sudo kubectl apply -f k8s/spdk.yaml
+	# sudo kubectl apply -f k8s/jaeger.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
@@ -148,8 +148,8 @@ runkblob:
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
@@ -215,3 +215,30 @@ stopnaall:
 restartgw:
 	sudo kubectl delete deployment gateway
 	sudo kubectl apply -f k8s/gateway.yaml
+
+preprenewenv:
+	export INFX_GATEWAY_URL="http://89.169.111.128:31501"
+	export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
+
+	/opt/inferx/bin/ixctl create config/public.json
+	/opt/inferx/bin/ixctl create config/default_funcpolicy.json
+	/opt/inferx/bin/ixctl create config/default_funcpolicy2.json
+	/opt/inferx/bin/ixctl create config/funcpolicy_2GPU.json
+	/opt/inferx/bin/ixctl create config/Qwen_namespace.json
+
+createqwen:
+	/opt/inferx/bin/ixctl create config/Qwen2.5-Coder-1.5B-Instruct.json
+
+createhermes:
+	/opt/inferx/bin/ixctl create config/Hermes-2-Pro-Llama-3-8B-AWQ.json
+
+deleteqwen:
+	/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
+
+deletehermes:
+	/opt/inferx/bin/ixctl delete function public Qwen Hermes-2-Pro-Llama-3-8B-AWQ
+
+
+
+
+
