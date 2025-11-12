@@ -79,10 +79,11 @@ message Obj {
     string name = 4;
     int64 channelRev = 5;
     int64 revision = 6;
-    repeated KV labels = 7;
-    repeated KV annotations = 8;
+    int64 src_epoch = 7;
+    repeated KV labels = 8;
+    repeated KV annotations = 9;
     
-    string data = 9;
+    string data = 10;
 }
 
 message ResponseHeader {

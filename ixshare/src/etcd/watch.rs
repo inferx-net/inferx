@@ -27,9 +27,9 @@ use tokio::sync::Notify;
 
 use crate::common::*;
 use crate::etcd::etcd_client::EtcdClient;
+use crate::ixmeta::*;
 use crate::metastore::obj::ToObject;
 use crate::metastore::selection_predicate::*;
-use crate::ixmeta::*;
 use inferxlib::data_obj::*;
 
 pub struct WatchReader {
@@ -180,6 +180,7 @@ impl Watcher {
                 &obj,
                 0,
                 kv.mod_revision(),
+                0,
             ))
         };
 
@@ -192,6 +193,7 @@ impl Watcher {
                         &obj,
                         0,
                         kv.mod_revision(),
+                        0,
                     ))
                 } else {
                     None
@@ -311,7 +313,7 @@ impl Watcher {
         for kv in getResp.kvs() {
             let obj = Object::Decode(kv.value())?;
             let obj =
-                DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision());
+                DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision(),0);
 
             if self.internalPred.Match(&obj)? {
                 let event = WatchEvent {
