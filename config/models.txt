@@ -44,6 +44,9 @@ google/gemma-7b-it
 #######################################################
 /opt/inferx/bin/ixctl create Qwen_namespace.json
 
+/opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ.json
+/opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ1.json
+
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-1.5B-Instruct.json
 /opt/inferx/bin/ixctl create Qwen2.5-Coder-3B.json
 /opt/inferx/bin/ixctl create Qwen2.5-1.5B.json
