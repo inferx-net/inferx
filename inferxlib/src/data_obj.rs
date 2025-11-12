@@ -94,6 +94,9 @@ pub struct DataObject<SpecType: Serialize + Clone + core::fmt::Debug + Default> 
     #[serde(skip_serializing, default)]
     pub channelRev: i64,
 
+    #[serde(skip_serializing, default)]
+    pub srcEpoch: i64,
+
     // revision number set by creator of object such as etcd
     #[serde(skip_serializing, default)]
     pub revision: i64,
@@ -114,6 +117,7 @@ impl DataObject<Value> {
             annotations: self.annotations.clone(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: serde_json::from_value::<T>(self.object.clone())?,
         };
 
@@ -142,6 +146,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: self.annotations.clone(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: serde_json::to_value(self.object.clone()).unwrap(),
         };
 
@@ -158,6 +163,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: self.annotations.Copy(),
             channelRev: channelRev,
             revision: revision,
+            srcEpoch: self.srcEpoch,
             object: self.object.clone(),
         };
     }
@@ -217,6 +223,7 @@ impl DeepCopy for DataObject<Value> {
             annotations: self.annotations.Copy(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: self.object.clone(),
         };
     }
