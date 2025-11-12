@@ -710,7 +710,7 @@ async fn FuncCall(
     mut req: Request,
 ) -> SResult<Response, StatusCode> {
     let path = req.uri().path();
-
+    error!("FuncCall 1, path is {:?}", path);
     let tracer = opentelemetry::global::tracer("gateway");
     let mut ttftSpan = tracer.start("TTFT");
     ttftSpan.set_attribute(KeyValue::new("req", path.to_owned()));

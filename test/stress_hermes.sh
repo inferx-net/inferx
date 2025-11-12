@@ -21,7 +21,11 @@ run_hey() {
 }
 
 
-run_hey 20 36000s "Qwen/Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant" 8000 "nousresearch/hermes-2-pro-llama-3-8b"
+for i in {1..50}; do
+    run_hey 20 600s "Qwen/Hermes-2-Pro-Llama-3-8B-AWQ" 8000 "nousresearch/hermes-2-pro-llama-3-8b"
+    run_hey 20 600s "Qwen2.5-Coder-1.5B-Instruct" 800 "Qwen2.5-Coder-1.5B-Instruct"
+done
+
 
 
 # for i in {1..50}; do
@@ -40,11 +44,9 @@ run_hey 20 36000s "Qwen/Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant" 8000 "nousresearch/
 # done
 
 run_curl() {
-    local concurrency=$1
-    local duration=$2
-    local model=$3
-    local token=$4
-    local model2=$5
+    local model=$1
+    local token=$2
+    local model2=$3
     local url="http://localhost:31501/funccall/public/${model}/v1/completions"
 
     echo "=== Running curl for model: ${model} ==="
@@ -60,5 +62,6 @@ run_curl() {
         }" 
 }
 
-# run_curl 10 36000s "Qwen/Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant" 8000 "nousresearch/hermes-2-pro-llama-3-8b"
+# run_curl "Qwen/Hermes-2-Pro-Llama-3-8B-AWQ-NoQuant" 8000 "nousresearch/hermes-2-pro-llama-3-8b"
+# run_curl "Qwen2.5-Coder-1.5B-Instruct" 800 "Qwen2.5-Coder-1.5B-Instruct"
 

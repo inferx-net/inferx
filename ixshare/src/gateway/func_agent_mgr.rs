@@ -297,6 +297,7 @@ impl Deref for FuncAgent {
 
 impl FuncAgent {
     pub fn New(func: &Function) -> Self {
+        error!("FuncAgent::New 1, {:?}", &func);
         let policy = GW_OBJREPO.get().unwrap().FuncPolicy(func);
 
         let queueLen = policy.queueLen;
@@ -428,6 +429,7 @@ impl FuncAgent {
         reqQueueRx: mpsc::Receiver<FuncClientReq>,
         workerStateUpdateRx: mpsc::Receiver<WorkerUpdate>,
     ) -> Result<()> {
+        error!("FuncAgent::Process, Enter");
         let mut reqQueueRx = reqQueueRx;
         let mut workerStateUpdateRx = workerStateUpdateRx;
 
@@ -437,6 +439,7 @@ impl FuncAgent {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(2000));
 
         loop {
+            // error!("FuncAgent::Process, 0");
             let timeoutReqCnt = reqQueue.CleanTimeout().await;
             self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
             if self.NeedNewWorker().await {

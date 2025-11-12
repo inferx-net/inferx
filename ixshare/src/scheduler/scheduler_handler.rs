@@ -608,6 +608,7 @@ impl SchedulerHandler {
         req: na::LeaseWorkerReq,
         tx: Sender<na::LeaseWorkerResp>,
     ) -> Result<()> {
+        error!("SchedulerHandler::ProcessLeaseWorkerReq enter, req is: {:?}", &req);
         let pods = self.GetFuncPods(&req.tenant, &req.namespace, &req.funcname, req.fprevision)?;
 
         for worker in &pods {
@@ -722,6 +723,7 @@ impl SchedulerHandler {
                 tx.send(resp).unwrap();
             }
             Ok(_) => {
+                error!("SchedulerHandler::ProcessLeaseWorkerReq, resume pod successfully");
                 self.PushLeaseWorkerReq(&funcname, req, tx)?;
             }
         }
@@ -835,7 +837,7 @@ impl SchedulerHandler {
     pub fn GetFuncPodsByKey(&self, fpkey: &str) -> Result<Vec<WorkerPod>> {
         match self.funcs.get(fpkey) {
             None => {
-                // error!("get function key is {} keys {:#?}", &fpkey, self.funcs.keys());
+                error!("get function key is {} keys {:#?}", &fpkey, self.funcs.keys());
                 return Ok(Vec::new());
             }
             Some(fpStatus) => {

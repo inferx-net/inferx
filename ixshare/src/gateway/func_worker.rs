@@ -312,6 +312,7 @@ impl FuncWorker {
 
     // return: (workerId, IPAddr, Keepalive)
     pub async fn LeaseWorker(&self) -> Result<LeaseWorkerResp> {
+        error!("FuncWorker::LeaseWorker");
         return SCHEDULER_CLIENT
             .LeaseWorker(
                 &self.tenant,
@@ -403,6 +404,7 @@ impl FuncWorker {
         _eventQueueRx: mpsc::Receiver<DeltaEvent>,
         idleClientRx: mpsc::Receiver<HttpSender>,
     ) -> Result<()> {
+        error!("FuncWorker::Process Enter");
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
         self.SetState(FuncWorkerState::Init);

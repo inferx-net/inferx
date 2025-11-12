@@ -133,6 +133,7 @@ impl Scheduler {
     }
 
     pub async fn LeaseWorker(&self, req: na::LeaseWorkerReq) -> Result<na::LeaseWorkerResp> {
+        error!("Scheduler::LeaseWorker enter, LeaseWorker request {:?}", &req);
         let (tx, rx) = oneshot::channel();
 
         self.msgTx
@@ -147,7 +148,7 @@ impl Scheduler {
                 });
             }
             Ok(resp) => {
-                //error!("LeaseWorker response {:?}", &resp);
+                error!("Scheduler::LeaseWorker, LeaseWorker response {:?}", &resp);
                 return Ok(resp);
             }
         }
