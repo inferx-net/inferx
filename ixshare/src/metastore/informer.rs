@@ -169,7 +169,8 @@ impl Informer {
                     );
                 }
                 Some(old) => {
-                    if old.Revision() != v.Revision() {
+                    if old.Revision() < v.Revision() {
+                        // the new obj is newer than the saved
                         map.insert(
                             v.channelRev,
                             DeltaEvent {
@@ -290,8 +291,15 @@ impl Informer {
                     Ok(e) => match e {
                         None => break,
                         Some(e) => {
-                            opts.revision = e.obj.Revision();
+                            opts.revision = e.obj.channelRev;
                             self.revision.store(opts.revision, Ordering::SeqCst);
+                            let oldobj = store.Get(&e.obj.Key());
+                            if let Some(old) = oldobj {
+                                if old.revision >= e.obj.Revision() {
+                                    continue;
+                                }
+                            }
+
                             let de = match e.type_ {
                                 EventType::Added => {
                                     store.Add(&e.obj)?;
