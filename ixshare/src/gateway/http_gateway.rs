@@ -17,6 +17,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::result::Result as SResult;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
@@ -704,11 +705,49 @@ async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) 
     return resp;
 }
 
+pub struct Disconnect {
+    pub start: std::time::Instant,
+    pub cancel: AtomicBool,
+    pub req: serde_json::Value,
+    pub headers: http::HeaderMap,
+}
+
+impl Disconnect {
+    pub fn New(req: serde_json::Value, headers: http::HeaderMap) -> Self {
+        return Self {
+            start: std::time::Instant::now(),
+            cancel: AtomicBool::new(false),
+            req: req,
+            headers: headers,
+        };
+    }
+
+    pub fn Cancel(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Drop for Disconnect {
+    fn drop(&mut self) {
+        if !self.cancel.load(std::sync::atomic::Ordering::Acquire) {
+            error!(
+                "Client disconnect before vllm return header {} ms, req {:#?}, headers {:#?}",
+                self.start.elapsed().as_millis(),
+                &self.req,
+                &self.headers
+            );
+        }
+    }
+}
+
 async fn FuncCall(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     mut req: Request,
 ) -> SResult<Response, StatusCode> {
+    let reqStart = std::time::Instant::now();
+    let headers = req.headers().clone();
     let path = req.uri().path();
 
     let tracer = opentelemetry::global::tracer("gateway");
@@ -808,9 +847,10 @@ async fn FuncCall(
         Ok(b) => b,
     };
 
-    // let json_req: serde_json::Value =
-    //     serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let json_req: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
     // error!("FuncCall get req {:#?}", json_req);
+    let disconnect = Disconnect::New(json_req.clone(), headers.clone());
 
     let mut retry = 0;
 
@@ -926,14 +966,18 @@ async fn FuncCall(
     }
 
     let mut bytecnt = 0;
+    let mut framecount = 0;
 
     let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(4096);
     let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
+    disconnect.Cancel();
     tokio::spawn(async move {
         let _client = client;
+        let mut ttft = 0;
+        let mut total = 0;
         loop {
             let frame = res.frame().await;
-            let mut ttft = 0;
+            framecount += 1;
             if first {
                 ttft = start.elapsed().as_millis() as u64;
                 ttftTx.send(ttft).await.ok();
@@ -941,7 +985,8 @@ async fn FuncCall(
                 ttftCtx.span().end();
                 first = false;
 
-                let total = ttft + tcpConnLatency;
+                total = ttft + tcpConnLatency;
+                // error!("ttft is {} ms /total {} ms", ttft, total);
                 if !keepalive {
                     GATEWAY_METRICS
                         .lock()
@@ -970,6 +1015,16 @@ async fn FuncCall(
                         ttft: ttft as i32,
                         latency: latency.as_millis() as i32,
                     });
+                    error!(
+                        "FuncCall sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                        reqStart.elapsed().as_millis(),
+                        total,
+                        framecount,
+                        retry-1,
+                        bytecnt,
+                        &headers,
+                        json_req
+                    );
                     return;
                 }
                 Some(b) => match b {
@@ -988,7 +1043,16 @@ async fn FuncCall(
 
             match tx.send(Ok(bytes)).await {
                 Err(_) => {
-                    // error!("PostCall sendbytes fail with channel unexpected closed");
+                    error!(
+                        "FuncCall sendbytes fail with client disconnect after return header {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                        reqStart.elapsed().as_millis(),
+                        total,
+                        framecount,
+                        retry-1,
+                        bytecnt,
+                        &headers,
+                        json_req
+                    );
                     return;
                 }
                 Ok(()) => (),
