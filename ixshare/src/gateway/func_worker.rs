@@ -363,8 +363,7 @@ impl FuncWorker {
     pub async fn HandleReturn(&self, sender: HttpSender) -> bool {
         self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
         let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::Relaxed);
-        let state = sender.HttpState();
-        if state == HttpClientState::Fail {
+        if sender.Fail() {
             if self.failCount.fetch_add(1, Ordering::Relaxed) == 3 {
                 // fail 3 times
                 error!("Pod failed 3 times: {:?}", self.WorkerName());
@@ -376,7 +375,7 @@ impl FuncWorker {
                     )));
                 return true;
             }
-        } else if state == HttpClientState::Success {
+        } else {
             // clear failure count
             self.failCount.store(0, Ordering::Relaxed);
         }
@@ -390,9 +389,7 @@ impl FuncWorker {
 
         self.perfStat.processTime.fetch_add(gap, Ordering::SeqCst);
 
-        if state == HttpClientState::Success {
-            self.connPool.ReturnSender(sender).await;
-        }
+        self.connPool.ReturnSender(sender).await;
 
         return false;
     }
@@ -738,8 +735,7 @@ impl ConnectionPool {
     }
 
     pub async fn ReturnSender(&self, sender: HttpSender) {
-        let state = sender.HttpState();
-        if state == HttpClientState::Fail {
+        if sender.Fail() || sender.Close() {
             return;
         }
 
@@ -747,12 +743,19 @@ impl ConnectionPool {
     }
 
     pub async fn GetConnect(&self) -> Result<QHttpCallClient> {
-        match self.senders.lock().await.pop() {
-            Some(sender) => {
-                self.reuseConn.fetch_add(1, Ordering::Relaxed);
-                return Ok(QHttpCallClient::New(self.finishQueue.clone(), sender));
+        loop {
+            match self.senders.lock().await.pop() {
+                Some(sender) => {
+                    if sender.Close() || sender.Fail() {
+                        continue;
+                    }
+                    self.reuseConn.fetch_add(1, Ordering::Relaxed);
+                    return Ok(QHttpCallClient::New(self.finishQueue.clone(), sender));
+                }
+                None => {
+                    break;
+                }
             }
-            None => (),
         }
 
         self.newConn.fetch_add(1, Ordering::Relaxed);
@@ -895,7 +898,8 @@ impl QHttpClient {
 pub struct HttpSender {
     pub podname: String,
     sender: SendRequest<axum::body::Body>,
-    pub fail: Arc<AtomicUsize>,
+    pub fail: Arc<AtomicBool>,
+    pub close: Arc<AtomicBool>,
     pub reuse: Arc<AtomicUsize>,
     pub startTime: Mutex<std::time::Instant>,
 }
@@ -906,17 +910,25 @@ impl HttpSender {
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         let fail = Arc::new(AtomicBool::new(false));
         let failclone = fail.clone();
+        let close = Arc::new(AtomicBool::new(false));
+        let closeclone = close.clone();
         tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                error!("QHttpCallClient::Error in connection: {}", e);
-                failclone.store(true, Ordering::SeqCst);
+            match conn.await {
+                Err(e) => {
+                    error!("QHttpCallClient::Error in connection: {}", e);
+                    failclone.store(true, Ordering::SeqCst);
+                }
+                Ok(()) => {
+                    closeclone.store(true, Ordering::SeqCst);
+                }
             }
         });
 
         let sender = HttpSender {
             podname: podname.to_owned(),
             sender: sender,
-            fail: Arc::new(AtomicUsize::new(HttpClientState::Success as usize)),
+            fail: fail,
+            close: close,
             reuse: Arc::new(AtomicUsize::new(1)),
             startTime: Mutex::new(std::time::Instant::now()),
         };
@@ -934,13 +946,8 @@ impl HttpSender {
             res = self.sender.send_request(req) => {
                 match res {
                     Err(e) => {
-                        // error!("HttpSender fail for pod {} with error {:?} is cancel {:?}", &self.podname, e, e.is_canceled());
-                        if e.is_canceled() {
-                            self.fail.store(HttpClientState::Clear as usize, Ordering::SeqCst);
-                        } else {
-                            error!("HttpSender fail for pod {} with error {:?}", &self.podname, e);
-                            self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
-                        }
+                        error!("HttpSender fail for pod {} with error {:?}", &self.podname, e);
+                        self.fail.store(true, Ordering::SeqCst);
 
                         return Err(Error::CommonError(format!(
                             "QHttpCallClient::Error take {} ms reuse {} in sending: {}/{}/{}",
@@ -955,13 +962,12 @@ impl HttpSender {
                         let status = r.status();
                         if RETRYABLE_HTTP_STATUS.contains(&(status.as_u16())) {
                             error!("HttpSender fail for pod {} with error response {:?}", &self.podname, &status);
-                            self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
+                            self.fail.store(true, Ordering::SeqCst);
                         }
                         return Ok(r);
                     }
                 }
             }
-            // if it takes more than 5 second to connect to instance, the instance is dead, need to kill it.
             // _ = tokio::time::sleep(Duration::from_millis(10000)) => {
             //     self.fail.store(HttpClientState::Fail as usize, Ordering::SeqCst);
             //     return Err(Error::CommonError(format!(
@@ -969,12 +975,16 @@ impl HttpSender {
             //         now.elapsed().as_millis()
             //     )));
             // }
+
         }
     }
 
-    pub fn HttpState(&self) -> HttpClientState {
-        let value = self.fail.load(Ordering::Relaxed);
-        return HttpClientState::FromIsize(value as isize);
+    pub fn Fail(&self) -> bool {
+        return self.fail.load(Ordering::Acquire);
+    }
+
+    pub fn Close(&self) -> bool {
+        return self.close.load(Ordering::Acquire);
     }
 }
 

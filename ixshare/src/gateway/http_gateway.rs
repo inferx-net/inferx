@@ -808,6 +808,10 @@ async fn FuncCall(
         Ok(b) => b,
     };
 
+    // let json_req: serde_json::Value =
+    //     serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // error!("FuncCall get req {:#?}", json_req);
+
     let mut retry = 0;
 
     let mut error = Error::Timeout(timeout);
@@ -926,7 +930,7 @@ async fn FuncCall(
     let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(4096);
     let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
     tokio::spawn(async move {
-        defer!(drop(client));
+        let _client = client;
         loop {
             let frame = res.frame().await;
             let mut ttft = 0;
