@@ -732,7 +732,7 @@ impl Drop for Disconnect {
     fn drop(&mut self) {
         if !self.cancel.load(std::sync::atomic::Ordering::Acquire) {
             error!(
-                "Client disconnect before vllm return header {} ms, req {:#?}, headers {:#?}",
+                "Funccall ********* Fail: Client disconnect before vllm return header {} ms, req {:#?}, headers {:#?}",
                 self.start.elapsed().as_millis(),
                 &self.req,
                 &self.headers
@@ -1016,7 +1016,7 @@ async fn FuncCall(
                         latency: latency.as_millis() as i32,
                     });
                     error!(
-                        "FuncCall sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                        "Funccall ********* Pass: sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
                         reqStart.elapsed().as_millis(),
                         total,
                         framecount,
@@ -1044,7 +1044,7 @@ async fn FuncCall(
             match tx.send(Ok(bytes)).await {
                 Err(_) => {
                     error!(
-                        "FuncCall sendbytes fail with client disconnect after return header {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                        "Funccall ********* Fail: sendbytes fail with client disconnect after return header {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
                         reqStart.elapsed().as_millis(),
                         total,
                         framecount,
