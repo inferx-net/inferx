@@ -1,0 +1,83 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "MythoMax-L2-13B-AWQ",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.6.4.post1",
+            "commands": [
+                "--model",
+                "TheBloke/MythoMax-L2-13B-AWQ",
+                "--quantization",
+                "awq",
+                "--max-num-seqs",
+                "24",
+                "--max-model-len",
+                "4096",
+                "--gpu-memory-utilization",
+                "0.9",
+                "--enable-chunked-prefill",
+                "--enable-prefix-caching"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "ReadyMem": 3000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 14000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
+                "path": "v1/completions",
+                "body": {
+                    "model": "TheBloke/MythoMax-L2-13B-AWQ",
+                    "max_tokens": "4000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "Mem"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}
