@@ -94,6 +94,9 @@ pub struct DataObject<SpecType: Serialize + Clone + core::fmt::Debug + Default> 
     #[serde(skip_serializing, default)]
     pub channelRev: i64,
 
+    #[serde(skip_serializing, default)]
+    pub srcEpoch: i64,
+
     // revision number set by creator of object such as etcd
     #[serde(skip_serializing, default)]
     pub revision: i64,
@@ -114,11 +117,18 @@ impl DataObject<Value> {
             annotations: self.annotations.clone(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: serde_json::from_value::<T>(self.object.clone())?,
         };
 
         return Ok(o);
     }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EpochRevision {
+    pub srcEpoch: i64,
+    pub revision: i64,
 }
 
 impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + Default>
@@ -142,6 +152,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: self.annotations.clone(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: serde_json::to_value(self.object.clone()).unwrap(),
         };
 
@@ -158,6 +169,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: self.annotations.Copy(),
             channelRev: channelRev,
             revision: revision,
+            srcEpoch: self.srcEpoch,
             object: self.object.clone(),
         };
     }
@@ -196,6 +208,13 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
         );
     }
 
+    pub fn EpochRevision(&self) -> EpochRevision {
+        return EpochRevision {
+            srcEpoch: self.srcEpoch,
+            revision: self.revision,
+        };
+    }
+
     pub fn Revision(&self) -> i64 {
         return self.revision;
     }
@@ -217,6 +236,7 @@ impl DeepCopy for DataObject<Value> {
             annotations: self.annotations.Copy(),
             channelRev: self.channelRev,
             revision: self.revision,
+            srcEpoch: self.srcEpoch,
             object: self.object.clone(),
         };
     }

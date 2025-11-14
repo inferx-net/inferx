@@ -84,6 +84,17 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
         Ok(Response::new(response))
     }
 
+    async fn get_addr(
+        &self,
+        _request: Request<ixmeta::GetAddrReqMessage>,
+    ) -> SResult<Response<ixmeta::GetAddrReponseMessage>, Status> {
+        return Ok(Response::new(ixmeta::GetAddrReponseMessage {
+            error: "SvcDir unimplement".into(),
+            svc_ip: "".to_owned(),
+            port: 0,
+        }));
+    }
+
     async fn create(
         &self,
         request: Request<ixmeta::CreateRequestMessage>,

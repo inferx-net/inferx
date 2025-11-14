@@ -111,6 +111,11 @@ impl Informer {
         return self.handlers.write().await.remove(&id);
     }
 
+    pub async fn Connect(&self, addr: &str) -> Result<CacherClient> {
+        let client = CacherClient::New(addr.to_owned()).await?;
+        return Ok(client);
+    }
+
     pub async fn GetClient(&self) -> Option<CacherClient> {
         let size = self.serverAddresses.len();
         let offset: usize = rand::thread_rng().gen_range(0..size);
@@ -146,8 +151,69 @@ impl Informer {
         }
     }
 
-    async fn InitList(&self, client: &CacherClient) -> Result<()> {
-        let store = self.store.clone();
+    async fn Merge(&self, first: bool, newstore: &ThreadSafeStore) -> Result<Vec<DeltaEvent>> {
+        let mut map = BTreeMap::new();
+        let mut l = self.store.write();
+        let newl = newstore.write();
+        for (k, v) in &newl.map {
+            match l.map.get(k) {
+                None => {
+                    map.insert(
+                        v.channelRev,
+                        DeltaEvent {
+                            type_: EventType::Added,
+                            inInitialList: first,
+                            obj: v.clone(),
+                            oldObj: None,
+                        },
+                    );
+                }
+                Some(old) => {
+                    if old.EpochRevision() < v.EpochRevision() {
+                        // the new obj is newer than the saved
+                        map.insert(
+                            v.channelRev,
+                            DeltaEvent {
+                                type_: EventType::Modified,
+                                inInitialList: first,
+                                obj: v.clone(),
+                                oldObj: Some(old.clone()),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        for (k, v) in &l.map {
+            match newl.map.get(k) {
+                None => {
+                    map.insert(
+                        v.channelRev,
+                        DeltaEvent {
+                            type_: EventType::Deleted,
+                            inInitialList: false,
+                            obj: v.clone(),
+                            oldObj: None,
+                        },
+                    );
+                }
+                Some(_) => (),
+            }
+        }
+
+        l.map.clear();
+        for (k, v) in &newl.map {
+            l.map.insert(k.clone(), v.clone());
+        }
+
+        l.id = newl.id;
+
+        return Ok(map.values().cloned().collect());
+    }
+
+    async fn InitList(&self, client: &CacherClient, first: bool) -> Result<()> {
+        // let store = self.store.clone();
 
         let objType = self.objType.clone();
         let tenant = self.tenant.clone();
@@ -156,33 +222,39 @@ impl Informer {
 
         let objs = client.List(&objType, &tenant, &namespace, &opts).await?;
         self.revision.store(objs.revision, Ordering::SeqCst);
-        // if &objType == "node_info" {
-        //     error!("InitList objType {} {:#?}", &objType, &objs);
-        // }
 
+        let store = ThreadSafeStore::default();
         for o in objs.objs {
             store.Add(&o)?;
+        }
+
+        let events = self.Merge(first, &store).await?;
+
+        info!(
+            "InitList first {} {} event {:#?}",
+            &objType,
+            first,
+            events.len()
+        );
+
+        for e in &events {
+            self.Distribute(e).await;
+        }
+
+        if first {
+            let o = DataObject {
+                objType: objType.clone(),
+                ..Default::default()
+            };
+
             self.Distribute(&DeltaEvent {
-                type_: EventType::Added,
+                type_: EventType::InitDone,
                 inInitialList: true,
                 obj: o,
                 oldObj: None,
             })
             .await;
         }
-
-        let o = DataObject {
-            objType: objType.clone(),
-            ..Default::default()
-        };
-
-        self.Distribute(&DeltaEvent {
-            type_: EventType::InitDone,
-            inInitialList: true,
-            obj: o,
-            oldObj: None,
-        })
-        .await;
 
         return Ok(());
     }
@@ -222,8 +294,15 @@ impl Informer {
                     Ok(e) => match e {
                         None => break,
                         Some(e) => {
-                            opts.revision = e.obj.Revision();
+                            opts.revision = e.obj.channelRev;
                             self.revision.store(opts.revision, Ordering::SeqCst);
+                            let oldobj = store.Get(&e.obj.Key());
+                            if let Some(old) = oldobj {
+                                if old.revision >= e.obj.Revision() {
+                                    continue;
+                                }
+                            }
+
                             let de = match e.type_ {
                                 EventType::Added => {
                                     store.Add(&e.obj)?;
@@ -276,6 +355,39 @@ impl Informer {
         }
     }
 
+    pub async fn Load(&self, addr: &str, first: bool) -> Result<()> {
+        let client = self.Connect(addr).await?;
+
+        match self.InitList(&client, first).await {
+            Err(e) => {
+                error!("informer initlist fail with error {:?}", e);
+                return Err(e);
+            }
+            Ok(()) => (),
+        }
+
+        if first {
+            self.listDone.store(true, Ordering::SeqCst);
+        }
+
+        return Ok(());
+    }
+
+    pub async fn UpdateProcess(&self, addr: &str) -> Result<()> {
+        let client = self.Connect(addr).await?;
+        loop {
+            match self.WatchUpdate(&client).await {
+                Err(e) => {
+                    error!("informer UpdateProcess fail with error {:?}", e);
+                    break;
+                }
+                Ok(()) => continue,
+            }
+        }
+
+        return Ok(());
+    }
+
     pub async fn Process(&self, notify: Arc<Notify>) -> Result<()> {
         let mut client = match self.GetClient().await {
             None => return Ok(()),
@@ -283,7 +395,7 @@ impl Informer {
         };
 
         loop {
-            match self.InitList(&client).await {
+            match self.InitList(&client, true).await {
                 Err(e) => {
                     error!("informer initlist fail with error {:?}", e);
                 }

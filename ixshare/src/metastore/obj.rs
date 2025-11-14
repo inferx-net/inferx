@@ -46,6 +46,7 @@ pub trait ToObject {
         item: &Object,
         channelRev: i64,
         revision: i64,
+        srcEpoch: i64,
     ) -> DataObject<SpecType>;
 }
 
@@ -72,6 +73,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             name: self.name.clone(),
             channel_rev: self.channelRev,
             revision: self.Revision(),
+            src_epoch: self.srcEpoch,
             labels: self.labels.ToVec(),
             annotations: self.annotations.ToVec(),
             data: serde_json::to_string(&self.object).unwrap(),
@@ -110,6 +112,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: annotations.into(),
             channelRev: item.channel_rev,
             revision: item.revision,
+            srcEpoch: item.src_epoch,
             object: serde_json::from_str::<SpecType1>(&item.data).unwrap(),
         };
 
@@ -122,6 +125,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
         item: &Object,
         channelRev: i64,
         revision: i64,
+        srcEpoch: i64,
     ) -> DataObject<SpecType1> {
         let mut lables = BTreeMap::new();
         for l in &item.labels {
@@ -142,6 +146,7 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             annotations: annotations.into(),
             channelRev: channelRev,
             revision: revision,
+            srcEpoch: srcEpoch,
             object: serde_json::from_str::<SpecType1>(&item.data).unwrap(),
         };
 
@@ -170,6 +175,7 @@ impl From<&Object> for DataObject<Value> {
             annotations: annotations.into(),
             channelRev: 0,
             revision: 0,
+            srcEpoch: 0,
             object: serde_json::from_str(&item.data).unwrap(),
         };
 
@@ -198,6 +204,7 @@ impl From<&Obj> for DataObject<Value> {
             annotations: annotations.into(),
             channelRev: item.channel_rev,
             revision: item.revision,
+            srcEpoch: item.src_epoch,
             object: serde_json::from_str(&item.data).unwrap(),
         };
 

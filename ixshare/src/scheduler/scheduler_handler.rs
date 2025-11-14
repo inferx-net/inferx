@@ -454,6 +454,9 @@ pub enum WorkerHandlerMsg {
 
 #[derive(Debug, Default)]
 pub struct SchedulerHandler {
+    // nodename -> nodeEpoch
+    pub nodeEpoch: BTreeMap<String, i64>,
+
     pub pods: BTreeMap<String, WorkerPod>,
 
     /*************** gateways ***************************** */
@@ -1070,6 +1073,7 @@ impl SchedulerHandler {
                                 }
                                 Node::KEY => {
                                     let node = Node::FromDataObject(obj)?;
+                                    self.CheckNodeEpoch(&node.name, node.object.nodeEpoch).await;
                                     let peerIp = ipnetwork::Ipv4Network::from_str(&node.object.nodeIp)
                                         .unwrap()
                                         .ip()
@@ -1092,10 +1096,13 @@ impl SchedulerHandler {
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
+                                    self.CheckNodeEpoch(&pod.object.spec.nodename, pod.srcEpoch).await;
+
                                     self.AddPod(pod.clone())?;
                                 }
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
+                                    self.CheckNodeEpoch(&snapshot.object.nodename, snapshot.srcEpoch).await;
                                     self.AddSnapshot(&snapshot)?;
                                 }
                                 FuncPolicy::KEY => {
@@ -2730,6 +2737,59 @@ impl SchedulerHandler {
         self.nodes.remove(&key);
 
         return Ok(());
+    }
+
+    // when statesvc and ixproxy restart together, there might be chance the new statesvc will give the node with new epoch
+    // the CheckNodeEpoch will delete all the pod, snapshot
+    pub async fn CheckNodeEpoch(&mut self, nodename: &str, nodeEpoch: i64) {
+        match self.nodeEpoch.get(nodename) {
+            None => {
+                // one new node
+                self.nodeEpoch.insert(nodename.to_owned(), nodeEpoch);
+                return;
+            }
+            Some(&oldEpoch) => {
+                if oldEpoch == nodeEpoch {
+                    // match, that's good
+                    return;
+                }
+
+                // one new node create
+                self.CleanNode(nodename).await;
+                self.nodeEpoch.insert(nodename.to_owned(), nodeEpoch);
+            }
+        }
+    }
+
+    pub async fn CleanNode(&mut self, nodename: &str) {
+        let tempPods = self.nodePods.remove(nodename);
+        if let Some(pods) = tempPods {
+            for (_, wp) in pods {
+                self.RemovePod(&wp.pod).await.ok();
+            }
+        }
+
+        let pods = match self.nodes.get(nodename) {
+            Some(ns) => ns.pods.clone(),
+            None => BTreeMap::new(),
+        };
+
+        for (_, wp) in pods {
+            self.RemovePod(&wp.pod).await.ok();
+        }
+
+        // remove snapshot
+        self.snapshots.remove(nodename);
+
+        let node = match self.nodes.get(nodename) {
+            None => {
+                return;
+            }
+            Some(ns) => ns.node.clone(),
+        };
+
+        self.RemoveNode(node).await.ok();
+        return;
     }
 
     pub fn AddPod(&mut self, pod: FuncPod) -> Result<()> {

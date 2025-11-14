@@ -22,6 +22,7 @@ use tokio::sync::Notify;
 use super::informer::{EventHandler, Informer};
 use super::selection_predicate::ListOption;
 use crate::common::*;
+use crate::scheduler::scheduler_handler::GetClient;
 
 #[derive(Debug)]
 pub struct InformerFactoryInner {
@@ -64,17 +65,76 @@ impl InformerFactory {
         return Ok(());
     }
 
-    pub async fn Process(&self, notify: Arc<Notify>) -> Result<()> {
+    pub async fn InitList(&self, addr: &str) -> Result<()> {
         let informers: Vec<Informer> = self.read().unwrap().informers.values().cloned().collect();
 
         let mut futures = Vec::new();
 
         for i in informers.iter() {
-            futures.push(i.Process(notify.clone()));
+            futures.push(i.Load(&addr, true));
         }
 
-        join_all(futures).await;
+        let futures: Vec<_> = futures.into_iter().map(|f| Box::pin(f)).collect::<Vec<_>>();
+
+        let res = join_all(futures).await;
+        for r in res {
+            r?;
+        }
+
         return Ok(());
+    }
+
+    pub async fn UpdateOnce(&self, addr: &str) -> Result<()> {
+        let informers: Vec<Informer> = self.read().unwrap().informers.values().cloned().collect();
+
+        let mut futures = Vec::new();
+
+        for i in informers.iter() {
+            futures.push(i.UpdateProcess(&addr));
+        }
+
+        let futures: Vec<_> = futures.into_iter().map(|f| Box::pin(f)).collect::<Vec<_>>();
+
+        let _v = futures::future::select_all(futures).await;
+        return Ok(());
+    }
+
+    pub async fn Reload(&self, addr: &str) -> Result<()> {
+        let informers: Vec<Informer> = self.read().unwrap().informers.values().cloned().collect();
+
+        info!("Informer factory Reload addr is {}", addr);
+        let mut futures = Vec::new();
+        for i in informers.iter() {
+            futures.push(i.Load(&addr, false));
+        }
+
+        let res = join_all(futures).await;
+        for r in res {
+            r?;
+        }
+        return Ok(());
+    }
+    pub async fn Process(&self, notify: Arc<Notify>) -> Result<()> {
+        let client = GetClient().await?;
+        let mut addr = client.GetAddr().await.unwrap();
+
+        info!("Informer factory Init addr is {}", addr);
+        self.InitList(&addr).await?;
+        notify.notify_waiters();
+
+        loop {
+            match self.UpdateOnce(&addr).await {
+                Err(e) => error!("informer_factory UpdateOnce fail with errror {:?}", e),
+                Ok(_) => (),
+            }
+
+            let client = GetClient().await?;
+            addr = client.GetAddr().await.unwrap();
+            match self.Reload(&addr).await {
+                Err(e) => error!("informer_factory reload fail with errror {:?}", e),
+                Ok(_) => (),
+            }
+        }
     }
 
     pub fn RemoveInformer(&self, objType: &str) -> Result<()> {

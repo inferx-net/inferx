@@ -73,7 +73,7 @@ impl BackendStore for EtcdStore {
 
         let obj = Object::Decode(val)?;
 
-        let obj = DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision());
+        let obj = DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision(), 0);
 
         return Ok(Some(obj));
     }
@@ -192,7 +192,7 @@ impl BackendStore for EtcdStore {
                 lastKey = kv.key().to_vec();
                 let obj = Object::Decode(kv.value())?;
                 let obj =
-                    DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision());
+                    DataObject::<Value>::NewFromObject(&obj, kv.mod_revision(), kv.mod_revision(), 0);
 
                 if pred.Match(&obj)? {
                     v.push(obj)

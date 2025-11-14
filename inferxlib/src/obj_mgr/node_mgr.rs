@@ -18,6 +18,7 @@ impl Default for NAState {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NodeSpec {
+    pub nodeEpoch: i64,
     pub nodeIp: String,
     pub naIp: String,
     pub cidr: String,

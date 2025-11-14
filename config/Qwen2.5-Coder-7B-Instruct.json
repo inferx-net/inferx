@@ -9,6 +9,7 @@
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
+                "--disable-uvicorn-access-log",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",
@@ -17,6 +18,7 @@
             "resources": {
                 "CPU": 12000,
                 "Mem": 30000,
+                "ReadyMem": 3000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
