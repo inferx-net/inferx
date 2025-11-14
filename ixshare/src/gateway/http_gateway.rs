@@ -1015,16 +1015,16 @@ async fn FuncCall(
                         ttft: ttft as i32,
                         latency: latency.as_millis() as i32,
                     });
-                    error!(
-                        "Funccall ********* Pass: sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
-                        reqStart.elapsed().as_millis(),
-                        total,
-                        framecount,
-                        retry-1,
-                        bytecnt,
-                        &headers,
-                        json_req
-                    );
+                    // error!(
+                    //     "Funccall ********* Pass: sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                    //     reqStart.elapsed().as_millis(),
+                    //     total,
+                    //     framecount,
+                    //     retry-1,
+                    //     bytecnt,
+                    //     &headers,
+                    //     json_req
+                    // );
                     return;
                 }
                 Some(b) => match b {
