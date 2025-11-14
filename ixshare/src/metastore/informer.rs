@@ -169,7 +169,7 @@ impl Informer {
                     );
                 }
                 Some(old) => {
-                    if old.Revision() < v.Revision() {
+                    if old.EpochRevision() < v.EpochRevision() {
                         // the new obj is newer than the saved
                         map.insert(
                             v.channelRev,
@@ -230,9 +230,12 @@ impl Informer {
 
         let events = self.Merge(first, &store).await?;
 
-        if !first {
-            error!("InitList first {} {} event {:#?}", &objType, first, events);
-        }
+        info!(
+            "InitList first {} {} event {:#?}",
+            &objType,
+            first,
+            events.len()
+        );
 
         for e in &events {
             self.Distribute(e).await;

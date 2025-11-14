@@ -125,6 +125,12 @@ impl DataObject<Value> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EpochRevision {
+    pub srcEpoch: i64,
+    pub revision: i64,
+}
+
 impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + Default>
     DataObject<SpecType>
 {
@@ -200,6 +206,13 @@ impl<SpecType: Serialize + for<'a> Deserialize<'a> + Clone + core::fmt::Debug + 
             "{}/{}/{}/{}",
             &self.objType, &self.tenant, &self.namespace, &self.name
         );
+    }
+
+    pub fn EpochRevision(&self) -> EpochRevision {
+        return EpochRevision {
+            srcEpoch: self.srcEpoch,
+            revision: self.revision,
+        };
     }
 
     pub fn Revision(&self) -> i64 {
