@@ -14,6 +14,8 @@
                 "awq",
                 "--max-model-len",
                 "8192",
+                "--uvicorn-log-level",
+                "warning",
                 "--enable-chunked-prefill",
                 "--enable-prefix-caching"
             ],

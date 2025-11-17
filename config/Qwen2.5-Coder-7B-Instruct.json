@@ -5,13 +5,14 @@
     "name": "Qwen2.5-Coder-7B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",
+                "--async-scheduling",
                 "--tensor-parallel-size=2"
             ],
             "resources": {
@@ -65,7 +66,10 @@
                     "min_replica": 0,
                     "max_replica": 1,
                     "standby_per_node": 1,
-                    "parallel": 200
+                    "parallel": 200,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
                 }
             }
         }
