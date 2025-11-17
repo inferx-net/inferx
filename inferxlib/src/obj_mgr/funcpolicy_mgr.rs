@@ -10,7 +10,7 @@ pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
 pub const DEFAULT_QUEUE_LEN: usize = 1000;
 pub const DEFAULT_QUEUE_TIMEOUT: f64 = 30.0;
 pub const DEFAULT_SCALEIN_TIMEOUT: f64 = 0.01; // 10 ms
-pub const DEFAULT_QUEUE_RATIO: f64 = 0.2;
+pub const DEFAULT_QUEUE_RATIO: f64 = 0.1;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ScaleOutPolicy {
@@ -21,6 +21,12 @@ pub enum ScaleOutPolicy {
 pub struct WaitQueueRatio {
     #[serde(rename = "wait_ratio")]
     pub waitRatio: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RuntimeConfig {
+    #[serde(default = "default_graph_sync", rename = "graph_sync")]
+    pub GraphSync: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -45,12 +51,23 @@ pub struct FuncPolicySpec {
 
     #[serde(default = "default_scalein_timeout", rename = "scalein_timeout")]
     pub scaleinTimeout: f64,
+
+    #[serde(default = "default_runtime_config", rename = "runtime_config")]
+    pub runtimeConfig: RuntimeConfig,
 }
 
 fn default_ScaleOutPolicy() -> ScaleOutPolicy {
     ScaleOutPolicy::WaitQueueRatio(WaitQueueRatio {
         waitRatio: DEFAULT_QUEUE_RATIO,
     })
+}
+
+fn default_graph_sync() -> bool {
+    true
+}
+
+fn default_runtime_config() -> RuntimeConfig {
+    RuntimeConfig { GraphSync: true }
 }
 
 fn default_parallel() -> usize {
@@ -80,6 +97,7 @@ impl Default for FuncPolicySpec {
             queueTimeout: default_queue_timeout(),
             scaleoutPolicy: default_ScaleOutPolicy(),
             scaleinTimeout: default_scalein_timeout(),
+            runtimeConfig: default_runtime_config(),
         };
     }
 }

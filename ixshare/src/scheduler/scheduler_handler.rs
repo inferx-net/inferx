@@ -2493,6 +2493,10 @@ impl SchedulerHandler {
             tps.push(termniatePod);
         }
 
+        let mut spec = func.object.spec.clone();
+        let policy = self.FuncPolicy(&tenant, &spec.policy);
+        spec.policy = ObjRef::Obj(policy);
+
         let request = tonic::Request::new(na::CreateFuncPodReq {
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
@@ -2502,7 +2506,7 @@ impl SchedulerHandler {
             labels: Vec::new(),
             annotations: annotations,
             create_type: createType.into(),
-            funcspec: serde_json::to_string(&func.object.spec)?,
+            funcspec: serde_json::to_string(&spec)?,
             alloc_resources: serde_json::to_string(allocResources).unwrap(),
             resource_quota: serde_json::to_string(resourceQuota).unwrap(),
             terminate_pods: tps,
