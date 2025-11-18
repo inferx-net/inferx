@@ -5,12 +5,15 @@
     "name": "Qwen2.5-7B-Instruct-1M",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-7B-Instruct-1M",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
+                "--uvicorn-log-level",
+                "warning",
+                "--async-scheduling",
                 "--max-model-len",
                 "2000",
                 "--tensor-parallel-size=2"

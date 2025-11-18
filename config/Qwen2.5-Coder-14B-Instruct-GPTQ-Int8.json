@@ -5,12 +5,14 @@
     "name": "Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
+                "--uvicorn-log-level",
+                "warning",
+                "--async-scheduling",
                 "--max-model-len",
                 "2048",
                 "--tensor-parallel-size=2"
@@ -32,6 +34,10 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "VLLM_USE_FLASHINFER_SAMPLER",
+                    "0"
                 ]
             ],
             "mounts": [
@@ -66,7 +72,10 @@
                     "min_replica": 0,
                     "max_replica": 1,
                     "standby_per_node": 1,
-                    "parallel": 200
+                    "parallel": 200,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
                 }
             }
         }

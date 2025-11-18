@@ -10,6 +10,8 @@
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
                 "--trust-remote-code",
+                "--uvicorn-log-level",
+                "warning",
                 "--max-model-len",
                 "2000",
                 "--async-scheduling",
@@ -21,7 +23,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13000
+                    "vRam": 12000
                 }
             },
             "envs": [
@@ -32,6 +34,10 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "VLLM_USE_FLASHINFER_SAMPLER",
+                    "0"
                 ]
             ],
             "mounts": [
