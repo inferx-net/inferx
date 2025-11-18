@@ -374,14 +374,14 @@ impl CacheStoreInner {
         return Ok(());
     }
 
-    pub fn Add(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
+    pub fn Add(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
         // the object's creator is the cachestore, so the channelRev == Revision
 
         let channelRev = self.ChannelRev();
-        let rev = if etcd { obj.revision } else { channelRev };
+        // let rev = if etcd { obj.revision } else { channelRev };
         let event = WatchEvent {
             type_: EventType::Added,
-            obj: obj.CopyWithRev(channelRev, rev),
+            obj: obj.CopyWithRev(channelRev, obj.revision),
         };
 
         return self.ProcessEvent(&event);
@@ -391,19 +391,19 @@ impl CacheStoreInner {
         let rev = self.ChannelRev();
         let event = WatchEvent {
             type_: EventType::Deleted,
-            obj: obj.CopyWithRev(rev, rev),
+            obj: obj.CopyWithRev(rev, obj.revision),
         };
 
         return self.ProcessEvent(&event);
     }
 
-    pub fn Update(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
+    pub fn Update(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
         let channelRev = self.ChannelRev();
-        let rev = if etcd { obj.revision } else { channelRev };
+        // let rev = if etcd { obj.revision } else { channelRev };
 
         let event = WatchEvent {
             type_: EventType::Modified,
-            obj: obj.CopyWithRev(channelRev, rev),
+            obj: obj.CopyWithRev(channelRev, obj.revision),
         };
 
         return self.ProcessEvent(&event);
