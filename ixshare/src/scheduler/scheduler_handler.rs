@@ -17,6 +17,7 @@ use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
+use std::collections::BinaryHeap;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -34,7 +35,7 @@ use inferxlib::resource::StandbyType;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
-use tokio::time::Interval;
+use tokio::time::{Duration, Interval};
 
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::POD_AUDIT_AGENT;
@@ -49,6 +50,7 @@ use crate::na::TerminatePodReq;
 use crate::peer_mgr::PeerMgr;
 use crate::scheduler::scheduler::SetIdleSource;
 use crate::scheduler::scheduler::SCHEDULER_CONFIG;
+use crate::scheduler::scheduler::TimedTask;
 use inferxlib::data_obj::DeltaEvent;
 use inferxlib::data_obj::EventType;
 use inferxlib::obj_mgr::func_mgr::*;
@@ -507,14 +509,36 @@ pub struct SchedulerHandler {
     pub nextWorkId: AtomicU64,
 
     pub taskQueue: TaskQueue,
+
+    delayed_tasks: BinaryHeap<TimedTask>,
+
+    delay_interval: Option<Interval>,
 }
 
 impl SchedulerHandler {
     pub fn New() -> Self {
         return Self {
             nextWorkId: AtomicU64::new(1),
+            delayed_tasks: BinaryHeap::new(),
             ..Default::default()
         };
+    }
+
+    pub fn schedule_delayed_task(&mut self, delay: Duration, task: SchedTask) {
+        let when = Instant::now() + delay;
+        self.delayed_tasks.push(TimedTask { when, task });
+    }
+
+    pub fn drain_due_delayed_tasks(&mut self) {
+        let now = Instant::now();
+        while let Some(entry) = self.delayed_tasks.peek() {
+            if entry.when <= now {
+                let TimedTask { task, .. } = self.delayed_tasks.pop().unwrap();
+                self.taskQueue.AddTask(task);
+            } else {
+                break;
+            }
+        }
     }
 
     pub async fn ProcessRefreshGateway(&mut self, req: na::RefreshGatewayReq) -> Result<()> {
@@ -1023,6 +1047,10 @@ impl SchedulerHandler {
         msgRx: &mut mpsc::Receiver<WorkerHandlerMsg>,
         interval: &mut Interval,
     ) -> Result<()> {
+        if self.delay_interval.is_none() {
+            self.delay_interval = Some(tokio::time::interval(Duration::from_millis(100)));
+        }
+        let delay_interval = self.delay_interval.as_mut().unwrap();
         tokio::select! {
             biased;
             m = msgRx.recv() => {
@@ -1046,6 +1074,9 @@ impl SchedulerHandler {
                     error!("scheduler msgRx read fail...");
                     return Err(Error::ProcessDone);
                 }
+            }
+            _ = delay_interval.tick() => {
+                self.drain_due_delayed_tasks();
             }
             _ = interval.tick() => {
                 if self.listDone {
@@ -1761,12 +1792,14 @@ impl SchedulerHandler {
     }
 
     pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
-        use tokio::time::{sleep, Duration};
         match task {
             SchedTask::AddNode(nodename) => {
-                // wait until all info of the node be synced
-                // todo: can't block main thread
-                sleep(Duration::from_secs(3)).await;
+                self.schedule_delayed_task(
+                    Duration::from_secs(3),
+                    SchedTask::DelayedInitNode(nodename.clone()),
+                );
+            }
+            SchedTask::DelayedInitNode(nodename) => {
                 for (funcId, _) in &self.funcs {
                     self.taskQueue.AddSnapshotTask(nodename, funcId);
                 }
