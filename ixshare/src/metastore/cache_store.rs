@@ -149,6 +149,7 @@ impl CacheStore {
     }
 
     pub fn Remove(&self, obj: &DataObject<Value>) -> Result<()> {
+        error!("cachestore remove {:?}", obj.StoreKey());
         return self.write().unwrap().Remove(obj);
     }
 
@@ -374,14 +375,14 @@ impl CacheStoreInner {
         return Ok(());
     }
 
-    pub fn Add(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
+    pub fn Add(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
         // the object's creator is the cachestore, so the channelRev == Revision
 
         let channelRev = self.ChannelRev();
-        // let rev = if etcd { obj.revision } else { channelRev };
+        let rev = if etcd { obj.revision } else { channelRev };
         let event = WatchEvent {
             type_: EventType::Added,
-            obj: obj.CopyWithRev(channelRev, obj.revision),
+            obj: obj.CopyWithRev(channelRev, rev),
         };
 
         return self.ProcessEvent(&event);
@@ -391,19 +392,19 @@ impl CacheStoreInner {
         let rev = self.ChannelRev();
         let event = WatchEvent {
             type_: EventType::Deleted,
-            obj: obj.CopyWithRev(rev, obj.revision),
+            obj: obj.CopyWithRev(rev, rev),
         };
 
         return self.ProcessEvent(&event);
     }
 
-    pub fn Update(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
+    pub fn Update(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
         let channelRev = self.ChannelRev();
-        // let rev = if etcd { obj.revision } else { channelRev };
+        let rev = if etcd { obj.revision } else { channelRev };
 
         let event = WatchEvent {
             type_: EventType::Modified,
-            obj: obj.CopyWithRev(channelRev, obj.revision),
+            obj: obj.CopyWithRev(channelRev, rev),
         };
 
         return self.ProcessEvent(&event);
@@ -440,6 +441,13 @@ impl CacheStoreInner {
         let mut removeWatches = Vec::new();
 
         for (idx, w) in &mut self.watchers {
+            if event.obj.objType == "pod" {
+                error!(
+                    "cachestore event {:#?} {:?}",
+                    event.obj.StoreKey(),
+                    event.type_
+                );
+            }
             match w.SendWatchCacheEvent(&wcEvent) {
                 Ok(()) => (),
                 Err(_) => {

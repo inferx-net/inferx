@@ -21,10 +21,10 @@ use crate::common::*;
 use crate::metastore::cache_store::CacheStore;
 use crate::metastore::informer::Informer;
 
-use inferxlib::data_obj::{DeltaEvent, EventType};
 use super::informer::EventHandler;
 use super::selection_predicate::ListOption;
 use super::store::ThreadSafeStore;
+use inferxlib::data_obj::{DeltaEvent, EventType};
 
 #[derive(Debug)]
 pub struct AggregateClientInner {
@@ -53,6 +53,10 @@ use async_trait::async_trait;
 #[async_trait]
 impl EventHandler for AggregateClient {
     async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
+        if event.obj.objType == "pod" {
+            error!("AggregateClient event {:#?} {:?}", event.obj.StoreKey(), event.type_);
+        }
+
         match event.type_ {
             EventType::Added => {
                 self.aggregateCacher.Add(&event.obj).unwrap();
