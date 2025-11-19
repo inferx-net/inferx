@@ -1,5 +1,6 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta13
+VERSION := v0.1.5.beta14fib
+
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -136,10 +137,10 @@ stopdash:
 
 runkblob:
 	-sudo rm /opt/inferx/log/*.log
-	sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
-	sudo kubectl apply -f k8s/scheduler-servicemonitor.yaml
+	# sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
+	# sudo kubectl apply -f k8s/scheduler-servicemonitor.yaml
 	# sudo kubectl apply -f k8s/spdk.yaml
-	sudo kubectl apply -f k8s/jaeger.yaml
+	# sudo kubectl apply -f k8s/jaeger.yaml
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
@@ -148,8 +149,8 @@ runkblob:
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml

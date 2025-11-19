@@ -2,7 +2,7 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Math-1.5B",
+    "name": "Qwen2.5-Math-1.5B-1",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.7.3",

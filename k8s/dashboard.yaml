@@ -14,6 +14,8 @@ spec:
       labels:
         app: inferx-dashboard
     spec:
+      nodeSelector:
+        inferx_storage: data 
       containers:
         - name: inferx-dashboard
           image: inferx/inferx_dashboard:${VERSION}
