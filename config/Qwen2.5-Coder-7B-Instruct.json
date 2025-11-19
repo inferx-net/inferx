@@ -5,7 +5,7 @@
     "name": "Qwen2.5-Coder-7B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.10.0",
+            "image": "vllm/vllm-openai:v0.11.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
@@ -14,7 +14,6 @@
                 "warning",
                 "--max-model-len",
                 "2000",
-                "--async-scheduling",
                 "--tensor-parallel-size=2"
             ],
             "resources": {
@@ -63,9 +62,9 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             },
             "policy": {
                 "Obj": {

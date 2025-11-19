@@ -5,14 +5,13 @@
     "name": "Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.10.0",
+            "image": "vllm/vllm-openai:v0.11.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
                 "--trust-remote-code",
                 "--uvicorn-log-level",
                 "warning",
-                "--async-scheduling",
                 "--max-model-len",
                 "2048",
                 "--tensor-parallel-size=2"
@@ -63,9 +62,9 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             },
             "policy": {
                 "Obj": {
