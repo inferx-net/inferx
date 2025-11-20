@@ -137,6 +137,10 @@ services:
     user: root
     cpus: 20
     network_mode: "host"
+    ulimits:
+      nofile:
+        soft: 1048576  # soft limit
+        hard: 1048576  # hard limit  
     environment:
       - STATESVC_ADDR=http://localhost:1237
       - RUN_SERVICE=IxProxy
