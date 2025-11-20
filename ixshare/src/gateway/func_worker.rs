@@ -362,9 +362,9 @@ impl FuncWorker {
     // return is_fail
     pub async fn HandleReturn(&self, sender: HttpSender) -> bool {
         self.funcAgent.activeReqCnt.fetch_sub(1, Ordering::SeqCst);
-        let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::Relaxed);
+        let ongoingReqCnt = self.ongoingReqCnt.fetch_sub(1, Ordering::AcqRel);
         if sender.Fail() {
-            if self.failCount.fetch_add(1, Ordering::Relaxed) == 3 {
+            if self.failCount.fetch_add(1, Ordering::AcqRel) == 3 {
                 // fail 3 times
                 error!("Pod failed 3 times: {:?}", self.WorkerName());
                 self.FinishWorker().await;

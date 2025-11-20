@@ -5,10 +5,13 @@
     "name": "Qwen2.5-Math-1.5B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.7.3",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Math-1.5B-Instruct"
+                "Qwen/Qwen2.5-Math-1.5B-Instruct",
+                "--uvicorn-log-level",
+                "warning",
+                "--async-scheduling"
             ],
             "resources": {
                 "CPU": 12000,

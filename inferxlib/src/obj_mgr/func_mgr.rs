@@ -58,6 +58,12 @@ pub struct HttpEndpoint {
     #[serde(default)]
     pub schema: URIScheme,
     pub probe: String,
+    #[serde(default = "ProbeTimeoutDefault")]
+    pub probeTimeout: u32,
+}
+
+fn ProbeTimeoutDefault() -> u32 {
+    return 1000;
 }
 
 impl Default for HttpEndpoint {
@@ -66,6 +72,7 @@ impl Default for HttpEndpoint {
             port: 80,
             schema: URIScheme::Http,
             probe: "/health".to_owned(),
+            probeTimeout: 1000,
         };
     }
 }
@@ -82,7 +89,7 @@ pub struct SampleCall {
 
 impl Default for SampleCall {
     fn default() -> Self {
-        let mut map = BTreeMap::new();
+        let mut map: BTreeMap<String, String> = BTreeMap::new();
         map.insert("name".to_owned(), "Unknown".to_owned());
         map.insert("max_tokens".to_owned(), "1000".to_owned());
         map.insert("temperature".to_owned(), "0".to_owned());
@@ -158,9 +165,6 @@ pub struct FuncSpec {
     #[serde(rename = "standby")]
     pub standby: Standby,
 
-    #[serde(default)]
-    pub probe: HttpEndpoint,
-
     #[serde(rename = "sample_query")]
     pub sampleCall: SampleCall,
 
@@ -207,12 +211,12 @@ impl Default for FuncSpec {
                 port: 80,
                 probe: "/health".to_owned(),
                 schema: URIScheme::Http,
+                probeTimeout: 1000,
             },
             entrypoint: Vec::new(),
             version: 0,
             resources: Resources::default(),
             standby: Standby::default(),
-            probe: HttpEndpoint::default(),
             sampleCall: SampleCall::default(),
             policy: Default::default(),
         };

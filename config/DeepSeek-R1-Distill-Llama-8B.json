@@ -5,12 +5,15 @@
     "name": "DeepSeek-R1-Distill-Llama-8B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
                 "/root/.cache/huggingface/git/DeepSeek-R1-Distill-Llama-8B",
                 "--served-model-name",
                 "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+                "--uvicorn-log-level",
+                "warning",
+                "--async-scheduling",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",
@@ -31,8 +34,8 @@
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
                 ],
                 [
-                    "VLLM_CUDART_SO_PATH",
-                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                    "TORCH_CUDA_ARCH_LIST",
+                    "8.6"
                 ]
             ],
             "mounts": [
@@ -61,6 +64,17 @@
                 "gpu": "Blob",
                 "pageable": "Blob",
                 "pinned": "Blob"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 1,
+                    "standby_per_node": 1,
+                    "parallel": 200,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
+                }
             }
         }
     }

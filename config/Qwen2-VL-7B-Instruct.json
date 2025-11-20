@@ -5,12 +5,14 @@
     "name": "Qwen2-VL-7B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2-VL-7B-Instruct",
-                "--disable-custom-all-reduce",
                 "--trust-remote-code",
+                "--uvicorn-log-level",
+                "warning",
+                "--async-scheduling",
                 "--gpu-memory-utilization",
                 " 0.90",
                 "--max-model-len",
@@ -23,7 +25,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 14200
+                    "vRam": 13800
                 }
             },
             "envs": [
@@ -62,6 +64,17 @@
                 "gpu": "Blob",
                 "pageable": "Blob",
                 "pinned": "Blob"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 1,
+                    "standby_per_node": 1,
+                    "parallel": 20,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
+                }
             }
         }
     }

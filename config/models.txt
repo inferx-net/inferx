@@ -24,6 +24,9 @@ export IFERX_PASSWORD="test"
 
 # /opt/inferx/bin/ixctl delete tenant system system public
 
+"--async-scheduling",
+                
+
 google/gemma-7b-it
 #######################################################
 /opt/inferx/bin/ixctl create TinyLlama_namespace.json
@@ -44,7 +47,6 @@ google/gemma-7b-it
 #######################################################
 /opt/inferx/bin/ixctl create Qwen_namespace.json
 
-/opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ.json
 /opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ.json
 /opt/inferx/bin/ixctl create MythoMax-L2-13B-AWQ.json
 
@@ -82,7 +84,7 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Math-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen   Qwen2.5-Coder-3B
-/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
+/opt/inferx/bin/ixctl delete function public Qwen MythoMax-L2-13B-AWQ
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-7B-Instruct-1M
