@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta15
+VERSION := v0.1.5.beta16
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -24,6 +24,22 @@ svcdeploy: svc
 	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION) ./target/svc
 	sudo docker image prune -f
 	# sudo docker push inferx/inferx_platform:$(VERSION)
+
+hf:
+	- mkdir -p ./target/hf
+	cp -f ./deployment/hf.Dockerfile ./target/hf/Dockerfile
+	cp -f ./deployment/download.py ./target/hf/download.py
+	sudo docker build -t inferx/inferx_hfdownload:v0.1.0 ./target/hf
+
+pushhf: hf
+	sudo docker push inferx/inferx_hfdownload:v0.1.0
+
+# make download MODEL=Qwen/Qwen2.5-0.5B
+download:
+	sudo docker run --rm \
+    -v $(pwd)/models:/models \
+    inferx/inferx_hfdownload:v0.1.0 \
+        $(MODEL)
 
 pushsvc: svcdeploy
 	# sudo docker login -u inferx
