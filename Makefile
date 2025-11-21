@@ -25,6 +25,22 @@ svcdeploy: svc
 	sudo docker image prune -f
 	# sudo docker push inferx/inferx_platform:$(VERSION)
 
+hf:
+	- mkdir -p ./target/hf
+	cp -f ./deployment/hf.Dockerfile ./target/hf/Dockerfile
+	cp -f ./deployment/download.py ./target/hf/download.py
+	sudo docker build -t inferx/inferx_hfdownload:v0.1.0 ./target/hf
+
+pushhf: hf
+	sudo docker push inferx/inferx_hfdownload:v0.1.0
+
+# make download MODEL=Qwen/Qwen2.5-0.5B
+download:
+	sudo docker run --rm \
+    -v $(pwd)/models:/models \
+    inferx/inferx_hfdownload:v0.1.0 \
+        $(MODEL)
+
 pushsvc: svcdeploy
 	# sudo docker login -u inferx
 	sudo docker tag inferx/inferx_platform:$(VERSION) inferx/inferx_platform:$(VERSION)
