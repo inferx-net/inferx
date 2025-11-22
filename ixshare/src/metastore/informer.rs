@@ -135,6 +135,7 @@ impl Informer {
                 };
             }
 
+            error!("informer::GetClient fail, waiting 1000 ms to retry");
             // retry after one second
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(1000)) => {}
@@ -143,6 +144,7 @@ impl Informer {
                     return None
                 }
             }
+            error!("informer::GetClient fail, retrying");
         }
     }
 

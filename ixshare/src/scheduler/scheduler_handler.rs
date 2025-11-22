@@ -2965,7 +2965,7 @@ pub async fn GetClient() -> Result<CacherClient> {
             Ok(client) => return Ok(client),
             Err(e) => {
                 println!(
-                    "informer::GetClient fail to connect to {} with error {:?}",
+                    "schedudlerHandler informer::GetClient fail to connect to {} with error {:?}",
                     addr, e
                 );
             }
