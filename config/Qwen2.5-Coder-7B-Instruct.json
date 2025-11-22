@@ -5,7 +5,7 @@
     "name": "Qwen2.5-Coder-7B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.11.0",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-7B-Instruct",
@@ -62,9 +62,9 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
             },
             "policy": {
                 "Obj": {

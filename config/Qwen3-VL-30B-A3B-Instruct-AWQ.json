@@ -2,23 +2,30 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-3B",
+    "name": "Qwen3-VL-30B-A3B-Instruct-AWQ",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.11.1",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Coder-3B",
+                "remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
+                "--gpu-memory-utilization",
+                "0.99",
                 "--max-model-len",
-                "1000"
+                "2000",
+                "--dtype",
+                "float16",
+                "--tensor-parallel-size=1"
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 24000,
+                "Mem": 80000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 10000
+                    "vRam": 70000
                 }
             },
             "envs": [
@@ -27,12 +34,12 @@
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
                 ],
                 [
-                    "VLLM_CUDART_SO_PATH",
-                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                    "TORCH_CUDA_ARCH_LIST",
+                    "9.0;9.0+PTX"
                 ],
                 [
-                    "HF_HUB_OFFLINE",
-                    "1"
+                    "VLLM_USE_BF16",
+                    "0"
                 ]
             ],
             "mounts": [
@@ -47,27 +54,20 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
-                "path": "v1/completions",
+                "apiType": "image2text",
+                "prompt": "What is in this image?",
+                "path": "v1/chat/completions",
+                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-3B",
-                    "max_tokens": "800",
-                    "temperature": "0",
-                    "stream": "true"
+                    "model": "remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ",
+                    "max_tokens": "1000",
+                    "temperature": "0"
                 }
             },
             "standby": {
-                "gpu": "File",
+                "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "File"
-            },
-            "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "default_funcpolicy2"
-                }
+                "pinned": "Mem"
             }
         }
     }

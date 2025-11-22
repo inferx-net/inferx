@@ -11,6 +11,8 @@
                 "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
+                "--gpu-memory-utilization",
+                "0.99",
                 "--max-model-len",
                 "1000",
                 "--tensor-parallel-size=2"
@@ -21,7 +23,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 80000
+                    "vRam": 73000
                 }
             },
             "envs": [

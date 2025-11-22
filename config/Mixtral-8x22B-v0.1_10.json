@@ -1,24 +1,27 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-3B",
+    "namespace": "mistralai",
+    "name": "Mixtral-8x22B-v0.1_10",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.10.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Coder-3B",
+                "mistralai/Mixtral-8x22B-v0.1",
+                "--gpu-memory-utilization",
+                "0.95",
                 "--max-model-len",
-                "1000"
+                "1200",
+                "--tensor-parallel-size=4"
             ],
             "resources": {
-                "CPU": 12000,
-                "Mem": 24000,
+                "CPU": 20000,
+                "Mem": 100000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 10000
+                    "Count": 4,
+                    "vRam": 72100
                 }
             },
             "envs": [
@@ -29,10 +32,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "HF_HUB_OFFLINE",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -48,25 +47,37 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
+                "prompt": "I like traveling by train because",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-3B",
-                    "max_tokens": "800",
+                    "model": "mistralai/Mixtral-8x22B-v0.1",
+                    "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"
                 }
             },
             "standby": {
-                "gpu": "File",
+                "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "File"
+                "pinned": "Mem"
             },
             "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "default_funcpolicy2"
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 10,
+                    "standby_per_node": 1,
+                    "parallel": 2,
+                    "queue_len": 1000,
+                    "queue_timeout": 30.0,
+                    "scaleout_policy": {
+                        "WaitQueueRatio": {
+                            "wait_ratio": 0.1
+                        }
+                    },
+                    "scalein_timeout": 0.01,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
                 }
             }
         }
