@@ -114,6 +114,7 @@ services:
       - /opt/inferx/log:/opt/inferx/log
       - /opt/inferx/cache:/opt/inferx/cache
       - /opt/inferx/snapshot:/opt/inferx/snapshot
+      - /opt/inferx/docker_log:/opt/inferx/docker_log
       - /opt/inferx/work:/opt/inferx/work
       - /opt/inferx/run:/opt/inferx/run
       # - /opt/inferx/:/opt/inferx/
