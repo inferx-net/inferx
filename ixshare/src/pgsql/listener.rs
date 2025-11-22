@@ -216,7 +216,8 @@ impl Listener {
             loop {
                 match clone.Process().await {
                     Err(e) => {
-                        error!("Listener fail with error {:?}, rerun ...", e);
+                        error!("Listener fail with error {:?}, restart ...", e);
+                        std::process::exit(0);
                     }
                     Ok(_) => break,
                 }
