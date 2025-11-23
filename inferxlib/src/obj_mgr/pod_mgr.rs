@@ -275,7 +275,6 @@ impl Default for PodState {
 impl PodState {
     pub fn BlockStandby(&self) -> bool {
         match self {
-            Self::PullingImage => return true,
             Self::Restoring => return true,
             Self::Creating => return true,
             Self::Resuming => return true,

@@ -2119,7 +2119,7 @@ impl SchedulerHandler {
                 return Ok(());
             }
 
-            if state != PodState::Standby {
+            if state != PodState::Standby && state != PodState::PullingImage {
                 continue;
             }
 
