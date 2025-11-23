@@ -898,7 +898,7 @@ impl EventHandler for GwObjRepo {
         match self.ProcessDeltaEvent(event).await {
             Err(e) => {
                 error!(
-                    "GwObjRepo::Process fail for event {:?} with error {:?}",
+                    "GwObjRepo::Process fail for error {:#?} event {:#?} ",
                     event, e
                 );
             }

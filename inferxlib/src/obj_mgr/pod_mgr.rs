@@ -225,6 +225,7 @@ impl FuncPod {
 pub enum PodState {
     // init state
     Init,
+    PullingImage,
     // scheduler start to creating a new pod
     Creating,
     // a state when startup
@@ -274,6 +275,7 @@ impl Default for PodState {
 impl PodState {
     pub fn BlockStandby(&self) -> bool {
         match self {
+            Self::PullingImage => return true,
             Self::Restoring => return true,
             Self::Creating => return true,
             Self::Resuming => return true,
