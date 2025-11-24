@@ -53,10 +53,6 @@ use async_trait::async_trait;
 #[async_trait]
 impl EventHandler for AggregateClient {
     async fn handle(&self, _store: &ThreadSafeStore, event: &DeltaEvent) {
-        if event.obj.objType == "pod" {
-            error!("AggregateClient event {:#?} {:?}", event.obj.StoreKey(), event.type_);
-        }
-
         match event.type_ {
             EventType::Added => {
                 self.aggregateCacher.Add(&event.obj).unwrap();

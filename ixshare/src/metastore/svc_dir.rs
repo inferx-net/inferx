@@ -112,7 +112,6 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
         };
 
         let version = self.write().unwrap().channelRev.Next();
-        dataobj.channelRev = version;
         dataobj.revision = version;
 
         let cacher = match self.GetCacher(&dataobj.objType) {
@@ -157,7 +156,6 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
         };
 
         let version = self.write().unwrap().channelRev.Next();
-        dataobj.channelRev = version;
         dataobj.revision = version;
 
         let cacher = match self.GetCacher(&dataobj.objType) {
@@ -214,7 +212,7 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
             &req.obj_type, &req.tenant, &req.namespace, &req.name
         );
 
-        let _version = self.write().unwrap().channelRev.Next();
+        let version = self.write().unwrap().channelRev.Next();
 
         match cacher
             .Get(&req.tenant, &req.namespace, &req.name, req.expect_rev)
@@ -233,18 +231,22 @@ impl ixmeta::ix_meta_service_server::IxMetaService for SvcDir {
                         revision: 0,
                     }));
                 }
-                Some(obj) => match cacher.Remove(&obj) {
-                    Err(e) => {
-                        return Ok(Response::new(ixmeta::DeleteResponseMessage {
-                            error: format!("svcdir fail to delete obj with error {:?}", e),
-                            revision: 0,
-                        }));
-                    }
-                    Ok(_) => {
-                        return Ok(Response::new(ixmeta::DeleteResponseMessage {
-                            error: "".into(),
-                            revision: self.read().unwrap().channelRev.Current(),
-                        }));
+                Some(mut obj) => 
+                {
+                    obj.revision = version;
+                    match cacher.Remove(&obj) {
+                        Err(e) => {
+                            return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                                error: format!("svcdir fail to delete obj with error {:?}", e),
+                                revision: 0,
+                            }));
+                        }
+                        Ok(_) => {
+                            return Ok(Response::new(ixmeta::DeleteResponseMessage {
+                                error: "".into(),
+                                revision: self.read().unwrap().channelRev.Current(),
+                            }));
+                        }
                     }
                 },
             },

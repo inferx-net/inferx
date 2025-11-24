@@ -515,13 +515,10 @@ impl EtcdStore {
             inner.cacheStore.clear();
             inner.cache.Reset();
 
-            let channelRev = inner.ChannelRev();
             for o in list.objs {
-                let revision = o.revision;
-                let obj = o.CopyWithRev(channelRev, revision);
+                let obj = o.DeepCopy();
                 inner.Add(&obj, true)?;
             }
-            inner.listRevision = channelRev;
         }
 
         return Ok(list.revision);

@@ -1415,6 +1415,7 @@ impl SchedulerHandler {
         let mut allocStates = BTreeMap::new();
 
         // go through candidate list to look for node has enough free resource, if so return
+        // TODO may need wait for nodes info to be available
         for nodename in candidateNodes {
             let node = self.nodes.get(nodename).unwrap();
 

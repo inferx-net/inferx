@@ -159,7 +159,7 @@ impl Informer {
             match l.map.get(k) {
                 None => {
                     map.insert(
-                        v.channelRev,
+                        v.EpochRevision(),
                         DeltaEvent {
                             type_: EventType::Added,
                             inInitialList: first,
@@ -172,7 +172,7 @@ impl Informer {
                     if old.EpochRevision() < v.EpochRevision() {
                         // the new obj is newer than the saved
                         map.insert(
-                            v.channelRev,
+                            v.EpochRevision(),
                             DeltaEvent {
                                 type_: EventType::Modified,
                                 inInitialList: first,
@@ -189,7 +189,7 @@ impl Informer {
             match newl.map.get(k) {
                 None => {
                     map.insert(
-                        v.channelRev,
+                        v.EpochRevision(),
                         DeltaEvent {
                             type_: EventType::Deleted,
                             inInitialList: false,
@@ -208,7 +208,6 @@ impl Informer {
         }
 
         l.id = newl.id;
-
         return Ok(map.values().cloned().collect());
     }
 
@@ -274,7 +273,7 @@ impl Informer {
                 let event = tokio::select! {
                     e = ws.Next() => {
                         e
-                    }
+                    }   
                     _ = closeNotify.notified() => {
                         self.closed.store(true, Ordering::SeqCst);
                         return Ok(())
@@ -339,18 +338,6 @@ impl Informer {
                 };
 
                 self.Distribute(&event).await;
-            }
-
-            let objs = client.List(&objType, &tenant, &namespace, &opts).await?;
-            opts.revision = objs.revision + 1;
-            for o in objs.objs {
-                self.Distribute(&DeltaEvent {
-                    type_: EventType::Added,
-                    inInitialList: false,
-                    obj: o,
-                    oldObj: None,
-                })
-                .await;
             }
         }
     }
