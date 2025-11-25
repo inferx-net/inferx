@@ -225,6 +225,7 @@ impl FuncPod {
 pub enum PodState {
     // init state
     Init,
+    PullingImage,
     // scheduler start to creating a new pod
     Creating,
     // a state when startup
