@@ -51,6 +51,7 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl create Qwen_namespace.json
 
 /opt/inferx/bin/ixctl create Hermes-2-Pro-Llama-3-8B-AWQ.json
+
 /opt/inferx/bin/ixctl create MythoMax-L2-13B-AWQ.json
 
 /opt/inferx/bin/ixctl create Llama-3.2-3B-Instruct-FP8.json

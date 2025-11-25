@@ -149,6 +149,7 @@ impl CacheStore {
     }
 
     pub fn Remove(&self, obj: &DataObject<Value>) -> Result<()> {
+        error!("cachestore remove {:?}", obj.StoreKey());
         return self.write().unwrap().Remove(obj);
     }
 
@@ -238,10 +239,6 @@ impl CacheStore {
 
     pub fn Contains(&self, key: &str) -> bool {
         return self.read().unwrap().GetByKey(key).is_some();
-    }
-
-    pub fn Refresh(&self, objs: &[DataObject<Value>]) -> Result<()> {
-        return self.write().unwrap().Refresh(objs);
     }
 
     pub fn ProcessEvent(&self, event: &WatchEvent) -> Result<()> {
@@ -374,36 +371,28 @@ impl CacheStoreInner {
         return Ok(());
     }
 
-    pub fn Add(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
-        // the object's creator is the cachestore, so the channelRev == Revision
-
-        let channelRev = self.ChannelRev();
-        let rev = if etcd { obj.revision } else { channelRev };
+    pub fn Add(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
         let event = WatchEvent {
             type_: EventType::Added,
-            obj: obj.CopyWithRev(channelRev, rev),
+            obj: obj.DeepCopy(),
         };
 
         return self.ProcessEvent(&event);
     }
 
     pub fn Remove(&mut self, obj: &DataObject<Value>) -> Result<()> {
-        let rev = self.ChannelRev();
         let event = WatchEvent {
             type_: EventType::Deleted,
-            obj: obj.CopyWithRev(rev, rev),
+            obj: obj.DeepCopy(),
         };
 
         return self.ProcessEvent(&event);
     }
 
-    pub fn Update(&mut self, obj: &DataObject<Value>, etcd: bool) -> Result<()> {
-        let channelRev = self.ChannelRev();
-        let rev = if etcd { obj.revision } else { channelRev };
-
+    pub fn Update(&mut self, obj: &DataObject<Value>, _etcd: bool) -> Result<()> {
         let event = WatchEvent {
             type_: EventType::Modified,
-            obj: obj.CopyWithRev(channelRev, rev),
+            obj: obj.DeepCopy(),
         };
 
         return self.ProcessEvent(&event);
@@ -428,7 +417,7 @@ impl CacheStoreInner {
             Some(o) => {
                 let newRev = event.obj.revision;
                 let preRev = o.revision;
-
+                
                 // get older update, ignore this
                 if newRev <= preRev {
                     return Ok(());
@@ -440,6 +429,13 @@ impl CacheStoreInner {
         let mut removeWatches = Vec::new();
 
         for (idx, w) in &mut self.watchers {
+            if event.obj.objType == "pod" {
+                error!(
+                    "cachestore event {:#?} {:?}",
+                    event.obj.StoreKey(),
+                    event.type_
+                );
+            }
             match w.SendWatchCacheEvent(&wcEvent) {
                 Ok(()) => (),
                 Err(_) => {
@@ -457,7 +453,7 @@ impl CacheStoreInner {
         if event.type_ == EventType::Deleted {
             self.cacheStore.remove(&key);
         } else {
-            self.cacheStore.insert(key, event.obj.clone());
+            self.cacheStore.insert(key, event.obj.CopyWithRev(channelRev, revision));
         }
 
         return Ok(());

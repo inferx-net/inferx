@@ -282,6 +282,19 @@ impl ixmeta::ix_meta_service_server::IxMetaService for StateSvc {
         Ok(Response::new(response))
     }
 
+    async fn get_addr(
+        &self,
+        _request: Request<ixmeta::GetAddrReqMessage>,
+    ) -> SResult<Response<ixmeta::GetAddrReponseMessage>, Status> {
+        let addr = STATESVC_CONFIG.svcIp.clone();
+        let port = STATESVC_CONFIG.stateSvcPort;
+        return Ok(Response::new(ixmeta::GetAddrReponseMessage {
+            error: "".into(),
+            svc_ip: addr,
+            port: port as i64,
+        }));
+    }
+
     async fn create(
         &self,
         request: Request<ixmeta::CreateRequestMessage>,

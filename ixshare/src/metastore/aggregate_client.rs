@@ -21,10 +21,10 @@ use crate::common::*;
 use crate::metastore::cache_store::CacheStore;
 use crate::metastore::informer::Informer;
 
-use inferxlib::data_obj::{DeltaEvent, EventType};
 use super::informer::EventHandler;
 use super::selection_predicate::ListOption;
 use super::store::ThreadSafeStore;
+use inferxlib::data_obj::{DeltaEvent, EventType};
 
 #[derive(Debug)]
 pub struct AggregateClientInner {

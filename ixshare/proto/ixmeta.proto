@@ -19,6 +19,7 @@ package ixmeta;
 
 service IxMetaService {
   rpc Version (VersionRequestMessage) returns (VersionResponseMessage) {}
+  rpc GetAddr (GetAddrReqMessage) returns (GetAddrReponseMessage) {}
   rpc Get (GetRequestMessage) returns (GetResponseMessage) {}
   rpc List (ListRequestMessage) returns (ListResponseMessage) {}
   rpc Watch (WatchRequestMessage) returns (stream WEvent) {}
@@ -26,6 +27,15 @@ service IxMetaService {
   rpc Update(UpdateRequestMessage) returns (UpdateResponseMessage) {}
   rpc Delete(DeleteRequestMessage) returns (DeleteResponseMessage) {}
   rpc Uid(UidRequestMessage) returns (UidReponseMessage) {}
+}
+
+message GetAddrReqMessage {
+}
+
+message GetAddrReponseMessage {
+    string error = 1;
+    string svcIp = 2;
+    int64 port = 3;
 }
 
 message UidRequestMessage {
@@ -69,10 +79,11 @@ message Obj {
     string name = 4;
     int64 channelRev = 5;
     int64 revision = 6;
-    repeated KV labels = 7;
-    repeated KV annotations = 8;
+    int64 src_epoch = 7;
+    repeated KV labels = 8;
+    repeated KV annotations = 9;
     
-    string data = 9;
+    string data = 10;
 }
 
 message ResponseHeader {

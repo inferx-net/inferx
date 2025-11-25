@@ -7,7 +7,7 @@
         "min_replica": 0,
         "max_replica": 2,
         "standby_per_node": 2,
-        "parallel": 300,
+        "parallel": 100,
         "queue_len": 1000,
         "queue_timeout": 30.0,
         "scaleout_policy": {
