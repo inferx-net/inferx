@@ -86,8 +86,8 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl create Qwen3-235B-A22B-Thinking-2507.json
 
-
-/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
+/opt/inferx/bin/ixctl delete function public Qwen Llama-3.2-3B-Instruct-FP8
+/opt/inferx/bin/ixctl delete function public Qwen Hermes-2-Pro-Llama-3-8B-AWQ
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Math-1.5B-Instruct
 /opt/inferx/bin/ixctl delete function public Qwen   Qwen2.5-Coder-3B
@@ -144,6 +144,7 @@ google/gemma-7b-it
 # /opt/inferx/bin/ixctl create Baichuan2-13B-Chat-4bits.json
 
 /opt/inferx/bin/ixctl delete function public baichuan-inc Baichuan-7B
+/opt/inferx/bin/ixctl delete function public baichuan-inc Baichuan2-7B-Chat
 /opt/inferx/bin/ixctl delete function public baichuan-inc Baichuan2-13B-Chat-4bits
 
 

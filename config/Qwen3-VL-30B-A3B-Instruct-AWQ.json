@@ -5,41 +5,29 @@
     "name": "Qwen3-VL-30B-A3B-Instruct-AWQ",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.11.1",
+            "image": "vllm/vllm-openai:v0.11.0",
             "commands": [
                 "--model",
                 "remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ",
-                "--disable-custom-all-reduce",
-                "--trust-remote-code",
                 "--gpu-memory-utilization",
                 "0.99",
                 "--max-model-len",
                 "2000",
-                "--dtype",
-                "float16",
-                "--tensor-parallel-size=1"
+                "--tensor-parallel-size=2"
             ],
             "resources": {
                 "CPU": 12000,
-                "Mem": 80000,
+                "Mem": 30000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 70000
+                    "Count": 2,
+                    "vRam": 14000
                 }
             },
             "envs": [
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
-                ],
-                [
-                    "TORCH_CUDA_ARCH_LIST",
-                    "9.0;9.0+PTX"
-                ],
-                [
-                    "VLLM_USE_BF16",
-                    "0"
                 ]
             ],
             "mounts": [
@@ -60,14 +48,33 @@
                 "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
                 "body": {
                     "model": "remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ",
-                    "max_tokens": "1000",
+                    "max_tokens": "800",
                     "temperature": "0"
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "Mem"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 10,
+                    "standby_per_node": 1,
+                    "parallel": 2,
+                    "queue_len": 1000,
+                    "queue_timeout": 30.0,
+                    "scaleout_policy": {
+                        "WaitQueueRatio": {
+                            "wait_ratio": 0.1
+                        }
+                    },
+                    "scalein_timeout": 0.01,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
+                }
             }
         }
     }

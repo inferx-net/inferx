@@ -5,7 +5,7 @@
     "name": "Qwen2.5-Coder-3B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-openai:v0.11.0",
             "commands": [
                 "--model",
                 "Qwen/Qwen2.5-Coder-3B",
@@ -59,9 +59,9 @@
                 }
             },
             "standby": {
-                "gpu": "File",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             },
             "policy": {
                 "Link": {

@@ -36,6 +36,10 @@
                 [
                     "TORCH_CUDA_ARCH_LIST",
                     "8.6"
+                ],
+                [
+                    "FLASHINFER_DISABLE_SAMPLING",
+                    "1"
                 ]
             ],
             "mounts": [
