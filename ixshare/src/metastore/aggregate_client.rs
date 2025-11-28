@@ -111,7 +111,9 @@ impl AggregateClient {
                     let store = informer.store.clone();
                     let lock = store.read();
                     for (_k, obj) in &lock.map {
-                        self.aggregateCacher.Remove(obj)?;
+                        let mut o = obj.clone();
+                        o.revision += 1;
+                        self.aggregateCacher.Remove(&o)?;
                     }
 
                     informer.Close()?;
