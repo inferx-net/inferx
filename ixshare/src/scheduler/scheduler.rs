@@ -255,7 +255,15 @@ pub async fn SchedulerProcess() -> Result<()> {
             info!("schedulersvc finish {:?}", res);
         }
         res  = schedulerRegister.Process(leaseId) => {
-            info!("schedulerRegister finish {:?}", res);
+            match res {
+                Ok(()) => {
+                    info!("schedulerRegister stopped");
+                }
+                Err(e) => {
+                    error!("schedulerRegister keepalive failed {:?}", e);
+                    panic!("LeaseKeepalive failed: {:?}", e);
+                }
+            }
         }
     }
 
