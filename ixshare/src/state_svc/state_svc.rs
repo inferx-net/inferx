@@ -676,8 +676,13 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
     info!("StateService config {:#?}", *STATESVC_CONFIG);
     let stateSvc = StateSvc::New(&STATESVC_CONFIG.etcdAddrs, &STATESVC_CONFIG.auditdbAddr).await?;
 
-    let stateSvcRegister =
-        StateSvcRegister::New(&STATESVC_CONFIG.etcdAddrs, "ss", "0.0.0.0", 8890).await?;
+    let stateSvcRegister = StateSvcRegister::New(
+        &STATESVC_CONFIG.etcdAddrs,
+        "ss",
+        &STATESVC_CONFIG.svcIp,
+        STATESVC_CONFIG.stateSvcPort,
+    )
+    .await?;
 
     error!("StateService 1");
     let nodeagentAggrStore = IxAggrStore::New(&stateSvc.svcDir.ChannelRev()).await?;
