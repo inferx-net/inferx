@@ -3072,3 +3072,39 @@ pub async fn GetClient() -> Result<CacherClient> {
     );
     return Err(Error::CommonError(errstr));
 }
+
+pub async fn GetClientWithRetry()
+    -> Result<CacherClient>
+{
+    let mut delay = Duration::from_millis(100);
+    let max_delay = Duration::from_secs(3);
+    let max_retries = 5;
+
+    let addr = &SCHEDULER_CONFIG.stateSvcAddrs;
+
+    for attempt in 1..=max_retries {
+        match CacherClient::New(addr[0].clone()).await {
+            Ok(client) => {
+                error!("Connected to state service at {} after {} attempt(s)", addr[0], attempt);
+                return Ok(client);
+            }
+            Err(e) => {
+                error!(
+                    "fail to connect to {} (attempt {}/{}), err={:?}",
+                    addr[0], attempt, max_retries, e
+                );
+            }
+        }
+
+        if attempt < max_retries {
+            tokio::time::sleep(delay).await;
+            delay = std::cmp::min(delay * 2, max_delay);
+        }
+    }
+
+    let errstr = format!(
+        "GetClient fail: after {} attempt(s)",
+        max_retries
+    );
+    return Err(Error::CommonError(errstr));
+}

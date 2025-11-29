@@ -22,7 +22,7 @@ use tokio::sync::Notify;
 use super::informer::{EventHandler, Informer};
 use super::selection_predicate::ListOption;
 use crate::common::*;
-use crate::scheduler::scheduler_handler::GetClient;
+use crate::scheduler::scheduler_handler::GetClientWithRetry;
 
 #[derive(Debug)]
 pub struct InformerFactoryInner {
@@ -115,7 +115,7 @@ impl InformerFactory {
         return Ok(());
     }
     pub async fn Process(&self, notify: Arc<Notify>) -> Result<()> {
-        let client = GetClient().await?;
+        let client = GetClientWithRetry().await?;
         let mut addr = client.GetAddr().await.unwrap();
 
         info!("Informer factory Init addr is {}", addr);
@@ -128,8 +128,8 @@ impl InformerFactory {
                 Ok(_) => (),
             }
 
-            let client = GetClient().await?;
-            addr = client.GetAddr().await.unwrap();
+            let client = GetClientWithRetry().await?;
+            addr = client.GetAddr().await.unwrap(); //TODO: handle panic
             match self.Reload(&addr).await {
                 Err(e) => error!("informer_factory reload fail with errror {:?}", e),
                 Ok(_) => (),
