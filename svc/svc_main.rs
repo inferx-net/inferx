@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
     }));
 
     error!(
-        "Start inferx service ....xxx std::env::var(RUN_SERVICE) {:?}",
+        "Start inferx service .... std::env::var(RUN_SERVICE) {:?}",
         std::env::var(RUN_SERVICE)
     );
 

@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta16
+VERSION := v0.1.5.beta17
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -34,10 +34,11 @@ hf:
 pushhf: hf
 	sudo docker push inferx/inferx_hfdownload:v0.1.0
 
-# make download MODEL=Qwen/Qwen2.5-0.5B
+# make download MODEL=remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ
 download:
 	sudo docker run --rm \
-    -v $(pwd)/models:/models \
+	--network host \
+    -v /opt/inferx/cache:/models \
     inferx/inferx_hfdownload:v0.1.0 \
         $(MODEL)
 
@@ -177,7 +178,10 @@ runstatesvc:
 
 stopstatesvc:
 	sudo kubectl delete deployment statesvc
-	
+
+rundb:
+	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
+
 runkdash:
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 

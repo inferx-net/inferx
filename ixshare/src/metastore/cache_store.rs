@@ -149,7 +149,6 @@ impl CacheStore {
     }
 
     pub fn Remove(&self, obj: &DataObject<Value>) -> Result<()> {
-        error!("cachestore remove {:?}", obj.StoreKey());
         return self.write().unwrap().Remove(obj);
     }
 
@@ -429,13 +428,6 @@ impl CacheStoreInner {
         let mut removeWatches = Vec::new();
 
         for (idx, w) in &mut self.watchers {
-            if event.obj.objType == "pod" {
-                error!(
-                    "cachestore event {:#?} {:?}",
-                    event.obj.StoreKey(),
-                    event.type_
-                );
-            }
             match w.SendWatchCacheEvent(&wcEvent) {
                 Ok(()) => (),
                 Err(_) => {

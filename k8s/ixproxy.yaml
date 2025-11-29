@@ -70,7 +70,7 @@ spec:
                 containerName: ixproxy
                 resource: limits.cpu                            
           - name: ENALBE_BLOB
-            value: "false"                     
+            value: "true"                     
           resources:
             requests:
               cpu: "5"
@@ -117,9 +117,6 @@ spec:
         - name: dev-hugepages
           hostPath:
             path: /dev/hugepages
-        - name: shm
-          hostPath:
-            path: /dev/shm
         - name: opt-inferx
           hostPath:
             path: /opt/inferx/
@@ -153,4 +150,8 @@ spec:
         - name: opt-inferx-run
           hostPath:
             path: /opt/inferx/run
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 30Gi 
       restartPolicy: Always
