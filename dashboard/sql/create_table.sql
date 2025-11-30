@@ -1,4 +1,5 @@
 
+
 --DROP TABLE Pod;
 CREATE TABLE Pod (
     tenant          VARCHAR NOT NULL,
@@ -6,10 +7,11 @@ CREATE TABLE Pod (
     fpname          VARCHAR NOT NULL,
     fprevision      bigint,
     id              VARCHAR NOT NULL,
+    podtype         VARCHAR NOT NULL,
     nodename        VARCHAR NOT NULL,
     state           VARCHAR NOT NULL,
     updatetime      TIMESTAMPTZ,
-    PRIMARY KEY(tenant, namespace, fpname, fprevision, id)
+    PRIMARY KEY(tenant, namespace, fpname, fprevision, podtype, nodename, id)
 );
 
 --DROP TABLE PodAudit;

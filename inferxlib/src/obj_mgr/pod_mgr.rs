@@ -58,6 +58,16 @@ impl Default for CreatePodType {
     }
 }
 
+impl CreatePodType {
+    pub fn String(&self) -> String {
+        match self {
+            Self::Normal => "Normal".to_owned(),
+            Self::Snapshot => "Snapshot".to_owned(),
+            Self::Restore => "Restore".to_owned(),
+        }
+    }
+}
+
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct FuncPodSpec {
     pub funcname: String,

@@ -275,6 +275,7 @@ pub struct SchedulerConfig {
     pub stateSvcAddrs: Vec<String>,
     pub nodeIp: String,
     pub schedulerPort: u16,
+    pub auditdbAddr: String,
 }
 
 impl SchedulerConfig {
@@ -306,11 +307,17 @@ impl SchedulerConfig {
             Err(_) => config.stateSvcAddrs.clone(),
         };
 
+        let auditdbAddr = match std::env::var("AUDITDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => config.auditdbAddr.clone(),
+        };
+
         let ret = Self {
             etcdAddrs: etcdAddrs,
             stateSvcAddrs: stateSvcAddrs,
             nodeIp: nodeIp,
             schedulerPort: schedulerPort,
+            auditdbAddr: auditdbAddr,
         };
 
         error!("SchedulerConfig is {:#?}", &ret);

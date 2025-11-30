@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta17
+VERSION := v0.1.5.beta18
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -143,14 +143,6 @@ stop:
 stopblob:
 	sudo docker compose -f docker-compose_blob.yml down
 
-rundash:
-	sudo docker run --net=host --name inferx_dashboard --env "KEYCLOAK_URL=http://192.168.0.22:1260/authn" \
-	-v /etc/letsencrypt/:/etc/letsencrypt/ --rm  inferx/inferx_dashboard:$(VERSION)
-
-stopdash:
-	sudo docker stop inferx_dashboard
-
-
 runkblob:
 	-sudo rm /opt/inferx/log/*.log
 	sudo kubectl apply -f k8s/gateway-servicemonitor.yaml
@@ -172,6 +164,12 @@ runkblob:
 	sudo kubectl apply -f k8s/ingress.yaml
 stopall:
 	sudo kubectl delete all --all 
+
+rundash:
+	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+
+stopdash:
+	sudo kubectl delete deployment inferx-dashboard
 
 runstatesvc:
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
