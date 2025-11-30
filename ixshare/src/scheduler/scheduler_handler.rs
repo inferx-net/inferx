@@ -15,6 +15,7 @@
 use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
+use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::collections::BTreeMap;
@@ -37,7 +38,6 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
 use tokio::time::{Duration, Interval};
 
-use crate::audit::FuncId;
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::SqlAudit;
 use crate::audit::POD_AUDIT_AGENT;
@@ -478,6 +478,7 @@ pub struct SchedulerHandler {
     /********************function ******************* */
     // funcname --> func
     pub funcs: BTreeMap<String, FuncStatus>,
+    pub funcstatus: BTreeMap<String, FunctionStatus>,
 
     /*********************snapshot ******************* */
     // funcid -> [nodename->SnapshotState]
@@ -504,6 +505,7 @@ pub struct SchedulerHandler {
 
     pub nodeListDone: bool,
     pub funcListDone: bool,
+    pub funcstatusListDone: bool,
     pub funcPodListDone: bool,
     pub snapshotListDone: bool,
     pub funcpolicyDone: bool,
@@ -1105,6 +1107,11 @@ impl SchedulerHandler {
                                         self.taskQueue.AddFunc(&funcid);
                                     }
                                 }
+                                FunctionStatus::KEY => {
+                                    let funcstatus = FunctionStatus::FromDataObject(obj)?;
+                                    let funcid = funcstatus.Id();
+                                    self.funcstatus.insert(funcid, funcstatus);
+                                }
                                 Node::KEY => {
                                     let node = Node::FromDataObject(obj)?;
                                     self.CheckNodeEpoch(&node.name, node.object.nodeEpoch).await;
@@ -1164,6 +1171,11 @@ impl SchedulerHandler {
                                         self.taskQueue.AddFunc(&fpId);
                                     }
                                 }
+                                FunctionStatus::KEY => {
+                                    let funcstatus = FunctionStatus::FromDataObject(obj)?;
+                                    let funcid = funcstatus.Id();
+                                    self.funcstatus.insert(funcid, funcstatus);
+                                }
                                 Node::KEY => {
                                     let node = Node::FromDataObject(obj)?;
                                     error!("Update node {:?}", &node);
@@ -1195,6 +1207,11 @@ impl SchedulerHandler {
                                     self.RemoveFunc(spec)?;
 
                                 }
+                                FunctionStatus::KEY => {
+                                    let funcstatus = FunctionStatus::FromDataObject(obj)?;
+                                    let funcid = funcstatus.Id();
+                                    self.funcstatus.remove(&funcid);
+                                }
                                 Node::KEY => {
                                     let node = Node::FromDataObject(obj)?;
                                     let cidr = ipnetwork::Ipv4Network::from_str(&node.object.cidr).unwrap();
@@ -1222,6 +1239,9 @@ impl SchedulerHandler {
                             match &obj.objType as &str {
                                 Function::KEY => {
                                     self.ListDone(ListType::Func).await?;
+                                }
+                                FunctionStatus::KEY => {
+                                    self.ListDone(ListType::FuncStatus).await?;
                                 }
                                 Node::KEY => {
                                     self.ListDone(ListType::Node).await?;
@@ -1992,38 +2012,48 @@ impl SchedulerHandler {
             Some(fpStatus) => fpStatus.func.clone(),
         };
 
-        if func.object.status.state == FuncState::Fail {
-            return Ok(());
-        }
-
-        let id = FuncId::New(funcId).unwrap();
-
-        let podCount = match self
-            .GetFuncPodCount(
-                &func.tenant,
-                &func.namespace,
-                &func.name,
-                id.revision,
-                &CreatePodType::Snapshot.String(),
-                nodename,
-            )
-            .await
-        {
-            Err(e) => {
+        match self.funcstatus.get(funcId) {
+            None => {
                 error!(
-                    "fail to get func {} snapshot count with error {:?}, will retry ...",
-                    funcId, e
+                    "TryCreateSnapshotOnNode can't get funcstatus for {}",
+                    funcId
                 );
-                self.AddSnapshotTask(nodename, funcId);
-                return Ok(());
             }
-            Ok(c) => c,
-        };
-
-        // there are too many retry snapshot pods. stop retry.
-        if podCount >= 3 {
-            return Ok(());
+            Some(status) => {
+                if status.object.state == FuncState::Fail {
+                    return Ok(());
+                }
+            }
         }
+
+        // let id = FuncId::New(funcId).unwrap();
+
+        // let podCount = match self
+        //     .GetFuncPodCount(
+        //         &func.tenant,
+        //         &func.namespace,
+        //         &func.name,
+        //         id.revision,
+        //         &CreatePodType::Snapshot.String(),
+        //         nodename,
+        //     )
+        //     .await
+        // {
+        //     Err(e) => {
+        //         error!(
+        //             "fail to get func {} snapshot count with error {:?}, will retry ...",
+        //             funcId, e
+        //         );
+        //         self.AddSnapshotTask(nodename, funcId);
+        //         return Ok(());
+        //     }
+        //     Ok(c) => c,
+        // };
+
+        // // there are too many retry snapshot pods. stop retry.
+        // if podCount >= 3 {
+        //     return Ok(());
+        // }
 
         let nodeStatus = match self.nodes.get(nodename) {
             None => return Ok(()),
@@ -2753,13 +2783,19 @@ impl SchedulerHandler {
     pub async fn ListDone(&mut self, listType: ListType) -> Result<bool> {
         match listType {
             ListType::Func => self.funcListDone = true,
+            ListType::FuncStatus => self.funcstatusListDone = true,
             ListType::FuncPod => self.funcPodListDone = true,
             ListType::Node => self.nodeListDone = true,
             ListType::Snapshot => self.snapshotListDone = true,
             ListType::Funcpolicy => self.funcpolicyDone = true,
         }
 
-        if self.nodeListDone && self.funcListDone && self.funcPodListDone && self.snapshotListDone {
+        if self.nodeListDone
+            && self.funcListDone
+            && self.funcstatusListDone
+            && self.funcPodListDone
+            && self.snapshotListDone
+        {
             self.listDone = true;
 
             self.RefreshScheduling().await?;
@@ -3014,17 +3050,26 @@ impl SchedulerHandler {
                     );
                     match podCreateType {
                         CreatePodType::Snapshot => {
-                            func.object.status.snapshotingFailureCnt += 1;
+                            match self.funcstatus.get(&funcKey).cloned() {
+                                None => {
+                                    error!("RemovePod can't get funcstatus for {}", &funcKey);
+                                }
+                                Some(mut status) => {
+                                    error!("RemovePod the funcstate is {:?}", status);
 
-                            self.AddSnapshotTask(&nodeName, &pod.FuncKey());
-                            // if func.object.status.snapshotingFailureCnt >= 3 {
-                            //     func.object.status.state = FuncState::Fail;
-                            // }
+                                    status.object.snapshotingFailureCnt += 1;
 
-                            // let client = GetClient().await.unwrap();
+                                    self.AddSnapshotTask(&nodeName, &pod.FuncKey());
+                                    if status.object.snapshotingFailureCnt >= 3 {
+                                        status.object.state = FuncState::Fail;
+                                    }
 
-                            // // update the func
-                            // client.Update(&func.DataObject(), 0).await.unwrap();
+                                    let client = GetClient().await.unwrap();
+
+                                    // update the func
+                                    client.Update(&status.DataObject(), 0).await.unwrap();
+                                }
+                            }
                         }
                         CreatePodType::Restore => {
                             func.object.status.resumingFailureCnt += 1;
@@ -3112,6 +3157,7 @@ pub enum ListType {
     Node,
     FuncPod,
     Func,
+    FuncStatus,
     Snapshot,
     Funcpolicy,
 }

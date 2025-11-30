@@ -16,6 +16,9 @@ use core::ops::Deref;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicyMgr;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
+use inferxlib::obj_mgr::funcstatus_mgr::FuncStatusMgr;
+use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
+use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatusDef;
 use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use inferxlib::obj_mgr::tenant_mgr::TenantMgr;
@@ -101,6 +104,7 @@ impl GatewayInfo {
 pub struct GwObjRepoInner {
     pub nodeMgr: NodeMgr,
     pub funcMgr: FuncMgr,
+    pub funcstatusMgr: FuncStatusMgr,
     pub tenantMgr: TenantMgr,
     pub namespaceMgr: NamespaceMgr,
     pub podMgr: PodMgr,
@@ -113,6 +117,7 @@ pub struct GwObjRepoInner {
     pub tenantListDone: AtomicBool,
     pub namespaceListDone: AtomicBool,
     pub funcListDone: AtomicBool,
+    pub funcstatusListDone: AtomicBool,
     pub podListDone: AtomicBool,
     pub snapshotListDone: AtomicBool,
     pub schedulerListDone: AtomicBool,
@@ -127,6 +132,7 @@ enum ListType {
     tenant,
     namespace,
     func,
+    funcstatus,
     pod,
     // node,
     scheduler,
@@ -160,6 +166,7 @@ impl GwObjRepo {
 
         // funcSpec
         factory.AddInformer(Function::KEY, &ListOption::default())?;
+        factory.AddInformer(FunctionStatus::KEY, &ListOption::default())?;
 
         // pod
         factory.AddInformer(FuncPod::KEY, &ListOption::default())?;
@@ -177,6 +184,7 @@ impl GwObjRepo {
             nodeMgr: NodeMgr::default(),
             tenantMgr: TenantMgr::default(),
             funcMgr: FuncMgr::default(),
+            funcstatusMgr: FuncStatusMgr::default(),
             namespaceMgr: NamespaceMgr::default(),
             podMgr: PodMgr::default(),
             snapshotMgr: FuncSnapshotMgr::default(),
@@ -186,6 +194,7 @@ impl GwObjRepo {
             tenantListDone: AtomicBool::new(false),
             namespaceListDone: AtomicBool::new(false),
             funcListDone: AtomicBool::new(false),
+            funcstatusListDone: AtomicBool::new(false),
             podListDone: AtomicBool::new(false),
             nodeListDone: AtomicBool::new(false),
             snapshotListDone: AtomicBool::new(false),
@@ -286,6 +295,10 @@ impl GwObjRepo {
                 self.funcListDone
                     .store(true, std::sync::atomic::Ordering::SeqCst);
             }
+            ListType::funcstatus => {
+                self.funcstatusListDone
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             ListType::pod => {
                 self.podListDone
                     .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -315,6 +328,9 @@ impl GwObjRepo {
                 .load(std::sync::atomic::Ordering::Relaxed)
             && self.nodeListDone.load(std::sync::atomic::Ordering::Relaxed)
             && self.funcListDone.load(std::sync::atomic::Ordering::Relaxed)
+            && self
+                .funcstatusListDone
+                .load(std::sync::atomic::Ordering::Relaxed)
             && self.podListDone.load(std::sync::atomic::Ordering::Relaxed)
             && self
                 .snapshotListDone
@@ -495,6 +511,17 @@ impl GwObjRepo {
             self.AddFunc(func)?;
         }
 
+        for fp in self.factory.GetInformer(FunctionStatus::KEY)?.store.List() {
+            let fs = match fp.To::<FunctionStatusDef>() {
+                Err(e) => {
+                    error!("can't deserilize obj {:?} with error {:?}", fp, e);
+                    continue;
+                }
+                Ok(s) => s,
+            };
+            self.funcstatusMgr.Add(fs)?;
+        }
+
         for pod in self.factory.GetInformer(FuncPod::KEY)?.store.List() {
             let podDef = match FuncPod::FromDataObject(pod.clone()) {
                 Err(e) => {
@@ -539,6 +566,10 @@ impl GwObjRepo {
                         Function::KEY => {
                             let func = obj.To::<FuncObject>()?;
                             self.AddFunc(func)?;
+                        }
+                        FunctionStatus::KEY => {
+                            let func = obj.To::<FunctionStatusDef>()?;
+                            self.funcstatusMgr.Add(func)?;
                         }
                         Node::KEY => {
                             let spec = Node::FromDataObject(obj)?;
@@ -596,6 +627,10 @@ impl GwObjRepo {
                             let func = obj.To::<FuncObject>()?;
                             self.AddFunc(func)?;
                         }
+                        FunctionStatus::KEY => {
+                            let func = obj.To::<FunctionStatusDef>()?;
+                            self.funcstatusMgr.Add(func)?;
+                        }
                         Tenant::KEY => {
                             let spec: Tenant = Tenant::FromDataObject(obj)?;
                             self.tenantMgr.Update(spec)?;
@@ -640,6 +675,10 @@ impl GwObjRepo {
                             let func = obj.To::<FuncObject>()?;
                             self.RemoveFunc(func)?;
                         }
+                        FunctionStatus::KEY => {
+                            let func = obj.To::<FunctionStatusDef>()?;
+                            self.funcstatusMgr.Remove(func)?;
+                        }
                         Tenant::KEY => {
                             let obj = event.oldObj.clone().unwrap();
                             let tenant = Tenant::FromDataObject(obj)?;
@@ -683,6 +722,9 @@ impl GwObjRepo {
                     }
                     Function::KEY => {
                         self.SetListDone(ListType::func);
+                    }
+                    FunctionStatus::KEY => {
+                        self.SetListDone(ListType::funcstatus);
                     }
                     Tenant::KEY => {
                         self.SetListDone(ListType::tenant);
@@ -733,12 +775,25 @@ impl GwObjRepo {
     pub fn ListFunc(&self, tenant: &str, namespace: &str) -> Result<Vec<FuncBrief>> {
         let funcs = self.GetFuncs(tenant, namespace)?;
         let mut funcbriefs = Vec::new();
-        for func in funcs {
+        for mut func in funcs {
             let funcname = func.name.clone() + "/";
             let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, &funcname);
             let snapshots =
                 self.snapshotMgr
                     .GetObjectsByPrefix(tenant, namespace, &snapshotPrefix)?;
+
+            match self
+                .funcstatusMgr
+                .Get(&func.tenant, &func.namespace, &func.name)
+            {
+                Err(_) => (),
+                Ok(funcstatus) => {
+                    func.object.status.snapshotingFailureCnt =
+                        funcstatus.object.snapshotingFailureCnt;
+                    func.object.status.state = funcstatus.object.state;
+                    func.object.status.resumingFailureCnt = funcstatus.object.resumingFailureCnt;
+                }
+            }
             let mut nodes = Vec::new();
             for s in &snapshots {
                 if s.object.funckey.contains(&funcname) {

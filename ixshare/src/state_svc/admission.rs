@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcstatus_mgr::{FunctionStatus, FunctionStatusDef};
 use serde_json::Value;
 
 use super::state_svc::*;
 use crate::common::*;
 use inferxlib::data_obj::DataObject;
-use inferxlib::obj_mgr::func_mgr::Function;
+use inferxlib::obj_mgr::func_mgr::{FuncState, Function};
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
 use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 
@@ -36,6 +37,57 @@ impl StateSvc {
             }
             FuncPolicy::KEY => {
                 return self.CreateFuncPolicyCheck(obj);
+            }
+            _ => (),
+        }
+
+        return Ok(());
+    }
+
+    pub async fn CreateFuncStatus(&self, dataobj: &DataObject<Value>) -> Result<()> {
+        match dataobj.objType.as_str() {
+            Function::KEY => {
+                let func: Function = Function::FromDataObject(dataobj.clone())?;
+                let status = FunctionStatusDef {
+                    version: func.Version(),
+                    state: FuncState::Normal,
+                    snapshotingFailureCnt: 0,
+                    resumingFailureCnt: 0,
+                };
+
+                let funcstatus = FunctionStatus {
+                    objType: FunctionStatus::KEY.to_string(),
+                    tenant: func.tenant.clone(),
+                    namespace: func.namespace.clone(),
+                    name: func.name.clone(),
+                    object: status,
+                    ..Default::default()
+                };
+
+                error!("CreateFuncStatus {:#?}", &funcstatus);
+
+                let statusDataObj = funcstatus.DataObject();
+
+                self.store.Create(&statusDataObj, 0).await?;
+            }
+            _ => (),
+        }
+
+        return Ok(());
+    }
+
+    pub async fn DeleteFuncStatus(
+        &self,
+        objType: &str,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<()> {
+        match objType {
+            Function::KEY => {
+                let key = format!("{}/{}/{}/{}", FunctionStatus::KEY, tenant, namespace, name);
+
+                self.store.Delete(&key, 0).await?;
             }
             _ => (),
         }
@@ -150,6 +202,7 @@ impl StateSvc {
                     &obj.objType
                 )));
             }
+            FunctionStatus::KEY => return Ok(()),
             Function::KEY => {
                 return self.UpdateFuncCheck(obj);
             }
