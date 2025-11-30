@@ -56,6 +56,7 @@ pub struct PodAudit {
     pub fpname: String,
     pub fprevision: i64,
     pub id: String,
+    pub podtype: String,
     pub nodename: String,
     pub action: String,
     pub state: String,
@@ -131,6 +132,7 @@ impl PodAuditAgent {
                         &msg.fpname,
                         msg.fprevision,
                         &msg.id,
+                        &msg.podtype,
                         &msg.nodename,
                         &msg.action,
                         &msg.state,
@@ -494,17 +496,19 @@ impl SqlAudit {
         fpname: &str,
         fprevision: i64,
         id: &str,
+        podtype: &str,
         nodename: &str,
         state: &str,
     ) -> Result<()> {
-        let query ="insert into Pod (tenant, namespace, fpname, fprevision, id, nodename, state, updatetime) values \
-        ($1, $2, $3, $4, $5, $6, $7, NOW())";
+        let query ="insert into Pod (tenant, namespace, fpname, fprevision, id, podtype, nodename, state, updatetime) values \
+        ($1, $2, $3, $4, $5, $6, $7, $8, NOW())";
         let _result = sqlx::query(query)
             .bind(tenant)
             .bind(namespace)
             .bind(fpname)
             .bind(fprevision)
             .bind(id)
+            .bind(podtype)
             .bind(nodename)
             .bind(state)
             .execute(&self.pool)
@@ -609,13 +613,16 @@ impl SqlAudit {
         fpname: &str,
         fprevision: i64,
         id: &str,
+        podtype: &str,
         nodename: &str,
         action: &str,
         state: &str,
     ) -> Result<()> {
         if action == "create" {
-            self.CreatePod(tenant, namespace, fpname, fprevision, id, nodename, state)
-                .await?;
+            self.CreatePod(
+                tenant, namespace, fpname, fprevision, id, podtype, nodename, state,
+            )
+            .await?;
         } else {
             self.UpdatePod(tenant, namespace, fpname, fprevision, id, state)
                 .await?;
@@ -626,6 +633,52 @@ impl SqlAudit {
         )
         .await?;
         return Ok(());
+    }
+
+    pub async fn FuncCount(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        fpname: &str,
+        fprevision: i64,
+        podtype: &str,
+        nodename: &str,
+    ) -> Result<u64> {
+        // Use parameters instead of format!(...)
+        let row: (i64,) = sqlx::query_as(
+            r#"
+                SELECT COUNT(*)
+                FROM pod
+                WHERE tenant = $1
+                AND namespace = $2
+                AND fpname = $3
+                AND fprevision = $4
+                AND podtype = $5
+                AND nodename = $6
+                "#,
+        )
+        .bind(tenant)
+        .bind(namespace)
+        .bind(fpname)
+        .bind(fprevision)
+        .bind(podtype)
+        .bind(nodename)
+        .fetch_one(&self.pool)
+        .await?;
+
+        // error!(
+        //     "SELECT COUNT(*)
+        //         FROM pod
+        //         WHERE tenant = '{}'
+        //         AND namespace = '{}'
+        //         AND fpname = '{}'
+        //         AND fprevision = {}
+        //         AND podtype = '{}'
+        //         AND nodename = '{}'",
+        //     tenant, namespace, fpname, fprevision, podtype, nodename
+        // );
+
+        Ok(row.0 as u64)
     }
 
     pub async fn ReadPodAudit(

@@ -17,9 +17,9 @@ use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use std::collections::BinaryHeap;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::BinaryHeap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::ops::Deref;
@@ -37,7 +37,9 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
 use tokio::time::{Duration, Interval};
 
+use crate::audit::FuncId;
 use crate::audit::SnapshotScheduleAudit;
+use crate::audit::SqlAudit;
 use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
 use crate::gateway::metrics::Nodelabel;
@@ -49,8 +51,8 @@ use crate::na::RemoveSnapshotReq;
 use crate::na::TerminatePodReq;
 use crate::peer_mgr::PeerMgr;
 use crate::scheduler::scheduler::SetIdleSource;
-use crate::scheduler::scheduler::SCHEDULER_CONFIG;
 use crate::scheduler::scheduler::TimedTask;
+use crate::scheduler::scheduler::SCHEDULER_CONFIG;
 use inferxlib::data_obj::DeltaEvent;
 use inferxlib::data_obj::EventType;
 use inferxlib::obj_mgr::func_mgr::*;
@@ -68,6 +70,7 @@ use inferxlib::obj_mgr::node_mgr::Node;
 use inferxlib::resource::Resources;
 
 use super::scheduler::BiIndex;
+use super::scheduler::FuncNodePair;
 use super::scheduler::SchedTask;
 use super::scheduler::SnapshotScheduleInfo;
 use super::scheduler::SnapshotScheduleState;
@@ -1782,14 +1785,27 @@ impl SchedulerHandler {
         }
     }
 
-    pub fn InitSnapshotTask(&self) -> Result<()> {
-        for (funcId, _) in &self.funcs {
-            for (nodename, _) in &self.nodes {
-                self.taskQueue.AddSnapshotTask(nodename, funcId);
+    pub fn InitSnapshotTask(&mut self) -> Result<()> {
+        let funcIds: Vec<String> = self.funcs.keys().cloned().collect();
+        let nodes: Vec<String> = self.nodes.keys().cloned().collect();
+        for funcId in &funcIds {
+            for nodename in &nodes {
+                error!("AddSnapshotTask 1");
+                self.AddSnapshotTask(nodename, funcId);
             }
         }
 
         return Ok(());
+    }
+
+    pub fn AddSnapshotTask(&mut self, nodename: &str, funcId: &str) {
+        self.schedule_delayed_task(
+            Duration::from_secs(1),
+            SchedTask::SnapshotTask(FuncNodePair {
+                nodename: nodename.to_owned(),
+                funcId: funcId.to_owned(),
+            }),
+        );
     }
 
     pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
@@ -1801,15 +1817,17 @@ impl SchedulerHandler {
                 );
             }
             SchedTask::DelayedInitNode(nodename) => {
-                for (funcId, _) in &self.funcs {
-                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                let funcIds: Vec<String> = self.funcs.keys().cloned().collect();
+                for funcId in &funcIds {
+                    self.AddSnapshotTask(nodename, &funcId);
                 }
                 self.taskQueue
                     .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
             }
             SchedTask::AddFunc(funcId) => {
-                for (nodename, _) in &self.nodes {
-                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                let nodes: Vec<String> = self.nodes.keys().cloned().collect();
+                for nodename in &nodes {
+                    self.AddSnapshotTask(nodename, funcId);
                 }
             }
             SchedTask::SnapshotTask(p) => {
@@ -1923,6 +1941,28 @@ impl SchedulerHandler {
         }
     }
 
+    pub async fn GetFuncPodCount(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        fpname: &str,
+        fprevision: i64,
+        podtype: &str,
+        nodename: &str,
+    ) -> Result<u64> {
+        let addr = SCHEDULER_CONFIG.auditdbAddr.clone();
+        if addr.len() == 0 {
+            return Err(Error::CommonError(format!(
+                "GetFuncPodCount can't get auditdbAddr"
+            )));
+        }
+        let sqlaudit = SqlAudit::New(&addr).await?;
+
+        return sqlaudit
+            .FuncCount(tenant, namespace, fpname, fprevision, podtype, nodename)
+            .await;
+    }
+
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
         match self.snapshots.get(funcId) {
             None => (),
@@ -1956,6 +1996,35 @@ impl SchedulerHandler {
             return Ok(());
         }
 
+        let id = FuncId::New(funcId).unwrap();
+
+        let podCount = match self
+            .GetFuncPodCount(
+                &func.tenant,
+                &func.namespace,
+                &func.name,
+                id.revision,
+                &CreatePodType::Snapshot.String(),
+                nodename,
+            )
+            .await
+        {
+            Err(e) => {
+                error!(
+                    "fail to get func {} snapshot count with error {:?}, will retry ...",
+                    funcId, e
+                );
+                self.AddSnapshotTask(nodename, funcId);
+                return Ok(());
+            }
+            Ok(c) => c,
+        };
+
+        // there are too many retry snapshot pods. stop retry.
+        if podCount >= 3 {
+            return Ok(());
+        }
+
         let nodeStatus = match self.nodes.get(nodename) {
             None => return Ok(()),
             Some(n) => n,
@@ -1979,7 +2048,7 @@ impl SchedulerHandler {
         }
 
         if nodeStatus.state != NAState::NodeAgentAvaiable {
-            self.taskQueue.AddSnapshotTask(nodename, funcId);
+            self.AddSnapshotTask(nodename, funcId);
 
             return Err(Error::SchedulerNoEnoughResource(
                 "NodAgent node ready".to_owned(),
@@ -2011,7 +2080,7 @@ impl SchedulerHandler {
                         nodename,
                         SnapshotScheduleState::Waiting(format!("Resource is busy")),
                     );
-                    self.taskQueue.AddSnapshotTask(nodename, funcId);
+                    self.AddSnapshotTask(nodename, funcId);
                     return Err(Error::SchedulerNoEnoughResource(s));
                 }
                 Err(e) => return Err(e),
@@ -2048,7 +2117,7 @@ impl SchedulerHandler {
                     nodename,
                     SnapshotScheduleState::ScheduleFail(format!("snapshoting sched fail {:?}", &e)),
                 );
-                self.taskQueue.AddSnapshotTask(nodename, funcId);
+                self.AddSnapshotTask(nodename, funcId);
                 return Err(e);
             }
             Ok(id) => id,
@@ -2946,14 +3015,16 @@ impl SchedulerHandler {
                     match podCreateType {
                         CreatePodType::Snapshot => {
                             func.object.status.snapshotingFailureCnt += 1;
-                            if func.object.status.snapshotingFailureCnt >= 3 {
-                                func.object.status.state = FuncState::Fail;
-                            }
 
-                            let client = GetClient().await.unwrap();
+                            self.AddSnapshotTask(&nodeName, &pod.FuncKey());
+                            // if func.object.status.snapshotingFailureCnt >= 3 {
+                            //     func.object.status.state = FuncState::Fail;
+                            // }
 
-                            // update the func
-                            client.Update(&func.DataObject(), 0).await.unwrap();
+                            // let client = GetClient().await.unwrap();
+
+                            // // update the func
+                            // client.Update(&func.DataObject(), 0).await.unwrap();
                         }
                         CreatePodType::Restore => {
                             func.object.status.resumingFailureCnt += 1;
