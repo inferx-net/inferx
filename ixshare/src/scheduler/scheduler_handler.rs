@@ -2795,6 +2795,7 @@ impl SchedulerHandler {
             && self.funcstatusListDone
             && self.funcPodListDone
             && self.snapshotListDone
+            && self.funcpolicyDone
         {
             self.listDone = true;
 
