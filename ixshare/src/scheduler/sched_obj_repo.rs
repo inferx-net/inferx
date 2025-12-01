@@ -15,6 +15,7 @@
 use core::ops::Deref;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicyMgr;
+use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -63,6 +64,7 @@ impl SchedObjRepo {
 
         // funcSpec
         factory.AddInformer(Function::KEY, &ListOption::default())?;
+        factory.AddInformer(FunctionStatus::KEY, &ListOption::default())?;
 
         // pod
         factory.AddInformer(FuncPod::KEY, &ListOption::default())?;
