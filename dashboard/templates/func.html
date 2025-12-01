@@ -273,6 +273,7 @@
         <th>model name</th>
         <th>revision</th>
         <th>id</th>
+        <th>node name</th>
         <th>create time</th>
         <th>exit info</th>
         <th>state</th>
@@ -284,6 +285,7 @@
         <td>{{ fail["fpname"] }}</td>
         <td>{{ fail["fprevision"] }}</td>
         <td>{{ fail["id"] }}</td>
+        <td>{{ fail["nodename"] }}</td>
         <td>{{ fail["createtime"] }}</td>
         <td>{{ fail["exit_info"] }}</td>
         <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{

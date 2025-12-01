@@ -76,6 +76,38 @@ impl StateSvc {
         return Ok(());
     }
 
+    pub async fn UpdateFuncStatus(&self, dataobj: &DataObject<Value>) -> Result<()> {
+        match dataobj.objType.as_str() {
+            Function::KEY => {
+                let func: Function = Function::FromDataObject(dataobj.clone())?;
+                let status = FunctionStatusDef {
+                    version: func.Version(),
+                    state: FuncState::Normal,
+                    snapshotingFailureCnt: 0,
+                    resumingFailureCnt: 0,
+                };
+
+                let funcstatus = FunctionStatus {
+                    objType: FunctionStatus::KEY.to_string(),
+                    tenant: func.tenant.clone(),
+                    namespace: func.namespace.clone(),
+                    name: func.name.clone(),
+                    object: status,
+                    ..Default::default()
+                };
+
+                error!("CreateFuncStatus {:#?}", &funcstatus);
+
+                let statusDataObj = funcstatus.DataObject();
+
+                self.store.Update(0, &statusDataObj, 0).await?;
+            }
+            _ => (),
+        }
+
+        return Ok(());
+    }
+
     pub async fn DeleteFuncStatus(
         &self,
         objType: &str,
