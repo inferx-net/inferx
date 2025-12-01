@@ -384,6 +384,17 @@ impl ixmeta::ix_meta_service_server::IxMetaService for StateSvc {
             }
             Ok(o) => o,
         };
+
+        match self.UpdateFuncStatus(&dataobj).await {
+            Ok(()) => (),
+            Err(e) => {
+                return Ok(Response::new(ixmeta::UpdateResponseMessage {
+                    error: format!("update funcstatus error: {:?}", e),
+                    revision: 0,
+                }))
+            }
+        }
+
         return Ok(Response::new(ixmeta::UpdateResponseMessage {
             error: "".into(),
             revision: o.revision,

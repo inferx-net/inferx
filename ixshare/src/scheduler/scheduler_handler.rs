@@ -1810,7 +1810,6 @@ impl SchedulerHandler {
         let nodes: Vec<String> = self.nodes.keys().cloned().collect();
         for funcId in &funcIds {
             for nodename in &nodes {
-                error!("AddSnapshotTask 1");
                 self.AddSnapshotTask(nodename, funcId);
             }
         }
@@ -1828,6 +1827,13 @@ impl SchedulerHandler {
         );
     }
 
+    pub fn AddStandbyTask(&mut self, nodename: &str) {
+        self.schedule_delayed_task(
+            Duration::from_secs(1),
+            SchedTask::StandbyTask(nodename.to_owned()),
+        );
+    }
+
     pub async fn ProcessTask(&mut self, task: &SchedTask) -> Result<()> {
         match task {
             SchedTask::AddNode(nodename) => {
@@ -1841,8 +1847,7 @@ impl SchedulerHandler {
                 for funcId in &funcIds {
                     self.AddSnapshotTask(nodename, &funcId);
                 }
-                self.taskQueue
-                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
+                self.AddStandbyTask(nodename);
             }
             SchedTask::AddFunc(funcId) => {
                 let nodes: Vec<String> = self.nodes.keys().cloned().collect();
@@ -2225,14 +2230,16 @@ impl SchedulerHandler {
             return Ok(());
         }
 
+        // add another StandbyTask for the node
+        if self.nodes.contains_key(nodename) {
+            self.AddStandbyTask(nodename);
+        }
+
         match self.nodes.get(nodename) {
             None => {
                 return Ok(());
             }
             Some(ns) => {
-                // add another StandbyTask for the node
-                self.taskQueue
-                    .AddTask(SchedTask::StandbyTask(nodename.to_owned()));
                 if ns.pendingPods.len() > 0 {
                     return Ok(());
                 }
@@ -2241,8 +2248,13 @@ impl SchedulerHandler {
 
         let mut funcPodCnt = BTreeMap::new();
         for (funcId, m) in &self.snapshots {
-            if m.contains_key(nodename) {
-                funcPodCnt.insert(funcId.to_owned(), 0);
+            match m.get(nodename) {
+                None => (),
+                Some(snapshot) => {
+                    if snapshot.state == SnapshotState::Ready {
+                        funcPodCnt.insert(funcId.to_owned(), 0);
+                    }
+                }
             }
         }
 
