@@ -119,13 +119,14 @@ impl ContainerSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, PartialEq, Eq)]
 pub enum SnapshotState {
+    Init,
     Loading,
     Ready,
 }
 
 impl Default for SnapshotState {
     fn default() -> Self {
-        return Self::Loading;
+        return Self::Init;
     }
 }
 

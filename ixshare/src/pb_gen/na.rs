@@ -41,6 +41,26 @@ pub struct RemovePodSandboxResp {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadSnapshotReq {
+    #[prost(string, tag = "1")]
+    pub funckey: ::prost::alloc::string::String,
+    #[prost(int64, tag = "2")]
+    pub gpu_standby: i64,
+    #[prost(int64, tag = "3")]
+    pub pageable_standby: i64,
+    #[prost(int64, tag = "4")]
+    pub pinned_standby: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LoadSnapshotResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemoveSnapshotReq {
     #[prost(string, tag = "1")]
     pub funckey: ::prost::alloc::string::String,
@@ -1010,6 +1030,25 @@ pub mod node_agent_service_client {
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
+        pub async fn load_snapshot(
+            &mut self,
+            request: impl tonic::IntoRequest<super::LoadSnapshotReq>,
+        ) -> Result<tonic::Response<super::LoadSnapshotResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.NodeAgentService/LoadSnapshot",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
         pub async fn remove_snapshot(
             &mut self,
             request: impl tonic::IntoRequest<super::RemoveSnapshotReq>,
@@ -1445,6 +1484,10 @@ pub mod node_agent_service_server {
             &self,
             request: tonic::Request<super::ReadPodLogReq>,
         ) -> Result<tonic::Response<super::ReadPodLogResp>, tonic::Status>;
+        async fn load_snapshot(
+            &self,
+            request: tonic::Request<super::LoadSnapshotReq>,
+        ) -> Result<tonic::Response<super::LoadSnapshotResp>, tonic::Status>;
         async fn remove_snapshot(
             &self,
             request: tonic::Request<super::RemoveSnapshotReq>,
@@ -1656,6 +1699,46 @@ pub mod node_agent_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = ReadPodLogSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.NodeAgentService/LoadSnapshot" => {
+                    #[allow(non_camel_case_types)]
+                    struct LoadSnapshotSvc<T: NodeAgentService>(pub Arc<T>);
+                    impl<
+                        T: NodeAgentService,
+                    > tonic::server::UnaryService<super::LoadSnapshotReq>
+                    for LoadSnapshotSvc<T> {
+                        type Response = super::LoadSnapshotResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::LoadSnapshotReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move {
+                                (*inner).load_snapshot(request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = LoadSnapshotSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -927,7 +927,7 @@ impl SchedulerHandler {
         return self.pendingsnapshots.contains_key(funcid);
     }
 
-    pub fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
+    pub async fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
 
         self.RemovePendingSnapshot(&funckey, &snapshot.object.nodename);
@@ -935,6 +935,15 @@ impl SchedulerHandler {
         if !self.snapshots.contains_key(&funckey) {
             self.snapshots.insert(funckey.clone(), BTreeMap::new());
         }
+
+        self.LoadSnapshot(
+            &snapshot.object.nodename,
+            &snapshot.object.funckey,
+            StandbyType::File,
+            StandbyType::File,
+            StandbyType::File,
+        )
+        .await?;
 
         self.snapshots
             .get_mut(&funckey)
@@ -1144,7 +1153,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.CheckNodeEpoch(&snapshot.object.nodename, snapshot.srcEpoch).await;
-                                    self.AddSnapshot(&snapshot)?;
+                                    self.AddSnapshot(&snapshot).await?;
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
@@ -2598,6 +2607,44 @@ impl SchedulerHandler {
         let pendingPod = PendingPod::New(&nodename, &podKey, &fpKey, &resources);
         let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
         nodeStatus.AddPendingPod(&pendingPod)?;
+
+        return Ok(());
+    }
+
+    pub async fn LoadSnapshot(
+        &mut self,
+        nodename: &str,
+        funckey: &str,
+        gpuStandby: StandbyType,
+        pageableStandby: StandbyType,
+        pinnedStandby: StandbyType,
+    ) -> Result<()> {
+        let naUrl = {
+            let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+            nodeStatus.node.NodeAgentUrl()
+        };
+
+        let mut client =
+            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl).await?;
+
+        let request = tonic::Request::new(na::LoadSnapshotReq {
+            funckey: funckey.to_owned(),
+            gpu_standby: gpuStandby as i64,
+            pageable_standby: pageableStandby as i64,
+            pinned_standby: pinnedStandby as i64,
+        });
+
+        let response = match client.load_snapshot(request).await {
+            Err(e) => {
+                error!("LoadSnapshot  fail with error {:?}", e);
+                return Ok(());
+            }
+            Ok(r) => r,
+        };
+        let resp = response.into_inner();
+        if !resp.error.is_empty() {
+            error!("LoadSnapshot fail with error {}", &resp.error);
+        }
 
         return Ok(());
     }

@@ -28,6 +28,7 @@ service NodeAgentService {
   rpc TerminatePod(TerminatePodReq) returns (TerminatePodResp) {}
   rpc ResumePod(ResumePodReq) returns (ResumePodResp) {}
   rpc ReadPodLog(ReadPodLogReq) returns (ReadPodLogResp) {}
+  rpc LoadSnapshot(LoadSnapshotReq) returns (LoadSnapshotResp) {}
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
 }
 
@@ -57,6 +58,17 @@ message RemovePodSandboxReq {
 }
 
 message RemovePodSandboxResp {
+  string error = 1;
+}
+
+message LoadSnapshotReq {
+  string funckey = 1;
+  int64   gpuStandby= 2;
+  int64   pageableStandby= 3;
+  int64   pinnedStandby= 4;
+}
+
+message LoadSnapshotResp {
   string error = 1;
 }
 

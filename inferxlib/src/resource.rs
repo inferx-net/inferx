@@ -752,6 +752,7 @@ impl Standby {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StandbyType {
+    None = 0,
     File,
     Mem,
     Blob,
@@ -766,6 +767,7 @@ impl Default for StandbyType {
 impl StandbyType {
     pub fn StandbyType(&self, blobStoreEnable: bool) -> StandbyType {
         let keepalive = match self {
+            StandbyType::None => StandbyType::None,
             StandbyType::Mem => StandbyType::Mem,
             StandbyType::File => StandbyType::File,
             StandbyType::Blob => {
@@ -782,6 +784,7 @@ impl StandbyType {
 
     pub fn String(&self) -> String {
         match self {
+            Self::None => "None".to_owned(),
             Self::Mem => "mem".to_owned(),
             Self::File => "file".to_owned(),
             Self::Blob => "blob".to_owned(),
