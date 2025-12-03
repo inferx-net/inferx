@@ -9,8 +9,8 @@ WATCHED_DIR := ixshare svc
 
 svc: $(shell find $(WATCHED_DIR) -type f)
 	cargo +stable build --bin svc
-	sudo cp -f onenode_logging_config.yaml /opt/inferx/config/
-	sudo cp -f nodeconfig/node*.json /opt/inferx/config/	
+	-sudo cp -f onenode_logging_config.yaml /opt/inferx/config/
+	-sudo cp -f nodeconfig/node*.json /opt/inferx/config/	
 
 svcdeploy: svc
 	- mkdir -p ./target/svc
