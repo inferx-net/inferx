@@ -2,24 +2,26 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Math-1.5B-1",
+    "name": "Qwen2.5-Coder-1.5B-Instruct-1",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Math-1.5B",
-                "--disable-custom-all-reduce",
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                "--gpu-memory-utilization",
+                "0.70",
                 "--max-model-len",
-                "2000"
+                "1000"
             ],
             "resources": {
                 "CPU": 12000,
                 "Mem": 24000,
+                "ReadyMem": 3000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 8000
+                    "vRam": 13000
                 }
             },
             "envs": [
@@ -30,6 +32,14 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
+                ],
+                [
+                    "VLLM_USE_GPU_MEMORY_RESERVATION",
+                    "True"
                 ]
             ],
             "mounts": [
@@ -45,11 +55,11 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
+                "prompt": "write a quick sort algorithm.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Math-1.5B",
-                    "max_tokens": "1000",
+                    "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                    "max_tokens": "800",
                     "temperature": "0",
                     "stream": "true"
                 }
@@ -58,6 +68,13 @@
                 "gpu": "Mem",
                 "pageable": "File",
                 "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
             }
         }
     }
