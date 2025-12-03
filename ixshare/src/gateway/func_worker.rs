@@ -39,6 +39,7 @@ use hyper_util::rt::TokioIo;
 use inferxlib::data_obj::DeltaEvent;
 
 use crate::common::*;
+use crate::gateway::metrics::{FunccallLabels, GATEWAY_METRICS};
 use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
@@ -410,6 +411,7 @@ impl FuncWorker {
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
         self.SetState(FuncWorkerState::Init);
+        let start = std::time::Instant::now();
         let resp = match self.LeaseWorker().await {
             Err(e) => {
                 span.end();
@@ -438,6 +440,23 @@ impl FuncWorker {
             }
             Ok(resp) => resp,
         };
+
+        let labels = FunccallLabels {
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            status: StatusCode::OK.as_u16(),
+        };
+        let leaseLatency = start.elapsed().as_millis();
+        if !resp.keepalive {
+            error!("cold start latency {:?}/{}", &labels, leaseLatency);
+            GATEWAY_METRICS
+                .lock()
+                .await
+                .funccallCsTtft
+                .get_or_create(&labels)
+                .observe(leaseLatency as f64 / 1000.0);
+        }
 
         span.end();
 

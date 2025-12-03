@@ -671,17 +671,9 @@ async fn RetryGetClient(
     }
 }
 
-async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) -> Response<Body> {
-    labels.status = status;
-    GATEWAY_METRICS
-        .lock()
-        .await
-        .funccallcnt
-        .get_or_create(labels)
-        .inc();
-
+async fn FailureResponse(e: Error, labels: &mut FunccallLabels, _status: Status) -> Response<Body> {
     // error!("Http call fail with error {:?}", &e);
-    let errcode = match &e {
+    let errcode: StatusCode = match &e {
         Error::Timeout(_timeout) => {
             error!("Http start fail with timeout {:?}", _timeout);
             StatusCode::GATEWAY_TIMEOUT
@@ -699,6 +691,15 @@ async fn FailureResponse(e: Error, labels: &mut FunccallLabels, status: Status) 
             StatusCode::INTERNAL_SERVER_ERROR
         }
     };
+
+    labels.status = errcode.as_u16();
+    GATEWAY_METRICS
+        .lock()
+        .await
+        .funccallcnt
+        .get_or_create(labels)
+        .inc();
+
     let body = Body::from(format!("service failure {:?}", &e));
     let resp = Response::builder().status(errcode).body(body).unwrap();
 
@@ -710,15 +711,17 @@ pub struct Disconnect {
     pub cancel: AtomicBool,
     pub req: serde_json::Value,
     pub headers: http::HeaderMap,
+    pub labels: FunccallLabels,
 }
 
 impl Disconnect {
-    pub fn New(req: serde_json::Value, headers: http::HeaderMap) -> Self {
+    pub fn New(req: serde_json::Value, headers: http::HeaderMap, labels: &FunccallLabels) -> Self {
         return Self {
             start: std::time::Instant::now(),
             cancel: AtomicBool::new(false),
             req: req,
             headers: headers,
+            labels: labels.clone(),
         };
     }
 
@@ -731,6 +734,17 @@ impl Disconnect {
 impl Drop for Disconnect {
     fn drop(&mut self) {
         if !self.cancel.load(std::sync::atomic::Ordering::Acquire) {
+            let mut labels = self.labels.clone();
+            tokio::spawn(async move {
+                labels.status = 499; // Client close req
+                GATEWAY_METRICS
+                    .lock()
+                    .await
+                    .funccallcnt
+                    .get_or_create(&labels)
+                    .inc();
+            });
+
             error!(
                 "Funccall ********* Fail: Client disconnect before vllm return header {} ms, req {:#?}, headers {:#?}",
                 self.start.elapsed().as_millis(),
@@ -791,7 +805,7 @@ async fn FuncCall(
         tenant: tenant.clone(),
         namespace: namespace.clone(),
         funcname: funcname.clone(),
-        status: Status::NA,
+        status: StatusCode::OK.as_u16(),
     };
 
     let timestamp = IxTimestamp::default();
@@ -850,7 +864,7 @@ async fn FuncCall(
     let json_req: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
     // error!("FuncCall get req {:#?}", json_req);
-    let disconnect = Disconnect::New(json_req.clone(), headers.clone());
+    let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
 
     let mut retry = 0;
 
@@ -952,7 +966,7 @@ async fn FuncCall(
 
     let mut first = true;
 
-    labels.status = Status::Success;
+    labels.status = StatusCode::OK.as_u16();
     GATEWAY_METRICS
         .lock()
         .await
@@ -986,7 +1000,10 @@ async fn FuncCall(
                 first = false;
 
                 total = ttft + tcpConnLatency;
-                // error!("ttft is {} ms /total {} ms", ttft, total);
+                error!(
+                    "ttft is {} ms /total {} ms keepalive {}",
+                    ttft, total, keepalive
+                );
                 if !keepalive {
                     GATEWAY_METRICS
                         .lock()
