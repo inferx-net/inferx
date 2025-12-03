@@ -70,6 +70,7 @@ use super::func_agent_mgr::IxTimestamp;
 use super::func_agent_mgr::GW_OBJREPO;
 use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
+use super::trace::{set_trace_logging, trace_logging_enabled};
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
@@ -133,6 +134,7 @@ impl HttpGateway {
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
             .route("/prompt/", post(PostPrompt))
+            .route("/debug/func_agents", get(GetFuncAgentsState))
             .route(
                 "/sampleccall/:tenant/:namespace/:name/",
                 get(GetSampleRestCall),
@@ -180,6 +182,10 @@ impl HttpGateway {
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
             .route("/metrics", get(GetMetrics))
+            .route(
+                "/debug/trace_logging/:state",
+                post(SetTraceLogging),
+            )
             .with_state(self.clone())
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
@@ -218,6 +224,45 @@ async fn root() -> &'static str {
     "InferX Gateway!"
 }
 
+async fn SetTraceLogging(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    Path(state): Path<String>,
+) -> SResult<Response, StatusCode> {
+    let lower = state.to_ascii_lowercase();
+    let enable = match lower.as_str() {
+        "on" | "enable" | "enabled" | "true" | "1" => Some(true),
+        "off" | "disable" | "disabled" | "false" | "0" => Some(false),
+        _ => None,
+    };
+
+    let enable = match enable {
+        Some(v) => v,
+        None => {
+            let body = Body::from(format!("invalid state '{}', use on/off", state));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    set_trace_logging(enable);
+    error!("TRACE_GATEWAY_LOG: {}", trace_logging_enabled());
+
+    let body = Body::from(if enable {
+        "trace logging enabled"
+    } else {
+        "trace logging disabled"
+    });
+
+    let resp = Response::builder()
+        .status(StatusCode::OK)
+        .body(body)
+        .unwrap();
+    return Ok(resp);
+}
+
 async fn GetMetrics() -> SResult<Response, StatusCode> {
     let mut buffer = String::new();
     let registery = METRICS_REGISTRY.lock().await;
@@ -230,6 +275,19 @@ async fn GetMetrics() -> SResult<Response, StatusCode> {
         )
         .body(Body::from(buffer))
         .unwrap());
+}
+
+async fn GetFuncAgentsState(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    let data = gw.funcAgentMgr.DebugInfo().await;
+    let resp = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(data.to_string()))
+        .unwrap();
+    Ok(resp)
 }
 
 async fn GetReqs(
@@ -658,6 +716,7 @@ async fn RetryGetClient(
                     // );
                     continue;
                 }
+                error!("RetryGetClient, e: {:?}", e);
                 return Err(e);
             }
             Ok(client) => {
@@ -862,6 +921,7 @@ async fn FuncCall(
     loop {
         retry += 1;
         if timestamp.Elapsed() > timeout {
+            error!("FuncCall 1");
             let resp = FailureResponse(error, &mut labels, Status::RequestFailure).await;
             ttftCtx.span().end();
             return Ok(resp);
