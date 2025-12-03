@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 0,
   "links": [],
   "panels": [
     {
@@ -80,13 +79,163 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "100 * sum(usedGPU) / sum(totalGPU)"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 0
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * sum(usedGPU) / sum(totalGPU)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "gpu utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "{endpoint=\"http\", exported_namespace=\"Qwen\", funcname=\"Qwen2.5-Math-7B\", instance=\"10.42.0.179:4000\", job=\"gateway\", namespace=\"default\", pod=\"gateway-696b8fd484-njbpk\", service=\"gateway\", status=\"200\", tenant=\"public\"}"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
       },
       "id": 7,
       "options": {
@@ -206,7 +355,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 16
       },
       "id": 6,
       "options": {
@@ -230,6 +379,19 @@
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "builder",
+          "expr": "usedGPU",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "Total GPU",
@@ -302,7 +464,7 @@
               "options": {
                 "mode": "exclude",
                 "names": [
-                  "{__name__=\"funccallCsTtft_bucket\", endpoint=\"http\", exported_namespace=\"Qwen\", funcname=\"Hermes-2-Pro-Llama-3-8B-AWQ\", instance=\"10.42.0.179:4000\", job=\"gateway\", le=\"+Inf\", namespace=\"default\", pod=\"gateway-696b8fd484-njbpk\", service=\"gateway\", status=\"200\", tenant=\"public\"}"
+                  "{__name__=\"funccallCsTtft_bucket\", endpoint=\"http\", exported_namespace=\"Qwen\", funcname=\"Hermes-2-Pro-Llama-3-8B-AWQ\", instance=\"10.42.0.179:4000\", job=\"gateway\", le=\"13.5\", namespace=\"default\", pod=\"gateway-696b8fd484-njbpk\", service=\"gateway\", status=\"200\", tenant=\"public\"}"
                 ],
                 "prefix": "All except:",
                 "readOnly": true
@@ -325,7 +487,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "id": 3,
       "options": {
@@ -421,7 +583,7 @@
               "options": {
                 "mode": "exclude",
                 "names": [
-                  "{endpoint=\"http\", exported_namespace=\"deepseek-ai\", funcname=\"DeepSeek-R1-Distill-Llama-8B\", instance=\"10.42.0.179:4000\", job=\"gateway\", namespace=\"default\", pod=\"gateway-696b8fd484-njbpk\", service=\"gateway\", status=\"200\", tenant=\"public\"}"
+                  "{endpoint=\"http\", exported_namespace=\"Qwen\", funcname=\"Qwen2-VL-7B-Instruct\", instance=\"10.42.0.179:4000\", job=\"gateway\", namespace=\"default\", pod=\"gateway-696b8fd484-njbpk\", service=\"gateway\", status=\"200\", tenant=\"public\"}"
                 ],
                 "prefix": "All except:",
                 "readOnly": true
@@ -444,7 +606,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "id": 2,
       "options": {
@@ -538,7 +700,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "id": 1,
       "options": {
@@ -579,12 +741,12 @@
     "list": []
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "InferX",
   "uid": "ad42jk8",
-  "version": 22
+  "version": 35
 }
