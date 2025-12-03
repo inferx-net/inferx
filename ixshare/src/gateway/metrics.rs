@@ -84,7 +84,7 @@ pub struct FunccallLabels {
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
-    pub status: Status, // track success/failure
+    pub status: u16, // track success/failure
 }
 
 #[derive(Debug)]
