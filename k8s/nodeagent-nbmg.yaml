@@ -1,0 +1,294 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeagent-blob
+  labels:
+    app: nodeagent
+spec:
+  selector:
+    matchLabels:
+      app: nodeagent
+  template:
+    metadata:
+      labels:
+        app: nodeagent
+    spec:
+      nodeSelector:
+        inferx_nodeType: inferx_blob      
+      containers:
+        - name: nodeagent
+          image: inferx/inferx_na:${VERSION}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: RUN_SERVICE
+            value: "NodeAgent"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: "5"               
+              memory: "60Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "1Gi"       # HugePages request
+            limits:
+              cpu: "20"               
+              memory: "100Gi"              # Regular memory request (RAM)
+              hugepages-2Mi: "1Gi" 
+              # nvidia.com/gpu: 1
+          volumeMounts:
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+            - name: dshm
+              mountPath: /dev/shm
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            - mountPath: /opt/inferx/config
+              name: opt-inferx-config
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            # - mountPath: /home/brad/mnt
+            #   name: docker-mnt
+            - name: dind
+              mountPath: /var/lib/docker
+            - name: opt-inferx-run
+              mountPath: /opt/inferx/run
+      volumes:
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: shm
+          hostPath:
+            path: /dev/shm
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log
+        - name: opt-inferx-config
+          hostPath:
+            path: /opt/inferx/config
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
+        - name: opt-inferx-run
+          hostPath:
+            path: /opt/inferx/run
+      restartPolicy: Always
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeagent-file
+  labels:
+    app: nodeagent
+spec:
+  selector:
+    matchLabels:
+      app: nodeagent
+  template:
+    metadata:
+      labels:
+        app: nodeagent
+    spec:
+      nodeSelector:
+        inferx_nodeType: inferx_file      
+      # initContainers:
+      #   - name: wait-for-dependencies
+      #     image: busybox
+      #     command:
+      #       [
+      #         "sh", "-c",
+      #         "until nc -z etcd.default.svc.cluster.local 2379 && \
+      #                nc -z keycloak.default.svc.cluster.local 8080; do \
+      #             echo 'Waiting for dependencies...'; sleep 3; \
+      #          done"
+      #       ]
+      containers:
+        - name: nodeagent
+          image: inferx/inferx_na:${VERSION}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: RUN_SERVICE
+            value: "NodeAgent"
+          - name: ENABLE_COREDUMP
+            value: "false"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.memory                
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.hugepages-2Mi   
+          - name: CACHE_MEMORY
+            value: "30Gi"
+          - name: ENABLE_2MB_PAGE
+            value: "false"  
+          - name: CONTEXT_OVERHEAD
+            value: "4800"         
+          - name: ALLOC_CPU
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.cpu                            
+          - name: ENALBE_BLOB
+            value: "false"                     
+          resources:
+            requests:
+              cpu: "5"
+              memory: "100Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "60Gi" 
+            limits:
+              cpu: "10"
+              memory: "350Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "60Gi" 
+              # nvidia.com/gpu: 1
+          volumeMounts:
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /dev/hugepages
+              name: dev-hugepages
+            - name: shm
+              mountPath: /dev/shm
+            # - mountPath: /opt/inferx/
+            #   name: opt-inferx
+            # - mountPath: /opt/inferx/config
+            #   name: opt-inferx-config
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
+            - mountPath: /opt/inferx/work
+              name: opt-inferx-work
+            - mountPath: /opt/inferx/log
+              name: opt-inferx-log
+            - mountPath: /opt/inferx/data
+              name: opt-inferx-data
+            - mountPath: /opt/inferx/cache
+              name: opt-inferx-cache
+            - mountPath: /opt/inferx/snapshot
+              name: opt-inferx-snapshot
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            - mountPath: /home/brad/mnt
+              name: docker-mnt
+            - name: dind
+              mountPath: /var/lib/docker
+            - name: opt-inferx-run
+              mountPath: /opt/inferx/run
+      volumes:
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: dev-hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: shm
+          hostPath:
+            path: /dev/shm
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: opt-inferx-log
+          hostPath:
+            path: /opt/inferx/log
+        - name: opt-inferx-config
+          hostPath:
+            path: /opt/inferx/config
+        - name: opt-inferx-work
+          hostPath:
+            path: /opt/inferx/work
+        - name: opt-inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+        - name: opt-inferx-cache
+          hostPath:
+            path: /opt/inferx/cache
+        - name: opt-inferx-data
+          hostPath:
+            path: /opt/inferx/data
+        - name: opt-inferx-snapshot
+          hostPath:
+            path: /opt/inferx/snapshot
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: docker-mnt
+          hostPath:
+            path: /home/brad/mnt
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
+        - name: opt-inferx-run
+          hostPath:
+            path: /opt/inferx/run
+      restartPolicy: Always
