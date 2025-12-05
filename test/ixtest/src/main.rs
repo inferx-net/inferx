@@ -14,29 +14,37 @@ pub static REQ_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[tokio::main]
 async fn main() {
-    // Usage: cargo run -- <concurrency> <duration_secs> <model>
+    // Usage: cargo run -- <concurrency> <duration_secs> [<modelalias>] <model>
     let args: Vec<String> = env::args().collect();
-    if args.len() != 4 {
-        eprintln!("Usage: {} <concurrency> <duration_secs> <model>", args[0]);
+    if args.len() != 4 && args.len() != 5 {
+        eprintln!(
+            "Usage: {} <concurrency> <duration_secs> [<modelalias>] <model>",
+            args[0]
+        );
         std::process::exit(1);
     }
 
     let concurrency: usize = args[1].parse().expect("invalid concurrency");
     let duration_secs: u64 = args[2].parse().expect("invalid duration");
-    let model = &args[3];
+    let (modelalias, model) = if args.len() == 4 {
+        let model = args[3].clone();
+        (model.clone(), model)
+    } else {
+        (args[3].clone(), args[4].clone())
+    };
 
-    run_hey(concurrency, duration_secs, model).await;
+    run_hey(concurrency, duration_secs, &modelalias, &model).await;
 }
 
-async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
+async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model: &str) {
     let url = format!(
         // "http://localhost:4000/funccall/public/{}/v1/completions",
         "http://localhost:31501/funccall/public/{}/v1/completions",
-        model
+        modelalias
     );
     println!(
         "=== Running hey for model: {} (c={}, z={}s) ===",
-        model, concurrency, duration_secs
+        modelalias, concurrency, duration_secs
     );
 
     let client = Client::new();
@@ -170,7 +178,7 @@ async fn run_hey(concurrency: usize, duration_secs: u64, model: &str) {
 
     println!(
         "===================== model: {} Done ======================\n\n\n",
-        model
+        modelalias
     );
     
     

@@ -21,6 +21,7 @@ use std::time::Duration;
 use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec, ScaleOutPolicy};
 use once_cell::sync::OnceCell;
+use serde_json::json;
 use tokio::sync::{mpsc, Notify};
 use tokio::sync::{oneshot, Mutex as TMutex};
 use tokio::time;
@@ -33,6 +34,7 @@ use inferxlib::obj_mgr::func_mgr::*;
 
 use super::func_worker::*;
 use super::gw_obj_repo::GwObjRepo;
+use super::trace::trace_logging_enabled;
 
 pub static GW_OBJREPO: OnceCell<GwObjRepo> = OnceCell::new();
 
@@ -177,6 +179,20 @@ impl FuncAgentMgr {
                 }
             },
         };
+    }
+
+    pub async fn DebugInfo(&self) -> serde_json::Value {
+        let agents: Vec<FuncAgent> = {
+            let lock = self.agents.lock().unwrap();
+            lock.values().cloned().collect()
+        };
+
+        let mut infos = Vec::new();
+        for agent in agents {
+            infos.push(agent.DebugInfo().await);
+        }
+
+        json!({ "funcs": infos })
     }
 }
 
@@ -390,17 +406,47 @@ impl FuncAgent {
         return self.Key();
     }
 
+    pub async fn DebugInfo(&self) -> serde_json::Value {
+        let workers: Vec<FuncWorker> = {
+            let lock = self.workers.lock().unwrap();
+            lock.values().cloned().collect()
+        };
+
+        let mut worker_infos = Vec::new();
+        for worker in workers {
+            worker_infos.push(worker.DebugInfo());
+        }
+
+        let wait_cnt = self.reqQueue.Count().await;
+
+        json!({
+            "funcKey": self.FuncKey(),
+            "activeReqCnt": self.activeReqCnt.load(Ordering::Relaxed),
+            "waitReqCnt": wait_cnt,
+            "parallelLevel": self.ParallelLevel(),
+            "totalSlot": self.totalSlot.load(Ordering::Relaxed),
+            "availableSlot": self.availableSlot.load(Ordering::Relaxed),
+            "startingSlot": self.startingSlot.load(Ordering::Relaxed),
+            "scaleInWorkerId": self.scaleInWorkerId.load(Ordering::Relaxed),
+            "nextWorkerId": self.nextWorkerId.load(Ordering::Relaxed),
+            "workers": worker_infos,
+        })
+    }
+
     pub async fn NeedNewWorker(&self) -> bool {
         let reqCnt = self.activeReqCnt.load(Ordering::Relaxed);
         let totalSlotCnt = self.TotalSlot();
-        // let waitReqcnt = self.reqQueue.Count().await;
+        let waitReqcnt = self.reqQueue.Count().await;
         match &*self.scaleoutPolicy.lock().unwrap() {
             ScaleOutPolicy::WaitQueueRatio(ratio) => {
                 if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
-                    // error!(
-                    //     "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
-                    //     reqCnt, totalSlotCnt, waitReqcnt
-                    // );
+                    if trace_logging_enabled() {
+                        error!(
+                            "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
+                            reqCnt, totalSlotCnt, waitReqcnt
+                        );
+                    }
+
                     return true;
                 }
             }
