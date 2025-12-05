@@ -165,7 +165,7 @@ async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model:
     }
 
     // let lock = joined.lock().await;
-    // if lock.len() > 0 {
+    // if lock.len() > 1 {
     //     println!("output text {:#?}", &*lock);
     // }
 

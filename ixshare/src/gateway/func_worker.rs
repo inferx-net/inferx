@@ -39,6 +39,7 @@ use hyper_util::rt::TokioIo;
 use inferxlib::data_obj::DeltaEvent;
 
 use crate::common::*;
+use crate::gateway::metrics::{FunccallLabels, GATEWAY_METRICS};
 use crate::gateway::trace::trace_logging_enabled;
 use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
@@ -418,13 +419,6 @@ impl FuncWorker {
         return false;
     }
 
-    pub fn Clean(&self) {
-        let ongoingReqCnt = self.ongoingReqCnt.load(Ordering::SeqCst);
-        self.funcAgent
-            .activeReqCnt
-            .fetch_sub(ongoingReqCnt, Ordering::SeqCst);
-    }
-
     pub async fn Process(
         &self,
         _reqQueueRx: mpsc::Receiver<FuncClientReq>,
@@ -434,6 +428,7 @@ impl FuncWorker {
         let tracer = opentelemetry::global::tracer("gateway");
         let mut span = tracer.start("lease");
         self.SetState(FuncWorkerState::Init);
+        let start = std::time::Instant::now();
         let resp = match self.LeaseWorker().await {
             Err(e) => {
                 span.end();
@@ -462,6 +457,23 @@ impl FuncWorker {
             }
             Ok(resp) => resp,
         };
+
+        let labels = FunccallLabels {
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            status: StatusCode::OK.as_u16(),
+        };
+        let leaseLatency = start.elapsed().as_millis();
+        if !resp.keepalive {
+            error!("cold start latency {:?}/{}", &labels, leaseLatency);
+            GATEWAY_METRICS
+                .lock()
+                .await
+                .funccallCsTtft
+                .get_or_create(&labels)
+                .observe(leaseLatency as f64 / 1000.0);
+        }
 
         span.end();
 
@@ -495,9 +507,6 @@ impl FuncWorker {
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
         self.SetState(FuncWorkerState::Processing);
         let reqQueue = self.funcAgent.reqQueue.clone();
-
-        let clone = self.clone();
-        defer!(clone.Clean());
 
         loop {
             let isScaleInWorker =
@@ -576,9 +585,9 @@ impl FuncWorker {
 
                     if cnt > 0 {
                         let reqs = reqQueue.TryRecvBatch(cnt).await;
-                        let req_cnt = reqs.len();
+                        let reqCnt = reqs.len();
+                        self.ongoingReqCnt.fetch_add(reqCnt, Ordering::SeqCst);
                         for req in reqs {
-                            self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
                             let client = match self.NewHttpCallClient().await {
                                 Err(e) => {
                                     error!("Funcworker connect fail with error {:?}", &e);
@@ -603,7 +612,7 @@ impl FuncWorker {
                                 id,
                                 self.funcAgent.parallelLeve.load(Ordering::Relaxed),
                                 self.ongoingReqCnt.load(Ordering::Relaxed),
-                                req_cnt
+                                reqCnt
                             );
                         }
                     }
@@ -1104,7 +1113,7 @@ impl Drop for QHttpCallClient {
                 if trace_logs() {
                     error!("QHttpCallClient drop send finishQueue")
                 }
-            },
+            }
         }
     }
 }
