@@ -595,9 +595,9 @@ impl FuncWorker {
 
                     if cnt > 0 {
                         let reqs = reqQueue.TryRecvBatch(cnt).await;
-                        let req_cnt = reqs.len();
+                        let reqCnt = reqs.len();
+                        self.ongoingReqCnt.fetch_add(reqCnt, Ordering::SeqCst);
                         for req in reqs {
-                            self.ongoingReqCnt.fetch_add(1, Ordering::SeqCst);
                             let client = match self.NewHttpCallClient().await {
                                 Err(e) => {
                                     error!("Funcworker connect fail with error {:?}", &e);
@@ -622,7 +622,7 @@ impl FuncWorker {
                                 id,
                                 self.funcAgent.parallelLeve.load(Ordering::Relaxed),
                                 self.ongoingReqCnt.load(Ordering::Relaxed),
-                                req_cnt
+                                reqCnt
                             );
                         }
                     }
