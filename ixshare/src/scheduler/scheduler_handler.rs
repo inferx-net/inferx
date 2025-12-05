@@ -399,12 +399,20 @@ impl FuncStatus {
 
                         let gpuCnt = pod.pod.object.spec.reqResources.gpu.gpuCount;
 
+                        let cnt = SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGpuCnt
+                            .Inc(nodelabel.clone(), gpuCnt);
+
                         SCHEDULER_METRICS
                             .lock()
                             .await
                             .usedGPU
                             .get_or_create(&nodelabel)
-                            .inc_by(gpuCnt as i64);
+                            .set(cnt as i64);
+
+                        error!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
 
                         let peer = match PEER_MGR.LookforPeer(pod.pod.object.spec.ipAddr) {
                             Ok(p) => p,
@@ -576,6 +584,29 @@ impl SchedulerHandler {
             match state {
                 WorkerPodState::Working(gatewayId) => {
                     if timeoutGateways.contains(&gatewayId) {
+                        let gpuCnt = worker.pod.object.spec.reqResources.gpu.gpuCount;
+                        let nodelabel = Nodelabel {
+                            nodename: worker.pod.object.spec.nodename.clone(),
+                        };
+
+                        let cnt = SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGpuCnt
+                            .Dec(nodelabel.clone(), gpuCnt);
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGPU
+                            .get_or_create(&nodelabel)
+                            .set(cnt as i64);
+
+                        error!(
+                            "user GPU desc timeout {:?} {} {}",
+                            &worker.pod.object.spec.funcname, gpuCnt, cnt
+                        );
+
                         worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
                         // how to handle the recovered failure gateway?
                         self.idlePods.insert(worker.pod.PodKey());
@@ -644,6 +675,11 @@ impl SchedulerHandler {
 
         for worker in &pods {
             let pod = &worker.pod;
+            error!(
+                "ProcessLeaseWorkerReq pod {:?} state {:?}",
+                pod.PodKey(),
+                worker.State()
+            );
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 worker.SetWorking(req.gateway_id);
                 let remove = self.idlePods.remove(&worker.pod.PodKey());
@@ -677,13 +713,20 @@ impl SchedulerHandler {
 
                 let gpuCnt = pod.object.spec.reqResources.gpu.gpuCount;
 
+                let cnt = SCHEDULER_METRICS
+                    .lock()
+                    .await
+                    .usedGpuCnt
+                    .Inc(nodelabel.clone(), gpuCnt);
+
                 SCHEDULER_METRICS
                     .lock()
                     .await
                     .usedGPU
                     .get_or_create(&nodelabel)
-                    .inc_by(gpuCnt as i64);
+                    .set(cnt as i64);
 
+                error!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
                 let resp = na::LeaseWorkerResp {
                     error: String::new(),
                     id: pod.object.spec.id.clone(),
@@ -800,13 +843,20 @@ impl SchedulerHandler {
 
         let gpuCnt = worker.pod.object.spec.reqResources.gpu.gpuCount;
 
+        let cnt = SCHEDULER_METRICS
+            .lock()
+            .await
+            .usedGpuCnt
+            .Dec(nodelabel.clone(), gpuCnt);
+
         SCHEDULER_METRICS
             .lock()
             .await
             .usedGPU
             .get_or_create(&nodelabel)
-            .dec_by(gpuCnt as i64);
+            .set(cnt as i64);
 
+        error!("user GPU desc {:?} {} {}", &req.funcname, gpuCnt, cnt);
         // in case the gateway dead and recover and try to return an out of date pod
         // assert!(
         //     !worker.State().IsIdle(),
@@ -2839,7 +2889,7 @@ impl SchedulerHandler {
             .await
             .totalGPU
             .get_or_create(&nodelabel)
-            .inc_by(gpuCnt as i64);
+            .set(gpuCnt as i64);
 
         let total = node.object.resources.clone();
         let pods = match self.nodePods.remove(&nodeName) {
@@ -2877,14 +2927,7 @@ impl SchedulerHandler {
             nodename: key.clone(),
         };
 
-        let gpuCnt = node.object.resources.gpus.Gpus().len();
-
-        SCHEDULER_METRICS
-            .lock()
-            .await
-            .totalGPU
-            .get_or_create(&nodelabel)
-            .dec_by(gpuCnt as i64);
+        SCHEDULER_METRICS.lock().await.totalGPU.remove(&nodelabel);
 
         if !self.nodes.contains_key(&key) {
             return Err(Error::NotExist(format!("NodeMgr::Remove {}", key)));
@@ -3006,6 +3049,20 @@ impl SchedulerHandler {
             .insert(podKey.clone(), boxPod.clone())
             .expect("UpdatePod get none old pod");
 
+        error!(
+            "Updatepad pod {}, state {:?}, old work state {:?}",
+            &podKey,
+            &boxPod.pod.object.status.state,
+            oldPod.State()
+        );
+
+        match oldPod.State() {
+            WorkerPodState::Working(_) => {
+                boxPod.SetState(oldPod.State());
+            }
+            _ => (),
+        }
+
         match self.nodes.get_mut(&nodeName) {
             None => match self.nodePods.get_mut(&nodeName) {
                 None => {
@@ -3046,7 +3103,39 @@ impl SchedulerHandler {
         let nodeName = pod.object.spec.nodename.clone();
         let funcKey = pod.FuncKey();
 
-        assert!(self.pods.remove(&podKey).is_some());
+        match self.pods.remove(&podKey) {
+            None => unreachable!(),
+            Some(worker) => {
+                let state = worker.State();
+                match state {
+                    WorkerPodState::Working(_gatewayId) => {
+                        let gpuCnt = worker.pod.object.spec.reqResources.gpu.gpuCount;
+                        let nodelabel = Nodelabel {
+                            nodename: worker.pod.object.spec.nodename.clone(),
+                        };
+
+                        let cnt = SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGpuCnt
+                            .Dec(nodelabel.clone(), gpuCnt);
+
+                        SCHEDULER_METRICS
+                            .lock()
+                            .await
+                            .usedGPU
+                            .get_or_create(&nodelabel)
+                            .set(cnt as i64);
+
+                        error!(
+                            "user GPU desc fail pod {:?} {} {}",
+                            &worker.pod.object.spec.funcname, gpuCnt, cnt
+                        );
+                    }
+                    _ => (),
+                }
+            }
+        }
 
         let podCreateType = pod.object.spec.create_type;
 
@@ -3203,9 +3292,7 @@ pub async fn GetClient() -> Result<CacherClient> {
     return Err(Error::CommonError(errstr));
 }
 
-pub async fn GetClientWithRetry()
-    -> Result<CacherClient>
-{
+pub async fn GetClientWithRetry() -> Result<CacherClient> {
     let mut delay = Duration::from_millis(100);
     let max_delay = Duration::from_secs(3);
     let max_retries = 5;
@@ -3215,7 +3302,10 @@ pub async fn GetClientWithRetry()
     for attempt in 1..=max_retries {
         match CacherClient::New(addr[0].clone()).await {
             Ok(client) => {
-                error!("Connected to state service at {} after {} attempt(s)", addr[0], attempt);
+                error!(
+                    "Connected to state service at {} after {} attempt(s)",
+                    addr[0], attempt
+                );
                 return Ok(client);
             }
             Err(e) => {
@@ -3232,9 +3322,6 @@ pub async fn GetClientWithRetry()
         }
     }
 
-    let errstr = format!(
-        "GetClient fail: after {} attempt(s)",
-        max_retries
-    );
+    let errstr = format!("GetClient fail: after {} attempt(s)", max_retries);
     return Err(Error::CommonError(errstr));
 }

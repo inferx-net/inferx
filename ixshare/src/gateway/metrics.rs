@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use opentelemetry::global;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::Protocol;
@@ -163,9 +165,41 @@ pub struct PodLabels {
     pub nodename: String,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet, PartialOrd, Ord)]
 pub struct Nodelabel {
     pub nodename: String,
+}
+
+#[derive(Debug, Default)]
+pub struct IxGauge {
+    pub map: BTreeMap<Nodelabel, u64>,
+}
+
+impl IxGauge {
+    pub fn Inc(&mut self, label: Nodelabel, cnt: u64) -> u64 {
+        match self.map.get_mut(&label) {
+            None => {
+                self.map.insert(label, cnt);
+                return cnt;
+            }
+            Some(v) => {
+                *v += cnt;
+                return *v;
+            }
+        }
+    }
+
+    pub fn Dec(&mut self, label: Nodelabel, cnt: u64) -> u64 {
+        match self.map.get_mut(&label) {
+            None => {
+                panic!("IxGauge get non decr {:?}/{}", label, cnt);
+            }
+            Some(v) => {
+                *v -= cnt;
+                return *v;
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -175,6 +209,9 @@ pub struct SchedulerMetrics {
     pub coldStartPodLatency: Family<PodLabels, Histogram>,
     pub usedGPU: Family<Nodelabel, Gauge>,
     pub totalGPU: Family<Nodelabel, Gauge>,
+
+    pub usedGpuCnt: IxGauge,
+    pub totalGpuCnt: IxGauge,
 }
 
 impl SchedulerMetrics {
@@ -186,6 +223,8 @@ impl SchedulerMetrics {
             coldStartPodLatency: Family::new_with_constructor(csHg),
             usedGPU: Family::default(),
             totalGPU: Family::default(),
+            usedGpuCnt: IxGauge::default(),
+            totalGpuCnt: IxGauge::default(),
         };
 
         return ret;

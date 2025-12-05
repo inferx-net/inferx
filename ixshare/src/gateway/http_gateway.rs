@@ -1060,10 +1060,10 @@ async fn FuncCall(
                 first = false;
 
                 total = ttft + tcpConnLatency;
-                error!(
-                    "ttft is {} ms /total {} ms keepalive {}",
-                    ttft, total, keepalive
-                );
+                // error!(
+                //     "ttft is {} ms /total {} ms keepalive {}",
+                //     ttft, total, keepalive
+                // );
                 if !keepalive {
                     GATEWAY_METRICS
                         .lock()
