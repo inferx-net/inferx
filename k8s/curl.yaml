@@ -1,0 +1,42 @@
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: modelstore
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 100Gi
+# ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-jason
+spec:
+  nodeSelector:
+    inferx_storage: data            
+  containers:
+    - name: curl
+      image: radial/busyboxplus:curl
+      command: ["sleep", "3600000"]
+      securityContext:
+        privileged: true
+      # volumeMounts:
+      #   - name: host-root
+      #     mountPath: /opt/inferx
+      #   - mountPath: /opt/cache   
+      #     name: model-storage
+  volumes:
+    # - name: model-storage
+    #   persistentVolumeClaim:
+    #     claimName: modelstore
+    # - name: model-storage
+    #   hostPath:
+    #     path: /opt/inferx/cache
+    #     type: Directory
+    # - name: host-root
+    #   hostPath:
+    #     path: /opt/inferx
+    #     type: Directory
+  restartPolicy: Never

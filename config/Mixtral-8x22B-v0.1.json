@@ -59,7 +59,7 @@
             "standby": {
                 "gpu": "Mem",
                 "pageable": "File",
-                "pinned": "Mem"
+                "pinned": "File"
             }
         }
     }
