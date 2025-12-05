@@ -419,13 +419,6 @@ impl FuncWorker {
         return false;
     }
 
-    pub fn Clean(&self) {
-        let ongoingReqCnt = self.ongoingReqCnt.load(Ordering::SeqCst);
-        self.funcAgent
-            .activeReqCnt
-            .fetch_sub(ongoingReqCnt, Ordering::SeqCst);
-    }
-
     pub async fn Process(
         &self,
         _reqQueueRx: mpsc::Receiver<FuncClientReq>,
@@ -514,9 +507,6 @@ impl FuncWorker {
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
         self.SetState(FuncWorkerState::Processing);
         let reqQueue = self.funcAgent.reqQueue.clone();
-
-        let clone = self.clone();
-        defer!(clone.Clean());
 
         loop {
             let isScaleInWorker =
