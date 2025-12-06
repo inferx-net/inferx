@@ -6,7 +6,7 @@ export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 export INFX_GATEWAY_URL="http://89.169.109.4:31501"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 
-export INFX_GATEWAY_URL="http://166.19.16.1:4000"
+export INFX_GATEWAY_URL="http://166.19.16.11:4000"
 export IFERX_APIKEY="87831cdb-d07a-4dc1-9de0-fb232c9bf286"
 
 
@@ -85,6 +85,7 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl create Qwen2.5-14B-Instruct-1M.json
 
 /opt/inferx/bin/ixctl create Qwen3-235B-A22B-Thinking-2507.json
+/opt/inferx/bin/ixctl create Qwen2.5-72B-Instruct.json
 
 /opt/inferx/bin/ixctl delete function public Qwen Llama-3.2-3B-Instruct-FP8
 /opt/inferx/bin/ixctl delete function public Qwen Hermes-2-Pro-Llama-3-8B-AWQ
@@ -98,7 +99,7 @@ google/gemma-7b-it
 
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-7B-Instruct-GPTQ-Int8
 /opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-Coder-7B-Instruct
-/opt/inferx/bin/ixctl delete function public Qwen Qwen2.5-1.5B
+/opt/inferx/bin/ixctl delete function public Qwen Qwen3-235B-A22B-Thinking-2507.json
 
 /opt/inferx/bin/ixctl delete function public Qwen QwQ-32B
 /opt/inferx/bin/ixctl delete function public Qwen 	Qwen2.5-Coder-14B-Instruct-GPTQ-Int8
@@ -249,12 +250,13 @@ google/gemma-7b-it
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Qwen-7B.json
 /opt/inferx/bin/ixctl create deepseek-math-7b-instruct.json
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-70B.json
+/opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-70B_4gpu.json
 /opt/inferx/bin/ixctl create DeepSeek-R1-Distill-Llama-70B-AWQ.json
 /opt/inferx/bin/ixctl create deepseek-coder-33b-instruct.json
 
 /opt/inferx/bin/ixctl create deepseek-r1-distill-qwen-32b.json
 
-/opt/inferx/bin/ixctl delete function public deepseek-ai deepseek-vl2-tiny
+/opt/inferx/bin/ixctl delete function public deepseek-ai deepseek-coder-33b-instruct
 /opt/inferx/bin/ixctl delete function public deepseek-ai deepseek-math-7b-rl
 /opt/inferx/bin/ixctl delete function public deepseek-ai DeepSeek-R1-Distill-Qwen-1.5B
 '/opt/inferx/bin/ixctl delete function public deepseek-ai deepseek-math-7b-instruct
