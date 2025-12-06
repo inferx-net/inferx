@@ -2,30 +2,27 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2-VL-7B-Instruct",
+    "name": "Qwen2.5-72B-Instruct",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.11.0",
+            "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2-VL-7B-Instruct",
+                "Qwen/Qwen2.5-72B-Instruct",
                 "--trust-remote-code",
-                "--uvicorn-log-level",
-                "warning",
-                "--async-scheduling",
                 "--gpu-memory-utilization",
-                " 0.90",
+                "0.95",
                 "--max-model-len",
-                "5000",
-                "--tensor-parallel-size=2"
+                "2000",
+                "--tensor-parallel-size=4"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 50000,
+                "Mem": 80000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 2,
-                    "vRam": 13000
+                    "Count": 4,
+                    "vRam": 60000
                 }
             },
             "envs": [
@@ -36,6 +33,14 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "HF_HUB_OFFLINE",
+                    "1"
+                ],
+                [
+                    "TRANSFORMERS_OFFLINE",
+                    "1"
                 ]
             ],
             "mounts": [
@@ -50,29 +55,37 @@
                 "probe": "/health"
             },
             "sample_query": {
-                "apiType": "image2text",
-                "prompt": "What is in this image?",
-                "path": "v1/chat/completions",
-                "imageUrl": "https://www.ilankelman.org/stopsigns/australia.jpg",
+                "apiType": "text2text",
+                "prompt": "write a quick sort algorithm.",
+                "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2-VL-7B-Instruct",
-                    "max_tokens": "200",
-                    "temperature": "0"
+                    "model": "Qwen/Qwen2.5-72B-Instruct",
+                    "max_tokens": "1000",
+                    "temperature": "0",
+                    "stream": "true"
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
             },
             "policy": {
                 "Obj": {
                     "min_replica": 0,
-                    "max_replica": 1,
+                    "max_replica": 2,
                     "standby_per_node": 1,
-                    "parallel": 20,
+                    "parallel": 100,
+                    "queue_len": 1000,
+                    "queue_timeout": 30.0,
+                    "scaleout_policy": {
+                        "WaitQueueRatio": {
+                            "wait_ratio": 0.1
+                        }
+                    },
+                    "scalein_timeout": 0.01,
                     "runtime_config": {
-                        "graph_sync": false
+                        "graph_sync": true
                     }
                 }
             }
