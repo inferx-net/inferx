@@ -34,11 +34,11 @@ spec:
                 name: inferx-dashboard
                 port:
                   number: 1250
-    ports:
-      web:
-        port: 30443
-        hostPort: 30443
-        expose: true
+    # ports:
+    #   web:
+    #     port: 30443
+    #     hostPort: 30443
+    #     expose: true
     #   websecure:
     #     port: 443
     #     hostPort: 443

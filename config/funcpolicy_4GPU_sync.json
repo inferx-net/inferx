@@ -1,0 +1,23 @@
+{
+    "type": "funcpolicy",
+    "tenant": "public",
+    "namespace": "system",
+    "name": "funcpolicy_4GPU_sync",
+    "object": {
+        "min_replica": 0,
+        "max_replica": 4,
+        "standby_per_node": 1,
+        "parallel": 20,
+        "queue_len": 1000,
+        "queue_timeout": 30.0,
+        "scaleout_policy": {
+            "WaitQueueRatio": {
+                "wait_ratio": 0.1
+            }
+        },
+        "scalein_timeout": 0.01,
+        "runtime_config": {
+            "graph_sync": true
+        }
+    }
+}
