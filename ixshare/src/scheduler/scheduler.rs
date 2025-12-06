@@ -199,6 +199,8 @@ impl Scheduler {
 
 pub async fn SchedulerSvc() -> Result<()> {
     SCHEDULER_METRICS.lock().await.Register().await;
+    SCHEDULER_METRICS.lock().await.totalGPU.clear();
+    SCHEDULER_METRICS.lock().await.usedGPU.clear();
 
     let objRepo = SchedObjRepo::New(SCHEDULER_CONFIG.stateSvcAddrs.clone()).await?;
 

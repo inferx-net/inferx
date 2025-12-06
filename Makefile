@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta20
+VERSION := v0.1.5.beta22
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -236,7 +236,6 @@ restartgw:
 	sudo kubectl delete deployment gateway
 	sudo kubectl apply -f k8s/gateway.yaml
 
-<<<<<<< HEAD
 runallcw:
 	-rm /opt/inferx/log/*.log
 	kubectl apply -f k8s/etcd.yaml
@@ -270,7 +269,7 @@ runallfw:
 	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
 	kubectl apply -f k8s/ingress.yaml
-=======
+
 runallnb:
 	-sudo rm /opt/inferx/log/*.log
 	sudo kubectl apply -f k8s/etcd.yaml
@@ -300,4 +299,3 @@ runallnbmg:
 	VERSION=$(VERSION) envsubst < k8s/nodeagent-nbmg.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
 	sudo kubectl apply -f k8s/ingress.yaml
->>>>>>> main

@@ -62,6 +62,13 @@
                 "gpu": "Mem",
                 "pageable": "File",
                 "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "funcpolicy_1GPU"
+                }
             }
         }
     }

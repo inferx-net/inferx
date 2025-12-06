@@ -9,6 +9,7 @@
             "commands": [
                 "--model",
                 "Qwen/Qwen3-235B-A22B-Thinking-2507",
+                "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",

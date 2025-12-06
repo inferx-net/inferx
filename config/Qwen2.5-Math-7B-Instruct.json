@@ -20,7 +20,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 13800
+                    "vRam": 13000
                 }
             },
             "envs": [
@@ -60,7 +60,7 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
+                "gpu": "Blob",
                 "pageable": "File",
                 "pinned": "File"
             }

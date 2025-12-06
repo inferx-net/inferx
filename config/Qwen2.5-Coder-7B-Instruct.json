@@ -20,11 +20,11 @@
             "resources": {
                 "CPU": 12000,
                 "Mem": 30000,
-                "ReadyMem": 3000,
+                "ReadyMem": 4000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 2,
-                    "vRam": 12000
+                    "vRam": 13000
                 }
             },
             "envs": [
@@ -35,10 +35,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "VLLM_USE_FLASHINFER_SAMPLER",
-                    "0"
                 ]
             ],
             "mounts": [
@@ -64,9 +60,9 @@
                 }
             },
             "standby": {
-                "gpu": "Mem",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             },
             "policy": {
                 "Obj": {
@@ -75,7 +71,7 @@
                     "standby_per_node": 1,
                     "parallel": 200,
                     "runtime_config": {
-                        "graph_sync": false
+                        "graph_sync": true
                     }
                 }
             }
