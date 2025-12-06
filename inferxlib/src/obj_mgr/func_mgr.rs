@@ -83,6 +83,8 @@ pub struct SampleCall {
     pub path: String,
     pub prompt: String,
     #[serde(default)]
+    pub prompts: Vec<String>,
+    #[serde(default)]
     pub imageUrl: String,
     pub body: BTreeMap<String, String>,
 }
@@ -100,6 +102,7 @@ impl Default for SampleCall {
             path: "/v1/completions".to_owned(),
             imageUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
+            prompts: Vec::new(),
             body: map,
         };
     }
