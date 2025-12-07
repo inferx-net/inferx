@@ -24,7 +24,7 @@ spec:
             initialDelaySeconds: 6    # wait before first probe
             periodSeconds: 10         # ping every 10s
             timeoutSeconds: 2         # fail if no response in 2s
-            failureThreshold: 3
+            failureThreshold: 10
           securityContext:
             privileged: true
             capabilities:
