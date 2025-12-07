@@ -225,9 +225,9 @@ async fn run_hey(
 
     if show_outputs {
         let lock = joined.lock().await;
-        if lock.len() > 1 {
-            println!("output text {:#?}", &*lock);
-        }
+        // if lock.len() > 1 {
+        println!("output text {:#?}", &*lock);
+        // }
     }
 
     println!(
