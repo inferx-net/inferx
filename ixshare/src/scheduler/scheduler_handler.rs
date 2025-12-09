@@ -1030,16 +1030,47 @@ impl SchedulerHandler {
     }
 
     pub async fn RemoveSnapshotByFunckey(&mut self, funckey: &str) -> Result<()> {
-        let snapshot = self.snapshots.remove(funckey);
+        info!("RemoveSnapshotByFunckey remove {} start", funckey);
+        let snapshot = self.snapshots.get(funckey);
+        let mut deletes = Vec::new();
         if let Some(snapshot) = snapshot {
-            for (nodename, _) in snapshot {
-                match self.RemoveSnapshotFromNode(&nodename, &funckey).await {
-                    Ok(()) => (),
+            let nodes: Vec<String> = snapshot.keys().cloned().collect();
+            for nodename in nodes {
+                let ret = self.RemoveSnapshotFromNode(&nodename, &funckey).await;
+                match ret {
+                    Ok(()) => {
+                        deletes.push(nodename);
+                    }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(
+                            "fail to remove snapshot {:?} from node {} with error {:?}",
+                            funckey, nodename, e
+                        );
                     }
                 }
             }
+        }
+
+        let mut remove = false;
+        let snapshot = self.snapshots.get_mut(funckey);
+        if let Some(snapshot) = snapshot {
+            for nodename in deletes {
+                snapshot.remove(&nodename);
+            }
+
+            if snapshot.len() == 0 {
+                remove = true;
+            }
+        }
+
+        if remove {
+            info!("RemoveSnapshotByFunckey remove {} done", funckey);
+            self.snapshots.remove(funckey);
+        } else {
+            info!(
+                "RemoveSnapshotByFunckey remove {} fail, will retry later",
+                funckey
+            );
         }
 
         return Ok(());
@@ -1054,17 +1085,10 @@ impl SchedulerHandler {
         }
 
         for funckey in &cleanSnapshots {
-            let snapshots = match self.snapshots.remove(funckey) {
-                None => continue,
-                Some(ns) => ns,
-            };
-
-            for (nodename, _state) in &snapshots {
-                match self.RemoveSnapshotFromNode(nodename, &funckey).await {
-                    Ok(()) => (),
-                    Err(e) => {
-                        error!("{:?}", e);
-                    }
+            match self.RemoveSnapshotByFunckey(&funckey).await {
+                Ok(()) => (),
+                Err(e) => {
+                    error!("CleanSnapshots get fail {:?}", e);
                 }
             }
         }
