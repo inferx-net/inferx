@@ -224,10 +224,23 @@ async fn run_hey(
     }
 
     if show_outputs {
-        let lock = joined.lock().await;
-        // if lock.len() > 1 {
-        println!("output text {:#?}", &*lock);
-        // }
+        let mut aggregated: Vec<(String, i32)> = {
+            let lock = joined.lock().await;
+            lock.iter()
+                .map(|(text, &count)| (text.clone(), count))
+                .collect()
+        };
+
+        aggregated.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        if aggregated.is_empty() {
+            println!("output text: <empty>");
+        } else {
+            println!("output text (sorted by count desc):");
+            for (text, count) in aggregated {
+                println!("{}: {}", count, text);
+            }
+        }
     }
 
     println!(
