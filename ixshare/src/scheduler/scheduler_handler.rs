@@ -1096,6 +1096,69 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    pub async fn CleanPods(&mut self) -> Result<()> {
+        let mut cleanfuncs = BTreeSet::new();
+        for (_podkey, pod) in &self.pods {
+            if !self.funcs.contains_key(&pod.pod.FuncKey()) {
+                cleanfuncs.insert(pod.pod.FuncKey());
+            }
+        }
+
+        // if cleanfuncs.len() > 0 {
+        //     error!("CleanPods available funcs {:?}", &self.funcs.keys());
+        //     error!("CleanPods clear funcs {:?}", &cleanfuncs);
+        // }
+
+        for funckey in &cleanfuncs {
+            match self.RemovePodsByFunckey(&funckey).await {
+                Ok(()) => (),
+                Err(e) => {
+                    error!("CleanPods get fail {:?}", e);
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RemovePodsByFunckey(&mut self, funckey: &str) -> Result<()> {
+        info!("RemovePodsByFunckey remove {} start", funckey);
+        let mut remove = true;
+        let mut pods = Vec::new();
+
+        for (_, p) in &self.pods {
+            if &p.pod.FuncKey() == funckey {
+                pods.push(p.clone());
+                remove = false;
+            }
+        }
+
+        for p in pods {
+            match self.StopWorker(&p.pod).await {
+                Err(e) => {
+                    info!(
+                        "RemovePodsByFunckey stopworker {} fail with error {:?}",
+                        p.pod.PodKey(),
+                        e
+                    );
+                }
+                Ok(()) => (),
+            }
+        }
+
+        if remove {
+            info!("RemovePodsByFunckey remove {} done", funckey);
+            self.funcs.remove(funckey);
+        } else {
+            info!(
+                "RemovePodsByFunckey remove {} fail, will retry later",
+                funckey
+            );
+        }
+
+        return Ok(());
+    }
+
     pub async fn RemoveSnapshotFromNode(&self, nodename: &str, funckey: &str) -> Result<()> {
         let nodeStatus = self.nodes.get(nodename).unwrap();
         let nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
@@ -1162,6 +1225,7 @@ impl SchedulerHandler {
                     // retry scheduling to see wheter there is more resource avaiable
                     self.RefreshScheduling().await?;
                     self.CleanSnapshots().await?;
+                    self.CleanPods().await?;
                     self.ProcessGatewayTimeout().await?;
                 }
             }
@@ -2494,22 +2558,8 @@ impl SchedulerHandler {
     pub const PRINT_SCHEDER_INFO: bool = false;
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
-        let pods = self.GetFuncPods(&spec.tenant, &spec.namespace, &spec.name, spec.Version())?;
+        self.RemovePodsByFunckey(&spec.Key()).await?;
 
-        for pod in &pods {
-            let pod = &pod.pod;
-
-            match self.StopWorker(&pod).await {
-                Ok(()) => (),
-                Err(e) => {
-                    error!(
-                        "ProcessRemoveFunc fail to stopper func worker {:?} with error {:#?}",
-                        pod.PodKey(),
-                        e
-                    );
-                }
-            }
-        }
         self.RemoveSnapshotByFunckey(&spec.Key()).await?;
 
         return Ok(());
