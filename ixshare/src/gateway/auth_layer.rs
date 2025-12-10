@@ -675,7 +675,7 @@ impl KeycloakProvider {
     }
 
     pub async fn GetGroups(&self, username: &str) -> Result<Vec<String>> {
-        let realm = "inferx";
+        let realm = &GATEWAY_CONFIG.keycloakconfig.realm;
         let users = self
             .client
             .realm_users_get(
