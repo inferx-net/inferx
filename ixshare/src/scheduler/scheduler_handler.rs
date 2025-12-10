@@ -1085,6 +1085,11 @@ impl SchedulerHandler {
         }
 
         for funckey in &cleanSnapshots {
+            if self.HasPod(&funckey) {
+                // we delete snapshot only after related pod are removed
+                continue;
+            }
+
             match self.RemoveSnapshotByFunckey(&funckey).await {
                 Ok(()) => (),
                 Err(e) => {
@@ -1111,7 +1116,7 @@ impl SchedulerHandler {
 
         for funckey in &cleanfuncs {
             match self.RemovePodsByFunckey(&funckey).await {
-                Ok(()) => (),
+                Ok(_) => (),
                 Err(e) => {
                     error!("CleanPods get fail {:?}", e);
                 }
@@ -1121,15 +1126,35 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub async fn RemovePodsByFunckey(&mut self, funckey: &str) -> Result<()> {
+    pub fn HasPod(&self, funckey: &str) -> bool {
+        let key = funckey.to_owned() + "/";
+
+        for (_, p) in self.pods.range(key..) {
+            if p.pod.FuncKey() == funckey {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    // return has pods
+    pub async fn RemovePodsByFunckey(&mut self, funckey: &str) -> Result<bool> {
         info!("RemovePodsByFunckey remove {} start", funckey);
         let mut remove = true;
         let mut pods = Vec::new();
 
-        for (_, p) in &self.pods {
-            if &p.pod.FuncKey() == funckey {
+        // add "/" after funckey, the key will be <tenant>/<namespace>/<funcname>/<revision>/
+        let key = funckey.to_owned() + "/";
+
+        for (_, p) in self.pods.range(key..) {
+            if p.pod.FuncKey() == funckey {
                 pods.push(p.clone());
                 remove = false;
+            } else {
+                break;
             }
         }
 
@@ -1156,7 +1181,7 @@ impl SchedulerHandler {
             );
         }
 
-        return Ok(());
+        return Ok(remove);
     }
 
     pub async fn RemoveSnapshotFromNode(&self, nodename: &str, funckey: &str) -> Result<()> {
@@ -1224,8 +1249,9 @@ impl SchedulerHandler {
                 if self.listDone {
                     // retry scheduling to see wheter there is more resource avaiable
                     self.RefreshScheduling().await?;
-                    self.CleanSnapshots().await?;
+                    // we need to delete pod at first before clean snapshot
                     self.CleanPods().await?;
+                    self.CleanSnapshots().await?;
                     self.ProcessGatewayTimeout().await?;
                 }
             }
@@ -2169,35 +2195,6 @@ impl SchedulerHandler {
             }
         }
 
-        // let id = FuncId::New(funcId).unwrap();
-
-        // let podCount = match self
-        //     .GetFuncPodCount(
-        //         &func.tenant,
-        //         &func.namespace,
-        //         &func.name,
-        //         id.revision,
-        //         &CreatePodType::Snapshot.String(),
-        //         nodename,
-        //     )
-        //     .await
-        // {
-        //     Err(e) => {
-        //         error!(
-        //             "fail to get func {} snapshot count with error {:?}, will retry ...",
-        //             funcId, e
-        //         );
-        //         self.AddSnapshotTask(nodename, funcId);
-        //         return Ok(());
-        //     }
-        //     Ok(c) => c,
-        // };
-
-        // // there are too many retry snapshot pods. stop retry.
-        // if podCount >= 3 {
-        //     return Ok(());
-        // }
-
         let nodeStatus = match self.nodes.get(nodename) {
             None => return Ok(()),
             Some(n) => n,
@@ -2243,6 +2240,7 @@ impl SchedulerHandler {
                 nodename, funcId
             )));
         }
+
         let mut nodeResources: NodeResources = nodeStatus.available.clone();
 
         let terminateWorkers =
@@ -2558,9 +2556,11 @@ impl SchedulerHandler {
     pub const PRINT_SCHEDER_INFO: bool = false;
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
-        self.RemovePodsByFunckey(&spec.Key()).await?;
+        let hasPod = self.RemovePodsByFunckey(&spec.Key()).await?;
 
-        self.RemoveSnapshotByFunckey(&spec.Key()).await?;
+        if !hasPod {
+            self.RemoveSnapshotByFunckey(&spec.Key()).await?;
+        }
 
         return Ok(());
     }
@@ -2862,16 +2862,10 @@ impl SchedulerHandler {
         {
             let nodename = pod.object.spec.nodename.clone();
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-            if pod.object.status.state != PodState::Failed {
-                // failure pod resource has been freed
-                self.stoppingPods.insert(pod.PodKey());
-                nodeStatus.FreeResource(&pod.object.spec.allocResources, &pod.PodKey())?;
-            }
-
             naUrl = nodeStatus.node.NodeAgentUrl();
         }
 
-        return self
+        match self
             .StopWorkerInner(
                 &naUrl,
                 &pod.tenant,
@@ -2880,7 +2874,21 @@ impl SchedulerHandler {
                 pod.object.spec.fprevision,
                 &pod.object.spec.id,
             )
-            .await;
+            .await
+        {
+            Err(e) => return Err(e),
+            Ok(()) => {
+                let nodename = pod.object.spec.nodename.clone();
+                let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+                if pod.object.status.state != PodState::Failed {
+                    // failure pod resource has been freed
+                    self.stoppingPods.insert(pod.PodKey());
+                    nodeStatus.FreeResource(&pod.object.spec.allocResources, &pod.PodKey())?;
+                }
+
+                return Ok(());
+            }
+        }
     }
 
     pub async fn StopWorkerInner(
