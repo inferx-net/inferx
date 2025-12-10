@@ -33,7 +33,9 @@ spec:
               fieldRef:
                 fieldPath: status.podIP  
           - name: ENABLE_TRACER
-            value: "true"        
+            value: "true"   
+          - name: KEYCLOAK_REALM
+            value: "inferx"     
           - name: RUN_SERVICE
             value: "Gateway"
           - name: INFERX_ADMIN_APIKEY
