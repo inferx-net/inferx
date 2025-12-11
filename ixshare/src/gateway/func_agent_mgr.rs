@@ -241,7 +241,6 @@ pub struct FuncAgentInner {
     pub reqQueueTx: mpsc::Sender<FuncClientReq>,
     pub workerStateUpdateTx: mpsc::Sender<WorkerUpdate>,
 
-    pub availableSlot: Arc<AtomicIsize>,
     pub totalSlot: Arc<AtomicUsize>,
     pub startingSlot: Arc<AtomicUsize>,
     pub activeReqCnt: AtomicUsize,
@@ -252,16 +251,6 @@ pub struct FuncAgentInner {
 }
 
 impl FuncAgentInner {
-    pub fn AvailableWorker(&self) -> Option<FuncWorker> {
-        for (_, worker) in &*self.workers.lock().unwrap() {
-            if worker.AvailableSlot() > 0 {
-                return Some(worker.clone());
-            }
-        }
-
-        return None;
-    }
-
     pub fn Key(&self) -> String {
         return format!("{}/{}/{}", &self.tenant, &self.namespace, &self.funcName);
     }
@@ -331,7 +320,6 @@ impl FuncAgent {
             reqQueueTx: rtx,
             workerStateUpdateTx: wtx,
             totalSlot: Arc::new(AtomicUsize::new(0)),
-            availableSlot: Arc::new(AtomicIsize::new(0)),
             startingSlot: Arc::new(AtomicUsize::new(0)),
             activeReqCnt: AtomicUsize::new(0),
             workers: Mutex::new(BTreeMap::new()),
@@ -425,7 +413,6 @@ impl FuncAgent {
             "waitReqCnt": wait_cnt,
             "parallelLevel": self.ParallelLevel(),
             "totalSlot": self.totalSlot.load(Ordering::Relaxed),
-            "availableSlot": self.availableSlot.load(Ordering::Relaxed),
             "startingSlot": self.startingSlot.load(Ordering::Relaxed),
             "scaleInWorkerId": self.scaleInWorkerId.load(Ordering::Relaxed),
             "nextWorkerId": self.nextWorkerId.load(Ordering::Relaxed),
@@ -654,26 +641,6 @@ impl FuncAgent {
     pub fn SendWorkerStatusUpdate(&self, update: WorkerUpdate) {
         let statusUpdateTx = self.workerStateUpdateTx.clone();
         statusUpdateTx.try_send(update).unwrap();
-    }
-
-    pub fn IncrSlot(&self, cnt: usize) -> isize {
-        // error!(
-        //     "IncrSlot cnt {} {} available {}",
-        //     l.Key(),
-        //     cnt,
-        //     l.availableSlot
-        // );
-        return self.availableSlot.fetch_add(cnt as isize, Ordering::SeqCst) + cnt as isize;
-    }
-
-    pub fn DecrSlot(&self, cnt: usize) -> isize {
-        // error!(
-        //     "DecrSlot cnt {} {} available {}",
-        //     l.Key(),
-        //     cnt,
-        //     l.availableSlot
-        // );
-        return self.availableSlot.fetch_sub(cnt as isize, Ordering::SeqCst) - cnt as isize;
     }
 }
 
