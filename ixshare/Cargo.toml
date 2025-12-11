@@ -44,6 +44,7 @@ threadpool = "1.8.1"
 errno = "0.2.4" 
 libloading = "0.8.6"
 crossbeam-channel = "0.5"
+indexmap = "2.2"
 
 axum = "0.7.4"
 hyper = { version = "1.7", features = ["full"] }
@@ -87,4 +88,3 @@ features = ["spin_no_std"]
 
 [build-dependencies]
 tonic-build = { version = "0.8" , features = ["prost"]}
-

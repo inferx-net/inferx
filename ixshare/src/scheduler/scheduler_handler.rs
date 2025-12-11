@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use inferxlib::data_obj::ObjRef;
+use indexmap::IndexSet;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
@@ -497,7 +498,7 @@ pub struct SchedulerHandler {
 
     /********************idle pods ************************* */
     // returnId --> PodKey()
-    pub idlePods: BTreeSet<String>,
+    pub idlePods: IndexSet<String>,
 
     /********************stopping pods ************************* */
     pub stoppingPods: BTreeSet<String>,
@@ -609,7 +610,8 @@ impl SchedulerHandler {
 
                         worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
                         // how to handle the recovered failure gateway?
-                        self.idlePods.insert(worker.pod.PodKey());
+                        let podKey = worker.pod.PodKey();
+                        self.idlePods.insert(podKey.clone());
                     }
                 }
                 _ => (),
@@ -682,7 +684,8 @@ impl SchedulerHandler {
             );
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 worker.SetWorking(req.gateway_id);
-                let remove = self.idlePods.remove(&worker.pod.PodKey());
+                let podKey = worker.pod.PodKey();
+                let remove = self.idlePods.shift_remove(&podKey);
                 error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
@@ -1719,7 +1722,7 @@ impl SchedulerHandler {
         }
 
         for podKey in &missWorkers {
-            self.idlePods.remove(podKey);
+            self.idlePods.shift_remove(podKey);
             error!("FindNode4Pod remove idlepod missing {:?}", &podKey);
         }
 
@@ -2091,8 +2094,8 @@ impl SchedulerHandler {
         }
 
         for workerid in &missWorkers {
-            let pod = self.idlePods.remove(workerid);
-            error!("FindNode4Pod remove idlepod missing {:?}", &pod);
+            self.idlePods.shift_remove(workerid);
+            error!("FindNode4Pod remove idlepod missing {:?}", &workerid);
         }
 
         let state = available.CanAlloc(&reqResource, createSnapshot);
@@ -2296,16 +2299,16 @@ impl SchedulerHandler {
 
         self.SetSnapshotStatus(funcId, nodename, SnapshotScheduleState::Scheduled);
 
-        for pod in &terminateWorkers {
-            let remove = self.idlePods.remove(&pod.pod.PodKey());
-            assert!(remove);
-            let podkey = pod.pod.PodKey();
-            match self.pods.get(&podkey) {
+        for worker in &terminateWorkers {
+            let podKey = worker.pod.PodKey();
+            let removed = self.idlePods.shift_remove(&podKey);
+            assert!(removed);
+            match self.pods.get(&podKey) {
                 None => unreachable!(),
                 Some(pod) => {
                     let nodename = pod.pod.object.spec.nodename.clone();
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    self.stoppingPods.insert(podkey.clone());
+                    self.stoppingPods.insert(podKey.clone());
 
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
@@ -2682,16 +2685,16 @@ impl SchedulerHandler {
             pod.SetState(WorkerPodState::Terminating);
         }
 
-        for pod in &terminateWorkers {
-            let remove = self.idlePods.remove(&pod.pod.PodKey());
-            assert!(remove);
-            let podkey = pod.pod.PodKey();
-            match self.pods.get(&podkey) {
+        for worker in &terminateWorkers {
+            let podKey = worker.pod.PodKey();
+            let removed = self.idlePods.shift_remove(&podKey);
+            assert!(removed);
+            match self.pods.get(&podKey) {
                 None => unreachable!(),
                 Some(pod) => {
                     let nodename = pod.pod.object.spec.nodename.clone();
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    self.stoppingPods.insert(podkey.clone());
+                    self.stoppingPods.insert(podKey.clone());
 
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
