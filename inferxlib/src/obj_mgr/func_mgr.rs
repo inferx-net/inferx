@@ -53,6 +53,16 @@ impl Default for URIScheme {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ProbeType {
+    HealthCheck,
+    Prompt,
+}
+
+fn ProbeTypeDefault() -> ProbeType {
+    return ProbeType::HealthCheck;
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HttpEndpoint {
     pub port: u16,
     #[serde(default)]
@@ -60,6 +70,8 @@ pub struct HttpEndpoint {
     pub probe: String,
     #[serde(default = "ProbeTimeoutDefault")]
     pub probeTimeout: u32,
+    #[serde(default = "ProbeTypeDefault")]
+    pub probetype: ProbeType,
 }
 
 fn ProbeTimeoutDefault() -> u32 {
@@ -73,6 +85,7 @@ impl Default for HttpEndpoint {
             schema: URIScheme::Http,
             probe: "/health".to_owned(),
             probeTimeout: 1000,
+            probetype: ProbeType::HealthCheck,
         };
     }
 }
@@ -221,6 +234,7 @@ impl Default for FuncSpec {
                 probe: "/health".to_owned(),
                 schema: URIScheme::Http,
                 probeTimeout: 1000,
+                probetype: ProbeType::HealthCheck,
             },
             entrypoint: Vec::new(),
             version: 0,
