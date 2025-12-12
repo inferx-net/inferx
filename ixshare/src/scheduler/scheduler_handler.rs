@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use inferxlib::data_obj::ObjRef;
 use indexmap::IndexSet;
+use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
@@ -224,6 +224,7 @@ impl NodeStatus {
             None => false,
         };
 
+        error!("FreeResource RemovePod ...");
         // we don't free source for stopping pod as they has been reclaimed when stopping it.
         if (pendingExist || exist) && !stopping {
             self.FreeResource(resources, podKey)?;
@@ -259,6 +260,8 @@ impl NodeStatus {
         //     _podkey, free
         // );
         self.available.Add(free)?;
+
+        error!("FreeResource xx {:#?}", &self.available.GPUResource());
         return Ok(());
     }
 }
@@ -2310,6 +2313,7 @@ impl SchedulerHandler {
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
                     self.stoppingPods.insert(podKey.clone());
 
+                    error!("FreeResource create snapshot1 ... ");
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
                 }
@@ -2490,6 +2494,7 @@ impl SchedulerHandler {
                     Some(ns) => ns,
                 };
                 let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
+                error!("FreeResource create snapshot2 ...");
                 nodeStatus.FreeResource(&resourceQuota, "")?;
                 return Err(e);
             }
@@ -2696,6 +2701,7 @@ impl SchedulerHandler {
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
                     self.stoppingPods.insert(podKey.clone());
 
+                    error!("FreeResource Resumepod xx ...");
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
                 }
@@ -2705,6 +2711,8 @@ impl SchedulerHandler {
         {
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
             let standbyResource = pod.pod.object.spec.allocResources.clone();
+            error!("FreeResource Resumepod 2... ");
+
             nodeStatus.FreeResource(&standbyResource, &fp.name)?;
             nodeStatus.available.Sub(&resources)?;
             info!(
@@ -2886,6 +2894,7 @@ impl SchedulerHandler {
                 if pod.object.status.state != PodState::Failed {
                     // failure pod resource has been freed
                     self.stoppingPods.insert(pod.PodKey());
+                    error!("FreeResource StopWorker");
                     nodeStatus.FreeResource(&pod.object.spec.allocResources, &pod.PodKey())?;
                 }
 
