@@ -77,7 +77,7 @@ async fn run_hey(
     gateway_endpoint: &str,
 ) {
     let base = gateway_endpoint.trim_end_matches('/');
-    let url = format!("{}/funccall/public/{}/v1/completions", base, modelalias);
+    let url = format!("{}/directfunccall/public/{}/v1/completions", base, modelalias);
     println!(
         "=== Running hey for model: {} (c={}, z={}s) ===",
         modelalias, concurrency, duration_secs
@@ -231,7 +231,8 @@ async fn run_hey(
                 .collect()
         };
 
-        aggregated.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        // sort by count asc, and then text asc for deterministic output
+        aggregated.sort_by_key(|(text, count)| (*count, text.clone()));
 
         if aggregated.is_empty() {
             println!("output text: <empty>");
