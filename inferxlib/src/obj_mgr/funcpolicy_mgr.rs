@@ -67,7 +67,7 @@ fn default_graph_sync() -> bool {
 }
 
 fn default_runtime_config() -> RuntimeConfig {
-    RuntimeConfig { GraphSync: true }
+    RuntimeConfig { GraphSync: false }
 }
 
 fn default_parallel() -> usize {
