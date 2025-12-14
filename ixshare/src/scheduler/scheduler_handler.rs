@@ -2889,15 +2889,8 @@ impl SchedulerHandler {
         {
             Err(e) => return Err(e),
             Ok(()) => {
-                let nodename = pod.object.spec.nodename.clone();
-                let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                if pod.object.status.state != PodState::Failed {
-                    // failure pod resource has been freed
-                    self.stoppingPods.insert(pod.PodKey());
-                    error!("FreeResource StopWorker");
-                    nodeStatus.FreeResource(&pod.object.spec.allocResources, &pod.PodKey())?;
-                }
-
+                // Don't pre-free or mark stoppingPods here; free on pod removal so we
+                // release resources exactly once even if StopWorker is retried.
                 return Ok(());
             }
         }
