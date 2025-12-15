@@ -224,7 +224,6 @@ impl NodeStatus {
             None => false,
         };
 
-        error!("FreeResource RemovePod ...");
         // we don't free source for stopping pod as they has been reclaimed when stopping it.
         if (pendingExist || exist) && !stopping {
             self.FreeResource(resources, podKey)?;
@@ -260,8 +259,6 @@ impl NodeStatus {
         //     _podkey, free
         // );
         self.available.Add(free)?;
-
-        error!("FreeResource xx {:#?}", &self.available.GPUResource());
         return Ok(());
     }
 }
@@ -2313,7 +2310,6 @@ impl SchedulerHandler {
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
                     self.stoppingPods.insert(podKey.clone());
 
-                    error!("FreeResource create snapshot1 ... ");
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
                 }
@@ -2494,7 +2490,6 @@ impl SchedulerHandler {
                     Some(ns) => ns,
                 };
                 let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
-                error!("FreeResource create snapshot2 ...");
                 nodeStatus.FreeResource(&resourceQuota, "")?;
                 return Err(e);
             }
@@ -2701,7 +2696,6 @@ impl SchedulerHandler {
                     let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
                     self.stoppingPods.insert(podKey.clone());
 
-                    error!("FreeResource Resumepod xx ...");
                     nodeStatus
                         .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
                 }
@@ -2711,7 +2705,6 @@ impl SchedulerHandler {
         {
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
             let standbyResource = pod.pod.object.spec.allocResources.clone();
-            error!("FreeResource Resumepod 2... ");
 
             nodeStatus.FreeResource(&standbyResource, &fp.name)?;
             nodeStatus.available.Sub(&resources)?;
