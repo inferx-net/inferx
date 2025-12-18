@@ -15,6 +15,9 @@
                 "wait_ratio": 0.1
             }
         },
-        "scalein_timeout": 0.01
+        "scalein_timeout": 0.01,
+        "runtime_config": {
+            "graph_sync": false
+        }
     }
 }
