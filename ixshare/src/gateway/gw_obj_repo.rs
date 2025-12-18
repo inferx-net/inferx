@@ -629,7 +629,7 @@ impl GwObjRepo {
                         }
                         FunctionStatus::KEY => {
                             let func = obj.To::<FunctionStatusDef>()?;
-                            self.funcstatusMgr.Add(func)?;
+                            self.funcstatusMgr.Update(func)?;
                         }
                         Tenant::KEY => {
                             let spec: Tenant = Tenant::FromDataObject(obj)?;

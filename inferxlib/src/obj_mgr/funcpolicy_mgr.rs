@@ -63,11 +63,11 @@ fn default_ScaleOutPolicy() -> ScaleOutPolicy {
 }
 
 fn default_graph_sync() -> bool {
-    true
+    false
 }
 
 fn default_runtime_config() -> RuntimeConfig {
-    RuntimeConfig { GraphSync: true }
+    RuntimeConfig { GraphSync: false }
 }
 
 fn default_parallel() -> usize {

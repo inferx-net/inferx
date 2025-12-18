@@ -258,22 +258,6 @@ impl FuncWorker {
         return self.parallelLevel;
     }
 
-    pub fn AvailableSlot(&self) -> usize {
-        let state = self.State();
-        // error!(
-        //     "AvailableSlot state {:?}/{:?}/{}/{}",
-        //     &self.workerId,
-        //     state,
-        //     self.parallelLevel,
-        //     self.ongoingReqCnt.load(Ordering::SeqCst)
-        // );
-        if state == FuncWorkerState::Idle || state == FuncWorkerState::Processing {
-            return self.parallelLevel - self.ongoingReqCnt.load(Ordering::SeqCst);
-        } else {
-            return 0;
-        }
-    }
-
     pub fn OngoingReq(&self) -> usize {
         return self.ongoingReqCnt.load(Ordering::SeqCst);
     }
@@ -336,8 +320,7 @@ impl FuncWorker {
         assert!(
             self.State() == FuncWorkerState::Idle || self.State() == FuncWorkerState::Processing
         );
-        let slot = self.AvailableSlot(); // need to dec the current connect when fail
-        self.funcAgent.DecrSlot(slot);
+
         self.funcAgent
             .activeReqCnt
             .fetch_sub(self.ongoingReqCnt.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -396,7 +379,6 @@ impl FuncWorker {
             self.failCount.store(0, Ordering::Relaxed);
         }
 
-        self.funcAgent.IncrSlot(1);
         if ongoingReqCnt == 1 {
             self.SetState(FuncWorkerState::Idle);
         }
@@ -501,8 +483,7 @@ impl FuncWorker {
             .await;
 
         let mut idleClientRx = idleClientRx;
-        let slots = self.parallelLevel;
-        self.funcAgent.IncrSlot(slots);
+
         self.funcAgent
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
         self.SetState(FuncWorkerState::Processing);

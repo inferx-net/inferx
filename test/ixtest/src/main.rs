@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap, env, sync::{
+    collections::BTreeMap, env, process, sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     }, time::{Duration, Instant}
@@ -11,44 +11,84 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 pub static REQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+const DEFAULT_PROMPT: &str =
+    "Can you provide ways to eat combinations of bananas and dragonfruits?";
+const DEFAULT_MAX_TOKENS: u32 = 20;
+const DEFAULT_GATEWAY_ENDPOINT: &str = "http://localhost:31501"; //"http://localhost:4000";
 
 #[tokio::main]
 async fn main() {
-    // Usage: cargo run -- <concurrency> <duration_secs> [<modelalias>] <model>
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 4 && args.len() != 5 {
-        eprintln!(
-            "Usage: {} <concurrency> <duration_secs> [<modelalias>] <model>",
-            args[0]
-        );
-        std::process::exit(1);
+    let mut args = env::args();
+    let program = args
+        .next()
+        .unwrap_or_else(|| String::from("ixtest"));
+    let input_args: Vec<String> = args.collect();
+
+    if input_args.is_empty() {
+        fatal(&program, "missing required arguments");
     }
 
-    let concurrency: usize = args[1].parse().expect("invalid concurrency");
-    let duration_secs: u64 = args[2].parse().expect("invalid duration");
-    let (modelalias, model) = if args.len() == 4 {
-        let model = args[3].clone();
-        (model.clone(), model)
+    let (
+        concurrency,
+        duration_secs,
+        modelalias,
+        model,
+        show_outputs,
+        prompt,
+        max_tokens,
+        max_requests,
+        gateway_endpoint,
+    ) = if input_args.iter().all(|arg| arg.contains('=')) {
+        parse_key_value_args(&program, &input_args)
     } else {
-        (args[3].clone(), args[4].clone())
+        parse_positional_args(&program, &input_args)
     };
 
-    run_hey(concurrency, duration_secs, &modelalias, &model).await;
+    if duration_secs == 0 && max_requests.is_none() {
+        fatal(
+            &program,
+            "duration must be greater than zero when max_requests is not provided",
+        );
+    }
+
+    run_hey(
+        concurrency,
+        duration_secs,
+        &modelalias,
+        &model,
+        show_outputs,
+        &prompt,
+        max_tokens,
+        max_requests,
+        &gateway_endpoint,
+    )
+    .await;
 }
 
-async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model: &str) {
-    let url = format!(
-        // "http://localhost:4000/funccall/public/{}/v1/completions",
-        "http://localhost:31501/funccall/public/{}/v1/completions",
-        modelalias
-    );
+async fn run_hey(
+    concurrency: usize,
+    duration_secs: u64,
+    modelalias: &str,
+    model: &str,
+    show_outputs: bool,
+    prompt: &str,
+    max_tokens: u32,
+    max_requests: Option<usize>,
+    gateway_endpoint: &str,
+) {
+    let base = gateway_endpoint.trim_end_matches('/');
+    let url = format!("{}/directfunccall/public/{}/v1/completions", base, modelalias);
     println!(
         "=== Running hey for model: {} (c={}, z={}s) ===",
         modelalias, concurrency, duration_secs
     );
 
     let client = Client::new();
-    let stop_time = Instant::now() + Duration::from_secs(duration_secs);
+    let stop_time = if duration_secs == 0 {
+        None
+    } else {
+        Some(Instant::now() + Duration::from_secs(duration_secs))
+    };
 
     let success = Arc::new(AtomicUsize::new(0));
     let fail = Arc::new(AtomicUsize::new(0));
@@ -65,15 +105,34 @@ async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model:
 
         let clone = joined.clone();
         let model = model.to_string();
+        let prompt = prompt.to_string();
+        let max_tokens = max_tokens;
+        let stop_time = stop_time;
+        let max_requests = max_requests;
         handles.push(tokio::spawn(async move {
             let mut first = None;
             let mut output: BTreeMap<String, i32> = BTreeMap::new();
 
-            while Instant::now() < stop_time {
-                let req_id = REQ_COUNT.fetch_add(1, Ordering::SeqCst);
+            loop {
+                if let Some(stop) = stop_time {
+                    if Instant::now() >= stop {
+                        break;
+                    }
+                }
+
+                let req_id = if let Some(limit) = max_requests {
+                    let current = REQ_COUNT.fetch_add(1, Ordering::SeqCst);
+                    if current >= limit {
+                        break;
+                    }
+                    current
+                } else {
+                    REQ_COUNT.fetch_add(1, Ordering::SeqCst)
+                };
+
                 let body = json!({
-                    "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
-                    "max_tokens": "20",
+                    "prompt": prompt,
+                    "max_tokens": max_tokens.to_string(),
                     "model": model,
                     "stream": "false",
                     "temperature": "0",
@@ -164,10 +223,26 @@ async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model:
         let _ = h.await;
     }
 
-    // let lock = joined.lock().await;
-    // if lock.len() > 1 {
-    //     println!("output text {:#?}", &*lock);
-    // }
+    if show_outputs {
+        let mut aggregated: Vec<(String, i32)> = {
+            let lock = joined.lock().await;
+            lock.iter()
+                .map(|(text, &count)| (text.clone(), count))
+                .collect()
+        };
+
+        // sort by count asc, and then text asc for deterministic output
+        aggregated.sort_by_key(|(text, count)| (*count, text.clone()));
+
+        if aggregated.is_empty() {
+            println!("output text: <empty>");
+        } else {
+            println!("output text (sorted by count desc):");
+            for (text, count) in aggregated {
+                println!("{}: {}", count, text);
+            }
+        }
+    }
 
     println!(
         "[200 OK]:\t{}\t[mismatch]:\t\t{}\t[fail]:\t\t\t{}\t\n",
@@ -182,4 +257,242 @@ async fn run_hey(concurrency: usize, duration_secs: u64, modelalias: &str,model:
     );
     
     
+}
+
+fn parse_positional_args(
+    program: &str,
+    args: &[String],
+) -> (
+    usize,
+    u64,
+    String,
+    String,
+    bool,
+    String,
+    u32,
+    Option<usize>,
+    String,
+) {
+    if args.len() < 3 || args.len() > 5 {
+        fatal(
+            program,
+            "expected 3 to 5 positional arguments",
+        );
+    }
+
+    let concurrency: usize = args[0]
+        .parse()
+        .unwrap_or_else(|_| fatal(program, "invalid concurrency value"));
+    let duration_secs: u64 = args[1]
+        .parse()
+        .unwrap_or_else(|_| fatal(program, "invalid duration seconds value"));
+
+    let (modelalias, model, max_requests) = match args.len() {
+        3 => {
+            let model = args[2].clone();
+            (model.clone(), model, None)
+        }
+        4 => {
+            if let Some(max) = try_parse_positive_usize(&args[3]) {
+                let model = args[2].clone();
+                (model.clone(), model, Some(max))
+            } else {
+                (args[2].clone(), args[3].clone(), None)
+            }
+        }
+        5 => {
+            let max = parse_positive_usize(program, "max_requests", &args[4]);
+            (args[2].clone(), args[3].clone(), Some(max))
+        }
+        _ => unreachable!(),
+    };
+
+    (
+        concurrency,
+        duration_secs,
+        modelalias,
+        model,
+        false,
+        DEFAULT_PROMPT.to_owned(),
+        DEFAULT_MAX_TOKENS,
+        max_requests,
+        DEFAULT_GATEWAY_ENDPOINT.to_owned(),
+    )
+}
+
+fn parse_key_value_args(
+    program: &str,
+    args: &[String],
+) -> (
+    usize,
+    u64,
+    String,
+    String,
+    bool,
+    String,
+    u32,
+    Option<usize>,
+    String,
+) {
+    let mut concurrency: Option<usize> = None;
+    let mut duration_secs: Option<u64> = None;
+    let mut modelalias: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut show_outputs: Option<bool> = None;
+    let mut prompt: Option<String> = None;
+    let mut max_tokens: Option<u32> = None;
+    let mut max_requests: Option<usize> = None;
+    let mut gateway_endpoint: Option<String> = None;
+
+    for arg in args {
+        let (key, raw_value) = arg
+            .split_once('=')
+            .unwrap_or_else(|| fatal(program, &format!("invalid argument '{}', expected key=value", arg)));
+        let key = key.trim().to_lowercase();
+        let value = raw_value.trim();
+
+        if key.is_empty() {
+            fatal(program, "argument key cannot be empty");
+        }
+        if value.is_empty() {
+            fatal(program, &format!("argument '{}' cannot be empty", key));
+        }
+
+        match key.as_str() {
+            "concurrency" | "concurrent" | "concurrently" | "c" => {
+                let parsed = value
+                    .parse::<usize>()
+                    .unwrap_or_else(|_| fatal(program, &format!("invalid concurrency '{}'", value)));
+                concurrency = Some(parsed);
+            }
+            "duration" | "dur" | "durtaion" | "duration_secs" | "time" => {
+                let secs = parse_duration_arg(value)
+                    .unwrap_or_else(|msg| fatal(program, &msg));
+                duration_secs = Some(secs);
+            }
+            "model" => {
+                model = Some(value.to_owned());
+            }
+            "alias" | "modelalias" | "name" => {
+                modelalias = Some(value.to_owned());
+            }
+            "show_output" | "show_outputs" | "show" | "dump_outputs" | "dump" => {
+                let parsed = parse_bool_arg(value)
+                    .unwrap_or_else(|msg| fatal(program, &msg));
+                show_outputs = Some(parsed);
+            }
+            "prompt" => {
+                prompt = Some(value.to_owned());
+            }
+            "max_tokens" | "maxtokens" | "tokens" => {
+                let parsed = value
+                    .parse::<u32>()
+                    .unwrap_or_else(|_| fatal(program, &format!("invalid max_tokens '{}'", value)));
+                if parsed == 0 {
+                    fatal(program, "max_tokens must be greater than zero");
+                }
+                max_tokens = Some(parsed);
+            }
+            "max_requests" | "max_request" | "maxreq" | "requests" | "reqs" => {
+                let parsed = parse_positive_usize(program, "max_requests", value);
+                max_requests = Some(parsed);
+            }
+            "gatewayendpoint" | "gateway_endpoint" | "gateway" | "endpoint" => {
+                gateway_endpoint = Some(value.to_owned());
+            }
+            _ => fatal(program, &format!("unknown argument '{}'", key)),
+        }
+    }
+
+    let model = model.unwrap_or_else(|| fatal(program, "model is required"));
+    let concurrency = concurrency.unwrap_or_else(|| fatal(program, "concurrency is required"));
+    let duration_secs = duration_secs.unwrap_or_else(|| fatal(program, "duration is required"));
+    let modelalias = modelalias.unwrap_or_else(|| model.clone());
+    let show_outputs = show_outputs.unwrap_or(false);
+    let prompt = prompt.unwrap_or_else(|| DEFAULT_PROMPT.to_owned());
+    let max_tokens = max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+    let max_requests = max_requests;
+    let gateway_endpoint = gateway_endpoint
+        .unwrap_or_else(|| DEFAULT_GATEWAY_ENDPOINT.to_owned());
+
+    (
+        concurrency,
+        duration_secs,
+        modelalias,
+        model,
+        show_outputs,
+        prompt,
+        max_tokens,
+        max_requests,
+        gateway_endpoint,
+    )
+}
+
+fn parse_duration_arg(value: &str) -> Result<u64, String> {
+    let trimmed = value.trim().to_lowercase();
+    if trimmed.is_empty() {
+        return Err("duration cannot be empty".into());
+    }
+
+    let (number_part, multiplier) = if let Some(num) = trimmed.strip_suffix('s') {
+        (num, 1)
+    } else if let Some(num) = trimmed.strip_suffix('m') {
+        (num, 60)
+    } else if let Some(num) = trimmed.strip_suffix('h') {
+        (num, 3600)
+    } else {
+        (trimmed.as_str(), 1)
+    };
+
+    let number = number_part
+        .parse::<u64>()
+        .map_err(|_| format!("invalid duration '{}'", value))?;
+    number
+        .checked_mul(multiplier)
+        .ok_or_else(|| "duration value is too large".into())
+}
+
+fn print_usage(program: &str) {
+    eprintln!(
+        "Usage (positional): {} <concurrency> <duration_secs> [<modelalias>] <model> [<max_requests>]",
+        program
+    );
+    eprintln!(
+        "Usage (key-value): {} concurrency=<n> duration=<Ns|Nm|Nh> [alias=<modelalias>] model=<model> [prompt=<text>] [max_tokens=<n>] [max_requests=<n>] [gatewayendpoint=<url>] [show_output=<true|false>]",
+        program
+    );
+    eprintln!(
+        "Example: {} concurrency=10 duration=20s model=\"deepseek-ai/DeepSeek-R1-Distill-Llama-70B_8GPU\" prompt=\"Write a haiku\" max_tokens=64 max_requests=500 gatewayendpoint=\"http://localhost:31501\"",
+        program
+    );
+}
+
+fn fatal(program: &str, msg: &str) -> ! {
+    eprintln!("Error: {}", msg);
+    print_usage(program);
+    process::exit(1);
+}
+
+fn parse_bool_arg(value: &str) -> Result<bool, String> {
+    match value.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" | "enable" | "enabled" => Ok(true),
+        "0" | "false" | "no" | "n" | "off" | "disable" | "disabled" => Ok(false),
+        _ => Err(format!("invalid boolean value '{}'", value)),
+    }
+}
+
+fn try_parse_positive_usize(value: &str) -> Option<usize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|v| *v > 0)
+}
+
+fn parse_positive_usize(program: &str, field: &str, value: &str) -> usize {
+    try_parse_positive_usize(value).unwrap_or_else(|| {
+        fatal(
+            program,
+            &format!("invalid {} '{}', expected positive integer", field, value),
+        )
+    })
 }

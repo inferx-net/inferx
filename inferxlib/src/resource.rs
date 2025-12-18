@@ -225,12 +225,19 @@ impl GPUResourceMap {
         //     self.slotSize,
         //     alloc.slotSize
         // );
+
         for (pGpuId, resource) in &alloc.map {
             match self.map.get_mut(pGpuId) {
                 None => {
                     self.map.insert(*pGpuId, resource.clone());
                 }
                 Some(alloc) => {
+                    assert!(
+                        alloc.slotCnt + resource.slotCnt <= self.totalSlotCnt,
+                        "alloc.slotCnt is {} resource.slotCnt  {}",
+                        alloc.slotCnt,
+                        resource.slotCnt
+                    );
                     alloc.slotCnt += resource.slotCnt;
                     alloc.contextCnt += resource.contextCnt;
                     alloc.ncclCnt += resource.ncclCnt;
