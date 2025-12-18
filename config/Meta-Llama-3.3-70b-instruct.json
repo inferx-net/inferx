@@ -1,27 +1,27 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "Qwen",
-    "name": "Qwen3-235B-A22B-Thinking-2507",
+    "namespace": "meta-llama",
+    "name": "meta-llama-3.3-70B-Instruct",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen3-235B-A22B-Thinking-2507",
+                "meta-llama/Llama-3.3-70B-Instruct",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
                 "--max-model-len",
                 "2000",
-                "--tensor-parallel-size=8"
+                "--tensor-parallel-size=2"
             ],
             "resources": {
                 "CPU": 20000,
-                "Mem": 140000,
+                "Mem": 100000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 8,
-                    "vRam": 72100
+                    "Count": 2,
+                    "vRam": 46000
                 }
             },
             "envs": [
@@ -32,10 +32,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "FLASHINFER_DISABLE_LOG",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -51,10 +47,10 @@
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
+                "prompt": "San Francisco is a",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+                    "model": "meta-llama/Llama-3.3-70B-Instruct",
                     "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"
@@ -64,13 +60,6 @@
                 "gpu": "Mem",
                 "pageable": "File",
                 "pinned": "File"
-            },
-            "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "funcpolicy_8GPU"
-                }
             }
         }
     }
