@@ -100,6 +100,9 @@ pub struct SampleCall {
     #[serde(default)]
     pub imageUrl: String,
     pub body: BTreeMap<String, String>,
+
+    #[serde(default = "DefaultLoadingTimeout")]
+    pub loadingTimeout: u64, // loading timeout, minutes
 }
 
 impl Default for SampleCall {
@@ -117,6 +120,7 @@ impl Default for SampleCall {
             prompt: "Seattle is a".to_owned(),
             prompts: Vec::new(),
             body: map,
+            loadingTimeout: 90,
         };
     }
 }
@@ -143,6 +147,10 @@ impl Default for ScheduleConfig {
 
 pub fn DefaultScheduleConfig() -> ScheduleConfig {
     return ScheduleConfig::default();
+}
+
+pub fn DefaultLoadingTimeout() -> u64 {
+    return 90;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

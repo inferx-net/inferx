@@ -178,6 +178,9 @@ pub struct ResourceConfig {
     #[serde(rename = "ContextOverhead")]
     pub contextOverhead: u64, // MB vRam per GPU
 
+    #[serde(rename = "ReserveMemPerentage", default)]
+    pub reserveMemPercentage: u64,
+
     #[serde(rename = "MaxContextPerGPU")]
     pub maxContextPerGPU: u64, // max
 }

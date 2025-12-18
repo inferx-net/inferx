@@ -642,6 +642,20 @@ impl NodeAgentConfig {
             Err(_) => resources.maxContextPerGPU,
         };
 
+        resources.reserveMemPercentage = match std::env::var("RESERVE_MEM_PERCENTAGE") {
+            Ok(s) => {
+                info!(
+                    "get reserveMemPercentage from env RESERVE_MEM_PERCENTAGE: {}",
+                    &s
+                );
+                match s.parse::<u64>() {
+                    Err(_) => 0,
+                    Ok(c) => c,
+                }
+            }
+            Err(_) => 0,
+        };
+
         resources.contextOverhead = match std::env::var("CONTEXT_OVERHEAD") {
             Ok(s) => {
                 info!("get context_overhead from env CONTEXT_OVERHEAD: {}", &s);

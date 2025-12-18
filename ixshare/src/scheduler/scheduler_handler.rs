@@ -1311,6 +1311,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.CheckNodeEpoch(&snapshot.object.nodename, snapshot.srcEpoch).await;
+                                    error!("get new snapshot {}", snapshot.StoreKey());
                                     self.AddSnapshot(&snapshot)?;
                                 }
                                 FuncPolicy::KEY => {
@@ -1355,6 +1356,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
+                                    error!("UpdateSnapshot snapshot {}", snapshot.StoreKey());
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
@@ -1392,6 +1394,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.RemoveSnapshot(&snapshot).await?;
+                                    error!("RemoveSnapshot snapshot {}", snapshot.StoreKey());
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
