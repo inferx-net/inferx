@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use indexmap::IndexSet;
+use lru::LruCache;
 use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
@@ -466,7 +466,7 @@ pub enum WorkerHandlerMsg {
     RefreshGateway(na::RefreshGatewayReq),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SchedulerHandler {
     // nodename -> nodeEpoch
     pub nodeEpoch: BTreeMap<String, i64>,
@@ -498,7 +498,7 @@ pub struct SchedulerHandler {
 
     /********************idle pods ************************* */
     // returnId --> PodKey()
-    pub idlePods: IndexSet<String>,
+    pub idlePods: LruCache<String, ()>,
 
     /********************stopping pods ************************* */
     pub stoppingPods: BTreeSet<String>,
@@ -529,13 +529,41 @@ pub struct SchedulerHandler {
     delay_interval: Option<Interval>,
 }
 
+impl Default for SchedulerHandler {
+    fn default() -> Self {
+        Self {
+            nodeEpoch: BTreeMap::new(),
+            pods: BTreeMap::new(),
+            gateways: BTreeMap::new(),
+            nodes: BTreeMap::new(),
+            nodePods: BTreeMap::new(),
+            funcs: BTreeMap::new(),
+            funcstatus: BTreeMap::new(),
+            snapshots: BTreeMap::new(),
+            pendingsnapshots: BTreeMap::new(),
+            idlePods: LruCache::unbounded(),
+            stoppingPods: BTreeSet::new(),
+            funcPods: BTreeMap::new(),
+            SnapshotSched: BiIndex::New(),
+            funcpolicy: BTreeMap::new(),
+            nodeListDone: false,
+            funcListDone: false,
+            funcstatusListDone: false,
+            funcPodListDone: false,
+            snapshotListDone: false,
+            funcpolicyDone: false,
+            listDone: false,
+            nextWorkId: AtomicU64::new(1),
+            taskQueue: TaskQueue::default(),
+            delayed_tasks: BinaryHeap::new(),
+            delay_interval: None,
+        }
+    }
+}
+
 impl SchedulerHandler {
     pub fn New() -> Self {
-        return Self {
-            nextWorkId: AtomicU64::new(1),
-            delayed_tasks: BinaryHeap::new(),
-            ..Default::default()
-        };
+        Self::default()
     }
 
     pub fn schedule_delayed_task(&mut self, delay: Duration, task: SchedTask) {
@@ -611,7 +639,7 @@ impl SchedulerHandler {
                         worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
                         // how to handle the recovered failure gateway?
                         let podKey = worker.pod.PodKey();
-                        self.idlePods.insert(podKey.clone());
+                        self.idlePods.put(podKey.clone(), ());
                     }
                 }
                 _ => (),
@@ -685,7 +713,7 @@ impl SchedulerHandler {
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 worker.SetWorking(req.gateway_id);
                 let podKey = worker.pod.PodKey();
-                let remove = self.idlePods.shift_remove(&podKey);
+                let remove = self.idlePods.pop(&podKey).is_some();
                 error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
@@ -890,7 +918,7 @@ impl SchedulerHandler {
             }
         } else {
             worker.SetIdle(SetIdleSource::ProcessReturnWorkerReq);
-            self.idlePods.insert(worker.pod.PodKey());
+            self.idlePods.put(worker.pod.PodKey(), ());
         }
 
         let resp = na::ReturnWorkerResp {
@@ -1673,7 +1701,7 @@ impl SchedulerHandler {
             &nodeSnapshots
         );
 
-        for podKey in &self.idlePods {
+        for (podKey, _) in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
                     missWorkers.push(podKey.to_owned());
@@ -1722,7 +1750,7 @@ impl SchedulerHandler {
         }
 
         for podKey in &missWorkers {
-            self.idlePods.shift_remove(podKey);
+            self.idlePods.pop(podKey);
             error!("FindNode4Pod remove idlepod missing {:?}", &podKey);
         }
 
@@ -2069,7 +2097,7 @@ impl SchedulerHandler {
         let mut workids: Vec<WorkerPod> = Vec::new();
         let mut missWorkers = Vec::new();
 
-        for podKey in &self.idlePods {
+        for (podKey, _) in &self.idlePods {
             match self.pods.get(podKey) {
                 None => {
                     missWorkers.push(podKey.to_owned());
@@ -2094,7 +2122,7 @@ impl SchedulerHandler {
         }
 
         for workerid in &missWorkers {
-            self.idlePods.shift_remove(workerid);
+            self.idlePods.pop(workerid);
             error!("FindNode4Pod remove idlepod missing {:?}", &workerid);
         }
 
@@ -2301,7 +2329,7 @@ impl SchedulerHandler {
 
         for worker in &terminateWorkers {
             let podKey = worker.pod.PodKey();
-            let removed = self.idlePods.shift_remove(&podKey);
+            let removed = self.idlePods.pop(&podKey).is_some();
             assert!(removed);
             match self.pods.get(&podKey) {
                 None => unreachable!(),
@@ -2687,7 +2715,7 @@ impl SchedulerHandler {
 
         for worker in &terminateWorkers {
             let podKey = worker.pod.PodKey();
-            let removed = self.idlePods.shift_remove(&podKey);
+            let removed = self.idlePods.pop(&podKey).is_some();
             assert!(removed);
             match self.pods.get(&podKey) {
                 None => unreachable!(),
@@ -3081,7 +3109,7 @@ impl SchedulerHandler {
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
             boxPod.SetIdle(SetIdleSource::AddPod);
-            self.idlePods.insert(boxPod.pod.PodKey());
+            self.idlePods.put(boxPod.pod.PodKey(), ());
         }
 
         match self.nodes.get_mut(&nodename) {
