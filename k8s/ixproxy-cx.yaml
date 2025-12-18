@@ -13,6 +13,9 @@ spec:
       labels:
         app: ixproxy
     spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        inferx_nodeType: inferx_file   
       containers:
         - name: ixproxy
           image: inferx/inferx_na:${VERSION}
@@ -59,7 +62,7 @@ spec:
           - name: CACHE_MEMORY
             value: "25Gi"
           - name: ENABLE_2MB_PAGE
-            value: "true"  
+            value: "false"  
           - name: CONTEXT_OVERHEAD
             value: "800"   
           - name: CONTEXT_COUNT
@@ -70,17 +73,17 @@ spec:
                 containerName: ixproxy
                 resource: limits.cpu                            
           - name: ENALBE_BLOB
-            value: "true"                     
+            value: "false"                     
           resources:
             requests:
               cpu: "5"
               memory: "30Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "30Gi" 
+              # hugepages-2Mi: "30Gi" 
             limits:
               cpu: "20"
-              memory: "180Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "30Gi" 
-              # nvidia.com/gpu: 1
+              memory: "1800Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "30Gi" 
+              nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
               name: run-udev
@@ -92,8 +95,8 @@ spec:
             #   name: opt-inferx
             # - mountPath: /opt/inferx/config
             #   name: opt-inferx-config
-            - mountPath: /opt/inferx/bin
-              name: opt-inferx-bin
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
@@ -129,9 +132,9 @@ spec:
         - name: opt-inferx-work
           hostPath:
             path: /opt/inferx/work
-        - name: opt-inferx-bin
-          hostPath:
-            path: /opt/inferx/bin
+        # - name: opt-inferx-bin
+        #   hostPath:
+        #     path: /opt/inferx/bin
         - name: opt-inferx-cache
           hostPath:
             path: /opt/inferx/cache

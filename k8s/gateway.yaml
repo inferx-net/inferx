@@ -15,6 +15,8 @@ spec:
         app: gateway
     spec:
       hostPID: true
+      nodeSelector:
+        inferx_storage: data  
       containers:
         - name: gateway
           image: inferx/inferx_platform:${VERSION}
