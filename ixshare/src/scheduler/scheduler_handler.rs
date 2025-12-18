@@ -261,7 +261,6 @@ impl NodeStatus {
         // );
         self.available.Add(free)?;
 
-        error!("FreeResource xx {:#?}", &self.available.GPUResource());
         return Ok(());
     }
 }
@@ -1314,6 +1313,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.CheckNodeEpoch(&snapshot.object.nodename, snapshot.srcEpoch).await;
+                                    error!("get new snapshot {}", snapshot.StoreKey());
                                     self.AddSnapshot(&snapshot)?;
                                 }
                                 FuncPolicy::KEY => {
@@ -1358,6 +1358,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
+                                    error!("UpdateSnapshot snapshot {}", snapshot.StoreKey());
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
@@ -1395,6 +1396,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.RemoveSnapshot(&snapshot).await?;
+                                    error!("RemoveSnapshot snapshot {}", snapshot.StoreKey());
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
@@ -2494,7 +2496,11 @@ impl SchedulerHandler {
                     Some(ns) => ns,
                 };
                 let resourceQuota = nodeStatus.ResourceQuota(&standbyResource)?;
-                error!("FreeResource create snapshot2 ...");
+                error!(
+                    "FreeResource create standby ... {}, error {:?}",
+                    function.Objectkey(),
+                    e
+                );
                 nodeStatus.FreeResource(&resourceQuota, "")?;
                 return Err(e);
             }
