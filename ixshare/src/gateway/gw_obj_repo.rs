@@ -595,10 +595,12 @@ impl GwObjRepo {
                         }
                         SchedulerInfo::KEY => {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
-                            info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
-                            SCHEDULER_CLIENT
+                            if let Err(e) = SCHEDULER_CLIENT
                                 .Connect(&SchedulerInfo.SchedulerUrl())
-                                .await?;
+                                .await {
+                                     panic!("Failed to connect to scheduler: {:?}", e)
+                                }
+                            info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
