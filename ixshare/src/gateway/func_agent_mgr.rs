@@ -538,7 +538,8 @@ impl FuncAgent {
                                 info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.WorkerName(), worker.id);
                                 self.RemoveWorker(&worker);
                             }
-                            WorkerUpdate::WorkerLeaseFail((worker, _e)) => {
+                            WorkerUpdate::WorkerLeaseFail((worker, e)) => {
+                                error!("Worker lease fail, worker: {}, error: {:?}", worker.WorkerName(), e);
                                 self.RemoveWorker(&worker);
                             }
 
