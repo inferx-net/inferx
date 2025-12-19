@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta23
+VERSION := v0.1.5.beta39
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -165,7 +165,7 @@ runkblob:
 	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
 stopall:
-	kubectl delete all --all 
+	sudo kubectl delete all --all 
 
 rundash:
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -

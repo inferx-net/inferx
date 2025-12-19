@@ -83,7 +83,7 @@
                 "Link": {
                     "objType": "funcpolicy",
                     "namespace": "system",
-                    "name": "default_funcpolicy"
+                    "name": "funcpolicy_1GPU"
                 }
             }
         }
