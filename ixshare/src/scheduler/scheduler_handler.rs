@@ -714,7 +714,8 @@ impl SchedulerHandler {
                 worker.SetWorking(req.gateway_id);
                 let podKey = worker.pod.PodKey();
                 let remove = self.idlePods.pop(&podKey).is_some();
-                error!("ProcessLeaseWorkerReq using idlepod work {:?}", &remove);
+                assert!(remove);
+                error!("ProcessLeaseWorkerReq using idlepod work {:?}", &podKey);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -1701,7 +1702,7 @@ impl SchedulerHandler {
             &nodeSnapshots
         );
 
-        for (podKey, _) in &self.idlePods {
+        for (podKey, _) in self.idlePods.iter().rev() {
             match self.pods.get(podKey) {
                 None => {
                     missWorkers.push(podKey.to_owned());
@@ -2097,7 +2098,7 @@ impl SchedulerHandler {
         let mut workids: Vec<WorkerPod> = Vec::new();
         let mut missWorkers = Vec::new();
 
-        for (podKey, _) in &self.idlePods {
+        for (podKey, _) in self.idlePods.iter().rev() {
             match self.pods.get(podKey) {
                 None => {
                     missWorkers.push(podKey.to_owned());

@@ -13,6 +13,8 @@ spec:
       labels:
         app: ixproxy
     spec:
+      nodeSelector:
+        inferx_nodeType: inferx_file  
       containers:
         - name: ixproxy
           image: inferx/inferx_na:${VERSION}
@@ -57,7 +59,7 @@ spec:
                 containerName: ixproxy
                 resource: limits.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "25Gi"
+            value: "10Gi"
           - name: ENABLE_2MB_PAGE
             value: "false"  
           - name: CONTEXT_OVERHEAD
