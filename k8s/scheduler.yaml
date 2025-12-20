@@ -15,6 +15,8 @@ spec:
         app: scheduler
     spec:
       hostPID: true
+      nodeSelector:
+        inferx_storage: data  
       containers:
         - name: scheduler
           image: inferx/inferx_platform:${VERSION}

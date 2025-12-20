@@ -28,8 +28,6 @@ spec:
           env:
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
-          - name: INIT_CUDAHOSTALLOC
-            value: "-1"
           - name: RUN_SERVICE
             value: "NodeAgent"
           - name: POD_IP
@@ -43,12 +41,12 @@ spec:
           resources:
             requests:
               cpu: "15"               
-              memory: "60Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "1Gi"       # HugePages request
+              memory: "40Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "1Gi"       # HugePages request
             limits:
               cpu: "20"               
-              memory: "100Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "1Gi" 
+              memory: "1800Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "1Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
@@ -150,6 +148,7 @@ spec:
       labels:
         app: nodeagent
     spec:
+      runtimeClassName: nvidia
       nodeSelector:
         inferx_nodeType: inferx_file      
       # initContainers:
@@ -203,7 +202,7 @@ spec:
           - name: ENABLE_2MB_PAGE
             value: "false"  
           - name: CONTEXT_OVERHEAD
-            value: "500"         
+            value: "800"         
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
@@ -218,7 +217,7 @@ spec:
               # hugepages-2Mi: "60Gi" 
             limits:
               cpu: "20"
-              memory: "100Gi"              # Regular memory request (RAM)
+              memory: "1800Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
@@ -238,6 +237,8 @@ spec:
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
               name: opt-inferx-log
+            - mountPath: /opt/inferx/docker_log
+              name: opt-inferx-container-log  
             - mountPath: /opt/inferx/data
               name: opt-inferx-data
             - mountPath: /opt/inferx/cache
@@ -268,6 +269,9 @@ spec:
         - name: opt-inferx-log
           hostPath:
             path: /opt/inferx/log
+        - name: opt-inferx-container-log
+          hostPath:
+            path: /opt/inferx/docker_log
         - name: opt-inferx-config
           hostPath:
             path: /opt/inferx/config

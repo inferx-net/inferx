@@ -2,26 +2,28 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen3-235B-A22B-Thinking-2507",
+    "name": "QwQ-32B-1",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen3-235B-A22B-Thinking-2507",
+                "Qwen/QwQ-32B",
                 "--disable-custom-all-reduce",
                 "--trust-remote-code",
+                "--gpu-memory-utilization",
+                "0.99",
                 "--max-model-len",
                 "2000",
                 "--tensor-parallel-size=8"
             ],
             "resources": {
-                "CPU": 20000,
-                "Mem": 140000,
+                "CPU": 12000,
+                "Mem": 80000,
                 "GPU": {
                     "Type": "Any",
                     "Count": 8,
-                    "vRam": 72100
+                    "vRam": 20000
                 }
             },
             "envs": [
@@ -32,10 +34,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "FLASHINFER_DISABLE_LOG",
-                    "1"
                 ]
             ],
             "mounts": [
@@ -54,7 +52,7 @@
                 "prompt": "write a quick sort algorithm.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+                    "model": "Qwen/QwQ-32B",
                     "max_tokens": "1000",
                     "temperature": "0",
                     "stream": "true"

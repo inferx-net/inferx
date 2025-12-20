@@ -1,0 +1,40 @@
+{
+    "funcs": [
+        {
+            "activeReqCnt": 0,
+            "availableSlot": 1353,
+            "funcKey": "public/Qwen/QwQ-32B",
+            "nextWorkerId": 73,
+            "parallelLevel": 50,
+            "scaleInWorkerId": -1,
+            "startingSlot": 0,
+            "totalSlot": 0,
+            "waitReqCnt": 0,
+            "workers": []
+        },
+        {
+            "activeReqCnt": 0,
+            "availableSlot": 19658,
+            "funcKey": "public/deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+            "nextWorkerId": 104,
+            "parallelLevel": 50,
+            "scaleInWorkerId": -1,
+            "startingSlot": 0,
+            "totalSlot": 0,
+            "waitReqCnt": 0,
+            "workers": []
+        },
+        {
+            "activeReqCnt": 0,
+            "availableSlot": 4488,
+            "funcKey": "public/mistralai/Mixtral-8x22B-v0.1",
+            "nextWorkerId": 62,
+            "parallelLevel": 50,
+            "scaleInWorkerId": -1,
+            "startingSlot": 0,
+            "totalSlot": 0,
+            "waitReqCnt": 0,
+            "workers": []
+        }
+    ]
+}
