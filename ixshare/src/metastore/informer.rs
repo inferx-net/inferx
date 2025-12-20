@@ -284,12 +284,26 @@ impl Informer {
 
                 let event = match event {
                     Err(e) => {
+                        let current_revision = self.revision.load(Ordering::Acquire);
+                        let err_str = format!("{:?}", e);
+
                         error!(
                             "WatchUpdate type is {}/{} watch get error {:?}",
                             self.objType,
-                            self.revision.load(Ordering::Acquire),
+                            current_revision,
                             e
                         );
+
+                        // Log additional details if this is a "too old resource version" error
+                        if err_str.contains("too old resource version") {
+                            error!(
+                                "DIAGNOSE: Too old resource version detected - objType={}, requested_revision={}, error_details={}",
+                                self.objType,
+                                current_revision,
+                                err_str
+                            );
+                        }
+
                         break;
                     }
                     Ok(e) => match e {

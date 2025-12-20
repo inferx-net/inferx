@@ -303,6 +303,13 @@ impl CacheStoreInner {
         objectType: &str,
         channelRev: &ChannelRev,
     ) -> Self {
+        let initial_channel_rev = channelRev.Current();
+        error!(
+            "DIAGNOSE: CacheStoreInner::New - objType={}, initial_channelRev={}, buffer_capacity={}",
+            objectType,
+            initial_channel_rev,
+            DEFAULT_CACHE_COUNT
+        );
         return Self {
             backendStore: store,
             objectType: objectType.to_string(),
@@ -512,6 +519,16 @@ impl CacheStoreInner {
         }
 
         if revision < oldest - 1 {
+            error!(
+                "DIAGNOSE: too old resource version - requested={}, oldest_available={}, listRevision={}, cache_size={}, cache_tail={}, cache_capacity={}, objType={}",
+                revision,
+                oldest - 1,
+                self.listRevision,
+                size,
+                self.cache.tail,
+                self.cache.buf.len(),
+                self.objectType
+            );
             return Err(Error::CommonError(format!(
                 "too old resource version: {} ({})",
                 revision,
