@@ -2009,6 +2009,20 @@ impl SchedulerHandler {
         let nodes: Vec<String> = self.nodes.keys().cloned().collect();
         for funcId in &funcIds {
             for nodename in &nodes {
+                // Skip if snapshot already exists on this node
+                if let Some(snapshots_for_func) = self.snapshots.get(funcId) {
+                    if snapshots_for_func.contains_key(nodename) {
+                        continue;
+                    }
+                }
+
+                // Skip if snapshot is already pending on this node
+                if let Some(pending_nodes) = self.pendingsnapshots.get(funcId) {
+                    if pending_nodes.contains(nodename) {
+                        continue;
+                    }
+                }
+
                 self.AddSnapshotTask(nodename, funcId);
             }
         }
@@ -3089,8 +3103,22 @@ impl SchedulerHandler {
             self.RemovePod(&wp.pod).await.ok();
         }
 
-        // remove snapshot
-        self.snapshots.remove(nodename);
+        // remove all snapshots on this node
+        let funcIds: Vec<String> = self.snapshots.keys().cloned().collect();
+        for funcId in funcIds {
+            if let Some(snapshots_for_func) = self.snapshots.get_mut(&funcId) {
+                snapshots_for_func.remove(nodename);
+                if snapshots_for_func.is_empty() {
+                    self.snapshots.remove(&funcId);
+                }
+            }
+        }
+
+        // remove pending snapshots for this node
+        let funcIds: Vec<String> = self.pendingsnapshots.keys().cloned().collect();
+        for funcId in funcIds {
+            self.RemovePendingSnapshot(&funcId, nodename);
+        }
 
         let node = match self.nodes.get(nodename) {
             None => {
@@ -3110,6 +3138,13 @@ impl SchedulerHandler {
 
         let boxPod: WorkerPod = WorkerPod::New(pod);
         assert!(self.pods.insert(podKey.clone(), boxPod.clone()).is_none());
+
+        // Reconstruct pendingsnapshots for snapshot pods during restart
+        // This ensures that in-progress snapshots are tracked properly
+        if boxPod.pod.object.spec.create_type == CreatePodType::Snapshot
+            && boxPod.pod.object.status.state != PodState::Failed {
+            self.AddPendingSnapshot(&fpKey, &nodename);
+        }
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
             boxPod.SetIdle(SetIdleSource::AddPod);
@@ -3326,7 +3361,7 @@ impl SchedulerHandler {
         }
 
         if podCreateType == CreatePodType::Snapshot {
-            self.pendingsnapshots.remove(&funcKey);
+            self.RemovePendingSnapshot(&funcKey, &nodeName);
         }
 
         return Ok(());
@@ -3361,6 +3396,9 @@ impl SchedulerHandler {
         }
 
         self.funcs.remove(&key);
+
+        // Clean up pending snapshots for this function
+        self.pendingsnapshots.remove(&key);
 
         return Ok(());
     }
