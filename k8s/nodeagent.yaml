@@ -28,6 +28,8 @@ spec:
           env:
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
+          - name: INIT_CUDAHOSTALLOC
+            value: "-1"
           - name: RUN_SERVICE
             value: "NodeAgent"
           - name: POD_IP
