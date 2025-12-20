@@ -425,6 +425,8 @@ pub struct NodeAgentConfig {
     pub tlsconfig: TLSConfig,
     pub auditdbAddr: String,
     pub secretStoreAddr: String,
+
+    pub initCudaHostAllocSize: i64, // GB
 }
 
 impl NodeAgentConfig {
@@ -513,6 +515,29 @@ impl NodeAgentConfig {
                 }
             }
             Err(_) => resources.allocMemory,
+        };
+
+        let initCudaHostAllocSize = match std::env::var("INIT_CUDAHOSTALLOC") {
+            Ok(s) => {
+                info!(
+                    "get initCudaHostAllocSize from env INIT_CUDAHOSTALLOC: {}",
+                    &s
+                );
+                let size = s.parse::<i64>();
+                match size {
+                    Err(_) => {
+                        info!("fail to get initCudaHostAllocSize from env INIT_CUDAHOSTALLOC: {}, use default value 32GB", &s);
+                        32
+                    }
+                    Ok(s) => {
+                        if s < 0 {
+                            info!("get initCudaHostAllocSize from env INIT_CUDAHOSTALLOC: {}, disable cudahostAlloc", &s);
+                        }
+                        s
+                    }
+                }
+            }
+            Err(_) => 32, // 32 GB
         };
 
         resources.cacheMemory = match std::env::var("CACHE_MEMORY") {
@@ -708,6 +733,7 @@ impl NodeAgentConfig {
             tlsconfig: config.tlsconfig.clone(),
             auditdbAddr: auditdbAddr,
             secretStoreAddr: secretStoreAddr,
+            initCudaHostAllocSize: initCudaHostAllocSize,
         };
 
         info!("Nodeagent Config  {:#?}", &ret);
