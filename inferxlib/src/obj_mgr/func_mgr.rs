@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cmp::max;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -213,7 +214,7 @@ impl FuncSpec {
         if gpuStandy == StandbyType::Mem {
             // when in standby state, the nodeagent has to cache the gpu data in cpu memory after snapshot is done.
             // so we need extra cpu memory to cache gpu data
-            resource.memory += resource.gpu.vRam * resource.gpu.gpuCount;
+            resource.memory = max(resource.memory, resource.gpu.vRam * resource.gpu.gpuCount);
         }
         resource.gpu.contextCount = contextCnt;
         return resource;
