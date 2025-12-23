@@ -2307,7 +2307,7 @@ impl SchedulerHandler {
                 Ok(t) => t,
             };
 
-        let mut resources;
+        let resources;
         let nodeAgentUrl;
 
         {
@@ -2317,8 +2317,6 @@ impl SchedulerHandler {
             // resources =
             //     nodeStatus.AllocResource(&snapshotResource, "CreateSnapshot", funcid, true)?;
             resources = nodeResources.Alloc(&snapshotResource, true)?;
-            resources.memory = func.object.spec.resources.memory;
-            error!("qqqq: resources.memory {}", resources.memory);
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
         }
 
