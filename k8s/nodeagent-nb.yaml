@@ -13,6 +13,7 @@ spec:
       labels:
         app: nodeagent
     spec:
+      hostPID: true
       nodeSelector:
         inferx_nodeType: inferx_blob      
       containers:
@@ -71,6 +72,9 @@ spec:
               name: opt-inferx-cache
             - mountPath: /opt/inferx/snapshot
               name: opt-inferx-snapshot
+            - mountPath: /sys/fs/cgroup
+              name: sys-fs-cgroup
+              readOnly: false
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
             # - mountPath: /home/brad/mnt
@@ -126,6 +130,9 @@ spec:
         - name: opt-inferx-run
           hostPath:
             path: /opt/inferx/run
+        - name: sys-fs-cgroup
+          hostPath:
+            path: /sys/fs/cgroup
       restartPolicy: Always
 ---
 apiVersion: apps/v1
@@ -143,6 +150,7 @@ spec:
       labels:
         app: nodeagent
     spec:
+      hostPID: true
       nodeSelector:
         inferx_nodeType: inferx_file      
       # initContainers:
@@ -237,6 +245,9 @@ spec:
               name: opt-inferx-cache
             - mountPath: /opt/inferx/snapshot
               name: opt-inferx-snapshot
+            - mountPath: /sys/fs/cgroup
+              name: sys-fs-cgroup
+              readOnly: false
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
             - mountPath: /home/brad/mnt
@@ -291,4 +302,7 @@ spec:
         - name: opt-inferx-run
           hostPath:
             path: /opt/inferx/run
+        - name: sys-fs-cgroup
+          hostPath:
+            path: /sys/fs/cgroup
       restartPolicy: Always

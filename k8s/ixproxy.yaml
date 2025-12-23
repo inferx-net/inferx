@@ -13,6 +13,7 @@ spec:
       labels:
         app: ixproxy
     spec:
+      hostPID: true
       containers:
         - name: ixproxy
           image: inferx/inferx_na:${VERSION}
@@ -106,6 +107,9 @@ spec:
               name: opt-inferx-cache
             - mountPath: /opt/inferx/snapshot
               name: opt-inferx-snapshot
+            - mountPath: /sys/fs/cgroup
+              name: sys-fs-cgroup
+              readOnly: false
             - mountPath: /var/run/docker/runtime-runc/moby/
               name: docker-runtime
             - name: dind
@@ -155,5 +159,8 @@ spec:
         - name: shm
           emptyDir:
             medium: Memory
-            sizeLimit: 30Gi 
+            sizeLimit: 30Gi
+        - name: sys-fs-cgroup
+          hostPath:
+            path: /sys/fs/cgroup 
       restartPolicy: Always
