@@ -464,6 +464,13 @@ pub enum WorkerHandlerMsg {
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
     RefreshGateway(na::RefreshGatewayReq),
+    CleanupDuplicateSnapshot {
+        funcid: String,
+        nodename: String,
+        podkey: String,
+        resources: NodeResources,
+        terminated_pod_keys: Vec<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -503,6 +510,10 @@ pub struct SchedulerHandler {
     /********************stopping pods ************************* */
     pub stoppingPods: BTreeSet<String>,
 
+    /********************pending termination pods ************************* */
+    // podkey of creating pod -> Vec<podkey> of pods to terminate when creation succeeds
+    pub pendingTerminationPods: BTreeMap<String, Vec<String>>,
+
     // temp pods storage when the func is not ready
     // funcname name -> <Podid --> WorkerPod>
     pub funcPods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
@@ -527,10 +538,13 @@ pub struct SchedulerHandler {
     delayed_tasks: BinaryHeap<TimedTask>,
 
     delay_interval: Option<Interval>,
+
+    pub msgTx: mpsc::Sender<WorkerHandlerMsg>,
 }
 
 impl Default for SchedulerHandler {
     fn default() -> Self {
+        let (tx, _rx) = mpsc::channel(1);
         Self {
             nodeEpoch: BTreeMap::new(),
             pods: BTreeMap::new(),
@@ -543,6 +557,7 @@ impl Default for SchedulerHandler {
             pendingsnapshots: BTreeMap::new(),
             idlePods: LruCache::unbounded(),
             stoppingPods: BTreeSet::new(),
+            pendingTerminationPods: BTreeMap::new(),
             funcPods: BTreeMap::new(),
             SnapshotSched: BiIndex::New(),
             funcpolicy: BTreeMap::new(),
@@ -557,13 +572,16 @@ impl Default for SchedulerHandler {
             taskQueue: TaskQueue::default(),
             delayed_tasks: BinaryHeap::new(),
             delay_interval: None,
+            msgTx: tx,
         }
     }
 }
 
 impl SchedulerHandler {
-    pub fn New() -> Self {
-        Self::default()
+    pub fn New(msgTx: mpsc::Sender<WorkerHandlerMsg>) -> Self {
+        let mut handler = Self::default();
+        handler.msgTx = msgTx;
+        handler
     }
 
     pub fn schedule_delayed_task(&mut self, delay: Duration, task: SchedTask) {
@@ -1009,6 +1027,68 @@ impl SchedulerHandler {
         return self.pendingsnapshots.contains_key(funcid);
     }
 
+    pub fn ProcessCleanupDuplicateSnapshot(
+        &mut self,
+        funcid: &str,
+        nodename: &str,
+        podkey: &str,
+        resources: &NodeResources,
+        terminated_pod_keys: &Vec<String>,
+    ) -> Result<()> {
+        error!(
+            "Processing cleanup for duplicate snapshot: funcid={}, node={}, pod={}, restoring {} terminated pods",
+            funcid, nodename, podkey, terminated_pod_keys.len()
+        );
+
+        // 1. Remove pending termination tracking for this pod
+        self.pendingTerminationPods.remove(podkey);
+
+        // 2. Remove from pendingsnapshots
+        self.RemovePendingSnapshot(funcid, nodename);
+
+        // 2. Remove pending pod from node and free snapshot resource
+        if let Some(nodeStatus) = self.nodes.get_mut(nodename) {
+            nodeStatus.pendingPods.remove(podkey);
+            // Free the allocated snapshot resource
+            // We need to free using resources parameter passed in, as it's the NodeResources that was allocated
+            nodeStatus.FreeResource(resources, "CleanupDuplicateSnapshot")?;
+        }
+
+        // 3. Remove pending pod from func
+        if let Some(funcStatus) = self.funcs.get_mut(funcid) {
+            funcStatus.RemovePod(podkey)?;
+        }
+
+        // 4. Restore terminated idle pods
+        for terminated_podkey in terminated_pod_keys {
+            // Remove from stoppingPods
+            self.stoppingPods.remove(terminated_podkey);
+
+            // Add back to idlePods
+            self.idlePods.put(terminated_podkey.clone(), ());
+
+            // Re-allocate their resources - allocResources is already NodeResources, just need the reqResource which is Resources
+            if let Some(pod) = self.pods.get(terminated_podkey) {
+                let pod_nodename = pod.pod.object.spec.nodename.clone();
+                if let Some(nodeStatus) = self.nodes.get_mut(&pod_nodename) {
+                    // Get the reqResources (Resources type) from the pod spec
+                    let req_resources = &pod.pod.object.spec.reqResources;
+                    match nodeStatus.AllocResource(req_resources, "RestoreIdlePod", terminated_podkey, false) {
+                        Ok(_) => {
+                            error!("Restored idle pod {} to idlePods and re-allocated resources", terminated_podkey);
+                        }
+                        Err(e) => {
+                            error!("Failed to re-allocate resources for idle pod {}: {:?}", terminated_podkey, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        error!("Cleanup completed for duplicate snapshot on {}", nodename);
+        Ok(())
+    }
+
     pub fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
 
@@ -1267,6 +1347,9 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::RefreshGateway(m) => {
                             self.ProcessRefreshGateway(m).await?;
                         }
+                        WorkerHandlerMsg::CleanupDuplicateSnapshot { funcid, nodename, podkey, resources, terminated_pod_keys } => {
+                            self.ProcessCleanupDuplicateSnapshot(&funcid, &nodename, &podkey, &resources, &terminated_pod_keys).ok();
+                        }
                         _ => ()
                     }
                 } else {
@@ -1280,7 +1363,7 @@ impl SchedulerHandler {
             _ = interval.tick() => {
                 if self.listDone {
                     // retry scheduling to see wheter there is more resource avaiable
-                    self.RefreshScheduling().await?;
+                    self.RefreshScheduling(None).await?;
                     // we need to delete pod at first before clean snapshot
                     self.CleanPods().await?;
                     self.CleanSnapshots().await?;
@@ -1437,22 +1520,22 @@ impl SchedulerHandler {
                         EventType::InitDone => {
                             match &obj.objType as &str {
                                 Function::KEY => {
-                                    self.ListDone(ListType::Func).await?;
+                                    self.ListDone(ListType::Func, None).await?;
                                 }
                                 FunctionStatus::KEY => {
-                                    self.ListDone(ListType::FuncStatus).await?;
+                                    self.ListDone(ListType::FuncStatus, None).await?;
                                 }
                                 Node::KEY => {
-                                    self.ListDone(ListType::Node).await?;
+                                    self.ListDone(ListType::Node, None).await?;
                                 }
                                 FuncPod::KEY => {
-                                    self.ListDone(ListType::FuncPod).await?;
+                                    self.ListDone(ListType::FuncPod, None).await?;
                                 }
                                 ContainerSnapshot::KEY => {
-                                    self.ListDone(ListType::Snapshot).await?;
+                                    self.ListDone(ListType::Snapshot, None).await?;
                                 }
                                 FuncPolicy::KEY => {
-                                    self.ListDone(ListType::Funcpolicy).await?;
+                                    self.ListDone(ListType::Funcpolicy, None).await?;
                                 }
                                 _ => {
                                     error!("SchedulerHandler get unexpect list done {}", &obj.objType);
@@ -1976,7 +2059,7 @@ impl SchedulerHandler {
         return Ok(nodename);
     }
 
-    pub async fn RefreshScheduling(&mut self) -> Result<()> {
+    pub async fn RefreshScheduling(&mut self, _msgTx: Option<&mpsc::Sender<WorkerHandlerMsg>>) -> Result<()> {
         let mut funcids: Vec<String> = self.funcs.keys().cloned().collect();
         funcids.shuffle(&mut thread_rng());
         for fpId in &funcids {
@@ -2328,6 +2411,7 @@ impl SchedulerHandler {
                 &resources,
                 na::CreatePodType::Snapshot,
                 &terminateWorkers,
+                Some(nodename.to_string()),
             )
             .await
         {
@@ -2345,23 +2429,6 @@ impl SchedulerHandler {
 
         self.SetSnapshotStatus(funcId, nodename, SnapshotScheduleState::Scheduled);
 
-        for worker in &terminateWorkers {
-            let podKey = worker.pod.PodKey();
-            let removed = self.idlePods.pop(&podKey).is_some();
-            assert!(removed);
-            match self.pods.get(&podKey) {
-                None => unreachable!(),
-                Some(pod) => {
-                    let nodename = pod.pod.object.spec.nodename.clone();
-                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    self.stoppingPods.insert(podKey.clone());
-
-                    nodeStatus
-                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-                }
-            }
-        }
-
         let podKey = FuncPod::FuncPodKey(
             &func.tenant,
             &func.namespace,
@@ -2369,6 +2436,22 @@ impl SchedulerHandler {
             func.Version(),
             &format!("{id}"),
         );
+
+        // Track pods marked for termination - don't free their resources yet
+        // Resources will be freed when the snapshot pod becomes Ready or fails
+        let mut terminated_pod_keys = Vec::new();
+        for worker in &terminateWorkers {
+            let terminated_podkey = worker.pod.PodKey();
+            terminated_pod_keys.push(terminated_podkey.clone());
+            // Remove from idle pool but don't free resources yet
+            let removed = self.idlePods.pop(&terminated_podkey).is_some();
+            assert!(removed);
+        }
+
+        // Store the pending termination pods for this snapshot pod
+        if !terminated_pod_keys.is_empty() {
+            self.pendingTerminationPods.insert(podKey.clone(), terminated_pod_keys);
+        }
 
         let pendingPod = PendingPod::New(&nodename, &podKey, funcId, &resources);
         let nodeStatus = self.nodes.get_mut(nodename).unwrap();
@@ -2527,6 +2610,7 @@ impl SchedulerHandler {
                 &resourceQuota,
                 na::CreatePodType::Restore,
                 &Vec::new(),
+                None,  // Restore type doesn't need cleanup notification
             )
             .await
         {
@@ -2731,21 +2815,21 @@ impl SchedulerHandler {
             pod.SetState(WorkerPodState::Terminating);
         }
 
+        // Track pods marked for termination - don't free their resources yet
+        // Resources will be freed when the resume pod becomes Ready or fails
+        let resuming_podkey = pod.pod.PodKey();
+        let mut terminated_pod_keys = Vec::new();
         for worker in &terminateWorkers {
-            let podKey = worker.pod.PodKey();
-            let removed = self.idlePods.pop(&podKey).is_some();
+            let terminated_podkey = worker.pod.PodKey();
+            terminated_pod_keys.push(terminated_podkey.clone());
+            // Remove from idle pool but don't free resources yet
+            let removed = self.idlePods.pop(&terminated_podkey).is_some();
             assert!(removed);
-            match self.pods.get(&podKey) {
-                None => unreachable!(),
-                Some(pod) => {
-                    let nodename = pod.pod.object.spec.nodename.clone();
-                    let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
-                    self.stoppingPods.insert(podKey.clone());
+        }
 
-                    nodeStatus
-                        .FreeResource(&pod.pod.object.spec.allocResources, &pod.pod.PodKey())?;
-                }
-            }
+        // Store the pending termination pods for this resume pod
+        if !terminated_pod_keys.is_empty() {
+            self.pendingTerminationPods.insert(resuming_podkey.clone(), terminated_pod_keys);
         }
 
         {
@@ -2784,6 +2868,7 @@ impl SchedulerHandler {
         resourceQuota: &NodeResources,
         createType: na::CreatePodType,
         terminatePods: &Vec<WorkerPod>,
+        nodename: Option<String>,
     ) -> Result<u64> {
         let tenant = &func.tenant;
         let namespace = &func.namespace;
@@ -2838,6 +2923,15 @@ impl SchedulerHandler {
             terminate_pods: tps,
         });
 
+        // Capture info for cleanup in case of duplicate snapshot error
+        let podkey = FuncPod::FuncPodKey(tenant, namespace, funcname, fpRevision, &format!("{id}"));
+        let funcid = FuncPod::FuncObjectKey(tenant, namespace, funcname, fpRevision);
+        let cleanup_resources = allocResources.clone();
+        let msgTx = self.msgTx.clone();
+
+        // Capture terminated pod keys for restoration if duplicate detected
+        let terminated_pod_keys: Vec<String> = terminatePods.iter().map(|w| w.pod.PodKey()).collect();
+
         // use another thread to start pod to avoid block main thread
         let _handle = tokio::spawn(async move {
             let response = match client.create_func_pod(request).await {
@@ -2850,10 +2944,100 @@ impl SchedulerHandler {
             let resp = response.into_inner();
             if !resp.error.is_empty() {
                 error!("StartWorker fail with error {}", &resp.error);
+
+                // Check if this is a duplicate snapshot error and send cleanup message
+                if resp.error.starts_with("DUPLICATE_SNAPSHOT:") {
+                    if let Some(node) = nodename {
+                        error!("Duplicate snapshot detected for {} on {}, sending cleanup message", funcid, node);
+                        let cleanup_msg = WorkerHandlerMsg::CleanupDuplicateSnapshot {
+                            funcid: funcid.clone(),
+                            nodename: node.clone(),
+                            podkey: podkey.clone(),
+                            resources: cleanup_resources,
+                            terminated_pod_keys: terminated_pod_keys.clone(),
+                        };
+                        msgTx.try_send(cleanup_msg).unwrap();
+                    }
+                }
             }
         });
 
         return Ok(id);
+    }
+
+    pub async fn CreateSnapshotWorker(
+        &self,
+        naUrl: &str,
+        func: &Function,
+        id: u64,
+        allocResources: &NodeResources,
+        resourceQuota: &NodeResources,
+        terminatePods: &Vec<WorkerPod>,
+    ) -> Result<()> {
+        let tenant = &func.tenant;
+        let namespace = &func.namespace;
+        let funcname = &func.name;
+        let fpRevision = func.Version();
+
+        let mut client =
+            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
+                .await?;
+
+        let mut annotations = Vec::new();
+        annotations.push(Kv {
+            key: FUNCPOD_TYPE.to_owned(),
+            val: FUNCPOD_PROMPT.to_owned(),
+        });
+
+        annotations.push(Kv {
+            key: FUNCPOD_FUNCNAME.to_owned(),
+            val: funcname.to_owned(),
+        });
+
+        let mut tps = Vec::new();
+        for p in terminatePods {
+            let pod = p.pod.clone();
+            let termniatePod = TerminatePodReq {
+                tenant: pod.tenant.clone(),
+                namespace: pod.namespace.clone(),
+                funcname: pod.object.spec.funcname.clone(),
+                fprevision: pod.object.spec.fprevision.clone(),
+                id: pod.object.spec.id.clone(),
+            };
+            tps.push(termniatePod);
+        }
+
+        let mut spec = func.object.spec.clone();
+        let policy = self.FuncPolicy(&tenant, &spec.policy);
+        spec.policy = ObjRef::Obj(policy);
+
+        let request = tonic::Request::new(na::CreateFuncPodReq {
+            tenant: tenant.to_owned(),
+            namespace: namespace.to_owned(),
+            funcname: funcname.to_owned(),
+            fprevision: fpRevision,
+            id: format!("{id}"),
+            labels: Vec::new(),
+            annotations: annotations,
+            create_type: na::CreatePodType::Snapshot.into(),
+            funcspec: serde_json::to_string(&spec)?,
+            alloc_resources: serde_json::to_string(allocResources).unwrap(),
+            resource_quota: serde_json::to_string(resourceQuota).unwrap(),
+            terminate_pods: tps,
+        });
+
+        // Wait for response (blocks scheduler but prevents race conditions)
+        let response = client.create_func_pod(request).await?;
+        let resp = response.into_inner();
+        if !resp.error.is_empty() {
+            error!(
+                "Scheduler: Fail to CreateSnapshotWorker {} {} {} {}",
+                namespace, funcname, id, resp.error
+            );
+            return Err(Error::CommonError(resp.error));
+        }
+
+        Ok(())
     }
 
     pub async fn ResumeWorker(
@@ -2968,7 +3152,7 @@ impl SchedulerHandler {
     }
 
     // return whether all list done
-    pub async fn ListDone(&mut self, listType: ListType) -> Result<bool> {
+    pub async fn ListDone(&mut self, listType: ListType, msgTx: Option<&mpsc::Sender<WorkerHandlerMsg>>) -> Result<bool> {
         match listType {
             ListType::Func => self.funcListDone = true,
             ListType::FuncStatus => self.funcstatusListDone = true,
@@ -2987,7 +3171,7 @@ impl SchedulerHandler {
         {
             self.listDone = true;
 
-            self.RefreshScheduling().await?;
+            self.RefreshScheduling(msgTx).await?;
             self.InitSnapshotTask()?;
 
             return Ok(true);
@@ -3223,6 +3407,55 @@ impl SchedulerHandler {
             },
             Some(nodeStatus) => {
                 nodeStatus.UpdatePod(&boxPod, &oldPod)?;
+
+                // Handle pending termination pods when pod becomes Ready
+                if oldPod.pod.object.status.state != PodState::Ready
+                    && boxPod.pod.object.status.state == PodState::Ready
+                {
+                    if let Some(terminated_pod_keys) = self.pendingTerminationPods.remove(&podKey) {
+                        error!(
+                            "Pod {} became Ready, freeing {} pending termination pods",
+                            podKey,
+                            terminated_pod_keys.len()
+                        );
+
+                        for terminated_podkey in &terminated_pod_keys {
+                            // Move from idle to stopping
+                            self.stoppingPods.insert(terminated_podkey.clone());
+
+                            // Free their resources
+                            if let Some(terminated_pod) = self.pods.get(terminated_podkey) {
+                                let terminated_nodename = terminated_pod.pod.object.spec.nodename.clone();
+                                if let Some(terminated_nodeStatus) = self.nodes.get_mut(&terminated_nodename) {
+                                    terminated_nodeStatus.FreeResource(
+                                        &terminated_pod.pod.object.spec.allocResources,
+                                        terminated_podkey
+                                    )?;
+                                    error!("Freed resources for pending termination pod {}", terminated_podkey);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Handle pending termination pods when pod fails - restore them
+                if oldPod.pod.object.status.state != PodState::Failed
+                    && boxPod.pod.object.status.state == PodState::Failed
+                {
+                    if let Some(terminated_pod_keys) = self.pendingTerminationPods.remove(&podKey) {
+                        error!(
+                            "Pod {} failed, restoring {} pending termination pods to idle",
+                            podKey,
+                            terminated_pod_keys.len()
+                        );
+
+                        for terminated_podkey in &terminated_pod_keys {
+                            // Restore to idle pool (they were never moved to stopping)
+                            self.idlePods.put(terminated_podkey.clone(), ());
+                            error!("Restored pod {} to idle pool", terminated_podkey);
+                        }
+                    }
+                }
             }
         }
 
