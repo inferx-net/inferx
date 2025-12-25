@@ -1842,15 +1842,33 @@ impl SchedulerHandler {
         }
 
         if findnodeName.is_none() {
+            let req = if !forStandby {
+                func.object.spec.SnapshotResource(1)
+            } else {
+                func.object.spec.RunningResource()
+            };
+
+            let mut node_details = String::new();
+            for (nodename, (nr, _)) in &nodeSnapshots {
+                node_details.push_str(&format!(
+                    "\n  Node '{}': available={:#?}",
+                    nodename, nr
+                ));
+            }
+
             error!(
-                "can't find enough resource for {}, nodes state {:#?}",
+                "can't find enough resource for {}, required resources: {:#?}, nodes allocation state: {:#?}{}",
                 func.Key(),
-                allocStates.values()
+                req,
+                allocStates.values(),
+                node_details
             );
             return Err(Error::SchedulerNoEnoughResource(format!(
-                "can't find enough resource for {}, nodes state {:#?}",
+                "can't find enough resource for {}, required resources: {:#?}, nodes allocation state: {:#?}{}",
                 func.Key(),
-                allocStates.values()
+                req,
+                allocStates.values(),
+                node_details
             )));
         }
 
@@ -2157,7 +2175,7 @@ impl SchedulerHandler {
                     .ok();
             }
             SchedTask::StandbyTask(nodename) => {
-                self.TryCreateStandbyOnNode(&nodename).await.ok();
+                self.TryAdjustStandbyPodsOnNode(&nodename).await.ok();
             }
 
             _ => (),
@@ -2493,7 +2511,7 @@ impl SchedulerHandler {
         }
     }
 
-    pub async fn TryCreateStandbyOnNode(&mut self, nodename: &str) -> Result<()> {
+    pub async fn TryAdjustStandbyPodsOnNode(&mut self, nodename: &str) -> Result<()> {
         if !self.nodes.contains_key(nodename) {
             return Ok(());
         }
@@ -2554,6 +2572,8 @@ impl SchedulerHandler {
         }
 
         let mut needStandby = Vec::new();
+        let mut excessStandby = Vec::new();
+
         for (funcId, &cnt) in &funcPodCnt {
             let func = match self.funcs.get(funcId) {
                 None => continue,
@@ -2565,7 +2585,50 @@ impl SchedulerHandler {
             let policy = self.FuncPolicy(&tenant, &func.func.object.spec.policy);
 
             if policy.standbyPerNode > cnt {
+                // Need more standby pods
                 needStandby.push(funcId.to_owned());
+            } else if policy.standbyPerNode < cnt {
+                // Have excess standby pods - collect them for cleanup
+                excessStandby.push((funcId.to_owned(), cnt - policy.standbyPerNode));
+            }
+        }
+
+        // First, cleanup excess standby pods
+        for (funcId, excess_count) in excessStandby {
+            let mut standby_pods = Vec::new();
+
+            // Collect standby pods for this function on this node
+            for (podKey, pod) in &self.pods {
+                if pod.pod.FuncKey() != funcId {
+                    continue;
+                }
+                if &pod.pod.object.spec.nodename != nodename {
+                    continue;
+                }
+                if pod.pod.object.status.state != PodState::Standby {
+                    continue;
+                }
+                standby_pods.push((podKey.clone(), pod.pod.clone()));
+            }
+
+            // Sort for deterministic selection
+            standby_pods.sort_by(|a, b| a.0.cmp(&b.0));
+
+            // Terminate excess pods
+            let to_terminate = std::cmp::min(excess_count as usize, standby_pods.len());
+            for i in 0..to_terminate {
+                let (pod_key, pod) = &standby_pods[i];
+                error!(
+                    "AdjustStandbyPodsOnNode: terminating excess standby pod {} on node {} for func {}",
+                    pod_key, nodename, funcId
+                );
+
+                if let Err(e) = self.StopWorker(pod).await {
+                    error!(
+                        "AdjustStandbyPodsOnNode: failed to stop worker {}: {:?}",
+                        pod_key, e
+                    );
+                }
             }
         }
 

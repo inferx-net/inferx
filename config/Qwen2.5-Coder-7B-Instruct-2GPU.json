@@ -61,19 +61,15 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
             },
             "policy": {
-                "Obj": {
-                    "min_replica": 0,
-                    "max_replica": 1,
-                    "standby_per_node": 1,
-                    "parallel": 200,
-                    "runtime_config": {
-                        "graph_sync": true
-                    }
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "funcpolicy_2GPU"
                 }
             }
         }

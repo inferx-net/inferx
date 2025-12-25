@@ -25,7 +25,7 @@ helm repo update
 ### 5. Deploy NVIDIA GPU Operator with Docker runtime
 echo "[+] Installing NVIDIA GPU Operator..."
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-chmod 555 /etc/rancher/k3s/k3s.yaml
+sudo chmod 555 /etc/rancher/k3s/k3s.yaml
 helm install --wait gpu-operator \
   nvidia/gpu-operator \
   -n gpu-operator --create-namespace \
@@ -48,4 +48,4 @@ kubectl patch svc prometheus-kube-prometheus-prometheus \
 
 
 #kubectl apply  -f https://github.com/NVIDIA/k8s-device-plugin/releases/download/v0.17.3/nvidia-device-plugin.yml
-#kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml

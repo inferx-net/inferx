@@ -2,7 +2,7 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-7B-Instruct",
+    "name": "Qwen2.5-Coder-7B-Instruct-4GPU",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
@@ -16,7 +16,7 @@
                 "warning",
                 "--max-model-len",
                 "2000",
-                "--tensor-parallel-size=2"
+                "--tensor-parallel-size=4"
             ],
             "resources": {
                 "CPU": 12000,
@@ -24,7 +24,7 @@
                 "ReadyMem": 4000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 2,
+                    "Count": 4,
                     "vRam": 13000
                 }
             },
@@ -61,19 +61,15 @@
                 }
             },
             "standby": {
-                "gpu": "Blob",
-                "pageable": "Blob",
-                "pinned": "Blob"
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
             },
             "policy": {
-                "Obj": {
-                    "min_replica": 0,
-                    "max_replica": 1,
-                    "standby_per_node": 1,
-                    "parallel": 200,
-                    "runtime_config": {
-                        "graph_sync": true
-                    }
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "funcpolicy_4GPU_sync"
                 }
             }
         }
