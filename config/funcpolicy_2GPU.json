@@ -6,7 +6,7 @@
     "object": {
         "min_replica": 0,
         "max_replica": 10,
-        "standby_per_node": 4,
+        "standby_per_node": 1,
         "parallel": 50,
         "queue_len": 1000,
         "queue_timeout": 30.0,
