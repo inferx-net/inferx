@@ -1,0 +1,71 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Qwen2.5-Math-1.5B",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.7.3",
+            "commands": [
+                "--model",
+                "Qwen/Qwen2.5-Math-1.5B",
+                "--disable-custom-all-reduce",
+                "--max-model-len",
+                "2000"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 8000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "Find the value of $x$ that satisfies the equation $4x+5 = 6x+7$.",
+                "path": "v1/completions",
+                "body": {
+                    "model": "Qwen/Qwen2.5-Math-1.5B",
+                    "max_tokens": "1000",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "Mem",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "funcpolicy_1GPU"
+                }
+            }
+        }
+    }
+}
