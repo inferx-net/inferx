@@ -497,7 +497,9 @@ pub enum WorkerHandlerMsg {
     },
     ResumeWorkerComplete {
         pod_key: String,
+        nodename: String,
         result: Result<()>,
+        resources: NodeResources,
         terminated_pod_keys: Vec<String>,
     },
     StartWorkerComplete {
@@ -695,6 +697,51 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    /// Determine if it's safe to restore resources after RPC failure
+    ///
+    /// Returns true only when we're certain the RPC never reached the NodeAgent.
+    /// This is conservative - when in doubt, we don't restore and let reconciliation handle it.
+    ///
+    /// Safe conditions (RPC definitely didn't execute):
+    /// - Connection refused: NodeAgent not started yet
+    /// - DNS errors: Can't resolve hostname
+    /// - Network unreachable: No route to host
+    /// - Service unavailable: gRPC service not running
+    ///
+    /// Unsafe conditions (RPC might have been processed):
+    /// - Timeouts: RPC might have completed but response lost
+    /// - Connection timeouts: Could occur after TCP connect (request might be sent)
+    /// - Internal errors: NodeAgent might have crashed during processing
+    /// - Unknown errors: Uncertain state
+    fn is_safe_to_restore(e: &Error) -> bool {
+        match e {
+            Error::TonicTransportErr(transport_err) => {
+                let err_str = format!("{:?}", transport_err);
+
+                // Only pre-connection transport errors are safe
+                // NOTE: Do NOT include "connection timeout" - it can fire after TCP connect
+                err_str.contains("Connection refused")
+                    || err_str.contains("ConnectionRefused")
+                    || err_str.contains("dns error")
+                    || err_str.contains("failed to lookup")
+                    || err_str.contains("No route to host")
+                    || err_str.contains("Network unreachable")
+            }
+            Error::TonicStatus(status) => {
+                // Only status codes that mean request wasn't processed
+                matches!(
+                    status.code(),
+                    tonic::Code::Unavailable | tonic::Code::Unimplemented
+                )
+            }
+            Error::CommonError(msg) => {
+                // Keep existing connection refused check for wrapped errors
+                msg.contains("Connection refused") || msg.contains("ConnectionRefused")
+            }
+            _ => false,
+        }
+    }
+
     /// Handle completion of async ResumeWorker RPC
     ///
     /// On success: Pod state will be updated to Ready by the informer when NodeAgent reports it
@@ -702,7 +749,9 @@ impl SchedulerHandler {
     pub async fn ProcessResumeWorkerComplete(
         &mut self,
         pod_key: &str,
+        nodename: &str,
         result: Result<()>,
+        resources: &NodeResources,
         terminated_pod_keys: Vec<String>,
     ) -> Result<()> {
         match result {
@@ -718,7 +767,92 @@ impl SchedulerHandler {
                 Ok(())
             }
             Err(e) => {
-                // RPC failed - but we can't tell if NodeAgent received the request or not
+                // Check if this is a safe-to-restore error (RPC never reached NodeAgent)
+                if Self::is_safe_to_restore(&e) {
+                    // NodeAgent never received the request - safe to restore all state
+                    error!(
+                        "ResumeWorker RPC failed (safe to restore) for pod {} on node {}: {:?} - restoring state",
+                        pod_key, nodename, e
+                    );
+
+                    // 1. Restore ready resource allocation
+                    if let Some(nodeStatus) = self.nodes.get_mut(nodename) {
+                        // Add back the ready resources that were reserved
+                        nodeStatus.available.Add(resources)?;
+
+                        // Remove from pending pods
+                        nodeStatus.pendingPods.remove(pod_key);
+
+                        info!(
+                            "Restored {} ready allocation for pod {} on node {}, available is now {:#?}",
+                            serde_json::to_string(&resources).unwrap_or_default(),
+                            pod_key,
+                            nodename,
+                            &nodeStatus.available
+                        );
+                    }
+
+                    // 2. Restore pod state to Standby, remove from func's pending pods,
+                    //    and fail any queued lease requests
+                    if let Some(worker) = self.pods.get(pod_key) {
+                        worker.SetState(WorkerPodState::Standby);
+
+                        // Remove from func's pending pods to unblock future scheduling
+                        let funcid = worker.pod.FuncKey();
+                        if let Some(funcStatus) = self.funcs.get_mut(&funcid) {
+                            funcStatus.pendingPods.remove(pod_key);
+
+                            // Fail the ONE lease request that triggered this Resume attempt
+                            // (Resume RPC failed, pod won't become Ready)
+                            // Don't pop all requests - other requests might be handled by other Resume attempts
+                            if let Some((_lease_req, lease_tx)) = funcStatus.PopLeaseWorkerReq() {
+                                let resp = na::LeaseWorkerResp {
+                                    error: format!(
+                                        "Resume RPC failed (safe to restore): {:?}. Gateway should retry.",
+                                        e
+                                    ),
+                                    ..Default::default()
+                                };
+                                lease_tx.send(resp).ok(); // Ignore send errors (channel might be closed)
+                                info!(
+                                    "Failed one queued lease request for func {} - gateway can retry",
+                                    funcid
+                                );
+                            }
+
+                            info!(
+                                "Removed pod {} from func {} pending pods",
+                                pod_key, funcid
+                            );
+                        }
+
+                        info!("Restored pod {} to Standby state", pod_key);
+                    } else {
+                        error!("Cannot restore pod {} - not found in pods map", pod_key);
+                    }
+
+                    // 3. Restore terminated pods to Idle
+                    for terminated_podkey in &terminated_pod_keys {
+                        if self.stoppingPods.remove(terminated_podkey) {
+                            if let Some(terminated_worker) = self.pods.get(terminated_podkey) {
+                                terminated_worker.SetState(WorkerPodState::Idle);
+                                self.idlePods.put(terminated_podkey.clone(), ());
+                                info!(
+                                    "Restored terminated pod {} to Idle (resume failed)",
+                                    terminated_podkey
+                                );
+                            }
+                        }
+                    }
+
+                    // Note: LeaseWorker requests are queued per-func (in funcStatus.leaseWorkerReqs).
+                    // We fail all queued requests above so gateway can retry immediately.
+                    // The restored Standby pod is now available for those retries.
+
+                    return Ok(());
+                }
+
+                // RPC failed but we can't tell if NodeAgent received the request or not
                 // NodeAgent guarantees: if pod becomes Ready, terminated pods are deleted (atomic)
                 // So we wait for pod events to tell us what actually happened:
                 // - If pod becomes Ready: NodeAgent succeeded, handle via Ready event
@@ -776,24 +910,12 @@ impl SchedulerHandler {
                 Ok(())
             }
             Err(e) => {
-                // Check if this is a "Connection refused" error (NodeAgent not ready yet)
-                let is_connection_refused = match &e {
-                    Error::TonicTransportErr(transport_err) => {
-                        let err_str = format!("{:?}", transport_err);
-                        err_str.contains("Connection refused")
-                            || err_str.contains("ConnectionRefused")
-                    }
-                    Error::CommonError(msg) => {
-                        msg.contains("Connection refused") || msg.contains("ConnectionRefused")
-                    }
-                    _ => false,
-                };
-
-                if is_connection_refused {
-                    // NodeAgent not ready - clean up and retry later
+                // Check if it's safe to restore (RPC never reached NodeAgent)
+                if Self::is_safe_to_restore(&e) {
+                    // NodeAgent never received the request - safe to restore and retry
                     error!(
-                        "StartWorkerV2 connection refused for {:?} pod {} on node {} - NodeAgent not ready, will retry",
-                        create_type, podkey, nodename
+                        "StartWorkerV2 RPC failed (safe to restore) for {:?} pod {} on node {}: {:?} - restoring state and will retry",
+                        create_type, podkey, nodename, e
                     );
 
                     // Clean up pending pod tracking
@@ -851,7 +973,7 @@ impl SchedulerHandler {
                             // So we must re-queue here to retry snapshot creation
                             self.AddSnapshotTask(nodename, funcid);
                             info!(
-                                "Re-queued SnapshotTask for func {} on node {} after connection refused",
+                                "Re-queued SnapshotTask for func {} on node {} after safe-to-restore error",
                                 funcid, nodename
                             );
                         }
@@ -874,9 +996,9 @@ impl SchedulerHandler {
                     return Ok(());
                 }
 
-                // Other errors (not connection refused)
+                // Other errors (not safe to restore - RPC might have been processed)
                 error!(
-                    "StartWorkerV2 RPC failed for {:?} pod {}: {:?} - cleanup may be needed",
+                    "StartWorkerV2 RPC failed for {:?} pod {}: {:?} - not safe to restore, cleanup may be needed",
                     create_type, podkey, e
                 );
 
@@ -1666,8 +1788,8 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::CleanupDuplicateSnapshot { funcid, nodename, podkey, resources, terminated_pod_keys } => {
                             self.ProcessCleanupDuplicateSnapshot(&funcid, &nodename, &podkey, &resources, &terminated_pod_keys).ok();
                         }
-                        WorkerHandlerMsg::ResumeWorkerComplete { pod_key, result, terminated_pod_keys } => {
-                            if let Err(e) = self.ProcessResumeWorkerComplete(&pod_key, result, terminated_pod_keys).await {
+                        WorkerHandlerMsg::ResumeWorkerComplete { pod_key, nodename, result, resources, terminated_pod_keys } => {
+                            if let Err(e) = self.ProcessResumeWorkerComplete(&pod_key, &nodename, result, &resources, terminated_pod_keys).await {
                                 panic!("CRITICAL: ProcessResumeWorkerComplete failed for pod {}: {:?} - resource accounting corrupted, scheduler must restart", pod_key, e);
                             }
                         }
@@ -4038,13 +4160,15 @@ impl SchedulerHandler {
         // Build pod key for tracking completion
         let pod_key = format!("{}/{}/{}/{}", tenant, namespace, funcname, id);
 
-        // Clone data needed for the async task
+        // Clone data needed for the async task and completion handler
         let naUrl = naUrl.to_owned();
         let tenant = tenant.to_owned();
         let namespace = namespace.to_owned();
         let funcname = funcname.to_owned();
         let id = id.to_owned();
         let allocResources = allocResources.clone();
+        let nodename_clone = nodename.to_owned();
+        let resources_for_completion = allocResources.clone();
 
         // Capture terminated pod keys for completion handler
         let mut terminated_pod_keys = Vec::new();
@@ -4095,7 +4219,9 @@ impl SchedulerHandler {
             },
             move |result| WorkerHandlerMsg::ResumeWorkerComplete {
                 pod_key,
+                nodename: nodename_clone,
                 result,
+                resources: resources_for_completion,
                 terminated_pod_keys,
             },
         );
