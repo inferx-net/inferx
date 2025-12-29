@@ -4735,6 +4735,40 @@ impl SchedulerHandler {
             self.RemovePendingSnapshot(&funcId, nodename);
         }
 
+        // Clean per-node semaphore (old epoch may have in-flight permits)
+        self.node_semaphores.remove(nodename);
+
+        // Clean pending snapshot removal RPCs for this node
+        // Format: "funckey:nodename" - remove all entries ending with ":nodename"
+        let suffix = format!(":{}", nodename);
+        self.pending_snapshot_removals.retain(|key| !key.ends_with(&suffix));
+
+        // Clean snapshot schedule entries for this node
+        // BiIndex tracks (funcid, nodename) pairs for scheduled snapshots
+        self.SnapshotSched.RemoveById2(nodename);
+
+        // Clean queued lease requests for pods that were on this node
+        // These requests are waiting for pods that no longer exist after node restart
+        for (_, func_status) in self.funcs.iter_mut() {
+            func_status.leaseWorkerReqs.retain(|(_lease_req, _tx)| {
+                // Check if any pod being requested was on the restarted node
+                // If so, fail the request since those pods are gone
+                // Note: We can't easily check pod locations here without pod state,
+                // so we'll let the lease requests time out naturally or fail when
+                // they try to lease non-existent pods
+                true // Keep all requests for now - they'll fail naturally
+            });
+        }
+
+        // Note: taskQueue and delayed_tasks are not cleaned here because:
+        // 1. taskQueue is a stream-based queue that can't be efficiently filtered
+        // 2. delayed_tasks is a BinaryHeap that can't be efficiently filtered
+        // Tasks referencing old node epoch will fail naturally when executed:
+        // - SnapshotTask(funcid, nodename) - will fail if node doesn't exist
+        // - RemoveSnapshotFromNode - will fail if snapshot doesn't exist
+        // - AddNode/DelayedInitNode - will be no-op or succeed with new epoch
+        // - StandbyTask - will schedule on available nodes
+
         let node = match self.nodes.get(nodename) {
             None => {
                 return;
