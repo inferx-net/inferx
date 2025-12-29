@@ -1792,7 +1792,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
-                                    error!("UpdateSnapshot snapshot {}", snapshot.StoreKey());
+                                    error!("UpdateSnapshot snapshot {} state: {:?}", snapshot.StoreKey(), &snapshot);
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;

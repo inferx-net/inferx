@@ -414,6 +414,12 @@ impl Informer {
         self.listDone.store(true, Ordering::SeqCst);
         notify.notify_waiters();
 
+        let watch_start_rev = self.revision.load(Ordering::Acquire);
+        if self.objType == "node" {
+            error!("Informer::Process [{}] InitList done, starting WatchUpdate from revision {}",
+                self.objType, watch_start_rev);
+        }
+
         loop {
             match self.WatchUpdate(&client).await {
                 Err(e) => {
