@@ -511,6 +511,11 @@ pub enum WorkerHandlerMsg {
         resources: NodeResources,
         terminated_pod_keys: Vec<String>,
     },
+    RemoveSnapshotComplete {
+        funckey: String,
+        nodename: String,
+        result: Result<()>,
+    },
 }
 
 #[derive(Debug)]
@@ -580,6 +585,11 @@ pub struct SchedulerHandler {
     // Per-node semaphores to limit concurrent operations on the same node
     // Prevents overlapping GPU resets and expensive docker cleanup operations
     node_semaphores: BTreeMap<String, Arc<Semaphore>>,
+
+    // Track pending snapshot removal RPCs to prevent duplicate requests
+    // Key format: "funckey:nodename"
+    // Prevents spawning duplicate RemoveSnapshot RPCs before the first completes
+    pending_snapshot_removals: BTreeSet<String>,
 }
 
 impl Default for SchedulerHandler {
@@ -613,6 +623,7 @@ impl Default for SchedulerHandler {
             delay_interval: None,
             msgTx: tx,
             node_semaphores: BTreeMap::new(),
+            pending_snapshot_removals: BTreeSet::new(),
         }
     }
 }
@@ -886,6 +897,54 @@ impl SchedulerHandler {
                 // - Resources stay reserved until reconciliation fixes it
 
                 Ok(())
+            }
+        }
+    }
+
+    pub fn ProcessRemoveSnapshotComplete(
+        &mut self,
+        funckey: &str,
+        nodename: &str,
+        result: Result<()>,
+    ) {
+        // Clear pending marker - RPC completed (success or failure)
+        let pending_key = format!("{}:{}", funckey, nodename);
+        self.pending_snapshot_removals.remove(&pending_key);
+
+        match result {
+            Ok(()) => {
+                info!(
+                    "RemoveSnapshot RPC succeeded for funckey {} on node {}",
+                    funckey, nodename
+                );
+
+                // Remove the snapshot from our tracking
+                if let Some(snapshot) = self.snapshots.get_mut(funckey) {
+                    snapshot.remove(nodename);
+
+                    // If this was the last node with this snapshot, remove the funckey entry
+                    if snapshot.is_empty() {
+                        self.snapshots.remove(funckey);
+                        info!(
+                            "All snapshots removed for funckey {}, removed from tracking",
+                            funckey
+                        );
+                    } else {
+                        info!(
+                            "Removed snapshot for funckey {} from node {}, {} nodes remaining",
+                            funckey,
+                            nodename,
+                            snapshot.len()
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "RemoveSnapshot RPC failed for funckey {} on node {}: {:?} - will retry on next cleanup cycle",
+                    funckey, nodename, e
+                );
+                // Don't remove from tracking - will be retried on next CleanSnapshots call
             }
         }
     }
@@ -1626,7 +1685,31 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub async fn CleanSnapshots(&mut self) -> Result<()> {
+    /// Remove all snapshots for a funckey (non-blocking, async) with spawn_rpc
+    ///
+    /// This spawns individual RemoveSnapshotFromNodeV2 calls for each node.
+    /// Completion is handled via WorkerHandlerMsg::RemoveSnapshotComplete messages.
+    /// The snapshot is removed from self.snapshots only when all nodes have been cleaned.
+    pub fn RemoveSnapshotByFunckeyV2(&mut self, funckey: &str) -> Result<()> {
+        info!("RemoveSnapshotByFunckeyV2 remove {} start", funckey);
+
+        let snapshot = self.snapshots.get(funckey);
+        if let Some(snapshot) = snapshot {
+            let nodes: Vec<String> = snapshot.keys().cloned().collect();
+            for nodename in nodes {
+                if let Err(e) = self.RemoveSnapshotFromNodeV2(&nodename, funckey) {
+                    error!(
+                        "Failed to spawn RemoveSnapshotFromNodeV2 for {} on node {}: {:?}",
+                        funckey, nodename, e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn CleanSnapshots(&mut self) -> Result<()> {
         let mut cleanSnapshots = Vec::new();
         for (funckey, _) in &self.snapshots {
             if !self.funcs.contains_key(funckey) {
@@ -1640,7 +1723,7 @@ impl SchedulerHandler {
                 continue;
             }
 
-            match self.RemoveSnapshotByFunckey(&funckey).await {
+            match self.RemoveSnapshotByFunckeyV2(&funckey) {
                 Ok(()) => (),
                 Err(e) => {
                     error!("CleanSnapshots get fail {:?}", e);
@@ -1757,6 +1840,74 @@ impl SchedulerHandler {
         )));
     }
 
+    /// Remove snapshot from node (non-blocking, async) with spawn_rpc
+    ///
+    /// This spawns the remove snapshot RPC in the background with:
+    /// - Duplicate prevention: Skips if removal already in progress
+    /// - Global concurrency limit (max 16 concurrent RPCs)
+    /// - Per-node concurrency limit (max 2 per node to prevent conflicts)
+    /// - 30 second timeout
+    /// - Result sent back via WorkerHandlerMsg::RemoveSnapshotComplete
+    pub fn RemoveSnapshotFromNodeV2(&mut self, nodename: &str, funckey: &str) -> Result<()> {
+        // Check if removal already in progress for this funckey:nodename pair
+        let pending_key = format!("{}:{}", funckey, nodename);
+        if self.pending_snapshot_removals.contains(&pending_key) {
+            // Already have a removal in flight, skip to avoid duplicate RPCs
+            return Ok(());
+        }
+
+        let nodeStatus = self.nodes.get(nodename).ok_or_else(|| {
+            Error::CommonError(format!("Node {} not found", nodename))
+        })?;
+        let nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+
+        // Mark this removal as pending
+        self.pending_snapshot_removals.insert(pending_key);
+
+        let funckey_for_rpc = funckey.to_owned();
+        let nodename_for_rpc = nodename.to_owned();
+        let funckey_for_completion = funckey.to_owned();
+        let nodename_for_completion = nodename.to_owned();
+
+        // Spawn RPC with semaphore limits and timeout
+        self.spawn_rpc(
+            nodename,
+            Duration::from_secs(30),
+            move || {
+                let funckey_clone = funckey_for_rpc.clone();
+                let nodename_clone = nodename_for_rpc.clone();
+                async move {
+                    let mut client =
+                        na::node_agent_service_client::NodeAgentServiceClient::connect(nodeAgentUrl)
+                            .await?;
+
+                    let request = tonic::Request::new(RemoveSnapshotReq {
+                        funckey: funckey_clone.clone(),
+                    });
+                    let response = client.remove_snapshot(request).await?;
+                    let resp = response.into_inner();
+
+                    if !resp.error.is_empty() {
+                        error!(
+                            "RemoveSnapshotFromNodeV2 fail for {} on node {} with error {}",
+                            funckey_clone, nodename_clone, resp.error
+                        );
+                        return Err(Error::CommonError(resp.error));
+                    }
+
+                    Ok(())
+                }
+            },
+            move |result| WorkerHandlerMsg::RemoveSnapshotComplete {
+                funckey: funckey_for_completion,
+                nodename: nodename_for_completion,
+                result,
+            },
+        );
+
+        Ok(())
+    }
+
     pub async fn ProcessOnce(
         &mut self,
         closeNotfiy: &Arc<Notify>,
@@ -1796,6 +1947,9 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::StartWorkerComplete { funcid, nodename, podkey, create_type, result, resources, terminated_pod_keys } => {
                             self.ProcessStartWorkerComplete(&funcid, &nodename, &podkey, create_type, result, &resources, &terminated_pod_keys).ok();
                         }
+                        WorkerHandlerMsg::RemoveSnapshotComplete { funckey, nodename, result } => {
+                            self.ProcessRemoveSnapshotComplete(&funckey, &nodename, result);
+                        }
                         _ => ()
                     }
                 } else {
@@ -1812,7 +1966,7 @@ impl SchedulerHandler {
                     self.RefreshScheduling(None).await?;
                     // we need to delete pod at first before clean snapshot
                     self.CleanPods().await?;
-                    self.CleanSnapshots().await?;
+                    self.CleanSnapshots()?;
                     self.ProcessGatewayTimeout().await?;
                 }
             }
@@ -3639,7 +3793,7 @@ impl SchedulerHandler {
         let hasPod = self.RemovePodsByFunckey(&spec.Key()).await?;
 
         if !hasPod {
-            self.RemoveSnapshotByFunckey(&spec.Key()).await?;
+            self.RemoveSnapshotByFunckeyV2(&spec.Key())?;
         }
 
         return Ok(());
@@ -4063,6 +4217,7 @@ impl SchedulerHandler {
         return Ok(id);
     }
 
+    // TODO: dead code, remove
     pub async fn CreateSnapshotWorker(
         &self,
         naUrl: &str,
