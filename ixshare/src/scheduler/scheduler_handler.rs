@@ -516,6 +516,10 @@ pub enum WorkerHandlerMsg {
         nodename: String,
         result: Result<()>,
     },
+    StopWorkerComplete {
+        pod_key: String,
+        result: Result<()>,
+    },
 }
 
 #[derive(Debug)]
@@ -945,6 +949,36 @@ impl SchedulerHandler {
                     funckey, nodename, e
                 );
                 // Don't remove from tracking - will be retried on next CleanSnapshots call
+            }
+        }
+    }
+
+    pub fn ProcessStopWorkerComplete(
+        &mut self,
+        pod_key: &str,
+        result: Result<()>,
+    ) {
+        match result {
+            Ok(()) => {
+                info!(
+                    "StopWorker RPC succeeded for pod {} - pod will be deleted via informer event",
+                    pod_key
+                );
+                // Don't pre-free resources or update state here
+                // Wait for pod deletion event from Kubernetes informer to:
+                // 1. Free the pod's resources
+                // 2. Remove pod from tracking
+                // 3. Remove from stoppingPods if present
+                // This ensures resources are freed exactly once
+            }
+            Err(e) => {
+                error!(
+                    "StopWorker RPC failed for pod {}: {:?}",
+                    pod_key, e
+                );
+                // Don't take any action - pod might already be deleted or in bad state
+                // Informer events will handle cleanup if pod gets deleted
+                // If pod still exists, it can be retried later
             }
         }
     }
@@ -1413,7 +1447,7 @@ impl SchedulerHandler {
             // we can't stopworker mutiple times. do some check.
             if state != WorkerPodState::Terminating {
                 worker.SetState(WorkerPodState::Terminating);
-                match self.StopWorker(&worker.pod).await {
+                match self.StopWorkerV2(&worker.pod) {
                     Ok(()) => (),
                     Err(e) => {
                         error!(
@@ -1748,7 +1782,7 @@ impl SchedulerHandler {
         // }
 
         for funckey in &cleanfuncs {
-            match self.RemovePodsByFunckey(&funckey).await {
+            match self.RemovePodsByFunckey(&funckey) {
                 Ok(_) => (),
                 Err(e) => {
                     error!("CleanPods get fail {:?}", e);
@@ -1774,7 +1808,7 @@ impl SchedulerHandler {
     }
 
     // return has pods
-    pub async fn RemovePodsByFunckey(&mut self, funckey: &str) -> Result<bool> {
+    pub fn RemovePodsByFunckey(&mut self, funckey: &str) -> Result<bool> {
         info!("RemovePodsByFunckey remove {} start", funckey);
         let mut remove = true;
         let mut pods = Vec::new();
@@ -1792,7 +1826,7 @@ impl SchedulerHandler {
         }
 
         for p in pods {
-            match self.StopWorker(&p.pod).await {
+            match self.StopWorkerV2(&p.pod) {
                 Err(e) => {
                     info!(
                         "RemovePodsByFunckey stopworker {} fail with error {:?}",
@@ -1949,6 +1983,9 @@ impl SchedulerHandler {
                         }
                         WorkerHandlerMsg::RemoveSnapshotComplete { funckey, nodename, result } => {
                             self.ProcessRemoveSnapshotComplete(&funckey, &nodename, result);
+                        }
+                        WorkerHandlerMsg::StopWorkerComplete { pod_key, result } => {
+                            self.ProcessStopWorkerComplete(&pod_key, result);
                         }
                         _ => ()
                     }
@@ -3431,7 +3468,7 @@ impl SchedulerHandler {
                     pod_key, nodename, funcId
                 );
 
-                if let Err(e) = self.StopWorker(pod).await {
+                if let Err(e) = self.StopWorkerV2(pod) {
                     error!(
                         "AdjustStandbyPodsOnNode: failed to stop worker {}: {:?}",
                         pod_key, e
@@ -3636,7 +3673,7 @@ impl SchedulerHandler {
                     pod_key, nodename, funcId
                 );
 
-                if let Err(e) = self.StopWorker(pod).await {
+                if let Err(e) = self.StopWorkerV2(pod) {
                     error!(
                         "AdjustStandbyPodsOnNodeV2: failed to stop worker {}: {:?}",
                         pod_key, e
@@ -3790,7 +3827,7 @@ impl SchedulerHandler {
     pub const PRINT_SCHEDER_INFO: bool = false;
 
     pub async fn ProcessRemoveFunc(&mut self, spec: &Function) -> Result<()> {
-        let hasPod = self.RemovePodsByFunckey(&spec.Key()).await?;
+        let hasPod = self.RemovePodsByFunckey(&spec.Key())?;
 
         if !hasPod {
             self.RemoveSnapshotByFunckeyV2(&spec.Key())?;
@@ -4413,6 +4450,29 @@ impl SchedulerHandler {
         }
     }
 
+    /// Stop/terminate a worker pod (non-blocking, async) with spawn_rpc
+    ///
+    /// This is the V2 version that uses spawn_rpc pattern.
+    /// Result will be delivered via WorkerHandlerMsg::StopWorkerComplete.
+    /// Pod deletion will be detected via Kubernetes informer events.
+    pub fn StopWorkerV2(&mut self, pod: &FuncPod) -> Result<()> {
+        let nodename = pod.object.spec.nodename.clone();
+        let nodeStatus = self.nodes.get(&nodename).ok_or_else(|| {
+            Error::CommonError(format!("Node {} not found", nodename))
+        })?;
+        let naUrl = nodeStatus.node.NodeAgentUrl();
+
+        self.StopWorkerInnerV2(
+            &naUrl,
+            &nodename,
+            &pod.tenant,
+            &pod.namespace,
+            &pod.object.spec.funcname,
+            pod.object.spec.fprevision,
+            &pod.object.spec.id,
+        )
+    }
+
     pub async fn StopWorkerInner(
         &self,
         naUrl: &str,
@@ -4443,6 +4503,79 @@ impl SchedulerHandler {
         }
 
         return Ok(());
+    }
+
+    /// Stop/terminate a worker pod (non-blocking, async) with spawn_rpc
+    ///
+    /// This spawns the terminate pod RPC in the background with:
+    /// - Global concurrency limit (max 16 concurrent RPCs)
+    /// - Per-node concurrency limit (max 2 per node to prevent conflicts)
+    /// - 30 second timeout
+    /// - Result sent back via WorkerHandlerMsg::StopWorkerComplete
+    ///
+    /// Unlike the blocking version, this doesn't wait for NodeAgent response.
+    /// Pod deletion will be detected via Kubernetes informer events.
+    pub fn StopWorkerInnerV2(
+        &mut self,
+        naUrl: &str,
+        nodename: &str,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        fprevision: i64,
+        id: &str,
+    ) -> Result<()> {
+        let pod_key = FuncPod::FuncPodKey(tenant, namespace, funcname, fprevision, id);
+
+        let naUrl = naUrl.to_owned();
+        let tenant = tenant.to_owned();
+        let namespace = namespace.to_owned();
+        let funcname = funcname.to_owned();
+        let id = id.to_owned();
+        let pod_key_for_completion = pod_key.clone();
+
+        // Spawn RPC with semaphore limits and timeout
+        self.spawn_rpc(
+            nodename,
+            Duration::from_secs(30),
+            move || {
+                let tenant_clone = tenant.clone();
+                let namespace_clone = namespace.clone();
+                let funcname_clone = funcname.clone();
+                let id_clone = id.clone();
+                async move {
+                    let mut client =
+                        na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl)
+                            .await?;
+
+                    let request = tonic::Request::new(na::TerminatePodReq {
+                        tenant: tenant_clone.clone(),
+                        namespace: namespace_clone.clone(),
+                        funcname: funcname_clone.clone(),
+                        fprevision: fprevision,
+                        id: id_clone.clone(),
+                    });
+                    let response = client.terminate_pod(request).await?;
+                    let resp = response.into_inner();
+
+                    if !resp.error.is_empty() {
+                        error!(
+                            "StopWorkerInnerV2 fail for {} {} {} {} {}",
+                            tenant_clone, namespace_clone, funcname_clone, id_clone, resp.error
+                        );
+                        return Err(Error::CommonError(resp.error));
+                    }
+
+                    Ok(())
+                }
+            },
+            move |result| WorkerHandlerMsg::StopWorkerComplete {
+                pod_key: pod_key_for_completion,
+                result,
+            },
+        );
+
+        Ok(())
     }
 
     // return whether all list done
