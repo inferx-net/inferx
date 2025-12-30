@@ -142,6 +142,11 @@ pub struct NodeStatus {
     pub pendingPods: BTreeMap<String, PendingPod>,
 
     pub pods: BTreeMap<String, WorkerPod>,
+
+    // Track pods that are being stopped/terminated
+    // Prevents premature resource freeing when deletion events arrive before termination completes
+    pub stoppingPods: BTreeSet<String>,
+
     pub createTime: Instant,
     pub state: NAState,
 }
@@ -166,6 +171,7 @@ impl NodeStatus {
             available: available,
             pendingPods: BTreeMap::new(),
             pods: pods,
+            stoppingPods: BTreeSet::new(),
             createTime: std::time::Instant::now(),
             state: state,
         });
@@ -224,13 +230,15 @@ impl NodeStatus {
         &mut self,
         podKey: &str,
         resources: &NodeResources,
-        stopping: bool,
     ) -> Result<()> {
         let pendingExist = self.pendingPods.remove(podKey).is_some();
         let exist = match self.pods.remove(podKey) {
             Some(_pod) => true,
             None => false,
         };
+
+        // Check if pod was in stopping state and remove it
+        let stopping = self.stoppingPods.remove(podKey);
 
         // Free resources on pod deletion - this is the ONLY place resources are freed
         // The 'stopping' flag is kept for logging/tracking purposes but doesn't affect resource freeing
@@ -284,6 +292,17 @@ impl NodeStatus {
             serde_json::to_string(&self.available).unwrap_or_default()
         );
         return Ok(());
+    }
+
+    // Add a pod to the stopping set
+    pub fn AddStoppingPod(&mut self, podKey: &str) {
+        self.stoppingPods.insert(podKey.to_string());
+    }
+
+    // Remove a pod from the stopping set
+    // Returns true if the pod was in the stopping set
+    pub fn RemoveStoppingPod(&mut self, podKey: &str) -> bool {
+        self.stoppingPods.remove(podKey)
     }
 }
 
@@ -339,6 +358,10 @@ pub struct FuncStatus {
     // podname --> PendingPod
     pub pendingPods: BTreeMap<String, PendingPod>,
 
+    // Track pods that are being stopped/terminated
+    // Prevents premature resource freeing when deletion events arrive before termination completes
+    pub stoppingPods: BTreeSet<String>,
+
     pub leaseWorkerReqs: VecDeque<(LeaseReq, Sender<na::LeaseWorkerResp>)>,
 }
 
@@ -348,6 +371,7 @@ impl FuncStatus {
             func: fp,
             pods: pods,
             pendingPods: BTreeMap::new(),
+            stoppingPods: BTreeSet::new(),
             leaseWorkerReqs: VecDeque::new(),
         });
     }
@@ -476,7 +500,19 @@ impl FuncStatus {
     pub fn RemovePod(&mut self, podKey: &str) -> Result<()> {
         self.pods.remove(podKey);
         self.pendingPods.remove(podKey);
+        self.stoppingPods.remove(podKey);
         return Ok(());
+    }
+
+    // Add a pod to the stopping set
+    pub fn AddStoppingPod(&mut self, podKey: &str) {
+        self.stoppingPods.insert(podKey.to_string());
+    }
+
+    // Remove a pod from the stopping set
+    // Returns true if the pod was in the stopping set
+    pub fn RemoveStoppingPod(&mut self, podKey: &str) -> bool {
+        self.stoppingPods.remove(podKey)
     }
 }
 
@@ -556,9 +592,6 @@ pub struct SchedulerHandler {
     // returnId --> PodKey()
     pub idlePods: LruCache<String, ()>,
 
-    /********************stopping pods ************************* */
-    pub stoppingPods: BTreeSet<String>,
-
     // temp pods storage when the func is not ready
     // funcname name -> <Podid --> WorkerPod>
     pub funcPods: BTreeMap<String, BTreeMap<String, WorkerPod>>,
@@ -610,7 +643,6 @@ impl Default for SchedulerHandler {
             snapshots: BTreeMap::new(),
             pendingsnapshots: BTreeMap::new(),
             idlePods: LruCache::unbounded(),
-            stoppingPods: BTreeSet::new(),
             funcPods: BTreeMap::new(),
             SnapshotSched: BiIndex::New(),
             funcpolicy: BTreeMap::new(),
@@ -848,14 +880,25 @@ impl SchedulerHandler {
 
                     // 3. Restore terminated pods to Idle
                     for terminated_podkey in &terminated_pod_keys {
-                        if self.stoppingPods.remove(terminated_podkey) {
-                            if let Some(terminated_worker) = self.pods.get(terminated_podkey) {
-                                terminated_worker.SetState(WorkerPodState::Idle);
-                                self.idlePods.put(terminated_podkey.clone(), ());
-                                info!(
-                                    "Restored terminated pod {} to Idle (resume failed)",
-                                    terminated_podkey
-                                );
+                        if let Some(terminated_worker) = self.pods.get(terminated_podkey) {
+                            let pod_nodename = terminated_worker.pod.object.spec.nodename.clone();
+                            let pod_funcid = terminated_worker.pod.FuncKey();
+
+                            // Remove from both node and func stoppingPods
+                            if let Some(nodeStatus) = self.nodes.get_mut(&pod_nodename) {
+                                if nodeStatus.RemoveStoppingPod(terminated_podkey) {
+                                    terminated_worker.SetState(WorkerPodState::Idle);
+                                    self.idlePods.put(terminated_podkey.clone(), ());
+
+                                    if let Some(funcStatus) = self.funcs.get_mut(&pod_funcid) {
+                                        funcStatus.RemoveStoppingPod(terminated_podkey);
+                                    }
+
+                                    info!(
+                                        "Restored terminated pod {} to Idle (resume failed)",
+                                        terminated_podkey
+                                    );
+                                }
                             }
                         }
                     }
@@ -1044,15 +1087,26 @@ impl SchedulerHandler {
                     // Restore terminated pods that were marked for deletion
                     // They should go back to idle since the new pod creation failed
                     for terminated_podkey in terminated_pod_keys {
-                        if self.stoppingPods.remove(terminated_podkey) {
-                            info!(
-                                "Restored terminated pod {} to idle (new pod creation failed)",
-                                terminated_podkey
-                            );
-                            // Put it back in idle pool if it still exists
-                            if let Some(worker) = self.pods.get(terminated_podkey) {
-                                worker.SetState(WorkerPodState::Idle);
-                                self.idlePods.put(terminated_podkey.clone(), ());
+                        // Put it back in idle pool if it still exists
+                        if let Some(worker) = self.pods.get(terminated_podkey) {
+                            let pod_nodename = worker.pod.object.spec.nodename.clone();
+                            let pod_funcid = worker.pod.FuncKey();
+
+                            // Remove from both node and func stoppingPods
+                            if let Some(nodeStatus) = self.nodes.get_mut(&pod_nodename) {
+                                if nodeStatus.RemoveStoppingPod(terminated_podkey) {
+                                    worker.SetState(WorkerPodState::Idle);
+                                    self.idlePods.put(terminated_podkey.clone(), ());
+
+                                    if let Some(funcStatus) = self.funcs.get_mut(&pod_funcid) {
+                                        funcStatus.RemoveStoppingPod(terminated_podkey);
+                                    }
+
+                                    info!(
+                                        "Restored terminated pod {} to idle (new pod creation failed)",
+                                        terminated_podkey
+                                    );
+                                }
                             }
                         }
                     }
@@ -1581,15 +1635,21 @@ impl SchedulerHandler {
 
         // 4. Restore terminated idle pods
         for terminated_podkey in terminated_pod_keys {
-            // Remove from stoppingPods
-            self.stoppingPods.remove(terminated_podkey);
-
-            // Add back to idlePods
-            self.idlePods.put(terminated_podkey.clone(), ());
-
             // Re-allocate their resources - allocResources is already NodeResources, just need the reqResource which is Resources
             if let Some(pod) = self.pods.get(terminated_podkey) {
                 let pod_nodename = pod.pod.object.spec.nodename.clone();
+                let pod_funcid = pod.pod.FuncKey();
+
+                // Remove from stoppingPods in both node and func
+                if let Some(nodeStatus) = self.nodes.get_mut(&pod_nodename) {
+                    nodeStatus.RemoveStoppingPod(terminated_podkey);
+                }
+                if let Some(funcStatus) = self.funcs.get_mut(&pod_funcid) {
+                    funcStatus.RemoveStoppingPod(terminated_podkey);
+                }
+
+                // Add back to idlePods
+                self.idlePods.put(terminated_podkey.clone(), ());
                 if let Some(nodeStatus) = self.nodes.get_mut(&pod_nodename) {
                     // Get the reqResources (Resources type) from the pod spec
                     let req_resources = &pod.pod.object.spec.reqResources;
@@ -3056,10 +3116,8 @@ impl SchedulerHandler {
             // Remove from idle pool but don't free resources yet
             let removed = self.idlePods.pop(&terminated_podkey).is_some();
             assert!(removed);
-            // Add to stoppingPods so deletion events don't free resources prematurely
-            // Also set state to Terminating
+            // Set state to Terminating
             worker.SetState(WorkerPodState::Terminating);
-            self.stoppingPods.insert(terminated_podkey.clone());
         }
 
         // CRITICAL: Allocate snapshot resource BEFORE RPC to prevent race condition
@@ -3068,6 +3126,21 @@ impl SchedulerHandler {
         let nodeAgentUrl;
         {
             let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+
+            // Add terminated pods to node's stoppingPods so deletion events don't free resources prematurely
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                nodeStatus.AddStoppingPod(&terminated_podkey);
+            }
+
+            // Also add to func's stoppingPods
+            if let Some(funcStatus) = self.funcs.get_mut(funcId) {
+                for worker in &terminateWorkers {
+                    let terminated_podkey = worker.pod.PodKey();
+                    funcStatus.AddStoppingPod(&terminated_podkey);
+                }
+            }
+
             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
             let snapshotResource = func.object.spec.SnapshotResource(contextCnt as u64);
 
@@ -3247,10 +3320,8 @@ impl SchedulerHandler {
             // Remove from idle pool but don't free resources yet
             let removed = self.idlePods.pop(&terminated_podkey).is_some();
             assert!(removed);
-            // Add to stoppingPods so deletion events don't free resources prematurely
-            // Also set state to Terminating
+            // Set state to Terminating
             worker.SetState(WorkerPodState::Terminating);
-            self.stoppingPods.insert(terminated_podkey.clone());
         }
 
         // CRITICAL: Reserve snapshot resource BEFORE RPC to prevent race condition
@@ -3261,6 +3332,20 @@ impl SchedulerHandler {
         let nodeAgentUrl;
         {
             let nodeStatus = self.nodes.get_mut(nodename).unwrap();
+
+            // Add terminated pods to node's stoppingPods so deletion events don't free resources prematurely
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                nodeStatus.AddStoppingPod(&terminated_podkey);
+            }
+
+            // Also add to func's stoppingPods
+            if let Some(funcStatus) = self.funcs.get_mut(funcId) {
+                for worker in &terminateWorkers {
+                    let terminated_podkey = worker.pod.PodKey();
+                    funcStatus.AddStoppingPod(&terminated_podkey);
+                }
+            }
             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
             let snapshotResource = func.object.spec.SnapshotResource(contextCnt as u64);
 
@@ -3935,8 +4020,6 @@ impl SchedulerHandler {
             // Remove from idle pool but don't free resources yet
             let removed = self.idlePods.pop(&terminated_podkey).is_some();
             assert!(removed);
-            // Add to stoppingPods so OnDeletePod knows not to free resources
-            self.stoppingPods.insert(terminated_podkey.clone());
         }
 
         // CRITICAL: Do all bookkeeping BEFORE spawning RPC to prevent race conditions
@@ -3964,6 +4047,20 @@ impl SchedulerHandler {
         //   - On failure: Add(ready) → release ready, standby stays allocated
         {
             let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+
+            // Add terminated pods to node's stoppingPods so deletion events don't free resources
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                nodeStatus.AddStoppingPod(&terminated_podkey);
+            }
+
+            // Also add to func's stoppingPods
+            if let Some(funcStatus) = self.funcs.get_mut(fpKey) {
+                for worker in &terminateWorkers {
+                    let terminated_podkey = worker.pod.PodKey();
+                    funcStatus.AddStoppingPod(&terminated_podkey);
+                }
+            }
 
             // Reserve ready allocation (standby stays allocated until RPC succeeds)
             nodeStatus.available.Sub(&resources)?;
@@ -5021,10 +5118,9 @@ impl SchedulerHandler {
         match self.nodes.get_mut(&nodeName) {
             None => (), // node information doesn't reach scheduler, will process when it arrives
             Some(nodeStatus) => {
-                let stopping = self.stoppingPods.remove(&pod.PodKey());
                 // Also remove from idlePods if present (handles race where pod was restored but then deleted)
                 self.idlePods.pop(&pod.PodKey());
-                nodeStatus.RemovePod(&pod.PodKey(), &pod.object.spec.allocResources, stopping)?;
+                nodeStatus.RemovePod(&pod.PodKey(), &pod.object.spec.allocResources)?;
             }
         }
         match self.funcs.get_mut(&funcKey) {
