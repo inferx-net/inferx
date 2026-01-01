@@ -669,7 +669,13 @@ impl GPUResourceMap {
         };
 
         for (pGpuId, resource) in &self.map {
-            info.map[*pGpuId as usize] = resource.slotCnt;
+            assert!(
+                resource.slotCnt >= 0,
+                "GPUResourceInfo encountered negative slotCnt for pGpuId {}: {}",
+                pGpuId,
+                resource.slotCnt
+            );
+            info.map[*pGpuId as usize] = resource.slotCnt as u32;
         }
 
         return info;
@@ -702,7 +708,7 @@ impl GPUResourceMap {
 pub struct GPUResourceInfo {
     pub total: u32,
     // phyGpuId --> SlotCnt
-    pub map: [i64; MAX_GPU_COUNT],
+    pub map: [u32; MAX_GPU_COUNT],
     pub slotSize: u64,
 }
 
@@ -728,7 +734,7 @@ impl GPUResourceInfo {
             if self.map[i] > 0 {
                 let gpuResource = GPUAlloc {
                     contextCnt: 1 as i64,
-                    slotCnt: self.map[i],
+                    slotCnt: self.map[i] as i64,
                     ncclCnt: ncclCnt as i64,
                 };
                 map.map.insert(i as i32, gpuResource);
