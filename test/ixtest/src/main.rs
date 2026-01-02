@@ -77,7 +77,7 @@ async fn run_hey(
     gateway_endpoint: &str,
 ) {
     let base = gateway_endpoint.trim_end_matches('/');
-    let url = format!("{}/directfunccall/public/{}/v1/completions", base, modelalias);
+    let url = format!("{}/funccall/public/{}/v1/completions", base, modelalias);
     println!(
         "=== Running hey for model: {} (c={}, z={}s) ===",
         modelalias, concurrency, duration_secs

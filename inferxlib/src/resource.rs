@@ -218,9 +218,9 @@ impl GPUResourceMap {
         return gpus;
     }
 
-    pub fn Add(&mut self, alloc: &Self) {
+    pub fn Add(&mut self, free: &Self) {
         if self.slotSize == 0 {
-            self.slotSize = alloc.slotSize;
+            self.slotSize = free.slotSize;
         }
         // assert!(
         //     self.slotSize == alloc.slotSize,
@@ -229,14 +229,19 @@ impl GPUResourceMap {
         //     alloc.slotSize
         // );
 
-        for (pGpuId, resource) in &alloc.map {
+        for (pGpuId, resource) in &free.map {
+            // Resources being freed must be non-negative (allocated amounts are always positive)
+            assert!(resource.slotCnt >= 0, "Cannot free negative slotCnt: {}", resource.slotCnt);
+            assert!(resource.contextCnt >= 0, "Cannot free negative contextCnt: {}", resource.contextCnt);
+            assert!(resource.ncclCnt >= 0, "Cannot free negative ncclCnt: {}", resource.ncclCnt);
+
             match self.map.get_mut(pGpuId) {
                 None => {
                     self.map.insert(*pGpuId, resource.clone());
                 }
                 Some(alloc) => {
                     assert!(
-                        alloc.slotCnt + resource.slotCnt <= self.totalSlotCnt,
+                        alloc.slotCnt + resource.slotCnt <= self.totalSlotCnt as i64,
                         "alloc.slotCnt is {} resource.slotCnt  {}",
                         alloc.slotCnt,
                         resource.slotCnt
@@ -258,9 +263,15 @@ impl GPUResourceMap {
         );
 
         for (pGpuId, resource) in &alloc.map {
+            // Resources being reserved/subtracted must be non-negative (allocated amounts are always positive)
+            assert!(resource.slotCnt >= 0, "Cannot subtract negative slotCnt: {}", resource.slotCnt);
+            assert!(resource.contextCnt >= 0, "Cannot subtract negative contextCnt: {}", resource.contextCnt);
+            assert!(resource.ncclCnt >= 0, "Cannot subtract negative ncclCnt: {}", resource.ncclCnt);
+
             match self.map.get_mut(pGpuId) {
                 None => unreachable!(),
                 Some(cnt) => {
+                    // Note: cnt (available resources) CAN go negative temporarily during async operations
                     cnt.slotCnt -= resource.slotCnt;
                     cnt.contextCnt -= resource.contextCnt;
                     cnt.ncclCnt -= resource.ncclCnt;
@@ -303,24 +314,28 @@ impl GPUResourceMap {
             1
         };
 
-        let slotCnt = self.ReqSlotCnt(usage.vRam);
+        let slotCnt = self.ReqSlotCnt(usage.vRam) as i64;
+
+        // Allocated resources must always be positive
+        assert!(slotCnt > 0, "slotCnt must be positive for allocation");
 
         for gpu in gpus {
             match self.map.get_mut(&gpu) {
                 None => unreachable!(),
                 Some(resource) => {
+                    // Available resources can go temporarily negative during async operations
                     resource.slotCnt -= slotCnt;
-                    resource.ncclCnt -= ncclCnt;
-                    resource.contextCnt -= usage.contextCount;
+                    resource.ncclCnt -= ncclCnt as i64;
+                    resource.contextCnt -= usage.contextCount as i64;
                 }
             }
 
             map.insert(
                 gpu,
                 GPUAlloc {
-                    contextCnt: usage.contextCount,
+                    contextCnt: usage.contextCount as i64,
                     slotCnt: slotCnt,
-                    ncclCnt: ncclCnt,
+                    ncclCnt: ncclCnt as i64,
                 },
             );
             count -= 1;
@@ -353,13 +368,13 @@ impl GPUResourceMap {
             1
         };
 
-        let reqSlotCnt = self.ReqSlotCnt(usage.vRam);
+        let reqSlotCnt = self.ReqSlotCnt(usage.vRam) as i64;
         for (&pGpuId, resource) in &self.map {
-            if resource.contextCnt < usage.contextCount {
+            if resource.contextCnt < usage.contextCount as i64 {
                 continue;
             }
 
-            if resource.ncclCnt < ncclCnt {
+            if resource.ncclCnt < ncclCnt as i64 {
                 continue;
             }
 
@@ -381,7 +396,7 @@ impl GPUResourceMap {
     }
 
     // 0: SlotCnt 1: phyGpuId
-    fn GenArr(&self) -> Vec<(u32, i32)> {
+    fn GenArr(&self) -> Vec<(i64, i32)> {
         let mut v = Vec::with_capacity(self.map.len());
         for (phyGpuId, resource) in &self.map {
             v.push((resource.slotCnt, *phyGpuId));
@@ -401,17 +416,17 @@ pub struct GPUAllocation {
 pub struct NodeResources {
     pub nodename: String,
     #[serde(rename = "CPU", default)]
-    pub cpu: u64, // 1/1000 CPU cores
+    pub cpu: i64, // 1/1000 CPU cores (signed to allow temporary negative during accounting)
     #[serde(rename = "Mem", default)]
-    pub memory: u64, // MB memory
+    pub memory: i64, // MB memory (signed to allow temporary negative during accounting)
     #[serde(rename = "CacheMem", default)]
-    pub cacheMemory: u64,
+    pub cacheMemory: i64, // (signed to allow temporary negative during accounting)
     #[serde(rename = "GPUType", default)]
     pub gpuType: GPUType,
     #[serde(rename = "GPUs", default)]
     pub gpus: GPUResourceMap,
     #[serde(rename = "MaxContextPerGPU", default)]
-    pub maxContextCnt: u64,
+    pub maxContextCnt: i64, // (signed to allow temporary negative during accounting)
 }
 
 impl NodeResources {
@@ -426,12 +441,12 @@ impl NodeResources {
     ) -> Self {
         return Self {
             nodename: nodename.to_owned(),
-            cpu: cpu,
-            memory: memory,
-            cacheMemory: cacheMemory,
+            cpu: cpu as i64,
+            memory: memory as i64,
+            cacheMemory: cacheMemory as i64,
             gpuType: gpuType.clone(),
             gpus: gpus,
-            maxContextCnt: maxContextPerGpu,
+            maxContextCnt: maxContextPerGpu as i64,
         };
     }
 
@@ -480,9 +495,9 @@ impl NodeResources {
         };
         return Self {
             nodename: self.nodename.clone(),
-            cpu: resource.cpu,
-            memory: memory,
-            cacheMemory: resource.cacheMemory,
+            cpu: resource.cpu as i64,
+            memory: memory as i64,
+            cacheMemory: resource.cacheMemory as i64,
             gpuType: self.gpuType.clone(),
             gpus: GPUResourceMap::default(),
             maxContextCnt: self.maxContextCnt,
@@ -493,9 +508,9 @@ impl NodeResources {
     pub fn ResourceQuota(&self, resource: &Resources) -> Self {
         return Self {
             nodename: self.nodename.clone(),
-            cpu: resource.cpu,
-            memory: resource.memory,
-            cacheMemory: resource.cacheMemory,
+            cpu: resource.cpu as i64,
+            memory: resource.memory as i64,
+            cacheMemory: resource.cacheMemory as i64,
             gpuType: self.gpuType.clone(),
             gpus: GPUResourceMap::default(),
             maxContextCnt: self.maxContextCnt,
@@ -591,7 +606,7 @@ pub struct NodeResourcesStatus {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct GPUResourceMap {
-    // total slotCnt
+    // total slotCnt (node capacity - always positive)
     pub totalSlotCnt: u32,
     pub map: BTreeMap<i32, GPUAlloc>,
     pub slotSize: u64,
@@ -625,7 +640,7 @@ impl GPUResourceMap {
         return self.FirstSlotCnt() as u64 * self.slotSize;
     }
 
-    pub fn FirstSlotCnt(&self) -> u32 {
+    pub fn FirstSlotCnt(&self) -> i64 {
         match self.map.first_key_value() {
             None => return 0,
             Some((_, resource)) => {
@@ -639,7 +654,7 @@ impl GPUResourceMap {
         return self.totalSlotCnt as u64 * self.slotSize;
     }
 
-    pub fn SlotCnt(&self, gpuId: i32) -> u32 {
+    pub fn SlotCnt(&self, gpuId: i32) -> i64 {
         match self.map.get(&gpuId) {
             None => return 0,
             Some(resource) => return resource.slotCnt,
@@ -654,7 +669,13 @@ impl GPUResourceMap {
         };
 
         for (pGpuId, resource) in &self.map {
-            info.map[*pGpuId as usize] = resource.slotCnt;
+            assert!(
+                resource.slotCnt >= 0,
+                "GPUResourceInfo encountered negative slotCnt for pGpuId {}: {}",
+                pGpuId,
+                resource.slotCnt
+            );
+            info.map[*pGpuId as usize] = resource.slotCnt as u32;
         }
 
         return info;
@@ -712,9 +733,9 @@ impl GPUResourceInfo {
         for i in 0..self.map.len() {
             if self.map[i] > 0 {
                 let gpuResource = GPUAlloc {
-                    contextCnt: 1,
-                    slotCnt: self.map[i],
-                    ncclCnt: ncclCnt,
+                    contextCnt: 1 as i64,
+                    slotCnt: self.map[i] as i64,
+                    ncclCnt: ncclCnt as i64,
                 };
                 map.map.insert(i as i32, gpuResource);
             }
@@ -726,9 +747,9 @@ impl GPUResourceInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GPUAlloc {
-    pub contextCnt: u64,
-    pub slotCnt: u32,
-    pub ncclCnt: u64,
+    pub contextCnt: i64,
+    pub slotCnt: i64,
+    pub ncclCnt: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -423,9 +423,13 @@ impl CacheStoreInner {
             Some(o) => {
                 let newRev = event.obj.revision;
                 let preRev = o.revision;
-                
+
                 // get older update, ignore this
                 if newRev <= preRev {
+                    if self.objectType == "node_info" {
+                        error!("CacheStore::ProcessEvent [{}] IGNORED stale event: key={} newRev={} preRev={} type={:?}",
+                            self.objectType, &key, newRev, preRev, event.type_);
+                    }
                     return Ok(());
                 }
                 wcEvent.prevObj = Some(o.clone());
@@ -450,8 +454,16 @@ impl CacheStoreInner {
         self.cache.Push(wcEvent);
 
         if event.type_ == EventType::Deleted {
+            if self.objectType == "node_info" {
+                error!("CacheStore::ProcessEvent [{}] DELETE: key={} revision={} channelRev={} watchers={} removed_from_cache=true",
+                    self.objectType, &key, revision, channelRev, self.watchers.len());
+            }
             self.cacheStore.remove(&key);
         } else {
+            if self.objectType == "node_info" && event.type_ == EventType::Added {
+                error!("CacheStore::ProcessEvent [{}] ADD/UPDATE: key={} revision={} channelRev={} watchers={} cache_size={}",
+                    self.objectType, &key, revision, channelRev, self.watchers.len(), self.cacheStore.len() + 1);
+            }
             self.cacheStore.insert(key, event.obj.CopyWithRev(channelRev, revision));
         }
 
