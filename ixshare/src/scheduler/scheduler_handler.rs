@@ -1646,7 +1646,7 @@ impl SchedulerHandler {
 
         // 3. Remove pending pod from func
         if let Some(funcStatus) = self.funcs.get_mut(funcid) {
-            funcStatus.RemovePod(podkey)?;
+            funcStatus.pendingPods.remove(podkey);
         }
 
         // 4. Restore terminated idle pods
