@@ -197,8 +197,9 @@ impl EventHandler for IxAggrStore {
                         &node.name, &node.object.nodeIp, obj.revision, obj.channelRev);
                     self.RemoveIxAgent(&node.name).unwrap();
                 }
-                _ => (),
-            }
+                _ => {
+                    error!("IxAggrStore::handle get unexpect event {:#?}", event);
+                }            }
         } else {
             match &event.type_ {
                 EventType::Added => {
@@ -233,7 +234,9 @@ impl EventHandler for IxAggrStore {
                     error!("IxAggrStore::handle [INIT_DONE] InitList completed, starting watch");
                     self.lock().unwrap().listNotify.notify_waiters();
                 }
-                _ => (),
+                _ => {
+                    error!("IxAggrStore::handle get unexpect event {:#?}", event);
+                },
             }
         }
     }

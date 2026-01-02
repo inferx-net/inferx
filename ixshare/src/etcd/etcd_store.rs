@@ -284,10 +284,12 @@ impl EtcdStore {
 
         let resp: etcd_client::TxnResponse = self.client.lock().await.txn(txn).await?;
         if !resp.succeeded() {
+            error!("EtcdStore::Create key already exists {}", preparedKey);
             return Err(Error::NewNewKeyExistsErr(preparedKey, 0));
         } else {
             match &resp.op_responses()[0] {
                 TxnOpResponse::Put(getresp) => {
+                    error!("EtcdStore::Create key created {}", preparedKey);
                     let actualRev = getresp.header().unwrap().revision();
                     return Ok(obj.CopyWithRev(actualRev, actualRev));
                 }
