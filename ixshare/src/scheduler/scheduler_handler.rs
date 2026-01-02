@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use lru::LruCache;
 use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
+use lru::LruCache;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::collections::BTreeMap;
@@ -34,6 +34,7 @@ use std::time::SystemTime;
 use inferxlib::node::WorkerPodState;
 use inferxlib::obj_mgr::node_mgr::NAState;
 use inferxlib::resource::StandbyType;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
@@ -464,6 +465,7 @@ pub enum WorkerHandlerMsg {
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
     RefreshGateway(na::RefreshGatewayReq),
+    DumpState(Sender<Value>),
 }
 
 #[derive(Debug)]
@@ -581,6 +583,133 @@ impl SchedulerHandler {
                 break;
             }
         }
+    }
+
+    pub fn DumpState(&self) -> Value {
+        let mut idlePods: Vec<String> = Vec::new();
+        for (podKey, _) in self.idlePods.iter() {
+            idlePods.push(podKey.clone());
+        }
+
+        let mut pods = serde_json::Map::new();
+        for (podKey, worker) in &self.pods {
+            pods.insert(
+                podKey.clone(),
+                json!({
+                    "state": format!("{:?}", worker.State()),
+                    "pod": worker.pod.clone(),
+                }),
+            );
+        }
+
+        let mut nodes = serde_json::Map::new();
+        for (nodename, ns) in &self.nodes {
+            let mut nodePods = serde_json::Map::new();
+            for (podKey, pod) in &ns.pods {
+                nodePods.insert(
+                    podKey.clone(),
+                    json!({
+                        "state": format!("{:?}", pod.State()),
+                        "func": pod.pod.FuncKey(),
+                    }),
+                );
+            }
+
+            let pending: Vec<String> = ns.pendingPods.keys().cloned().collect();
+
+            nodes.insert(
+                nodename.clone(),
+                json!({
+                    "state": format!("{:?}", ns.state),
+                    "node": ns.node.clone(),
+                    "total": ns.total.clone(),
+                    "available": ns.available.clone(),
+                    "pendingPods": pending,
+                    "pods": nodePods,
+                }),
+            );
+        }
+
+        let mut funcs = serde_json::Map::new();
+        for (funcId, status) in &self.funcs {
+            let pending: Vec<String> = status.pendingPods.keys().cloned().collect();
+            let pods: Vec<String> = status.pods.keys().cloned().collect();
+
+            funcs.insert(
+                funcId.clone(),
+                json!({
+                    "func": status.func.clone(),
+                    "pendingPods": pending,
+                    "pods": pods,
+                    "leaseQueueDepth": status.leaseWorkerReqs.len(),
+                }),
+            );
+        }
+
+        let funcstatus = json!(self.funcstatus);
+
+        let mut snapshots = serde_json::Map::new();
+        for (funcId, nodesMap) in &self.snapshots {
+            let mut sn = serde_json::Map::new();
+            for (nodename, snapshot) in nodesMap {
+                sn.insert(nodename.clone(), json!(snapshot.clone()));
+            }
+            snapshots.insert(funcId.clone(), json!(sn));
+        }
+
+        let mut pendingsnapshots = serde_json::Map::new();
+        for (funcId, nodes) in &self.pendingsnapshots {
+            pendingsnapshots.insert(
+                funcId.clone(),
+                json!(nodes.iter().cloned().collect::<Vec<_>>()),
+            );
+        }
+
+        let mut funcPods = serde_json::Map::new();
+        for (funcId, pods) in &self.funcPods {
+            funcPods.insert(
+                funcId.clone(),
+                json!(pods.keys().cloned().collect::<Vec<_>>()),
+            );
+        }
+
+        let funcpolicy = json!(self.funcpolicy);
+
+        let stoppingPods: Vec<String> = self.stoppingPods.iter().cloned().collect();
+
+        let now = std::time::Instant::now();
+        let mut gateways = serde_json::Map::new();
+        for (gatewayId, refresh) in &self.gateways {
+            gateways.insert(
+                gatewayId.to_string(),
+                json!({
+                    "lastRefreshMs": now.duration_since(*refresh).as_millis()
+                }),
+            );
+        }
+
+        json!({
+            "gateways": gateways,
+            "idlePods": idlePods,
+            "pods": pods,
+            "nodes": nodes,
+            "funcs": funcs,
+            "funcstatus": funcstatus,
+            "snapshots": snapshots,
+            "pendingSnapshots": pendingsnapshots,
+            "stoppingPods": stoppingPods,
+            "funcPods": funcPods,
+            "funcpolicy": funcpolicy,
+            "listFlags": {
+                "nodeListDone": self.nodeListDone,
+                "funcListDone": self.funcListDone,
+                "funcstatusListDone": self.funcstatusListDone,
+                "funcPodListDone": self.funcPodListDone,
+                "snapshotListDone": self.snapshotListDone,
+                "funcpolicyDone": self.funcpolicyDone,
+                "listDone": self.listDone,
+            }
+        })
     }
 
     pub async fn ProcessRefreshGateway(&mut self, req: na::RefreshGatewayReq) -> Result<()> {
@@ -1267,6 +1396,9 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::RefreshGateway(m) => {
                             self.ProcessRefreshGateway(m).await?;
                         }
+                        WorkerHandlerMsg::DumpState(tx) => {
+                            let _ = tx.send(self.DumpState());
+                        }
                         _ => ()
                     }
                 } else {
@@ -1767,10 +1899,7 @@ impl SchedulerHandler {
 
             let mut node_details = String::new();
             for (nodename, (nr, _)) in &nodeSnapshots {
-                node_details.push_str(&format!(
-                    "\n  Node '{}': available={:#?}",
-                    nodename, nr
-                ));
+                node_details.push_str(&format!("\n  Node '{}': available={:#?}", nodename, nr));
             }
 
             error!(
@@ -3205,7 +3334,8 @@ impl SchedulerHandler {
         // Reconstruct pendingsnapshots for snapshot pods during restart
         // This ensures that in-progress snapshots are tracked properly
         if boxPod.pod.object.spec.create_type == CreatePodType::Snapshot
-            && boxPod.pod.object.status.state != PodState::Failed {
+            && boxPod.pod.object.status.state != PodState::Failed
+        {
             self.AddPendingSnapshot(&fpKey, &nodename);
         }
 
