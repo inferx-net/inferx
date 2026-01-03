@@ -104,10 +104,17 @@ impl IxAggrStore {
 
         let agent = IxAgent::New(nodeName, svcAddr, &nodeStore, &podStore, &snapshotStore)?;
 
-        self.lock()
-            .unwrap()
-            .agents
-            .insert(nodeName.to_owned(), agent.clone());
+        let prev = {
+            let mut guard = self.lock().unwrap();
+            guard.agents.insert(nodeName.to_owned(), agent.clone())
+        };
+        if let Some(existing) = prev {
+            error!(
+                "IxAggrStore::AddIxAgent existing agent found for node={}, svcAddr={} replaced by svcAddr={}",
+                nodeName, existing.svcAddr, svcAddr
+            );
+            existing.Close();
+        }
 
         let mut notifies = Vec::new();
         let nodeListNotify = Arc::new(Notify::new());
