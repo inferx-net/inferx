@@ -786,6 +786,7 @@ impl SchedulerHandler {
             }
 
             let pending: Vec<String> = ns.pendingPods.keys().cloned().collect();
+            let stopping: Vec<String> = ns.stoppingPods.iter().cloned().collect();
 
             nodes.insert(
                 nodename.clone(),
@@ -795,6 +796,7 @@ impl SchedulerHandler {
                     "total": ns.total.clone(),
                     "available": ns.available.clone(),
                     "pendingPods": pending,
+                    "stoppingPods": stopping,
                     "pods": nodePods,
                 }),
             );
@@ -804,6 +806,7 @@ impl SchedulerHandler {
         for (funcId, status) in &self.funcs {
             let pending: Vec<String> = status.pendingPods.keys().cloned().collect();
             let pods: Vec<String> = status.pods.keys().cloned().collect();
+            let stoppingPods: Vec<String> = status.stoppingPods.iter().cloned().collect();
 
             funcs.insert(
                 funcId.clone(),
@@ -811,6 +814,7 @@ impl SchedulerHandler {
                     "func": status.func.clone(),
                     "pendingPods": pending,
                     "pods": pods,
+                    "stoppingPods": stoppingPods,
                     "leaseQueueDepth": status.leaseWorkerReqs.len(),
                 }),
             );
