@@ -46,6 +46,7 @@ use crate::scheduler::scheduler_http::SchedulerHttpSrv;
 use crate::scheduler::scheduler_register::SchedulerRegister;
 use crate::scheduler::scheduler_svc::SchedulerGrpcSvc;
 use inferxlib::data_obj::DeltaEvent;
+use serde_json::Value;
 
 use super::scheduler_handler::SchedulerHandler;
 use super::scheduler_handler::WorkerHandlerMsg;
@@ -194,6 +195,21 @@ impl Scheduler {
         }
 
         return Ok(());
+    }
+
+    pub async fn DumpState(&self) -> Result<Value> {
+        let (tx, rx) = oneshot::channel();
+
+        self.msgTx
+            .try_send(WorkerHandlerMsg::DumpState(tx))
+            .unwrap();
+
+        match rx.await {
+            Err(e) => {
+                return Err(Error::CommonError(format!("{:?}", e)));
+            }
+            Ok(v) => return Ok(v),
+        }
     }
 }
 

@@ -35,6 +35,7 @@ use std::time::SystemTime;
 use inferxlib::node::WorkerPodState;
 use inferxlib::obj_mgr::node_mgr::NAState;
 use inferxlib::resource::StandbyType;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
@@ -540,6 +541,7 @@ pub enum WorkerHandlerMsg {
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
     RefreshGateway(na::RefreshGatewayReq),
+    DumpState(Sender<Value>),
     CleanupDuplicateSnapshot {
         funcid: String,
         nodename: String,
@@ -751,6 +753,134 @@ impl SchedulerHandler {
                 break;
             }
         }
+    }
+
+    pub fn DumpState(&self) -> Value {
+        let mut idlePods: Vec<String> = Vec::new();
+        for (podKey, _) in self.idlePods.iter() {
+            idlePods.push(podKey.clone());
+        }
+
+        let mut pods = serde_json::Map::new();
+        for (podKey, worker) in &self.pods {
+            pods.insert(
+                podKey.clone(),
+                json!({
+                    "state": format!("{:?}", worker.State()),
+                    "pod": worker.pod.clone(),
+                }),
+            );
+        }
+
+        let mut nodes = serde_json::Map::new();
+        for (nodename, ns) in &self.nodes {
+            let mut nodePods = serde_json::Map::new();
+            for (podKey, pod) in &ns.pods {
+                nodePods.insert(
+                    podKey.clone(),
+                    json!({
+                        "state": format!("{:?}", pod.State()),
+                        "func": pod.pod.FuncKey(),
+                    }),
+                );
+            }
+
+            let pending: Vec<String> = ns.pendingPods.keys().cloned().collect();
+            let stopping: Vec<String> = ns.stoppingPods.iter().cloned().collect();
+
+            nodes.insert(
+                nodename.clone(),
+                json!({
+                    "state": format!("{:?}", ns.state),
+                    "node": ns.node.clone(),
+                    "total": ns.total.clone(),
+                    "available": ns.available.clone(),
+                    "pendingPods": pending,
+                    "stoppingPods": stopping,
+                    "pods": nodePods,
+                }),
+            );
+        }
+
+        let mut funcs = serde_json::Map::new();
+        for (funcId, status) in &self.funcs {
+            let pending: Vec<String> = status.pendingPods.keys().cloned().collect();
+            let pods: Vec<String> = status.pods.keys().cloned().collect();
+            let stoppingPods: Vec<String> = status.stoppingPods.iter().cloned().collect();
+
+            funcs.insert(
+                funcId.clone(),
+                json!({
+                    "func": status.func.clone(),
+                    "pendingPods": pending,
+                    "pods": pods,
+                    "stoppingPods": stoppingPods,
+                    "leaseQueueDepth": status.leaseWorkerReqs.len(),
+                }),
+            );
+        }
+
+        let funcstatus = json!(self.funcstatus);
+
+        let mut snapshots = serde_json::Map::new();
+        for (funcId, nodesMap) in &self.snapshots {
+            let mut sn = serde_json::Map::new();
+            for (nodename, snapshot) in nodesMap {
+                sn.insert(nodename.clone(), json!(snapshot.clone()));
+            }
+            snapshots.insert(funcId.clone(), json!(sn));
+        }
+
+        let mut pendingsnapshots = serde_json::Map::new();
+        for (funcId, nodes) in &self.pendingsnapshots {
+            pendingsnapshots.insert(
+                funcId.clone(),
+                json!(nodes.iter().cloned().collect::<Vec<_>>()),
+            );
+        }
+
+        let mut funcPods = serde_json::Map::new();
+        for (funcId, pods) in &self.funcPods {
+            funcPods.insert(
+                funcId.clone(),
+                json!(pods.keys().cloned().collect::<Vec<_>>()),
+            );
+        }
+
+        let funcpolicy = json!(self.funcpolicy);
+
+        let now = std::time::Instant::now();
+        let mut gateways = serde_json::Map::new();
+        for (gatewayId, refresh) in &self.gateways {
+            gateways.insert(
+                gatewayId.to_string(),
+                json!({
+                    "lastRefreshMs": now.duration_since(*refresh).as_millis()
+                }),
+            );
+        }
+
+        json!({
+            "gateways": gateways,
+            "idlePods": idlePods,
+            "pods": pods,
+            "nodes": nodes,
+            "funcs": funcs,
+            "funcstatus": funcstatus,
+            "snapshots": snapshots,
+            "pendingSnapshots": pendingsnapshots,
+            "funcPods": funcPods,
+            "funcpolicy": funcpolicy,
+            "listFlags": {
+                "nodeListDone": self.nodeListDone,
+                "funcListDone": self.funcListDone,
+                "funcstatusListDone": self.funcstatusListDone,
+                "funcPodListDone": self.funcPodListDone,
+                "snapshotListDone": self.snapshotListDone,
+                "funcpolicyDone": self.funcpolicyDone,
+                "listDone": self.listDone,
+            }
+        })
     }
 
     pub async fn ProcessRefreshGateway(&mut self, req: na::RefreshGatewayReq) -> Result<()> {
@@ -1978,6 +2108,9 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::RefreshGateway(m) => {
                             self.ProcessRefreshGateway(m).await?;
                         }
+                        WorkerHandlerMsg::DumpState(tx) => {
+                            let _ = tx.send(self.DumpState());
+                        }
                         WorkerHandlerMsg::CleanupDuplicateSnapshot { funcid, nodename, podkey, resources, terminated_pod_keys } => {
                             self.ProcessCleanupDuplicateSnapshot(&funcid, &nodename, &podkey, &resources, &terminated_pod_keys).ok();
                         }
@@ -3084,11 +3217,17 @@ impl SchedulerHandler {
                 nodeStatus.AddStoppingPod(&terminated_podkey);
             }
 
-            // Also add to func's stoppingPods
-            if let Some(funcStatus) = self.funcs.get_mut(funcId) {
-                for worker in &terminateWorkers {
-                    let terminated_podkey = worker.pod.PodKey();
+            // Also add to each pod's func stoppingPods (pods may belong to different funcs)
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                let terminated_funckey = worker.pod.FuncKey();
+                if let Some(funcStatus) = self.funcs.get_mut(&terminated_funckey) {
                     funcStatus.AddStoppingPod(&terminated_podkey);
+                } else {
+                    error!(
+                        "TryCreateSnapshotOnNode: missing funcStatus for {} when marking stopping pod {}",
+                        terminated_funckey, terminated_podkey
+                    );
                 }
             }
             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
@@ -3601,11 +3740,17 @@ impl SchedulerHandler {
                 nodeStatus.AddStoppingPod(&terminated_podkey);
             }
 
-            // Also add to func's stoppingPods
-            if let Some(funcStatus) = self.funcs.get_mut(fpKey) {
-                for worker in &terminateWorkers {
-                    let terminated_podkey = worker.pod.PodKey();
+            // Also add to each pod's func stoppingPods (pods may belong to different funcs)
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                let terminated_funckey = worker.pod.FuncKey();
+                if let Some(funcStatus) = self.funcs.get_mut(&terminated_funckey) {
                     funcStatus.AddStoppingPod(&terminated_podkey);
+                } else {
+                    error!(
+                        "ResumePod: missing funcStatus for {} when marking stopping pod {}",
+                        terminated_funckey, terminated_podkey
+                    );
                 }
             }
 
