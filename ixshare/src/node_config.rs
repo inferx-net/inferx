@@ -526,8 +526,8 @@ impl NodeAgentConfig {
                 let size = s.parse::<i64>();
                 match size {
                     Err(_) => {
-                        info!("fail to get initCudaHostAllocSize from env INIT_CUDAHOSTALLOC: {}, use default value 32GB", &s);
-                        32
+                        info!("fail to parse initCudaHostAllocSize from env INIT_CUDAHOSTALLOC: {}, use default value -1 (disabled)", &s);
+                        -1
                     }
                     Ok(s) => {
                         if s < 0 {
@@ -537,7 +537,7 @@ impl NodeAgentConfig {
                     }
                 }
             }
-            Err(_) => 32, // 32 GB
+            Err(_) => -1, // disable by default
         };
 
         resources.cacheMemory = match std::env::var("CACHE_MEMORY") {
