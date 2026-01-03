@@ -3217,11 +3217,17 @@ impl SchedulerHandler {
                 nodeStatus.AddStoppingPod(&terminated_podkey);
             }
 
-            // Also add to func's stoppingPods
-            if let Some(funcStatus) = self.funcs.get_mut(funcId) {
-                for worker in &terminateWorkers {
-                    let terminated_podkey = worker.pod.PodKey();
+            // Also add to each pod's func stoppingPods (pods may belong to different funcs)
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                let terminated_funckey = worker.pod.FuncKey();
+                if let Some(funcStatus) = self.funcs.get_mut(&terminated_funckey) {
                     funcStatus.AddStoppingPod(&terminated_podkey);
+                } else {
+                    error!(
+                        "TryCreateSnapshotOnNode: missing funcStatus for {} when marking stopping pod {}",
+                        terminated_funckey, terminated_podkey
+                    );
                 }
             }
             let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
@@ -3734,11 +3740,17 @@ impl SchedulerHandler {
                 nodeStatus.AddStoppingPod(&terminated_podkey);
             }
 
-            // Also add to func's stoppingPods
-            if let Some(funcStatus) = self.funcs.get_mut(fpKey) {
-                for worker in &terminateWorkers {
-                    let terminated_podkey = worker.pod.PodKey();
+            // Also add to each pod's func stoppingPods (pods may belong to different funcs)
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                let terminated_funckey = worker.pod.FuncKey();
+                if let Some(funcStatus) = self.funcs.get_mut(&terminated_funckey) {
                     funcStatus.AddStoppingPod(&terminated_podkey);
+                } else {
+                    error!(
+                        "ResumePod: missing funcStatus for {} when marking stopping pod {}",
+                        terminated_funckey, terminated_podkey
+                    );
                 }
             }
 
