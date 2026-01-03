@@ -179,7 +179,7 @@ impl Scheduler {
         let mut msgRx = self.msgRx.lock().unwrap().take().unwrap();
         let closeNotify = self.closeNotify.clone();
 
-        let mut handler = SchedulerHandler::New();
+        let mut handler = SchedulerHandler::New(self.msgTx.clone());
         loop {
             match handler
                 .Process(closeNotify.clone(), &mut eventRx, &mut msgRx)

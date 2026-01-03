@@ -209,6 +209,13 @@ impl Watcher {
                         return Ok(None);
                     }
 
+                    // Log delete events for node_info to track lease expirations
+                    if obj.objType == "node_info" {
+                        error!("etcd::Watcher::ParseEvent DELETE from etcd: key={} revision={} objType={}",
+                            String::from_utf8(kv.key().to_vec()).unwrap_or_else(|_| "<invalid>".to_string()),
+                            kv.mod_revision(), obj.objType);
+                    }
+
                     return Ok(Some(WatchEvent {
                         type_: EventType::Deleted,
                         obj: obj,
@@ -221,6 +228,13 @@ impl Watcher {
                 Some(obj) => {
                     if !self.Filter(&obj) {
                         return Ok(None);
+                    }
+
+                    // Log create events for node_info
+                    if obj.objType == "node_info" {
+                        error!("etcd::Watcher::ParseEvent CREATE from etcd: key={} revision={} objType={}",
+                            String::from_utf8(kv.key().to_vec()).unwrap_or_else(|_| "<invalid>".to_string()),
+                            kv.mod_revision(), obj.objType);
                     }
 
                     return Ok(Some(WatchEvent {
