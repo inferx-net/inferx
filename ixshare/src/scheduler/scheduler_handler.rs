@@ -4640,11 +4640,12 @@ impl SchedulerHandler {
             }
         }
 
+        // Remove from idlePods if present, put it here because node deletion event may arrive before pod deletion event.
+        self.idlePods.pop(&pod.PodKey());
+
         match self.nodes.get_mut(&nodeName) {
             None => (), // node information doesn't reach scheduler, will process when it arrives
             Some(nodeStatus) => {
-                // Also remove from idlePods if present (handles race where pod was restored but then deleted)
-                self.idlePods.pop(&pod.PodKey());
                 nodeStatus.RemovePod(&pod.PodKey(), &pod.object.spec.allocResources)?;
             }
         }

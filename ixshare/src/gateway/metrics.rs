@@ -192,7 +192,8 @@ impl IxGauge {
     pub fn Dec(&mut self, label: Nodelabel, cnt: u64) -> u64 {
         match self.map.get_mut(&label) {
             None => {
-                panic!("IxGauge get non decr {:?}/{}", label, cnt);
+                error!("IxGauge get non decr {:?}/{}", label, cnt);
+                0
             }
             Some(v) => {
                 *v -= cnt;
