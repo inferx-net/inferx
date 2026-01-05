@@ -2711,7 +2711,7 @@ impl SchedulerHandler {
         match self.nodes.get(nodename) {
             None => return false,
             Some(ns) => {
-                return ns.state == NAState::NodeAgentAvaiable;
+                return ns.state == NAState::NodeAgentReady;
             }
         }
     }
@@ -2751,7 +2751,7 @@ impl SchedulerHandler {
                 );
             }
 
-            if ns.state != NAState::NodeAgentAvaiable {
+            if !self.IsNodeReady(&ns.node.name) {
                 continue;
             }
 
@@ -3146,7 +3146,7 @@ impl SchedulerHandler {
             }
         }
 
-        if nodeStatus.state != NAState::NodeAgentAvaiable {
+        if !self.IsNodeReady(nodename) {
             self.AddSnapshotTask(nodename, funcId);
 
             return Err(Error::SchedulerNoEnoughResource(
@@ -3348,6 +3348,9 @@ impl SchedulerHandler {
             }
             Some(ns) => {
                 if ns.pendingPods.len() > 0 {
+                    return Ok(());
+                }
+                if !self.IsNodeReady(nodename) {
                     return Ok(());
                 }
             }

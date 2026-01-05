@@ -7,7 +7,9 @@ use crate::data_obj::*;
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NAState {
     NodeProxyAvailable,
-    NodeAgentAvaiable,
+    NodeAgentConnected,
+    #[serde(alias = "NodeAgentAvaiable")]
+    NodeAgentReady,
 }
 
 impl Default for NAState {
