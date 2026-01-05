@@ -61,6 +61,7 @@ use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
 use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use crate::peer_mgr::IxTcpClient;
+use crate::print::{set_trace_logging, trace_logging_enabled};
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
@@ -70,7 +71,6 @@ use super::func_agent_mgr::IxTimestamp;
 use super::func_agent_mgr::GW_OBJREPO;
 use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
-use super::trace::{set_trace_logging, trace_logging_enabled};
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
