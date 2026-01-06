@@ -196,7 +196,15 @@ impl IxGauge {
                 0
             }
             Some(v) => {
-                *v -= cnt;
+                // TODO: this is a temporary guard against underflow, need to revisit all the metric code later.
+                let before = *v;
+                *v = v.saturating_sub(cnt);
+                if before < cnt {
+                    error!(
+                        "IxGauge underflow guarded for {:?}: had {}, dec {}",
+                        label, before, cnt
+                    );
+                }
                 return *v;
             }
         }
