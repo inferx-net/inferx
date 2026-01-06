@@ -1599,7 +1599,7 @@ impl SchedulerHandler {
             Ok(w) => w,
         };
 
-        info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
+        trace!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
             // when the scheduler restart, this issue will happen, fix this.
