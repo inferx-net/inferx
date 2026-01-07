@@ -62,6 +62,15 @@ pub enum RunService {
     All,
 }
 
+async fn service_identifier() -> Result<String> {
+    if let Ok(pod_ip) = std::env::var("POD_IP") {
+        return Ok(pod_ip);
+    }
+
+    let id = UID.get().unwrap().Get().await?;
+    return Ok(id.to_string());
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 16)]
 async fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|info: &std::panic::PanicHookInfo<'_>| {
@@ -150,8 +159,10 @@ async fn main() -> Result<()> {
             }
         }
         RunService::StateSvc => {
-            LOG.SetServiceName("StateSvc");
-            info!("StateSvc start ...");
+            let svc_identifier = service_identifier().await?;
+            let service_name = format!("StateSvc-{}", svc_identifier);
+            LOG.SetServiceName(&service_name);
+            info!("StateSvc {} start ...", service_name);
             tokio::select! {
                 res = StateService(None) => {
                     info!("stateservice finish {:?}", res);
@@ -159,8 +170,10 @@ async fn main() -> Result<()> {
             }
         }
         RunService::Scheduler => {
-            LOG.SetServiceName("Scheduler");
-            info!("Scheduler start ...");
+            let scheduler_identifier = service_identifier().await?;
+            let service_name = format!("Scheduler-{}", scheduler_identifier);
+            LOG.SetServiceName(&service_name);
+            info!("Scheduler {} start ...", service_name);
             tokio::select! {
                 res = SchedulerSvc() => {
                     info!("schedulerFuture finish {:?}", res);
