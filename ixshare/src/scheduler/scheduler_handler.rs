@@ -710,7 +710,7 @@ impl SchedulerHandler {
     /// - Error handling: all results (success/error/timeout) sent back to scheduler
     fn spawn_rpc<F, Fut>(
         &mut self,
-        nodename: &str,
+        _nodename: &str,
         timeout: Duration,
         rpc_operation: F,
         completion_msg: impl FnOnce(Result<()>) -> WorkerHandlerMsg + Send + 'static,
@@ -718,14 +718,15 @@ impl SchedulerHandler {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        let global_sem = GLOBAL_RPC_SEMAPHORE.clone();
-        let node_sem = self.get_node_semaphore(nodename);
+        // let global_sem = GLOBAL_RPC_SEMAPHORE.clone();
+        // let node_sem = self.get_node_semaphore(nodename);
         let msgTx = self.msgTx.clone();
 
         tokio::spawn(async move {
             // Acquire semaphores (blocks this task, not the scheduler)
-            let _global_permit = global_sem.acquire().await.unwrap();
-            let _node_permit = node_sem.acquire().await.unwrap();
+            // don't need to acquire global semaphore and node semaphore for now!
+            // let _global_permit = global_sem.acquire().await.unwrap();
+            // let _node_permit = node_sem.acquire().await.unwrap();
 
             // Execute RPC with timeout
             let result = match tokio::time::timeout(timeout, rpc_operation()).await {
@@ -1830,7 +1831,10 @@ impl SchedulerHandler {
     pub fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
 
+        info!("AddSnapshot: adding snapshot for func {} on node {}", funckey, snapshot.object.nodename);
+
         self.RemovePendingSnapshot(&funckey, &snapshot.object.nodename);
+        info!("AddSnapshot: removed from pending snapshots for func {} on node {}", funckey, snapshot.object.nodename);
 
         if !self.snapshots.contains_key(&funckey) {
             self.snapshots.insert(funckey.clone(), BTreeMap::new());
@@ -1840,6 +1844,8 @@ impl SchedulerHandler {
             .get_mut(&funckey)
             .unwrap()
             .insert(snapshot.object.nodename.clone(), snapshot.object.clone());
+
+        info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, snapshot.object.nodename);
 
         return Ok(());
     }
@@ -3083,12 +3089,14 @@ impl SchedulerHandler {
 
 
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
+        // Check if snapshot already exists
         match self.snapshots.get(funcId) {
             None => (),
             Some(ss) => {
                 match ss.get(nodename) {
                     Some(_) => {
                         // there is snapshot on the node
+                        info!("TryCreateSnapshotOnNode: snapshot already exists for func {} on node {}", funcId, nodename);
                         return Ok(());
                     }
                     None => (),
@@ -3096,15 +3104,19 @@ impl SchedulerHandler {
             }
         }
 
+        // Check if snapshot is already pending
         match self.pendingsnapshots.get(funcId) {
             None => (),
             Some(m) => {
                 if m.contains(nodename) {
                     // doing snapshot in the node
+                    info!("TryCreateSnapshotOnNode: snapshot already pending for func {} on node {}", funcId, nodename);
                     return Ok(());
                 }
             }
         }
+
+        info!("TryCreateSnapshotOnNode: proceeding to create snapshot for func {} on node {}", funcId, nodename);
 
         let func = match self.funcs.get(funcId) {
             None => return Ok(()),
