@@ -13,6 +13,8 @@ spec:
       labels:
         app: ixproxy
     spec:
+      nodeSelector:
+        inferx_nodeType: inferx_file 
       containers:
         - name: ixproxy
           image: inferx/inferx_na:${VERSION}

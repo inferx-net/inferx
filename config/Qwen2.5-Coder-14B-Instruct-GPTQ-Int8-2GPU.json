@@ -2,7 +2,7 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-14B-Instruct-GPTQ-Int8",
+    "name": "Qwen2.5-Coder-14B-Instruct-GPTQ-Int8-2GPU",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.11.0",
@@ -48,7 +48,8 @@
             "endpoint": {
                 "port": 8000,
                 "schema": "Http",
-                "probe": "/health"
+                "probe": "/health",
+                "probetype": "Prompt"
             },
             "sample_query": {
                 "apiType": "text2text",
