@@ -422,7 +422,8 @@ impl FuncStatus {
         return Ok(());
     }
 
-    pub async fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<()> {
+    pub async fn UpdatePod(&mut self, pod: &WorkerPod) -> Result<bool> {
+        let mut add_to_idle = false;
         let podKey = pod.pod.PodKey();
         if self.pods.insert(podKey.clone(), pod.clone()).is_none() {
             error!("podkey is {}", &podKey);
@@ -436,49 +437,6 @@ impl FuncStatus {
                         let elapsed = req.time.elapsed().unwrap().as_millis();
 
                         let req = &req.req;
-                        pod.SetWorking(req.gateway_id); // first time get ready, we don't need to remove it from idlePods in scheduler
-
-                        let labels = PodLabels {
-                            tenant: req.tenant.clone(),
-                            namespace: req.namespace.clone(),
-                            funcname: req.funcname.clone(),
-                            revision: req.fprevision,
-                            nodename: pod.pod.object.spec.nodename.clone(),
-                        };
-                        SCHEDULER_METRICS
-                            .lock()
-                            .await
-                            .podLeaseCnt
-                            .get_or_create(&labels)
-                            .inc();
-
-                        SCHEDULER_METRICS
-                            .lock()
-                            .await
-                            .coldStartPodLatency
-                            .get_or_create(&labels)
-                            .observe(elapsed as f64 / 1000.0);
-
-                        let nodelabel = Nodelabel {
-                            nodename: pod.pod.object.spec.nodename.clone(),
-                        };
-
-                        let gpuCnt = pod.pod.object.spec.reqResources.gpu.gpuCount;
-
-                        let cnt = SCHEDULER_METRICS
-                            .lock()
-                            .await
-                            .usedGpuCnt
-                            .Inc(nodelabel.clone(), gpuCnt);
-
-                        SCHEDULER_METRICS
-                            .lock()
-                            .await
-                            .usedGPU
-                            .get_or_create(&nodelabel)
-                            .set(cnt as i64);
-
-                        error!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
 
                         let peer = match PEER_MGR.LookforPeer(pod.pod.object.spec.ipAddr) {
                             Ok(p) => p,
@@ -498,6 +456,48 @@ impl FuncStatus {
 
                         match tx.send(resp) {
                             Ok(()) => {
+                                pod.SetWorking(req.gateway_id);
+                                let labels = PodLabels {
+                                    tenant: req.tenant.clone(),
+                                    namespace: req.namespace.clone(),
+                                    funcname: req.funcname.clone(),
+                                    revision: req.fprevision,
+                                    nodename: pod.pod.object.spec.nodename.clone(),
+                                };
+                                SCHEDULER_METRICS
+                                    .lock()
+                                    .await
+                                    .podLeaseCnt
+                                    .get_or_create(&labels)
+                                    .inc();
+
+                                SCHEDULER_METRICS
+                                    .lock()
+                                    .await
+                                    .coldStartPodLatency
+                                    .get_or_create(&labels)
+                                    .observe(elapsed as f64 / 1000.0);
+
+                                let nodelabel = Nodelabel {
+                                    nodename: pod.pod.object.spec.nodename.clone(),
+                                };
+
+                                let gpuCnt = pod.pod.object.spec.reqResources.gpu.gpuCount;
+
+                                let cnt = SCHEDULER_METRICS
+                                    .lock()
+                                    .await
+                                    .usedGpuCnt
+                                    .Inc(nodelabel.clone(), gpuCnt);
+
+                                SCHEDULER_METRICS
+                                    .lock()
+                                    .await
+                                    .usedGPU
+                                    .get_or_create(&nodelabel)
+                                    .set(cnt as i64);
+
+                                info!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
                                 break;
                             }
                             Err(_) => (), // if no gateway are waiting ...
@@ -505,13 +505,14 @@ impl FuncStatus {
                     }
                     None => {
                         pod.SetIdle(SetIdleSource::UpdatePod);
+                        add_to_idle = true;
                         break;
                     }
                 }
             }
         }
 
-        return Ok(());
+        return Ok(add_to_idle);
     }
 
     pub fn RemovePod(&mut self, podKey: &str) -> Result<()> {
@@ -1599,7 +1600,7 @@ impl SchedulerHandler {
             Ok(w) => w,
         };
 
-        info!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
+        trace!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
 
         if worker.State().IsIdle() {
             // when the scheduler restart, this issue will happen, fix this.
@@ -2711,7 +2712,7 @@ impl SchedulerHandler {
         match self.nodes.get(nodename) {
             None => return false,
             Some(ns) => {
-                return ns.state == NAState::NodeAgentAvaiable;
+                return ns.state == NAState::NodeAgentReady;
             }
         }
     }
@@ -2751,7 +2752,7 @@ impl SchedulerHandler {
                 );
             }
 
-            if ns.state != NAState::NodeAgentAvaiable {
+            if !self.IsNodeReady(&ns.node.name) {
                 continue;
             }
 
@@ -3146,7 +3147,7 @@ impl SchedulerHandler {
             }
         }
 
-        if nodeStatus.state != NAState::NodeAgentAvaiable {
+        if !self.IsNodeReady(nodename) {
             self.AddSnapshotTask(nodename, funcId);
 
             return Err(Error::SchedulerNoEnoughResource(
@@ -3348,6 +3349,9 @@ impl SchedulerHandler {
             }
             Some(ns) => {
                 if ns.pendingPods.len() > 0 {
+                    return Ok(());
+                }
+                if !self.IsNodeReady(nodename) {
                     return Ok(());
                 }
             }
@@ -4520,20 +4524,25 @@ impl SchedulerHandler {
             }
         }
 
+        let mut add_to_idle = false;
         match self.funcs.get_mut(&funcKey) {
             None => match self.funcPods.get_mut(&funcKey) {
                 None => {
                     let mut pods = BTreeMap::new();
-                    pods.insert(podKey, boxPod);
+                    pods.insert(podKey.clone(), boxPod.clone());
                     self.funcPods.insert(funcKey, pods);
                 }
                 Some(pods) => {
-                    pods.insert(podKey, boxPod);
+                    pods.insert(podKey.clone(), boxPod.clone());
                 }
             },
             Some(fpStatus) => {
-                fpStatus.UpdatePod(&boxPod).await?;
+                add_to_idle = fpStatus.UpdatePod(&boxPod).await?;
             }
+        }
+
+        if add_to_idle {
+            self.idlePods.put(boxPod.pod.PodKey(), ());
         }
 
         return Ok(());
@@ -4640,11 +4649,12 @@ impl SchedulerHandler {
             }
         }
 
+        // Remove from idlePods if present, put it here because node deletion event may arrive before pod deletion event.
+        self.idlePods.pop(&pod.PodKey());
+
         match self.nodes.get_mut(&nodeName) {
             None => (), // node information doesn't reach scheduler, will process when it arrives
             Some(nodeStatus) => {
-                // Also remove from idlePods if present (handles race where pod was restored but then deleted)
-                self.idlePods.pop(&pod.PodKey());
                 nodeStatus.RemovePod(&pod.PodKey(), &pod.object.spec.allocResources)?;
             }
         }

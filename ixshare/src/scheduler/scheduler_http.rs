@@ -1,4 +1,5 @@
 use axum::body::Body;
+use axum::extract::Path;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -9,6 +10,7 @@ use prometheus_client::encoding::text::encode;
 use serde_json::json;
 
 use crate::gateway::metrics::METRICS_REGISTRY;
+use crate::print::{set_trace_logging, trace_logging_enabled};
 use crate::scheduler::scheduler::SCHEDULER;
 
 pub async fn MetricsHandler() -> impl IntoResponse {
@@ -40,9 +42,41 @@ pub async fn DumpState() -> impl IntoResponse {
     }
 }
 
+pub async fn SetTraceLogging(Path(state): Path<String>) -> Response {
+    let lower = state.to_ascii_lowercase();
+    let enable = match lower.as_str() {
+        "on" | "enable" | "enabled" | "true" | "1" => Some(true),
+        "off" | "disable" | "disabled" | "false" | "0" => Some(false),
+        _ => None,
+    };
+
+    let enable = match enable {
+        Some(v) => v,
+        None => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(format!("invalid state '{}', use on/off", state)))
+                .unwrap();
+        }
+    };
+
+    set_trace_logging(enable);
+    info!("TRACE_SCHEDULER_LOG: {}", trace_logging_enabled());
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::from(if enable {
+            "trace logging enabled"
+        } else {
+            "trace logging disabled"
+        }))
+        .unwrap()
+}
+
 pub async fn SchedulerHttpSrv() {
     let router = Router::new()
         .route("/metrics", get(MetricsHandler))
+        .route("/trace/:state", get(SetTraceLogging))
         .route("/debug/state", get(DumpState))
         .route("/", get(root));
     let port = 80;

@@ -30,6 +30,19 @@ lazy_static! {
     pub static ref LOG_MONITOR: LogMonitor = LogMonitor::New();
 }
 
+/// Global switch for trace-level logging; used by the `trace!` macro.
+pub static TRACE_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+#[inline]
+pub fn trace_logging_enabled() -> bool {
+    TRACE_LOG_ENABLED.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn set_trace_logging(enable: bool) {
+    TRACE_LOG_ENABLED.store(enable, Ordering::SeqCst);
+}
+
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 pub fn RawRdtsc() -> i64 {
@@ -374,5 +387,15 @@ macro_rules! debug {
     ($($arg:tt)*) => ({
         let s = &format!($($arg)*);
         $crate::print::LOG.Print("DEBUG", &s);
+    });
+}
+
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => ({
+        if $crate::print::trace_logging_enabled() {
+            let s = &format!($($arg)*);
+            $crate::print::LOG.Print("TRACE", &s);
+        }
     });
 }

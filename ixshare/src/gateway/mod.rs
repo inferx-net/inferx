@@ -21,4 +21,3 @@ pub mod http_gw;
 pub mod scheduler_client;
 pub mod secret;
 pub mod metrics;
-pub mod trace;

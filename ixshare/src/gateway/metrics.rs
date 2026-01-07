@@ -192,10 +192,19 @@ impl IxGauge {
     pub fn Dec(&mut self, label: Nodelabel, cnt: u64) -> u64 {
         match self.map.get_mut(&label) {
             None => {
-                panic!("IxGauge get non decr {:?}/{}", label, cnt);
+                error!("IxGauge get non decr {:?}/{}", label, cnt);
+                0
             }
             Some(v) => {
-                *v -= cnt;
+                // TODO: this is a temporary guard against underflow, need to revisit all the metric code later.
+                let before = *v;
+                *v = v.saturating_sub(cnt);
+                if before < cnt {
+                    error!(
+                        "IxGauge underflow guarded for {:?}: had {}, dec {}",
+                        label, before, cnt
+                    );
+                }
                 return *v;
             }
         }

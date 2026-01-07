@@ -34,7 +34,6 @@ use inferxlib::obj_mgr::func_mgr::*;
 
 use super::func_worker::*;
 use super::gw_obj_repo::GwObjRepo;
-use super::trace::trace_logging_enabled;
 
 pub static GW_OBJREPO: OnceCell<GwObjRepo> = OnceCell::new();
 
@@ -427,12 +426,10 @@ impl FuncAgent {
         match &*self.scaleoutPolicy.lock().unwrap() {
             ScaleOutPolicy::WaitQueueRatio(ratio) => {
                 if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
-                    if trace_logging_enabled() {
-                        error!(
-                            "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
-                            reqCnt, totalSlotCnt, waitReqcnt
-                        );
-                    }
+                    trace!(
+                        "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
+                        reqCnt, totalSlotCnt, waitReqcnt
+                    );
 
                     return true;
                 }
