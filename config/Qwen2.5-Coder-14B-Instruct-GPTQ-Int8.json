@@ -48,7 +48,8 @@
             "endpoint": {
                 "port": 8000,
                 "schema": "Http",
-                "probe": "/health"
+                "probe": "/health",
+                "probetype": "Prompt"
             },
             "sample_query": {
                 "apiType": "text2text",
