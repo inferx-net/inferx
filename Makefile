@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta40t10
+VERSION := v0.1.5.beta42
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -312,6 +312,23 @@ runallcx:
 	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
+	kubectl apply -f k8s/ingress.yaml
+
+runallfa:
+	-rm /opt/inferx/log/*.log
+	kubectl apply -f k8s/etcd.yaml
+	kubectl apply -f k8s/keycloak_postgres.yaml
+	kubectl apply -f k8s/keycloak.yaml
+	VERSION=$(VERSION) envsubst < k8s/secretdb.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/ixproxy-fa.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/nodeagent-fa.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
