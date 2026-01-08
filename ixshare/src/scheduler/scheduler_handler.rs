@@ -3189,7 +3189,13 @@ impl SchedulerHandler {
 
         let mut nodeResources: NodeResources = nodeStatus.available.clone();
 
-        let terminateWorkers =
+        // Check if we already have enough resources WITHOUT terminating idle pods
+        // If yes, allocate directly to avoid unnecessary eviction of idle pods
+        let terminateWorkers = if nodeResources.CanAlloc(&reqResource, true).Ok() {
+            // Current available resources are sufficient, no need to terminate any pods
+            Vec::new()
+        } else {
+            // Need to free resources by terminating idle pods
             match self.TryFreeResources(nodename, funcId, &mut nodeResources, &reqResource, true) {
                 Err(Error::SchedulerNoEnoughResource(s)) => {
                     self.SetSnapshotStatus(
@@ -3202,7 +3208,8 @@ impl SchedulerHandler {
                 }
                 Err(e) => return Err(e),
                 Ok(t) => t,
-            };
+            }
+        };
 
         // Track pods marked for termination - don't free their resources yet
         // Resources will be freed when the snapshot pod becomes Ready or fails
