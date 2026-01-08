@@ -96,8 +96,8 @@ spec:
             #   name: opt-inferx
             # - mountPath: /opt/inferx/config
             #   name: opt-inferx-config
-            - mountPath: /opt/inferx/bin
-              name: opt-inferx-bin
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
