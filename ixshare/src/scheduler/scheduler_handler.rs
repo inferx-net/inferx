@@ -3176,6 +3176,20 @@ impl SchedulerHandler {
 
         let state = nodeStatus.total.CanAlloc(&reqResource, true);
         if !state.Ok() {
+            let reqGpu = &reqResource.gpu;
+            let totalGpu = nodeStatus.total.GPUResource();
+            error!(
+                "TryCreateSnapshotOnNode: node {} total can't satisfy {} req cpu {} mem {} cache {} gpuCount {} vRam {} total gpu {:?} state {:?}",
+                nodename,
+                funcId,
+                reqResource.cpu,
+                reqResource.memory,
+                reqResource.cacheMemory,
+                reqGpu.gpuCount,
+                reqGpu.vRam,
+                totalGpu.Gpus(),
+                state
+            );
             self.SetSnapshotStatus(
                 funcId,
                 nodename,
