@@ -1392,7 +1392,7 @@ impl SchedulerHandler {
     }
 
     pub async fn ProcessConnectReq(
-        &self,
+        &mut self,
         req: na::ConnectReq,
         tx: Sender<na::ConnectResp>,
     ) -> Result<bool> {
@@ -1439,6 +1439,14 @@ impl SchedulerHandler {
 
         for pod in &pods {
             pod.SetWorking(gatewayId);
+            // Remove from idlePods cache when setting to Working
+            // so RefreshScheduling won't reuse this pod while gateway is using it
+            if self.idlePods.pop(&pod.pod.PodKey()).is_none() {
+                warn!(
+                    "ProcessConnectReq expected idle pod {} to exist in idlePods but it was missing",
+                    pod.pod.PodKey()
+                );
+            }
         }
 
         let resp = na::ConnectResp {
@@ -1646,6 +1654,10 @@ impl SchedulerHandler {
                     "ProcessReturnWorkerReq can't find pod {:#?} with error e {:?}",
                     req, e
                 );
+                let resp = na::ReturnWorkerResp {
+                    error: format!("{:?}", e),
+                };
+                tx.send(resp).unwrap();
                 return Ok(());
             }
             Ok(w) => w,
