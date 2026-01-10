@@ -526,14 +526,22 @@ impl FuncAgent {
                                 // worker.SetState(FuncWorkerState::Processing);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
-                                worker.ReturnWorker(true).await.ok();
-                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
+                                // Remove from local tracking immediately to prevent reuse
                                 self.RemoveWorker(&worker);
+
+                                // Spawn background retry to return worker to scheduler
+                                Self::spawn_return_worker_retry(worker.clone(), true);
+
+                                info!("Spawned background retry for WorkerFail: {}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
-                                worker.ReturnWorker(false).await.ok();
-                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.WorkerName(), worker.id);
+                                // Remove from local tracking immediately to prevent reuse
                                 self.RemoveWorker(&worker);
+
+                                // Spawn background retry to return worker to scheduler
+                                Self::spawn_return_worker_retry(worker.clone(), false);
+
+                                info!("Spawned background retry for IdleTimeout: {}/{:?}", worker.WorkerName(), worker.id);
                             }
                             WorkerUpdate::WorkerLeaseFail((worker, e)) => {
                                 error!("Worker lease fail, worker: {}, error: {:?}", worker.WorkerName(), e);
@@ -639,6 +647,31 @@ impl FuncAgent {
     pub fn SendWorkerStatusUpdate(&self, update: WorkerUpdate) {
         let statusUpdateTx = self.workerStateUpdateTx.clone();
         statusUpdateTx.try_send(update).unwrap();
+    }
+
+    fn spawn_return_worker_retry(worker: FuncWorker, failworker: bool) {
+        tokio::spawn(async move {
+            let mut retry_count = 0;
+            loop {
+                match worker.ReturnWorker(failworker).await {
+                    Ok(()) => {
+                        info!(
+                            "Worker successfully returned to scheduler after {} retries",
+                            retry_count
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        retry_count += 1;
+                        error!(
+                            "ReturnWorker failed (attempt {}): {:?}, retrying...",
+                            retry_count, e
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        });
     }
 }
 

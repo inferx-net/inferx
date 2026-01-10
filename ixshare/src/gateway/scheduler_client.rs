@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use tokio::sync::Mutex as TMutex;
+use tokio::time::{sleep, Duration};
 
 use crate::na::{self, LeaseWorkerResp};
 
@@ -49,6 +50,48 @@ impl SchedulerClient {
     }
 
     pub async fn Connect(&self, schedulerUrl: &String) -> Result<()> {
+        let mut backoff = Duration::from_millis(500);
+        loop {
+            match self.try_connect_once(schedulerUrl).await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    // Check if this is a permanent error (invalid IP/hostname)
+                    if Self::is_permanent_error(&e) {
+                        error!(
+                            "Gateway id: {} failed to connect to scheduler with permanent error: {:?}, triggering service discovery refresh",
+                            GatewayId(),
+                            e
+                        );
+                        return Err(e);  // Fail fast, don't retry
+                    }
+
+                    // Transient error, retry with backoff
+                    error!(
+                        "Gateway id: {} failed to connect to scheduler: {:?}, retrying in {:?}",
+                        GatewayId(),
+                        e,
+                        backoff
+                    );
+                    sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
+                }
+            }
+        }
+    }
+
+    /// Check if error is permanent (invalid IP/hostname) vs transient (timeout, connection refused)
+    fn is_permanent_error(e: &Error) -> bool {
+        let error_str = format!("{:?}", e);
+
+        // "No route to host" (error 113) - invalid IP
+        // "Name or service not known" - invalid hostname
+        // "Network is unreachable" (error 101) - invalid network
+        error_str.contains("No route to host") ||
+        error_str.contains("Network is unreachable") ||
+        error_str.contains("Name or service not known")
+    }
+
+    async fn try_connect_once(&self, schedulerUrl: &String) -> Result<()> {
         let mut schedClient: na::scheduler_service_client::SchedulerServiceClient<
             tonic::transport::Channel,
         > = na::scheduler_service_client::SchedulerServiceClient::connect(schedulerUrl.to_owned())
@@ -76,22 +119,15 @@ impl SchedulerClient {
         let response = schedClient.connect_scheduler(request).await?;
         let resp = response.into_inner();
         if resp.error.len() != 0 {
-            error!(
-                "Gateway id: {} fail as connect to new scheduler fail with error {:?}, need restart to avoid double lease workers",
+            return Err(Error::CommonError(format!(
+                "Gateway id: {} failed to connect to scheduler: {}",
                 GatewayId(),
                 &resp.error
-            );
-
-            panic!(
-                "Gateway id: {} fail as connect to new scheduler fail with error {:?}, need restart to avoid double lease workers",
-                GatewayId(),
-                &resp.error
-            )
+            )));
         }
 
         *self.schedulerUrl.lock().await = Some(schedulerUrl.to_owned());
-
-        return Ok(());
+        Ok(())
     }
 
     pub async fn Disconnect(&self) {
@@ -156,6 +192,15 @@ impl SchedulerClient {
         let response = client.return_worker(request).await?;
         let resp = response.into_inner();
 
+        if resp.error.len() != 0 {
+            return Err(Error::CommonError(format!(
+                "Return Worker fail with error {}",
+                resp.error
+            )));
+        }
+
+        // Only remove from leasedWorkers after RPC succeeds
+        // If RPC fails, worker stays in leasedWorkers for background retry
         self.leasedWorkers.lock().await.remove(&LeasedWorker {
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
@@ -164,14 +209,7 @@ impl SchedulerClient {
             id: id.to_owned(),
         });
 
-        if resp.error.len() == 0 {
-            return Ok(());
-        }
-
-        return Err(Error::CommonError(format!(
-            "Return Worker fail with error {}",
-            resp.error
-        )));
+        return Ok(());
     }
 
     pub async fn RefreshGateway(&self) -> Result<()> {
