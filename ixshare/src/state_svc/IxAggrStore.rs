@@ -259,6 +259,8 @@ pub struct IxAgentInner {
     pub nodeClient: AggregateClient,
     pub podClient: AggregateClient,
     pub snapshotClient: AggregateClient,
+
+    pub handles: Mutex<Vec<(String, tokio::task::JoinHandle<()>)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -289,6 +291,8 @@ impl IxAgent {
             nodeClient: AggregateClient::New(nodeCache, "node", "", "")?,
             podClient: AggregateClient::New(podCache, "pod", "", "")?,
             snapshotClient: AggregateClient::New(snapshotCache, "snapshot", "", "")?,
+
+            handles: Mutex::new(Vec::new()),
         };
 
         return Ok(Self(Arc::new(inner)));
@@ -297,6 +301,30 @@ impl IxAgent {
     pub fn Close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.closeNotify.notify_waiters();
+
+        // Spawn a timeout task to abort tasks if they don't exit gracefully
+        let handles_to_abort = {
+            let mut handles = self.handles.lock().unwrap();
+            handles.drain(..).collect::<Vec<_>>()
+        };
+
+        tokio::spawn(async move {
+            // Give tasks 2 seconds to exit gracefully via closeNotify
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            for (handle_label, handle) in handles_to_abort {
+                info!(
+                        "IxAgent task {} handle checking for graceful exit",
+                        handle_label
+                    );
+                if !handle.is_finished() {
+                    info!(
+                        "IxAgent task {} did not exit gracefully, aborting",
+                        handle_label
+                    );
+                    handle.abort();
+                }
+            }
+        });
     }
 
     pub async fn Process(
@@ -305,36 +333,53 @@ impl IxAgent {
         podListNotify: Arc<Notify>,
         snapshotListNotify: Arc<Notify>,
     ) -> Result<()> {
-        let clone = self.clone();
-        tokio::spawn(async move {
-            clone
-                .snapshotClient
-                .Process(vec![clone.svcAddr.clone()], snapshotListNotify.clone())
-                .await
-                .unwrap();
-        });
+        let mut handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
-        let clone = self.clone();
-        tokio::spawn(async move {
-            clone
-                .podClient
-                .Process(vec![clone.svcAddr.clone()], podListNotify.clone())
-                .await
-                .unwrap();
-        });
+        let snapshot_clone = self.clone();
+        let snapshot_handle_label = format!("{} snapshot", snapshot_clone.nodeName);
+        handles.push((
+            snapshot_handle_label,
+            tokio::spawn(async move {
+                snapshot_clone
+                    .snapshotClient
+                    .Process(vec![snapshot_clone.svcAddr.clone()], snapshotListNotify.clone())
+                    .await
+                    .unwrap();
+            }),
+        ));
 
-        let clone = self.clone();
+        let pod_clone = self.clone();
+        let pod_handle_label = format!("{} pod", pod_clone.nodeName);
+        handles.push((
+            pod_handle_label,
+            tokio::spawn(async move {
+                pod_clone
+                    .podClient
+                    .Process(vec![pod_clone.svcAddr.clone()], podListNotify.clone())
+                    .await
+                    .unwrap();
+            }),
+        ));
+
+        let node_clone = self.clone();
 
         // slow down node sync to make pod and snapshot ready before it to avoid create more snapshot pod
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        tokio::spawn(async move {
-            clone
-                .nodeClient
-                .Process(vec![clone.svcAddr.clone()], nodeListNotify.clone())
-                .await
-                .unwrap();
-        });
+        let node_handle_label = format!("{} node", node_clone.nodeName);
+        handles.push((
+            node_handle_label,
+            tokio::spawn(async move {
+                node_clone
+                    .nodeClient
+                    .Process(vec![node_clone.svcAddr.clone()], nodeListNotify.clone())
+                    .await
+                    .unwrap();
+            }),
+        ));
+
+        // Store handles for later cleanup
+        *self.handles.lock().unwrap() = handles;
 
         self.closeNotify.notified().await;
         self.nodeClient.Close();
