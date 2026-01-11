@@ -886,6 +886,7 @@ impl SchedulerHandler {
                 "snapshotListDone": self.snapshotListDone,
                 "funcpolicyDone": self.funcpolicyDone,
                 "listDone": self.listDone,
+                "warmupComplete": self.warmupComplete,
             }
         })
     }
