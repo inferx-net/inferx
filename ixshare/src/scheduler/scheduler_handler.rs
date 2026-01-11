@@ -20,8 +20,7 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -628,6 +627,10 @@ pub struct SchedulerHandler {
     pub funcpolicyDone: bool,
     pub listDone: bool,
 
+    // Warm-up stage tracking: prevents pod eviction during initialization before gateways reconnect
+    pub warmupStartTime: Option<Instant>,
+    pub warmupComplete: bool,
+
     pub nextWorkId: AtomicU64,
 
     pub taskQueue: TaskQueue,
@@ -672,6 +675,8 @@ impl Default for SchedulerHandler {
             snapshotListDone: false,
             funcpolicyDone: false,
             listDone: false,
+            warmupStartTime: None,
+            warmupComplete: false,
             nextWorkId: AtomicU64::new(1),
             taskQueue: TaskQueue::default(),
             delayed_tasks: BinaryHeap::new(),
@@ -1387,11 +1392,22 @@ impl SchedulerHandler {
     }
 
     pub async fn ProcessConnectReq(
-        &self,
+        &mut self,
         req: na::ConnectReq,
         tx: Sender<na::ConnectResp>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let gatewayId = req.gateway_id;
+
+        // Block connections during scheduler initialization to prevent race condition
+        // where pods are evicted before gateway reconnects after scheduler restart
+        if !self.listDone {
+            let resp = na::ConnectResp {
+                error: "Scheduler still initializing, please retry".to_string(),
+            };
+            tx.send(resp).ok();
+            return Ok(false);
+        }
+
         let mut pods = Vec::new();
         for w in &req.workers {
             let pod =
@@ -1415,7 +1431,7 @@ impl SchedulerHandler {
                     ..Default::default()
                 };
                 tx.send(resp).unwrap();
-                return Ok(());
+                return Ok(false);
             }
 
             pods.push(pod);
@@ -1423,6 +1439,14 @@ impl SchedulerHandler {
 
         for pod in &pods {
             pod.SetWorking(gatewayId);
+            // Remove from idlePods cache when setting to Working
+            // so RefreshScheduling won't reuse this pod while gateway is using it
+            if self.idlePods.pop(&pod.pod.PodKey()).is_none() {
+                warn!(
+                    "ProcessConnectReq expected idle pod {} to exist in idlePods but it was missing",
+                    pod.pod.PodKey()
+                );
+            }
         }
 
         let resp = na::ConnectResp {
@@ -1430,6 +1454,40 @@ impl SchedulerHandler {
         };
         tx.send(resp).ok();
 
+        return Ok(true);
+    }
+
+    /// Check if warm-up stage should be completed
+    /// After 5 seconds without any gateway connecting, finish warm-up anyway
+    async fn CheckAndCompleteWarmup(&mut self) -> Result<()> {
+        if self.warmupComplete {
+            return Ok(());
+        }
+
+        if let Some(start_time) = self.warmupStartTime {
+            let elapsed = std::time::Instant::now().duration_since(start_time);
+
+            // After timeout, complete warm-up regardless of connections
+            if elapsed > std::time::Duration::from_secs(5) {
+                info!(
+                    "Scheduler warm-up complete (timeout, no gateway connected). Starting normal operation."
+                );
+                self.CompleteWarmupAfterConnect().await?;
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn CompleteWarmupAfterConnect(&mut self) -> Result<()> {
+        if self.warmupComplete {
+            return Ok(());
+        }
+        self.warmupComplete = true;
+        info!("Scheduler warm-up complete (gateway connected). Starting normal operation.");
+        self.RefreshScheduling(None).await?;
+        self.InitSnapshotTask()?;
         return Ok(());
     }
 
@@ -1596,6 +1654,10 @@ impl SchedulerHandler {
                     "ProcessReturnWorkerReq can't find pod {:#?} with error e {:?}",
                     req, e
                 );
+                let resp = na::ReturnWorkerResp {
+                    error: format!("{:?}", e),
+                };
+                tx.send(resp).unwrap();
                 return Ok(());
             }
             Ok(w) => w,
@@ -2104,7 +2166,9 @@ impl SchedulerHandler {
                 if let Some(msg) = m {
                     match msg {
                         WorkerHandlerMsg::ConnectScheduler((m, tx)) => {
-                            self.ProcessConnectReq(m, tx).await?;
+                            if self.ProcessConnectReq(m, tx).await? {
+                                self.CompleteWarmupAfterConnect().await?;
+                            }
                         }
                         WorkerHandlerMsg::LeaseWorker((m, tx)) => {
                             self.ProcessLeaseWorkerReq(m, tx).await?;
@@ -2147,12 +2211,18 @@ impl SchedulerHandler {
             }
             _ = interval.tick() => {
                 if self.listDone {
-                    // retry scheduling to see wheter there is more resource avaiable
-                    self.RefreshScheduling(None).await?;
-                    // we need to delete pod at first before clean snapshot
-                    self.CleanPods().await?;
-                    self.CleanSnapshots()?;
-                    self.ProcessGatewayTimeout().await?;
+                    // Check if warm-up should be completed
+                    self.CheckAndCompleteWarmup().await?;
+
+                    // Only do scheduling work after warm-up is complete
+                    if self.warmupComplete {
+                        // retry scheduling to see wheter there is more resource avaiable
+                        self.RefreshScheduling(None).await?;
+                        // we need to delete pod at first before clean snapshot
+                        self.CleanPods().await?;
+                        self.CleanSnapshots()?;
+                        self.ProcessGatewayTimeout().await?;
+                    }
                 }
             }
             event = eventRx.recv() => {
@@ -2166,7 +2236,7 @@ impl SchedulerHandler {
                                     let func = Function::FromDataObject(obj)?;
                                     let funcid = func.Id();
                                     self.AddFunc(func)?;
-                                    if self.listDone {
+                                    if self.listDone && self.warmupComplete {
                                         self.ProcessAddFunc(&funcid).await;
                                         self.taskQueue.AddFunc(&funcid);
                                     }
@@ -2305,22 +2375,22 @@ impl SchedulerHandler {
                         EventType::InitDone => {
                             match &obj.objType as &str {
                                 Function::KEY => {
-                                    self.ListDone(ListType::Func, None).await?;
+                                    self.ListDone(ListType::Func).await?;
                                 }
                                 FunctionStatus::KEY => {
-                                    self.ListDone(ListType::FuncStatus, None).await?;
+                                    self.ListDone(ListType::FuncStatus).await?;
                                 }
                                 Node::KEY => {
-                                    self.ListDone(ListType::Node, None).await?;
+                                    self.ListDone(ListType::Node).await?;
                                 }
                                 FuncPod::KEY => {
-                                    self.ListDone(ListType::FuncPod, None).await?;
+                                    self.ListDone(ListType::FuncPod).await?;
                                 }
                                 ContainerSnapshot::KEY => {
-                                    self.ListDone(ListType::Snapshot, None).await?;
+                                    self.ListDone(ListType::Snapshot).await?;
                                 }
                                 FuncPolicy::KEY => {
-                                    self.ListDone(ListType::Funcpolicy, None).await?;
+                                    self.ListDone(ListType::Funcpolicy).await?;
                                 }
                                 _ => {
                                     error!("SchedulerHandler get unexpect list done {}", &obj.objType);
@@ -4227,7 +4297,6 @@ impl SchedulerHandler {
     pub async fn ListDone(
         &mut self,
         listType: ListType,
-        msgTx: Option<&mpsc::Sender<WorkerHandlerMsg>>,
     ) -> Result<bool> {
         match listType {
             ListType::Func => self.funcListDone = true,
@@ -4247,8 +4316,11 @@ impl SchedulerHandler {
         {
             self.listDone = true;
 
-            self.RefreshScheduling(msgTx).await?;
-            self.InitSnapshotTask()?;
+            // Start warm-up stage: wait for gateways to reconnect before scheduling work
+            // RefreshScheduling and InitSnapshotTask will be called once warm-up is complete
+            self.warmupStartTime = Some(std::time::Instant::now());
+            self.warmupComplete = false;
+            info!("Initialization complete, starting warm-up stage to wait for gateways to reconnect");
 
             return Ok(true);
         }

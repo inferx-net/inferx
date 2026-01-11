@@ -28,7 +28,7 @@ use tokio::time;
 
 use crate::audit::SqlAudit;
 use crate::common::*;
-use crate::gateway::scheduler_client::SCHEDULER_CLIENT;
+use crate::gateway::scheduler_client::{LeasedWorker, SCHEDULER_CLIENT};
 use crate::scheduler::scheduler_handler::GetClient;
 use inferxlib::obj_mgr::func_mgr::*;
 
@@ -526,14 +526,22 @@ impl FuncAgent {
                                 // worker.SetState(FuncWorkerState::Processing);
                             }
                             WorkerUpdate::WorkerFail((worker, e)) => {
-                                worker.ReturnWorker(true).await.ok();
-                                info!("ReturnWorker WorkerUpdate::WorkerFail ...{}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
+                                // Remove from local tracking immediately to prevent reuse
                                 self.RemoveWorker(&worker);
+
+                                // Spawn background retry to return worker to scheduler
+                                Self::spawn_return_worker_retry(worker.clone(), true);
+
+                                info!("Spawned background retry for WorkerFail: {}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
-                                worker.ReturnWorker(false).await.ok();
-                                info!("ReturnWorker WorkerUpdate::IdleTimeout ...{}/{:?}", worker.WorkerName(), worker.id);
+                                // Remove from local tracking immediately to prevent reuse
                                 self.RemoveWorker(&worker);
+
+                                // Spawn background retry to return worker to scheduler
+                                Self::spawn_return_worker_retry(worker.clone(), false);
+
+                                info!("Spawned background retry for IdleTimeout: {}/{:?}", worker.WorkerName(), worker.id);
                             }
                             WorkerUpdate::WorkerLeaseFail((worker, e)) => {
                                 error!("Worker lease fail, worker: {}, error: {:?}", worker.WorkerName(), e);
@@ -639,6 +647,75 @@ impl FuncAgent {
     pub fn SendWorkerStatusUpdate(&self, update: WorkerUpdate) {
         let statusUpdateTx = self.workerStateUpdateTx.clone();
         statusUpdateTx.try_send(update).unwrap();
+    }
+
+    fn spawn_return_worker_retry(worker: FuncWorker, failworker: bool) {
+        tokio::spawn(async move {
+            let mut retry_count = 0;
+            let max_retries = 10;
+            let mut backoff = std::time::Duration::from_millis(500);
+            let mut success = false;
+            let pod_id = worker.id.load(Ordering::Relaxed);
+
+            loop {
+                match worker.ReturnWorker(failworker).await {
+                    Ok(()) => {
+                        info!(
+                        "Worker {}/{}/{} (podId: {}) successfully returned to scheduler after {} retries",
+                        worker.tenant,
+                        worker.namespace,
+                        worker.funcname,
+                        pod_id,
+                        retry_count
+                    );
+                        success = true;
+                        break;
+                    }
+                    Err(e) => {
+                        let error_str = format!("{:?}", e);
+
+                        // If pod doesn't exist on scheduler, no point retrying
+                        if error_str.contains("NotExist") {
+                            error!(
+                                "ReturnWorker failed for {}/{}/{} (podId: {}): pod doesn't exist on scheduler, stopping retry",
+                                worker.tenant, worker.namespace, worker.funcname, pod_id
+                            );
+                            break;
+                        }
+
+                        retry_count += 1;
+                        if retry_count >= max_retries {
+                            error!(
+                                "ReturnWorker exceeded max retries ({}) for {}/{}/{} (podId: {}). Last error: {:?}",
+                                max_retries, worker.tenant, worker.namespace, worker.funcname, pod_id, e
+                            );
+                            break;
+                        }
+                        error!(
+                            "ReturnWorker failed (attempt {}/{}): {:?}, retrying in {:?}",
+                            retry_count, max_retries, e, backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(5));
+                    }
+                }
+            }
+
+            let lw = LeasedWorker {
+                tenant: worker.tenant.clone(),
+                namespace: worker.namespace.clone(),
+                funcname: worker.funcname.clone(),
+                fprevision: worker.fprevision,
+                id: worker.id.load(Ordering::Relaxed).to_string(),
+            };
+            let removed = SCHEDULER_CLIENT.leasedWorkers.lock().await.remove(&lw);
+            if removed && !success {
+                info!(
+                    "Removed worker {}/{} in cleanup after hitting retry cap",
+                    worker.funcname, lw.id
+                );
+            }
+        });
     }
 }
 

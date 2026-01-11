@@ -619,7 +619,13 @@ impl Serialize for GPUResourceMap {
     {
         let allocRam = match self.map.first_key_value() {
             None => 0,
-            Some((_, alloc)) => alloc.slotCnt as u64 * self.slotSize / 1024 / 1024,
+            Some((_, alloc)) => {
+                // Keep as i64 to allow temporary negative values during async operations
+                // Divide slotSize by 1024*1024 first to avoid overflow
+                let slot_size_mb = (self.slotSize / 1024 / 1024) as i64;
+                // error!("[GPUResourceMap::serialize] slot_size_mb={}, slot_cnt={}", slot_size_mb, alloc.slotCnt);
+                slot_size_mb * alloc.slotCnt
+            }
         };
 
         let mut s = serializer.serialize_struct("GPUResourceMap", 3)?;
@@ -632,12 +638,18 @@ impl Serialize for GPUResourceMap {
 }
 
 impl GPUResourceMap {
-    pub fn VRam(&self, gpuId: i32) -> u64 {
-        return self.SlotCnt(gpuId) as u64 * self.slotSize;
+    pub fn VRam(&self, gpuId: i32) -> i64 {
+        let slot_cnt = self.SlotCnt(gpuId);
+        let slot_size_mb = (self.slotSize / 1024 / 1024) as i64;
+        // error!("[GPUResourceMap::VRam] gpuId={}, slot_cnt={}, slot_size_mb={}", gpuId, slot_cnt, slot_size_mb);
+        return slot_size_mb * slot_cnt;
     }
 
-    pub fn FirstVRam(&self) -> u64 {
-        return self.FirstSlotCnt() as u64 * self.slotSize;
+    pub fn FirstVRam(&self) -> i64 {
+        let slot_cnt = self.FirstSlotCnt();
+        let slot_size_mb = (self.slotSize / 1024 / 1024) as i64;
+        // error!("[GPUResourceMap::FirstVRam] slot_cnt={}, slot_size_mb={}", slot_cnt, slot_size_mb);
+        return slot_size_mb * slot_cnt;
     }
 
     pub fn FirstSlotCnt(&self) -> i64 {
