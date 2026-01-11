@@ -655,14 +655,19 @@ impl FuncAgent {
             let max_retries = 10;
             let mut backoff = std::time::Duration::from_millis(500);
             let mut success = false;
+            let pod_id = worker.id.load(Ordering::Relaxed);
 
             loop {
                 match worker.ReturnWorker(failworker).await {
                     Ok(()) => {
                         info!(
-                            "Worker successfully returned to scheduler after {} retries",
-                            retry_count
-                        );
+                        "Worker {}/{}/{} (podId: {}) successfully returned to scheduler after {} retries",
+                        worker.tenant,
+                        worker.namespace,
+                        worker.funcname,
+                        pod_id,
+                        retry_count
+                    );
                         success = true;
                         break;
                     }
@@ -672,8 +677,8 @@ impl FuncAgent {
                         // If pod doesn't exist on scheduler, no point retrying
                         if error_str.contains("NotExist") {
                             error!(
-                                "ReturnWorker failed for {}/{}/{} (workerId: {}): pod doesn't exist on scheduler, stopping retry",
-                                worker.tenant, worker.namespace, worker.funcname, worker.workerId
+                                "ReturnWorker failed for {}/{}/{} (podId: {}): pod doesn't exist on scheduler, stopping retry",
+                                worker.tenant, worker.namespace, worker.funcname, pod_id
                             );
                             break;
                         }
@@ -681,8 +686,8 @@ impl FuncAgent {
                         retry_count += 1;
                         if retry_count >= max_retries {
                             error!(
-                                "ReturnWorker exceeded max retries ({}) for {}/{}/{} (workerId: {}). Last error: {:?}",
-                                max_retries, worker.tenant, worker.namespace, worker.funcname, worker.workerId, e
+                                "ReturnWorker exceeded max retries ({}) for {}/{}/{} (podId: {}). Last error: {:?}",
+                                max_retries, worker.tenant, worker.namespace, worker.funcname, pod_id, e
                             );
                             break;
                         }
