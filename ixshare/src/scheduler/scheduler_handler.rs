@@ -1029,7 +1029,7 @@ impl SchedulerHandler {
 
                         info!("Restored pod {} to Standby state", pod_key);
                     } else {
-                        error!("Cannot restore pod {} - not found in pods map", pod_key);
+                        panic!("Critical error: Cannot restore pod {} - not found in pods map. This indicates a data consistency issue (possible pod_key corruption or race condition). Scheduler state is inconsistent and must be restarted.", pod_key);
                     }
 
                     // 3. Restore terminated pods to Idle
@@ -4125,7 +4125,7 @@ impl SchedulerHandler {
         nodename: &str,
     ) -> Result<()> {
         // Build pod key for tracking completion
-        let pod_key = format!("{}/{}/{}/{}", tenant, namespace, funcname, id);
+        let pod_key = format!("{}/{}/{}/{}/{}", tenant, namespace, funcname, fprevsion, id);
 
         // Clone data needed for the async task and completion handler
         let naUrl = naUrl.to_owned();
