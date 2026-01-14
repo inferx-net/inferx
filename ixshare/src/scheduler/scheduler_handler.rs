@@ -2314,8 +2314,20 @@ impl SchedulerHandler {
                                 }
                                 Node::KEY => {
                                     let node = Node::FromDataObject(obj)?;
+                                    let nodename = node.name.clone();
+                                    let new_state = node.object.state;
+
+                                    // Check if this is a NodeAgentReady transition
+                                    let old_state = self.nodes.get(&nodename).map(|ns| ns.state);
+
                                     error!("Update node {:?}", &node);
-                                    self.UpdateNode(node)?;
+                                    self.UpdateNode(node.clone())?;
+
+                                    // If NodeAgent just became ready, trigger reconciliation
+                                    if old_state == Some(NAState::NodeAgentConnected) && new_state == NAState::NodeAgentReady {
+                                        info!("Node {} transitioned to NodeAgentReady - triggering reconciliation", nodename);
+                                        self.ReconcileNodeAfterNodeAgentRestart(&nodename, &node).await?;
+                                    }
                                 }
                                 FuncPod::KEY => {
                                     let pod = FuncPod::FromDataObject(obj)?;
@@ -4376,6 +4388,175 @@ impl SchedulerHandler {
         ns.node = node;
 
         return Ok(());
+    }
+
+    pub async fn ReconcileNodeAfterNodeAgentRestart(
+        &mut self,
+        nodename: &str,
+        new_node_info: &Node,
+    ) -> Result<()> {
+        info!("=== Starting reconciliation for node {} after NodeAgent restart ===", nodename);
+
+        // Get mutable reference to node status
+        let nodeStatus = match self.nodes.get_mut(nodename) {
+            Some(ns) => ns,
+            None => {
+                error!("Node {} not found during reconciliation", nodename);
+                return Ok(());
+            }
+        };
+
+        // Step 1: Identify transient pods to remove
+        let mut pods_to_remove: Vec<String> = Vec::new();
+
+        for (pod_key, pod) in &nodeStatus.pods {
+            let state = pod.pod.object.status.state;
+
+            // Keep only Standby and Ready pods (stable states that survived)
+            // Remove: Creating, PullingImage, Resuming, Working, Terminating, Failed, etc.
+            match state {
+                PodState::Standby | PodState::Ready => {
+                    info!("Keeping stable pod {}: {:?}", pod_key, state);
+                }
+                _ => {
+                    pods_to_remove.push(pod_key.clone());
+                    info!("Marking transient pod {} for removal: {:?}", pod_key, state);
+                }
+            }
+        }
+
+        // Step 2: Remove transient pods from node's pod map
+        for pod_key in &pods_to_remove {
+            nodeStatus.pods.remove(pod_key);
+        }
+
+        // Step 3: Clear all transient tracking structures
+        // pendingPods: All pods in Resuming state
+        // stoppingPods: All pods in Terminating state
+        let pending_count = nodeStatus.pendingPods.len();
+        let stopping_count = nodeStatus.stoppingPods.len();
+        nodeStatus.pendingPods.clear();
+        nodeStatus.stoppingPods.clear();
+
+        if pending_count > 0 {
+            info!("Cleared {} pending pods from node {}", pending_count, nodename);
+        }
+        if stopping_count > 0 {
+            info!("Cleared {} stopping pods from node {}", stopping_count, nodename);
+        }
+
+        // Step 4: Clean up per-func tracking structures
+        for (_funcid, funcStatus) in self.funcs.iter_mut() {
+            // Remove transient pods from func's pod maps
+            for pod_key in &pods_to_remove {
+                funcStatus.pendingPods.remove(pod_key);
+                funcStatus.stoppingPods.remove(pod_key);
+                funcStatus.pods.remove(pod_key);
+            }
+        }
+
+        // TODO: Handle lease worker requests for affected functions
+        // Need to identify which functions have pods on this restarted node,
+        // then remove their queued lease requests. This requires more careful
+        // consideration to avoid affecting unrelated functions.
+
+        // Step 5: Remove from global pods map
+        for pod_key in &pods_to_remove {
+            self.pods.remove(pod_key);
+        }
+
+        // Step 6: Clean up temp storage structures
+        // nodePods: temp storage when node is not yet ready
+        if let Some(tempPods) = self.nodePods.get_mut(nodename) {
+            for pod_key in &pods_to_remove {
+                tempPods.remove(pod_key);
+            }
+        }
+
+        // funcPods: temp storage when func is not yet ready
+        for (_funcKey, tempPods) in self.funcPods.iter_mut() {
+            for pod_key in &pods_to_remove {
+                tempPods.remove(pod_key);
+            }
+        }
+
+        // Step 7: *** CRITICAL RESOURCE REFRESH ***
+        // Recalculate available resources from scratch
+        let total = new_node_info.object.resources.Copy();
+        let mut available = total.Copy();
+
+        // Subtract resources only for surviving stable pods
+        for (_pod_key, pod) in &nodeStatus.pods {
+            // At this point, only Standby/Ready pods remain
+            available.Sub(&pod.pod.object.spec.allocResources)?;
+        }
+
+        nodeStatus.total = total;
+        nodeStatus.available = available;
+
+        // Step 8: Sync WorkerPodState for surviving stable pods
+        // Ensure WorkerPodState matches the actual pod state from FuncPod
+        for (_pod_key, pod) in &nodeStatus.pods {
+            let pod_state = pod.pod.object.status.state;
+            let worker_state = pod.State();
+
+            match pod_state {
+                PodState::Ready => {
+                    // Ready pods should be Idle (not actively serving)
+                    // unless they have an active lease (Working state)
+                    match worker_state {
+                        WorkerPodState::Working(_) => {
+                            // Pod has active lease, keep it as Working
+                            // Don't touch it
+                        }
+                        _ => {
+                            // Pod is not working, set to Idle
+                            pod.SetState(WorkerPodState::Idle);
+                            self.idlePods.put(pod.pod.PodKey(), ());
+                            info!(
+                                "Reconciliation: Set pod {} to Idle (PodState::Ready, no active lease)",
+                                pod.pod.PodKey()
+                            );
+                        }
+                    }
+                }
+                PodState::Standby => {
+                    // Standby pods should be in Standby WorkerPodState
+                    if worker_state != WorkerPodState::Standby {
+                        pod.SetState(WorkerPodState::Standby);
+                        info!(
+                            "Reconciliation: Set pod {} to Standby state",
+                            pod.pod.PodKey()
+                        );
+                    }
+                }
+                _ => {
+                    // Shouldn't reach here after pod filtering above
+                    panic!(
+                        "Reconciliation: Unexpected pod state {:?} for pod {} (should only be Standby/Ready)",
+                        pod_state,
+                        pod.pod.PodKey()
+                    );
+                }
+            }
+        }
+
+        info!(
+            "Reconciliation complete for node {}:\n  \
+            - Removed {} transient pods\n  \
+            - Cleared {} pending pods\n  \
+            - Cleared {} stopping pods\n  \
+            - Total resources: {}\n  \
+            - Available resources: {}",
+            nodename,
+            pods_to_remove.len(),
+            pending_count,
+            stopping_count,
+            serde_json::to_string(&nodeStatus.total).unwrap_or_default(),
+            serde_json::to_string(&nodeStatus.available).unwrap_or_default()
+        );
+
+        Ok(())
     }
 
     pub async fn RemoveNode(&mut self, node: Node) -> Result<()> {
