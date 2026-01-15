@@ -404,6 +404,25 @@ impl FuncStatus {
         return self.leaseWorkerReqs.pop_front();
     }
 
+    pub fn ReconcileStuckLeaseRequests(&mut self, timeout_ms: u64) -> usize {
+        let mut removed_count = 0;
+
+        // Remove from front while requests are older than timeout
+        // VecDeque front = oldest request
+        while let Some((req, _)) = self.leaseWorkerReqs.front() {
+            if let Ok(elapsed) = req.time.elapsed() {
+                if elapsed.as_millis() as u64 > timeout_ms {
+                    self.leaseWorkerReqs.pop_front();
+                    removed_count += 1;
+                    continue;
+                }
+            }
+            break;  // Found a fresh request, stop (rest are newer)
+        }
+
+        removed_count
+    }
+
     pub fn AddPendingPod(&mut self, pendingPod: &PendingPod) -> Result<()> {
         self.pendingPods
             .insert(pendingPod.podKey.clone(), pendingPod.clone());
@@ -2223,6 +2242,8 @@ impl SchedulerHandler {
                         self.CleanPods().await?;
                         self.CleanSnapshots()?;
                         self.ProcessGatewayTimeout().await?;
+                        // Reconcile stuck lease requests periodically (timeout 30 seconds)
+                        self.ReconcileAllStuckLeaseRequests(30000);
                     }
                 }
             }
@@ -3369,6 +3390,7 @@ impl SchedulerHandler {
             .await
         {
             Err(e) => {
+                error!("TryCreateSnapshotOnNode: RPC failed for func {} on node {} - {:?}", funcId, nodename, e);
                 self.SetSnapshotStatus(
                     funcId,
                     nodename,
@@ -4557,6 +4579,18 @@ impl SchedulerHandler {
         );
 
         Ok(())
+    }
+
+    pub fn ReconcileAllStuckLeaseRequests(&mut self, timeout_ms: u64) -> usize {
+        let mut total_removed = 0;
+        for (_funcid, funcStatus) in self.funcs.iter_mut() {
+            let removed = funcStatus.ReconcileStuckLeaseRequests(timeout_ms);
+            total_removed += removed;
+        }
+        if total_removed > 0 {
+            info!("Reconciled {} stuck lease requests (timeout {}ms)", total_removed, timeout_ms);
+        }
+        total_removed
     }
 
     pub async fn RemoveNode(&mut self, node: Node) -> Result<()> {
