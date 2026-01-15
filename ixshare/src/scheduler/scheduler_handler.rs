@@ -706,6 +706,16 @@ impl Default for SchedulerHandler {
         }
     }
 }
+fn is_snapshot_pod_finished(state: PodState) -> bool {
+    matches!(
+        state,
+        PodState::Snapshoted
+            | PodState::Terminating
+            | PodState::Terminated
+            | PodState::Cleanup
+            | PodState::Deleted
+    )
+}
 
 impl SchedulerHandler {
     pub fn New(msgTx: mpsc::Sender<WorkerHandlerMsg>) -> Self {
@@ -4027,7 +4037,7 @@ impl SchedulerHandler {
 
                 if !resp.error.is_empty() {
                     // Check if this is a duplicate snapshot error
-                    if resp.error.starts_with("DUPLICATE_SNAPSHOT:") {
+                    if resp.error.contains("DUPLICATE_SNAPSHOT:") {
                         error!(
                             "Duplicate snapshot detected for {} on {}, sending cleanup message",
                             funcid_clone, nodename_owned
@@ -4956,6 +4966,30 @@ impl SchedulerHandler {
             }
         }
 
+        if podCreateType == CreatePodType::Snapshot && !is_snapshot_pod_finished(state) {
+            info!(
+                "Snapshot pod {} deleted before completion in state {:?} (func {}, node {})",
+                podKey, state, funcKey, nodeName
+            );
+
+            // Check if snapshot already exists before re-queueing
+            let has_snapshot = self
+                .snapshots
+                .get(&funcKey)
+                .map(|s| s.contains_key(&nodeName))
+                .unwrap_or(false);
+
+            if !has_snapshot {
+                warn!(
+                    "Snapshot pod {} deleted while snapshot is not created succcessuly, re-queueing snapshot task",
+                    podKey
+                );
+                self.AddSnapshotTask(&nodeName, &pod.FuncKey());
+            }
+
+            self.RemovePendingSnapshot(&funcKey, &nodeName);
+        }
+
         // Remove from idlePods if present, put it here because node deletion event may arrive before pod deletion event.
         self.idlePods.pop(&pod.PodKey());
 
@@ -4970,10 +5004,6 @@ impl SchedulerHandler {
             Some(fpStatus) => {
                 fpStatus.RemovePod(&pod.PodKey()).unwrap();
             }
-        }
-
-        if podCreateType == CreatePodType::Snapshot {
-            self.RemovePendingSnapshot(&funcKey, &nodeName);
         }
 
         return Ok(());
