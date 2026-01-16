@@ -67,7 +67,7 @@
                 "Link": {
                     "objType": "funcpolicy",
                     "namespace": "system",
-                    "name": "funcpolicy_1GPU"
+                    "name": "funcpolicy_1Standby"
                 }
             }
         }

@@ -82,7 +82,7 @@ spec:
               # hugepages-2Mi: "30Gi" 
             limits:
               cpu: "100"
-              memory: "1800Gi"              # Regular memory request (RAM)
+              memory: "1400Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "30Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:

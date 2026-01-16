@@ -2,11 +2,11 @@
     "type": "funcpolicy",
     "tenant": "public",
     "namespace": "system",
-    "name": "funcpolicy_1GPU",
+    "name": "funcpolicy_1Standby",
     "object": {
         "min_replica": 0,
         "max_replica": 20,
-        "standby_per_node": 8,
+        "standby_per_node": 1,
         "parallel": 50,
         "queue_len": 1000,
         "queue_timeout": 30.0,

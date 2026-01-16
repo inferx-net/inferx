@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.1.5.beta42
+VERSION := v0.1.5.beta45
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -165,7 +165,7 @@ runkblob:
 	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
 stopall:
-	sudo kubectl delete all --all 
+	kubectl delete all --all 
 
 rundash:
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
@@ -246,8 +246,8 @@ runallcw:
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/ixproxy-cw.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s/nodeagent-cw.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
