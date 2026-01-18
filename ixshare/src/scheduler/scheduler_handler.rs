@@ -4588,6 +4588,12 @@ impl SchedulerHandler {
             serde_json::to_string(&nodeStatus.available).unwrap_or_default()
         );
 
+        // Step 9: Clean up pendingSnapshots for this node
+        let funcIds: Vec<String> = self.pendingsnapshots.keys().cloned().collect();
+        for funcId in funcIds {
+            self.RemovePendingSnapshot(&funcId, nodename);
+        }
+
         Ok(())
     }
 
@@ -4603,6 +4609,40 @@ impl SchedulerHandler {
         total_removed
     }
 
+    /// Clean up funcStatus.pendingPods and funcStatus.stoppingPods for a node
+    /// Must be called before removing or clearing nodeStatus
+    fn CleanFuncStatusForNode(&mut self, nodename: &str) {
+        if let Some(nodeStatus) = self.nodes.get(nodename) {
+            // Collect pod keys and their funcIds from nodeStatus.pendingPods
+            let pending_pods: Vec<(String, String)> = nodeStatus
+                .pendingPods
+                .iter()
+                .map(|(pod_key, pending_pod)| (pod_key.clone(), pending_pod.funcId.clone()))
+                .collect();
+
+            // Collect pod keys from nodeStatus.stoppingPods (need to look up funcId from pods)
+            let stopping_pods: Vec<String> = nodeStatus.stoppingPods.iter().cloned().collect();
+
+            // Remove pending pods from funcStatus
+            for (pod_key, func_id) in pending_pods {
+                if let Some(funcStatus) = self.funcs.get_mut(&func_id) {
+                    funcStatus.pendingPods.remove(&pod_key);
+                }
+            }
+
+            // Remove stopping pods from funcStatus
+            for pod_key in stopping_pods {
+                // Look up funcId from nodeStatus.pods
+                if let Some(worker) = nodeStatus.pods.get(&pod_key) {
+                    let func_id = worker.pod.FuncKey();
+                    if let Some(funcStatus) = self.funcs.get_mut(&func_id) {
+                        funcStatus.stoppingPods.remove(&pod_key);
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn RemoveNode(&mut self, node: Node) -> Result<()> {
         info!("remove node {}", &node.name);
         let key = node.name.clone();
@@ -4615,6 +4655,15 @@ impl SchedulerHandler {
 
         if !self.nodes.contains_key(&key) {
             return Err(Error::NotExist(format!("NodeMgr::Remove {}", key)));
+        }
+
+        // Clean up funcStatus.pendingPods and funcStatus.stoppingPods before removing nodeStatus
+        self.CleanFuncStatusForNode(&key);
+
+        // Clean up pendingSnapshots for this node
+        let funcIds: Vec<String> = self.pendingsnapshots.keys().cloned().collect();
+        for funcId in funcIds {
+            self.RemovePendingSnapshot(&funcId, &key);
         }
 
         self.nodes.remove(&key);
@@ -4651,6 +4700,9 @@ impl SchedulerHandler {
                 self.RemovePod(&wp.pod).await.ok();
             }
         }
+
+        // Clean up funcStatus.pendingPods and funcStatus.stoppingPods before clearing nodeStatus
+        self.CleanFuncStatusForNode(nodename);
 
         let pods = match self.nodes.get(nodename) {
             Some(ns) => ns.pods.clone(),
