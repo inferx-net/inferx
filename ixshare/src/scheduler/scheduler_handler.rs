@@ -2795,7 +2795,11 @@ impl SchedulerHandler {
             if p.pod.object.status.state != PodState::Standby {
                 continue;
             }
-            nodes.insert(p.pod.object.spec.nodename.clone());
+            let nodename = &p.pod.object.spec.nodename;
+            if !self.IsNodeReady(nodename) {
+                continue;
+            }
+            nodes.insert(nodename.clone());
         }
 
         if nodes.len() == 0 {
