@@ -70,9 +70,9 @@ spec:
             valueFrom:
               resourceFieldRef:
                 containerName: ixproxy
-                resource: limits.cpu                            
+                resource: limits.cpu
           - name: ENALBE_BLOB
-            value: "false"                     
+            value: "false"
           resources:
             requests:
               cpu: "1"

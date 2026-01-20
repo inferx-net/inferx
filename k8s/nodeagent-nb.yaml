@@ -193,19 +193,19 @@ spec:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: limits.hugepages-2Mi   
-          - name: CACHE_MEMORY
-            value: "30Gi"
-          - name: ENABLE_2MB_PAGE
-            value: "false"  
-          - name: CONTEXT_OVERHEAD
-            value: "500"         
+          # - name: CACHE_MEMORY
+          #   value: "30Gi"
+          # - name: ENABLE_2MB_PAGE
+          #   value: "false"  
+          # - name: CONTEXT_OVERHEAD
+          #   value: "500"         
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: limits.cpu                            
-          - name: ENALBE_BLOB
-            value: "false"                     
+          # - name: ENALBE_BLOB
+          #   value: "false"                     
           resources:
             requests:
               cpu: "5"
