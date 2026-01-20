@@ -26,7 +26,7 @@ spec:
             initialDelaySeconds: 6    # wait before first probe
             periodSeconds: 10         # ping every 10s
             timeoutSeconds: 2         # fail if no response in 2s
-            failureThreshold: 3
+            failureThreshold: 10
           securityContext:
             privileged: true
             capabilities:
@@ -61,9 +61,9 @@ spec:
           - name: CACHE_MEMORY
             value: "10Gi"
           - name: ENABLE_2MB_PAGE
-            value: "false"  
-          - name: CONTEXT_OVERHEAD
-            value: "2400"   
+            value: "false"
+          - name: RESERVE_MEM_PERCENTAGE
+            value: "12"
           - name: CONTEXT_COUNT
             value: "1"      
           - name: ALLOC_CPU
@@ -75,12 +75,12 @@ spec:
             value: "false"
           resources:
             requests:
-              cpu: "1"
-              memory: "30Gi"              # Regular memory request (RAM)
+              cpu: "5"
+              memory: "20Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "30Gi" 
             limits:
               cpu: "20"
-              memory: "180Gi"              # Regular memory request (RAM)
+              memory: "80Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "30Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:

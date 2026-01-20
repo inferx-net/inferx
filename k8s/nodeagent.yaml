@@ -151,7 +151,7 @@ spec:
         app: nodeagent
     spec:
       nodeSelector:
-        inferx_nodeType: inferx_file      
+        inferx_nodeType: inferx_file
       # initContainers:
       #   - name: wait-for-dependencies
       #     image: busybox
@@ -194,25 +194,25 @@ spec:
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.memory                
+                resource: limits.memory
           - name: ALLOC_MEMORY_2M
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.hugepages-2Mi   
+                resource: limits.hugepages-2Mi
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.cpu                            
+                resource: limits.cpu
           resources:
             requests:
-              cpu: "15"
-              memory: "40Gi"              # Regular memory request (RAM)
+              cpu: "5"
+              memory: "20Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
             limits:
               cpu: "20"
-              memory: "100Gi"              # Regular memory request (RAM)
+              memory: "80Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
