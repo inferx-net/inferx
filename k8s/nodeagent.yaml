@@ -151,7 +151,7 @@ spec:
         app: nodeagent
     spec:
       nodeSelector:
-        inferx_nodeType: inferx_file      
+        inferx_nodeType: inferx_file
       # initContainers:
       #   - name: wait-for-dependencies
       #     image: busybox
@@ -176,6 +176,8 @@ spec:
           env:
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
+          - name: INIT_CUDAHOSTALLOC
+            value: "-1"
           - name: RUN_SERVICE
             value: "NodeAgent"
           - name: ENABLE_COREDUMP
@@ -192,33 +194,25 @@ spec:
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.memory                
+                resource: limits.memory
           - name: ALLOC_MEMORY_2M
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.hugepages-2Mi   
-          - name: CACHE_MEMORY
-            value: "30Gi"
-          - name: ENABLE_2MB_PAGE
-            value: "false"  
-          - name: CONTEXT_OVERHEAD
-            value: "500"         
+                resource: limits.hugepages-2Mi
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
-                resource: limits.cpu                            
-          - name: ENALBE_BLOB
-            value: "false"                     
+                resource: limits.cpu
           resources:
             requests:
-              cpu: "15"
-              memory: "40Gi"              # Regular memory request (RAM)
+              cpu: "5"
+              memory: "20Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
             limits:
               cpu: "20"
-              memory: "100Gi"              # Regular memory request (RAM)
+              memory: "80Gi"              # Regular memory request (RAM)
               # hugepages-2Mi: "60Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:

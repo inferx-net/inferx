@@ -14,7 +14,7 @@ spec:
         app: nodeagent
     spec:
       nodeSelector:
-        inferx_nodeType: inferx_blob      
+        inferx_nodeType: inferx_blob
       containers:
         - name: nodeagent
           image: inferx/inferx_na:${VERSION}
@@ -28,6 +28,8 @@ spec:
           env:
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
+          - name: INIT_CUDAHOSTALLOC
+            value: "-1"
           - name: RUN_SERVICE
             value: "NodeAgent"
           - name: POD_IP
@@ -45,7 +47,7 @@ spec:
               hugepages-2Mi: "1Gi"       # HugePages request
             limits:
               cpu: "20"               
-              memory: "100Gi"              # Regular memory request (RAM)
+              memory: "80Gi"              # Regular memory request (RAM)
               hugepages-2Mi: "1Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
@@ -144,7 +146,7 @@ spec:
         app: nodeagent
     spec:
       nodeSelector:
-        inferx_nodeType: inferx_file      
+        inferx_nodeType: inferx_file
       # initContainers:
       #   - name: wait-for-dependencies
       #     image: busybox
@@ -193,19 +195,19 @@ spec:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: limits.hugepages-2Mi   
-          - name: CACHE_MEMORY
-            value: "30Gi"
-          - name: ENABLE_2MB_PAGE
-            value: "false"  
-          - name: CONTEXT_OVERHEAD
-            value: "500"         
+          # - name: CACHE_MEMORY
+          #   value: "30Gi"
+          # - name: ENABLE_2MB_PAGE
+          #   value: "false"  
+          # - name: CONTEXT_OVERHEAD
+          #   value: "500"         
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: limits.cpu                            
-          - name: ENALBE_BLOB
-            value: "false"                     
+          # - name: ENALBE_BLOB
+          #   value: "false"                     
           resources:
             requests:
               cpu: "5"

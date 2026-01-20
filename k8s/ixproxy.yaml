@@ -57,11 +57,9 @@ spec:
                 containerName: ixproxy
                 resource: limits.hugepages-2Mi   
           - name: CACHE_MEMORY
-            value: "25Gi"
+            value: "10Gi"
           - name: ENABLE_2MB_PAGE
-            value: "true"  
-          - name: CONTEXT_OVERHEAD
-            value: "800"   
+            value: "false"  
           - name: RESERVE_MEM_PERCENTAGE
             value: "12"
           - name: CONTEXT_COUNT
@@ -70,18 +68,18 @@ spec:
             valueFrom:
               resourceFieldRef:
                 containerName: ixproxy
-                resource: limits.cpu                            
+                resource: limits.cpu
           - name: ENALBE_BLOB
-            value: "true"                     
+            value: "false"
           resources:
             requests:
               cpu: "5"
-              memory: "30Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "30Gi" 
+              memory: "20Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "30Gi" 
             limits:
               cpu: "20"
-              memory: "180Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "30Gi" 
+              memory: "80Gi"              # Regular memory request (RAM)
+              # hugepages-2Mi: "30Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
@@ -94,8 +92,8 @@ spec:
             #   name: opt-inferx
             # - mountPath: /opt/inferx/config
             #   name: opt-inferx-config
-            - mountPath: /opt/inferx/bin
-              name: opt-inferx-bin
+            # - mountPath: /opt/inferx/bin
+            #   name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
@@ -153,7 +151,6 @@ spec:
           hostPath:
             path: /opt/inferx/run
         - name: shm
-          emptyDir:
-            medium: Memory
-            sizeLimit: 30Gi 
+          hostPath:
+            path: /dev/shm
       restartPolicy: Always
