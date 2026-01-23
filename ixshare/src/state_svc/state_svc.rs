@@ -123,7 +123,6 @@ impl StateSvc {
         };
 
         svc.factory.AddEventHandler(Arc::new(svc.clone())).await?;
-        error!("StateSvc new 7");
         return Ok(svc);
     }
 
@@ -721,7 +720,6 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
     )
     .await?;
 
-    error!("StateService 1");
     let nodeagentAggrStore = IxAggrStore::New(&stateSvc.svcDir.ChannelRev()).await?;
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.NodeStore());
     stateSvc.svcDir.AddCacher(nodeagentAggrStore.PodStore());
@@ -730,12 +728,10 @@ pub async fn StateService(notify: Option<Arc<Notify>>) -> Result<()> {
         .AddCacher(nodeagentAggrStore.SnapshotStore());
     let nodeagentAggrStoreFuture = nodeagentAggrStore.Process();
     let stateSvcAddr = format!("0.0.0.0:{}", STATESVC_CONFIG.stateSvcPort);
-    error!("StateService 2");
     let stateSvcFuture = Server::builder()
         .add_service(IxMetaServiceServer::new(stateSvc.clone()))
         .add_service(ReqWatchingServiceServer::new(stateSvc.clone()))
         .serve(stateSvcAddr.parse().unwrap());
-    error!("StateService 3");
     match notify {
         Some(n) => {
             n.notify_waiters();

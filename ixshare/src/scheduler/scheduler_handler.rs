@@ -83,7 +83,7 @@ use super::scheduler::WorkerPod;
 lazy_static::lazy_static! {
     pub static ref PEER_MGR: PeerMgr = {
         let cidrStr = "0.0.0.0"; // we don't need this for scheduler
-        error!("PEER_MGR cidr {}", cidrStr);
+        info!("PEER_MGR cidr {}", cidrStr);
         let ipv4 = ipnetwork::Ipv4Network::from_str(&cidrStr).unwrap();
         //let localIp = local_ip_address::local_ip().unwrap();
         let pm = PeerMgr::New(ipv4.prefix() as _, ipv4.network());
@@ -246,7 +246,7 @@ impl NodeStatus {
         if pendingExist || exist {
             self.FreeResource(resources, podKey)?;
             if stopping {
-                info!("Freed resources for stopping pod {} on deletion", podKey);
+                trace!("Freed resources for stopping pod {} on deletion", podKey);
             }
         }
 
@@ -269,7 +269,7 @@ impl NodeStatus {
         // This would catch bugs while still allowing legitimate temporary negatives.
 
         let res = self.available.Alloc(req, createSnapshot)?;
-        info!(
+        trace!(
             "AllocResource node={} action={} owner={} allocated={} available_after={}",
             self.available.nodename,
             action,
@@ -300,7 +300,7 @@ impl NodeStatus {
         //   }
 
         self.available.Add(free)?;
-        info!(
+        trace!(
             "FreeResource node={} pod={} freed={} available_after={}",
             self.available.nodename,
             podkey,
@@ -515,7 +515,7 @@ impl FuncStatus {
                                     .get_or_create(&nodelabel)
                                     .set(cnt as i64);
 
-                                info!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
+                                trace!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
                                 break;
                             }
                             Err(_) => (), // if no gateway are waiting ...
@@ -990,7 +990,7 @@ impl SchedulerHandler {
                 // Pod will become Ready via Kubernetes informer event later
                 // Standby resources will be freed when Ready event arrives
                 // Don't free standby here to avoid double-free
-                info!(
+                trace!(
                     "ResumeWorker RPC succeeded for pod {} - waiting for Ready event to free standby allocation",
                     pod_key
                 );
@@ -1222,7 +1222,7 @@ impl SchedulerHandler {
         match result {
             Ok(()) => {
                 // RPC succeeded - pod will become Ready via informer event
-                info!(
+                trace!(
                     "StartWorker RPC succeeded for {:?} pod {} - waiting for Ready event",
                     create_type, podkey
                 );
@@ -1245,7 +1245,7 @@ impl SchedulerHandler {
                         // Free allocated resources
                         nodeStatus.FreeResource(resources, podkey)?;
 
-                        info!(
+                        trace!(
                             "Freed resources for failed pod {} on node {}, will retry via task queue",
                             podkey, nodename
                         );
@@ -1383,7 +1383,7 @@ impl SchedulerHandler {
                             .get_or_create(&nodelabel)
                             .set(cnt as i64);
 
-                        error!(
+                        trace!(
                             "user GPU desc timeout {:?} {} {}",
                             &worker.pod.object.spec.funcname, gpuCnt, cnt
                         );
@@ -1530,7 +1530,7 @@ impl SchedulerHandler {
 
         for worker in &pods {
             let pod = &worker.pod;
-            error!(
+            trace!(
                 "ProcessLeaseWorkerReq pod {:?} state {:?}",
                 pod.PodKey(),
                 worker.State()
@@ -1540,7 +1540,7 @@ impl SchedulerHandler {
                 let podKey = worker.pod.PodKey();
                 let remove = self.idlePods.pop(&podKey).is_some();
                 assert!(remove);
-                error!("ProcessLeaseWorkerReq using idlepod work {:?}", &podKey);
+                trace!("ProcessLeaseWorkerReq using idlepod work {:?}", &podKey);
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -1583,7 +1583,7 @@ impl SchedulerHandler {
                     .get_or_create(&nodelabel)
                     .set(cnt as i64);
 
-                error!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
+                trace!("user GPU inc {:?} {} {}", &req.funcname, gpuCnt, cnt);
                 let resp = na::LeaseWorkerResp {
                     error: String::new(),
                     id: pod.object.spec.id.clone(),
@@ -1723,7 +1723,7 @@ impl SchedulerHandler {
             .get_or_create(&nodelabel)
             .set(cnt as i64);
 
-        error!("user GPU desc {:?} {} {}", &req.funcname, gpuCnt, cnt);
+        trace!("user GPU desc {:?} {} {}", &req.funcname, gpuCnt, cnt);
         // in case the gateway dead and recover and try to return an out of date pod
         // assert!(
         //     !worker.State().IsIdle(),
@@ -2310,7 +2310,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.CheckNodeEpoch(&snapshot.object.nodename, snapshot.srcEpoch).await;
-                                    error!("get new snapshot {}", snapshot.StoreKey());
+                                    info!("get new snapshot {}", snapshot.StoreKey());
                                     self.AddSnapshot(&snapshot)?;
                                 }
                                 FuncPolicy::KEY => {
@@ -2351,7 +2351,7 @@ impl SchedulerHandler {
                                     // Check if this is a NodeAgentReady transition
                                     let old_state = self.nodes.get(&nodename).map(|ns| ns.state);
 
-                                    error!("Update node {:?}", &node);
+                                    info!("Update node {:?}", &node);
                                     self.UpdateNode(node.clone())?;
 
                                     // If NodeAgent just became ready, trigger reconciliation
@@ -2367,7 +2367,7 @@ impl SchedulerHandler {
                                 ContainerSnapshot::KEY => {
                                     let snapshot = FuncSnapshot::FromDataObject(obj)?;
                                     self.UpdateSnapshot(&snapshot)?;
-                                    error!("UpdateSnapshot snapshot {} state: {:?}", snapshot.StoreKey(), &snapshot);
+                                    info!("UpdateSnapshot snapshot {} state: {:?}", snapshot.StoreKey(), &snapshot);
                                 }
                                 FuncPolicy::KEY => {
                                     let policy = FuncPolicy::FromDataObject(obj)?;
@@ -2661,7 +2661,7 @@ impl SchedulerHandler {
 
             let state = nr.CanAlloc(&req, createSnapshot);
             if state.Ok() {
-                info!(
+                trace!(
                     "FindNode4Pod 1 for resuming func {:?} with nr {:#?}",
                     func.Id(),
                     &nr
@@ -2680,7 +2680,7 @@ impl SchedulerHandler {
         let mut nodeResource: NodeResources = NodeResources::default();
 
         // try to simulate killing idle pods and see whether can find good node
-        info!(
+        trace!(
             "FindNode4Pod 2 for resuming func {:?} with idle pods {:#?} nodeSnapshots is {:#?}",
             func.Id(),
             &self.idlePods,
@@ -2706,7 +2706,7 @@ impl SchedulerHandler {
                             }
 
                             workids.push(pod.clone());
-                            info!(
+                            trace!(
                                 "FindNode4Pod 2 for resuming 2 func {:?} with idle pod {:#?}",
                                 func.Id(),
                                 podKey,
@@ -2737,7 +2737,7 @@ impl SchedulerHandler {
 
         for podKey in &missWorkers {
             self.idlePods.pop(podKey);
-            error!("FindNode4Pod remove idlepod missing {:?}", &podKey);
+            info!("FindNode4Pod remove idlepod missing {:?}", &podKey);
         }
 
         if findnodeName.is_none() {
@@ -3234,7 +3234,7 @@ impl SchedulerHandler {
             }
         }
 
-        info!("TryCreateSnapshotOnNode: proceeding to create snapshot for func {} on node {}", funcId, nodename);
+        trace!("TryCreateSnapshotOnNode: proceeding to create snapshot for func {} on node {}", funcId, nodename);
 
         let func = match self.funcs.get(funcId) {
             None => return Ok(()),
@@ -3630,7 +3630,7 @@ impl SchedulerHandler {
             resourceQuota = nodeStatus.ReadyResourceQuota(&function.object.spec.resources)?;
             nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
 
-            info!(
+            trace!(
                 "Before CreateStandby RPC for func {} on node {} allocated standby resource {}, node available is {:#?}",
                 funcId,
                 nodename,
@@ -3689,7 +3689,7 @@ impl SchedulerHandler {
             .unwrap()
             .AddPendingPod(&pendingPod)?;
 
-        info!(
+        trace!(
             "CreateStandby RPC spawned for func {} on node {}, pod {}, waiting for completion",
             funcId, nodename, podKey
         );
@@ -3835,7 +3835,7 @@ impl SchedulerHandler {
             terminatePods.push(w.pod.PodKey());
         }
 
-        info!(
+        trace!(
             "ResumePod pod {} with terminating {:#?}",
             pod.pod.PodKey(),
             &terminatePods
@@ -3899,7 +3899,7 @@ impl SchedulerHandler {
             // Reserve ready allocation (standby stays allocated until RPC succeeds)
             nodeStatus.available.Sub(&resources)?;
 
-            info!(
+            trace!(
                 "Before ResumePod RPC for pod {} reserved {} ready (standby {} remains allocated), node available is {:#?}",
                 pod.pod.PodKey(),
                 serde_json::to_string(&resources).unwrap_or_default(),
@@ -4417,7 +4417,7 @@ impl SchedulerHandler {
             return Err(Error::NotExist(format!("NodeMgr::UpdateNode {}", nodeName)));
         }
 
-        error!("UpdateNode the node is {:#?}", &node);
+        info!("UpdateNode the node is {:#?}", &node);
 
         let ns = self.nodes.get_mut(&nodeName).unwrap();
         ns.state = node.object.state;
@@ -4845,7 +4845,7 @@ impl SchedulerHandler {
             .insert(podKey.clone(), boxPod.clone())
             .expect("UpdatePod get none old pod");
 
-        error!(
+        trace!(
             "Updatepad pod {}, state {:?}, old work state {:?}",
             &podKey,
             &boxPod.pod.object.status.state,
@@ -4884,7 +4884,7 @@ impl SchedulerHandler {
                     let standbyResource = oldPod.pod.object.spec.allocResources.clone();
 
                     nodeStatus.available.Add(&standbyResource)?;
-                    info!(
+                    trace!(
                         "Pod {} transitioned Standby→Resuming, freed standby allocation {}",
                         podKey,
                         serde_json::to_string(&standbyResource).unwrap_or_default()
@@ -4950,7 +4950,7 @@ impl SchedulerHandler {
                             .get_or_create(&nodelabel)
                             .set(cnt as i64);
 
-                        error!(
+                        trace!(
                             "user GPU desc fail pod {:?} {} {}",
                             &worker.pod.object.spec.funcname, gpuCnt, cnt
                         );
@@ -5094,6 +5094,8 @@ impl SchedulerHandler {
         }
 
         self.funcs.remove(&key);
+        self.funcPods.remove(&key);
+        self.funcstatus.remove(&key); 
 
         // Clean up pending snapshots for this function
         self.pendingsnapshots.remove(&key);
@@ -5150,7 +5152,7 @@ pub async fn GetClientWithRetry() -> Result<CacherClient> {
     for attempt in 1..=max_retries {
         match CacherClient::New(addr[0].clone()).await {
             Ok(client) => {
-                error!(
+                info!(
                     "Connected to state service at {} after {} attempt(s)",
                     addr[0], attempt
                 );

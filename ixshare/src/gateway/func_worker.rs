@@ -439,7 +439,7 @@ impl FuncWorker {
         };
         let leaseLatency = start.elapsed().as_millis();
         if !resp.keepalive {
-            error!("cold start latency {:?}/{}", &labels, leaseLatency);
+            trace!("cold start latency {:?}/{}", &labels, leaseLatency);
             GATEWAY_METRICS
                 .lock()
                 .await

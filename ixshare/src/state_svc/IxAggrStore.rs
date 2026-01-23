@@ -193,19 +193,19 @@ impl EventHandler for IxAggrStore {
 
                     let stateSvcPort: u16 = node.object.stateSvcPort;
                     let stateSvcAddr = format!("http://{}:{}", &node.object.nodeIp, stateSvcPort);
-                    error!("IxAggrStore::handle [AFTER_INIT] Added node: name={} ip={} port={} revision={} channelRev={}",
+                    info!("IxAggrStore::handle [AFTER_INIT] Added node: name={} ip={} port={} revision={} channelRev={}",
                         &node.name, &node.object.nodeIp, stateSvcPort, obj.revision, obj.channelRev);
                     self.AddIxAgent(&node.name, &stateSvcAddr).unwrap();
                 }
                 EventType::Deleted => {
                     let obj = event.oldObj.as_ref().unwrap();
                     let node = obj.To::<NodeSpec>().unwrap();
-                    error!("IxAggrStore::handle [AFTER_INIT] Deleted node: name={} ip={} revision={} channelRev={}",
+                    info!("IxAggrStore::handle [AFTER_INIT] Deleted node: name={} ip={} revision={} channelRev={}",
                         &node.name, &node.object.nodeIp, obj.revision, obj.channelRev);
                     self.RemoveIxAgent(&node.name).unwrap();
                 }
                 _ => {
-                    error!("IxAggrStore::handle get unexpect event {:#?}", event);
+                    info!("IxAggrStore::handle get event {:#?}", event);
                 }            }
         } else {
             match &event.type_ {
@@ -220,7 +220,7 @@ impl EventHandler for IxAggrStore {
                     let stateSvcAddr =
                         format!("http://{}:{}", &nodeInfo.object.nodeIp, stateSvcPort);
 
-                    error!("IxAggrStore::handle [DURING_INIT] Added node: name={} ip={} port={} revision={} channelRev={} inInitialList={}",
+                    info!("IxAggrStore::handle [DURING_INIT] Added node: name={} ip={} port={} revision={} channelRev={} inInitialList={}",
                         &nodeInfo.name, &nodeInfo.object.nodeIp, stateSvcPort, obj.revision, obj.channelRev, event.inInitialList);
                     let mut notifies = self.AddIxAgent(&nodeInfo.name, &stateSvcAddr).unwrap();
                     self.lock().unwrap().notifies.append(&mut notifies);
@@ -233,16 +233,16 @@ impl EventHandler for IxAggrStore {
                         &obj.object
                     ));
 
-                    error!("IxAggrStore::handle [DURING_INIT] Deleted node: name={} ip={} revision={} channelRev={} inInitialList={}",
+                    info!("IxAggrStore::handle [DURING_INIT] Deleted node: name={} ip={} revision={} channelRev={} inInitialList={}",
                         &nodeInfo.name, &nodeInfo.object.nodeIp, obj.revision, obj.channelRev, event.inInitialList);
                     self.RemoveIxAgent(&nodeInfo.name).unwrap();
                 }
                 EventType::InitDone => {
-                    error!("IxAggrStore::handle [INIT_DONE] InitList completed, starting watch");
+                    info!("IxAggrStore::handle [INIT_DONE] InitList completed, starting watch");
                     self.lock().unwrap().listNotify.notify_waiters();
                 }
                 _ => {
-                    error!("IxAggrStore::handle get unexpect event {:#?}", event);
+                    info!("IxAggrStore::handle get event {:#?}", event);
                 },
             }
         }
