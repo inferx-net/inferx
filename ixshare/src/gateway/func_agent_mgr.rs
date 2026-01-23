@@ -471,7 +471,7 @@ impl FuncAgent {
             self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
             if self.NeedNewWorker().await {
                 if throttle.TryAcquire().await {
-                    error!(
+                    trace!(
                         "create new worker {} activereqcnt {} waitreqcnt {}",
                         self.FuncKey(),
                         self.ActiveReqCnt(),
@@ -532,7 +532,7 @@ impl FuncAgent {
                                 // Spawn background retry to return worker to scheduler
                                 Self::spawn_return_worker_retry(worker.clone(), true);
 
-                                info!("Spawned background retry for WorkerFail: {}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
+                                trace!("Spawned background retry for WorkerFail: {}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 // Remove from local tracking immediately to prevent reuse
@@ -541,7 +541,7 @@ impl FuncAgent {
                                 // Spawn background retry to return worker to scheduler
                                 Self::spawn_return_worker_retry(worker.clone(), false);
 
-                                info!("Spawned background retry for IdleTimeout: {}/{:?}", worker.WorkerName(), worker.id);
+                                trace!("Spawned background retry for IdleTimeout: {}/{:?}", worker.WorkerName(), worker.id);
                             }
                             WorkerUpdate::WorkerLeaseFail((worker, e)) => {
                                 error!("Worker lease fail, worker: {}, error: {:?}", worker.WorkerName(), e);
@@ -660,7 +660,7 @@ impl FuncAgent {
             loop {
                 match worker.ReturnWorker(failworker).await {
                     Ok(()) => {
-                        info!(
+                        trace!(
                         "Worker {}/{}/{} (podId: {}) successfully returned to scheduler after {} retries",
                         worker.tenant,
                         worker.namespace,
