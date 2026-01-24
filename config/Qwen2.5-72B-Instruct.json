@@ -84,7 +84,7 @@
                 "Link": {
                     "objType": "funcpolicy",
                     "namespace": "system",
-                    "name": "funcpolicy_4GPU_sync"
+                    "name": "funcpolicy_4GPU"
                 }
             }
         }
