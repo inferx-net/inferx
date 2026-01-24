@@ -20,6 +20,7 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
+use core::panic;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
@@ -1107,7 +1108,7 @@ impl SchedulerHandler {
                     "Pod {} RPC failed, not rolling back - pod state will be determined by Kubernetes events. \
                     Pod state: Resuming, {} terminated pods marked as Terminating",
                     pod_key,
-                    terminated_pod_keys.len()
+                    terminated_pod_keys.join(", ")
                 );
 
                 // Don't rollback:
@@ -1126,7 +1127,15 @@ impl SchedulerHandler {
                 // - TODO: Reconciliation loop will detect stuck pod and retry or clean up
                 // - Resources stay reserved until reconciliation fixes it
 
-                Ok(())
+                // TODO: panic for now, handle later
+                panic!(
+                    "Critical error: Cannot safely restore pod {} after ResumeWorker RPC failure. \
+                    Terminated pods: {}. This indicates a data consistency issue. Scheduler state is inconsistent and must be restarted.",
+                    pod_key,
+                    terminated_pod_keys.join(", ")
+                );
+
+                // Ok(())
             }
         }
     }
@@ -1327,9 +1336,9 @@ impl SchedulerHandler {
                 }
 
                 // Other errors (not safe to restore - RPC might have been processed)
-                error!(
-                    "StartWorker RPC failed for {:?} pod {}: {:?} - not safe to restore, cleanup may be needed",
-                    create_type, podkey, e
+                panic!(
+                    "StartWorker RPC failed for {:?} pod {} while terminating {}: {:?} - not safe to restore, cleanup may be needed",
+                    create_type, podkey, terminated_pod_keys.join(", "), e
                 );
 
                 // For other errors:
@@ -1337,7 +1346,7 @@ impl SchedulerHandler {
                 // - Other failures will be handled by reconciliation or pod events
                 // Don't clean up here as the pod might actually succeed later
 
-                Ok(())
+                // Ok(())
             }
         }
     }
@@ -3835,12 +3844,6 @@ impl SchedulerHandler {
             terminatePods.push(w.pod.PodKey());
         }
 
-        trace!(
-            "ResumePod pod {} with terminating {:#?}",
-            pod.pod.PodKey(),
-            &terminatePods
-        );
-
         // Track pods marked for termination - don't free their resources yet
         // Resources will be freed when the resume pod becomes Ready or fails
         for worker in &terminateWorkers {
@@ -3907,6 +3910,12 @@ impl SchedulerHandler {
                 &nodeStatus.available
             );
         }
+
+        info!(
+            "ResumePod pod {} with terminating {:#?}",
+            pod.pod.PodKey(),
+            &terminatePods
+        );
 
         // 3. Track pending pod
         let podKey = FuncPod::FuncPodKey(
