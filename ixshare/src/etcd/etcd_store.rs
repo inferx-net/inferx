@@ -289,7 +289,7 @@ impl EtcdStore {
         } else {
             match &resp.op_responses()[0] {
                 TxnOpResponse::Put(getresp) => {
-                    error!("EtcdStore::Create key created {}", preparedKey);
+                    info!("EtcdStore::Create key created {}", preparedKey);
                     let actualRev = getresp.header().unwrap().revision();
                     return Ok(obj.CopyWithRev(actualRev, actualRev));
                 }

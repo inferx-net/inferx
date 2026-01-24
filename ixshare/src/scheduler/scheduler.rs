@@ -316,7 +316,7 @@ impl WorkerPod {
     }
 
     pub fn SetIdle(&self, src: SetIdleSource) {
-        error!(
+        trace!(
             "Set pod {} Idle from {:?} src {:?}",
             self.pod.PodKey(),
             self.State(),
@@ -326,7 +326,7 @@ impl WorkerPod {
     }
 
     pub fn SetWorking(&self, gatewayId: i64) {
-        error!("Set pod {} working", self.pod.PodKey());
+        trace!("Set pod {} working", self.pod.PodKey());
         match *self.workerState.lock().unwrap() {
             WorkerPodState::Working(oldgatewayId) => {
                 error!(

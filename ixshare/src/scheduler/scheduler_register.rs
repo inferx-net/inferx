@@ -145,7 +145,7 @@ impl SchedulerRegister {
             }
 
             self.WaitForLeaderLoss().await?;
-            error!("lead scheduler loss {:?}", &self.info);
+            warn!("lead scheduler loss {:?}", &self.info);
         }
     }
 

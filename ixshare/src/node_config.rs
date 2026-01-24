@@ -320,7 +320,7 @@ impl SchedulerConfig {
             auditdbAddr: auditdbAddr,
         };
 
-        error!("SchedulerConfig is {:#?}", &ret);
+        info!("SchedulerConfig is {:#?}", &ret);
 
         return ret;
     }
@@ -367,7 +367,7 @@ impl StateSvcConfig {
             auditdbAddr: auditdbAddr,
         };
 
-        error!("StateSvcConfig is {:#?}", &ret);
+        info!("StateSvcConfig is {:#?}", &ret);
 
         return ret;
     }
@@ -566,7 +566,7 @@ impl NodeAgentConfig {
                 }
             }
             Err(_) => {
-                error!("missing CACHE_MEMORY environment variable");
+                warn!("missing CACHE_MEMORY environment variable");
                 20 * 1024
             }
         };

@@ -416,7 +416,7 @@ impl Informer {
 
         let watch_start_rev = self.revision.load(Ordering::Acquire);
         if self.objType == "node" {
-            error!("Informer::Process [{}] InitList done, starting WatchUpdate from revision {}",
+            info!("Informer::Process [{}] InitList done, starting WatchUpdate from revision {}",
                 self.objType, watch_start_rev);
         }
 
