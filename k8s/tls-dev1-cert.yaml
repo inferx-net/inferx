@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dev1-inferx-net
+  namespace: default          # change to the namespace your ingress lives in
+spec:
+  secretName: dev1-inferx-net-tls
+  dnsNames:
+    - dev1.inferx.net
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer

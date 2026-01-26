@@ -10,8 +10,36 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/proxy-chunked: "on"
 spec:
+  tls:
+    - hosts:
+        - dev1.inferx.net
+      secretName: dev1-inferx-net-tls
   rules:
-    - http:
+    - host: dev1.inferx.net
+      http:
+        paths:
+          - path: /funccall/
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 4000
+          - path: /authn/
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: inferx-dashboard
+                port:
+                  number: 1250
+    - http:  # Direct IP access (no TLS)
         paths:
           - path: /funccall/
             pathType: Prefix
