@@ -28,7 +28,7 @@ spec:
             - name: KEYCLOAK_CLIENT_ID
               value: "infer_client"
             - name: KEYCLOAK_CLIENT_SECRET
-              value: "M2Dse5531tdtyipZdGizLEeoOVgziQRX"
+              value: "8gviEC1wWF4Ncbwx4Car9PqqH5kWG17u"
             - name: INFERX_APIGW_ADDR
               value: "http://gateway:4000"
           volumeMounts:

@@ -137,7 +137,7 @@ def not_require_login(func):
             return func(*args, **kwargs)
 
         current_path = request.url
-        redirect_uri = url_for('login', redirectpath=current_path, _external=True)
+        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -150,7 +150,7 @@ def require_login(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         current_path = request.url
-        redirect_uri = url_for('login', redirectpath=current_path, _external=True)
+        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -164,7 +164,7 @@ def login():
     nonce = generate_token(20)
     session['keycloak_nonce'] = nonce
     redirectpath=request.args.get('redirectpath', '')
-    redirect_uri = url_for('auth_callback', redirectpath=redirectpath,  _external=True)
+    redirect_uri = url_for('prefix.auth_callback', redirectpath=redirectpath,  _external=True)
     return keycloak.authorize_redirect(
         redirect_uri=redirect_uri,
         nonce=nonce  # Pass nonce to Keycloak
@@ -190,7 +190,7 @@ def auth_callback():
         session['id_token'] = token.get('id_token')
 
         if redirectpath=='':
-            return redirect(url_for('ListFunc'))
+            return redirect(url_for('prefix.ListFunc'))
         return redirect(redirectpath)
     except Exception as e:
         return f"Authentication failed: {str(e)}", 403
@@ -209,7 +209,7 @@ def logout():
     # # Redirect to Keycloak to clear SSO session
     return redirect(
         f"{end_session_endpoint}?"
-        f"post_logout_redirect_uri={url_for('ListFunc', _external=True)}&"
+        f"post_logout_redirect_uri={url_for('prefix.ListFunc', _external=True)}&"
         f"id_token_hint={id_token}"
     )
 
@@ -824,8 +824,6 @@ def GetFunc():
         path=sample["path"]
     )
 
-
-# @app.route("/demo/")
 @prefix_bp.route("/listnode")
 @not_require_login
 def ListNode():
