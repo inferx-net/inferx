@@ -22,7 +22,7 @@ use crate::{
 use super::{
     auth_layer::{AccessToken, GetTokenCache},
     gw_obj_repo::{FuncBrief, FuncDetail},
-    http_gateway::HttpGateway,
+    http_gateway::{HttpGateway, ObjectType, PermissionType, UserRole},
 };
 
 impl HttpGateway {
@@ -49,6 +49,309 @@ impl HttpGateway {
             .await?;
 
         return Ok(version);
+    }
+
+    pub async fn Rbac(
+        &self,
+        token: &Arc<AccessToken>,
+        permissionType: &PermissionType,
+        objType: &ObjectType,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match objType {
+            ObjectType::Tenant => {
+                if tenant != "system" || namespace != "system" {
+                    return Err(Error::CommonError(format!(
+                        "invalid tenant or namespace name"
+                    )));
+                }
+
+                match permissionType {
+                    PermissionType::Grant => {
+                        return self.GrantTenantRole(token, name, role, username).await;
+                    }
+                    PermissionType::Revoke => {
+                        return self.RevokeTenantRole(token, name, role, username).await;
+                    }
+                }
+            }
+            ObjectType::Namespace => {
+                if namespace != "system" {
+                    return Err(Error::CommonError(format!(
+                        "invalid tenant or namespace name"
+                    )));
+                }
+
+                match permissionType {
+                    PermissionType::Grant => {
+                        return self
+                            .GrantNamespaceRole(token, tenant, name, role, username)
+                            .await;
+                    }
+                    PermissionType::Revoke => {
+                        return self
+                            .RevokeNamespaceRole(token, tenant, name, role, username)
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn GrantTenantRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenantname: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.tenantMgr.Get("system", "system", tenantname) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get tenant {} with error {:?}",
+                    tenantname, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenantname) {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenantname, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if usertoken.IsTenantAdmin(tenantname) {
+                    return Err(Error::Exist(format!(
+                        "user {} already tenant {} admin",
+                        username, tenantname
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantTenantAdminPermission(&usertoken, tenantname, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if usertoken.IsTenantUser(tenantname) {
+                    return Err(Error::Exist(format!(
+                        "user {} already tenant {} user",
+                        username, tenantname
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantTenantUserPermission(&usertoken, tenantname, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RevokeTenantRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.tenantMgr.Get("system", "system", tenant) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get tenant {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenant) {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if !usertoken.IsTenantAdmin(tenant) {
+                    return Err(Error::NotExist(format!(
+                        "user {} is not tenant {} admin",
+                        username, tenant
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeTenantAdminPermission(&usertoken, tenant, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if !usertoken.IsTenantUser(tenant) {
+                    return Err(Error::NotExist(format!(
+                        "user {} already tenant {} user",
+                        username, tenant
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeTenantUserPermission(token, tenant, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn GrantNamespaceRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get namespace {}/{} with error {:?}",
+                    tenant, namespace, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if usertoken.IsNamespaceAdmin(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} already namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantNamespaceAdminPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if usertoken.IsNamespaceUser(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} already namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantNamespaceUserPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RevokeNamespaceRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get namespace {}/{} with error {:?}",
+                    tenant, namespace, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if !usertoken.IsNamespaceAdmin(tenant, namespace) {
+                    return Err(Error::NotExist(format!(
+                        "user {} is not namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeNamespaceAdminPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if !usertoken.IsNamespaceUser(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} is not namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeNamespaceUserPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
     }
 
     pub async fn UpdateTenant(

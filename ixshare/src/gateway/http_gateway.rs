@@ -118,6 +118,10 @@ impl HttpGateway {
         let auth_layer = NODE_CONFIG.keycloakconfig.AuthLayer();
 
         let app = Router::new()
+            .route(
+                "/rbac/:permissionType/:objType/:tenant/:namespace/:name/:role/:username/",
+                get(Rbac),
+            )
             .route("/apikey/", get(GetApikeys))
             .route("/apikey/", put(CreateApikey))
             .route("/apikey/", delete(DeleteApikey))
@@ -182,10 +186,7 @@ impl HttpGateway {
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
             .route("/metrics", get(GetMetrics))
-            .route(
-                "/debug/trace_logging/:state",
-                post(SetTraceLogging),
-            )
+            .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
@@ -1627,6 +1628,72 @@ async fn GetNode(
         Ok(list) => {
             let data = serde_json::to_string_pretty(&list).unwrap();
             let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")] // This matches "grant" in URL to PermissionType::Grant
+pub enum PermissionType {
+    Grant,
+    Revoke,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ObjectType {
+    Tenant,
+    Namespace,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+async fn Rbac(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((permissionType, objType, tenant, namespace, name, role, username)): Path<(
+        PermissionType,
+        ObjectType,
+        String,
+        String,
+        String,
+        UserRole,
+        String,
+    )>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .Rbac(
+            &token,
+            &permissionType,
+            &objType,
+            &tenant,
+            &namespace,
+            &name,
+            role,
+            &username,
+        )
+        .await
+    {
+        Ok(()) => {
+            let body = Body::from(format!("{}", "rbac successfully"));
             let resp = Response::builder()
                 .status(StatusCode::OK)
                 .body(body)
