@@ -41,6 +41,7 @@ use tokio::sync::Notify;
 lazy_static::lazy_static! {
     pub static ref POD_AUDIT_AGENT: PodAuditAgent = PodAuditAgent::New();
     pub static ref REQ_AUDIT_AGENT: ReqAuditAgent = ReqAuditAgent::New();
+    pub static ref GPU_USAGE_AGENT: GpuUsageAuditAgent = GpuUsageAuditAgent::New();
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +368,126 @@ impl ReqAuditAgent {
     }
 }
 
+/// GPU Usage record for billing
+#[derive(Debug, Clone)]
+pub struct GpuUsage {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub fprevision: i64,
+    pub nodename: String,
+    pub pod_id: String,
+
+    // GPU resource info
+    pub gpu_type: String,
+    pub gpu_count: i32,
+    pub vram_mb: i64,
+    pub total_vram_mb: i64,
+
+    // Usage tracking
+    pub usage_type: String, // "request" or "snapshot"
+    pub start_time: chrono::DateTime<chrono::Utc>,
+    pub end_time: chrono::DateTime<chrono::Utc>,
+    pub duration_ms: i64,
+
+    pub is_coldstart: bool,
+    pub gateway_id: Option<i64>,
+}
+
+#[derive(Debug)]
+pub struct GpuUsageAuditAgentInner {
+    pub closeNotify: Arc<Notify>,
+    pub stop: AtomicBool,
+    pub tx: mpsc::Sender<GpuUsage>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GpuUsageAuditAgent(Arc<GpuUsageAuditAgentInner>);
+
+impl Deref for GpuUsageAuditAgent {
+    type Target = Arc<GpuUsageAuditAgentInner>;
+
+    fn deref(&self) -> &Arc<GpuUsageAuditAgentInner> {
+        &self.0
+    }
+}
+
+impl GpuUsageAuditAgent {
+    pub fn New() -> Self {
+        let (tx, rx) = mpsc::channel::<GpuUsage>(300);
+
+        let inner = GpuUsageAuditAgentInner {
+            closeNotify: Arc::new(Notify::new()),
+            stop: AtomicBool::new(false),
+            tx: tx,
+        };
+
+        let agent = GpuUsageAuditAgent(Arc::new(inner));
+        let agent1 = agent.clone();
+
+        tokio::spawn(async move {
+            agent1.Process(rx).await.unwrap();
+        });
+
+        return agent;
+    }
+
+    pub fn Close(&self) -> Result<()> {
+        self.closeNotify.notify_one();
+        return Ok(());
+    }
+
+    pub fn Audit(&self, msg: GpuUsage) {
+        // Skip if auditdb is not enabled
+        if !Self::Enable() {
+            return;
+        }
+        match self.tx.try_send(msg) {
+            Ok(()) => (),
+            Err(e) => {
+                error!("GpuUsageAuditAgent: fail to send audit log {:?}", &e);
+            }
+        }
+    }
+
+    pub fn Enable() -> bool {
+        return NA_CONFIG.auditdbAddr.len() > 0;
+    }
+
+    pub async fn Process(&self, mut rx: mpsc::Receiver<GpuUsage>) -> Result<()> {
+        let addr = NA_CONFIG.auditdbAddr.clone();
+        info!("GpuUsageAuditAgent: auditdb address {}", &addr);
+        if addr.len() == 0 {
+            // auditdb is not enabled
+            info!("GpuUsageAuditAgent: auditdb is not enabled");
+            return Ok(());
+        }
+        let sqlaudit = SqlAudit::New(&addr).await?;
+
+        loop {
+            tokio::select! {
+                _ = self.closeNotify.notified() => {
+                    self.stop.store(false, Ordering::SeqCst);
+                    break;
+                }
+                msg = rx.recv() => {
+                    if let Some(msg) = msg {
+                        match sqlaudit.CreateGpuUsageRecord(&msg).await {
+                            Ok(()) => (),
+                            Err(e) => {
+                                error!("GpuUsageAuditAgent: fail to create record {:?}", &e);
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlAudit {
     pub pool: PgPool,
@@ -414,6 +535,42 @@ impl SqlAudit {
             .bind(keepalive)
             .bind(ttf)
             .bind(latency)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
+    }
+
+    pub async fn CreateGpuUsageRecord(&self, usage: &GpuUsage) -> Result<()> {
+        let query = r#"
+            INSERT INTO GpuUsage (
+                tenant, namespace, funcname, fprevision, nodename, pod_id,
+                gpu_type, gpu_count, vram_mb, total_vram_mb,
+                usage_type, start_time, end_time, duration_ms,
+                is_coldstart, gateway_id
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10,
+                $11, $12, $13, $14,
+                $15, $16
+            )
+        "#;
+        let _result = sqlx::query(query)
+            .bind(&usage.tenant)
+            .bind(&usage.namespace)
+            .bind(&usage.funcname)
+            .bind(usage.fprevision)
+            .bind(&usage.nodename)
+            .bind(&usage.pod_id)
+            .bind(&usage.gpu_type)
+            .bind(usage.gpu_count)
+            .bind(usage.vram_mb)
+            .bind(usage.total_vram_mb)
+            .bind(&usage.usage_type)
+            .bind(usage.start_time)
+            .bind(usage.end_time)
+            .bind(usage.duration_ms)
+            .bind(usage.is_coldstart)
+            .bind(usage.gateway_id)
             .execute(&self.pool)
             .await?;
         return Ok(());

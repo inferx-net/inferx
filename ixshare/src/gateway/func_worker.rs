@@ -44,9 +44,22 @@ use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
 
-use super::func_agent_mgr::{FuncAgent, IxTimestamp, WorkerUpdate};
+use super::func_agent_mgr::{FuncAgent, IxTimestamp, WorkerUpdate, GW_OBJREPO};
+use super::http_gateway::GatewayId;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use serde_json::json;
+
+/// GPU tracking info for billing
+#[derive(Debug, Clone, Default)]
+pub struct GpuTrackingInfo {
+    pub nodename: String,
+    pub gpu_type: String,
+    pub gpu_count: i32,
+    pub vram_mb: i64,
+    pub total_vram_mb: i64,
+    pub lease_start: Option<std::time::Instant>,
+    pub is_coldstart: bool,
+}
 
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
 pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
@@ -135,6 +148,9 @@ pub struct FuncWorkerInner {
     pub connPool: ConnectionPool,
     pub failCount: AtomicUsize,
     pub perfStat: PerfStat,
+
+    // GPU tracking for billing
+    pub gpuTrackingInfo: Mutex<GpuTrackingInfo>,
 }
 
 impl Drop for FuncWorkerInner {
@@ -224,6 +240,7 @@ impl FuncWorker {
             connPool: connectPool,
             failCount: AtomicUsize::new(0),
             perfStat: PerfStat::default(),
+            gpuTrackingInfo: Mutex::new(GpuTrackingInfo::default()),
         };
 
         let worker = Self(Arc::new(inner));
@@ -469,6 +486,36 @@ impl FuncWorker {
         *self.hostIpaddr.lock().unwrap() = IpAddress(hostipaddr);
         *self.hostport.lock().unwrap() = hostport;
 
+        // Populate GPU tracking info for billing
+        {
+            // Pod name format matches gw_obj_repo.rs GetFuncPod usage
+            let pod_name = format!(
+                "{}/{}/{}/{}/{}",
+                &self.tenant, &self.namespace, &self.funcname, self.fprevision, id
+            );
+            let mut tracking_info = self.gpuTrackingInfo.lock().unwrap();
+            tracking_info.lease_start = Some(std::time::Instant::now());
+            tracking_info.is_coldstart = !keepalive;
+
+            if let Some(obj_repo) = GW_OBJREPO.get() {
+                if let Ok(pod) = obj_repo.GetFuncPod(&self.tenant, &self.namespace, &pod_name) {
+                    tracking_info.nodename = pod.object.spec.nodename.clone();
+                    tracking_info.gpu_type = pod.object.spec.allocResources.gpuType.0.clone();
+                    tracking_info.gpu_count = pod.object.spec.reqResources.gpu.gpuCount as i32;
+                    tracking_info.vram_mb = pod.object.spec.reqResources.gpu.vRam as i64; // already in MB
+                    tracking_info.total_vram_mb = (pod.object.spec.allocResources.gpus.TotalVRam() / 1024 / 1024) as i64;
+                    info!(
+                        "GpuTracking: populated for pod={}, gpu_count={}, gpu_type={}, vram_mb={}, total_vram_mb={}",
+                        pod_name, tracking_info.gpu_count, tracking_info.gpu_type, tracking_info.vram_mb, tracking_info.total_vram_mb
+                    );
+                } else {
+                    info!("GpuTracking: pod not found in cache for {}", pod_name);
+                }
+            } else {
+                info!("GpuTracking: GW_OBJREPO not initialized");
+            }
+        }
+
         self.connPool
             .Init(id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
             .await;
@@ -711,6 +758,43 @@ impl FuncWorker {
             "parallelLevel": self.parallelLevel,
             "state": format!("{:?}", state),
             "keepalive": self.keepalive.load(Ordering::Relaxed),
+        })
+    }
+
+    /// Create GpuUsage record for billing when worker is returned
+    pub fn CreateGpuUsageRecord(&self) -> Option<crate::audit::GpuUsage> {
+        let tracking_info = self.gpuTrackingInfo.lock().unwrap();
+
+        // Skip if lease_start is not set (shouldn't happen in normal flow)
+        let lease_start = tracking_info.lease_start?;
+
+        // Skip if gpu_count is 0 (no GPU used)
+        if tracking_info.gpu_count == 0 {
+            return None;
+        }
+
+        let duration = lease_start.elapsed();
+        let duration_ms = duration.as_millis() as i64;
+        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        let start_time = now - chrono::Duration::milliseconds(duration_ms);
+
+        Some(crate::audit::GpuUsage {
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            fprevision: self.fprevision,
+            nodename: tracking_info.nodename.clone(),
+            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            gpu_type: tracking_info.gpu_type.clone(),
+            gpu_count: tracking_info.gpu_count,
+            vram_mb: tracking_info.vram_mb,
+            total_vram_mb: tracking_info.total_vram_mb,
+            usage_type: "request".to_string(),
+            start_time,
+            end_time: now,
+            duration_ms,
+            is_coldstart: tracking_info.is_coldstart,
+            gateway_id: Some(GatewayId()),
         })
     }
 }
