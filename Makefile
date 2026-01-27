@@ -1,5 +1,5 @@
 ARCH := ${shell uname -m}
-VERSION := v0.2.0
+VERSION := v0.2.0.brad1
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -51,12 +51,12 @@ pushsvc: svcdeploy
 
 pushall: pushsvc pushdb pushdash
 
-ctl:	
-	# the release version has build error
-	OPENSSL_STATIC=1 cargo +stable build --bin ixctl
+ctl:
+	# need to run "cargo install bindgen-cli"
+	OPENSSL_STATIC=1 AWS_LC_SYS_PREGENERATING_BINDINGS=1 cargo +stable build --bin ixctl --release
 	# sudo strip target/debug/ixctl
 	-sudo cp -f ixctl_logging_config.yaml /opt/inferx/config/
-	-sudo cp -f target/debug/ixctl /opt/inferx/bin/
+	-sudo cp -f target/release/ixctl /opt/inferx/bin/
 
 dash:
 	mkdir -p ./target/dashboard
@@ -172,6 +172,13 @@ rundash:
 
 stopdash:
 	sudo kubectl delete deployment inferx-dashboard
+
+stopkeycloak:
+	sudo kubectl delete deployment keycloak
+
+runkeycloak:
+	sudo kubectl apply -f k8s/keycloak.yaml
+
 
 runstatesvc:
 	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
