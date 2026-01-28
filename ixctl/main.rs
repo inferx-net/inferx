@@ -36,6 +36,7 @@ pub mod revoke;
 pub mod roles;
 pub mod tenantusers;
 pub mod update;
+pub mod apikey;
 
 use oauth2::{
     basic::BasicClient, reqwest::async_http_client, AuthUrl, ClientId, ClientSecret,

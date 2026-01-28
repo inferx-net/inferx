@@ -90,10 +90,10 @@ impl SqlSecret {
         return Ok(keys);
     }
 
-    pub async fn DeleteApikey(&self, apikey: &str, username: &str) -> bool {
+    pub async fn DeleteApikey(&self, keyname: &str, username: &str) -> bool {
         let query = format!(
-            "delete from Apikey where apikey = '{}' and username='{}'",
-            apikey, username
+            "delete from Apikey where keyname = '{}' and username='{}'",
+            keyname, username
         );
         let result = sqlx::query(&query).execute(&self.pool).await;
 
@@ -103,7 +103,9 @@ impl SqlSecret {
                 return false;
             }
 
-            Ok(_res) => return true,
+            Ok(res) => {
+                return res.rows_affected() > 0;
+            }
         }
     }
 

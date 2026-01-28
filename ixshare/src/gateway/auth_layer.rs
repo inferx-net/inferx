@@ -546,16 +546,48 @@ impl TokenCache {
         return Ok(newToken);
     }
 
-    pub async fn CreateApikey(&self, username: &str, keyname: &str) -> Result<String> {
+    pub async fn CreateApikey(
+        &self,
+        token: &Arc<AccessToken>,
+        username: &str,
+        keyname: &str,
+    ) -> Result<String> {
+        let username = if username.len() == 0 {
+            token.username.clone()
+        } else if username == &token.username {
+            token.username.clone()
+        } else {
+            if !token.IsInferxAdmin() {
+                return Err(Error::NoPermission);
+            }
+            token.username.clone()
+        };
+
         let apikey = uuid::Uuid::new_v4().to_string();
         self.sqlstore
-            .CreateApikey(&apikey, username, keyname)
+            .CreateApikey(&apikey, &username, keyname)
             .await?;
         return Ok(apikey);
     }
 
-    pub async fn DeleteApiKey(&self, apikey: &str, username: &str) -> Result<bool> {
-        let res = self.sqlstore.DeleteApikey(apikey, username).await;
+    pub async fn DeleteApiKey(
+        &self,
+        token: &Arc<AccessToken>,
+        keyname: &str,
+        username: &str,
+    ) -> Result<bool> {
+        let username = if username.len() == 0 {
+            token.username.clone()
+        } else if username == &token.username {
+            token.username.clone()
+        } else {
+            if !token.IsInferxAdmin() {
+                return Err(Error::NoPermission);
+            }
+            token.username.clone()
+        };
+
+        let res = self.sqlstore.DeleteApikey(keyname, &username).await;
         return Ok(res);
     }
 

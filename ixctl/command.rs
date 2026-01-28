@@ -20,6 +20,7 @@ use inferxlib::common::*;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::apikey::ApikeyCmd;
 use crate::create::CreateCmd;
 use crate::delete::DeleteCmd;
 use crate::get::GetCmd;
@@ -61,6 +62,13 @@ impl UserRole {
             Self::User => "user".to_owned(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Apikey {
+    pub apikey: String,
+    pub username: String,
+    pub keyname: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -160,6 +168,7 @@ pub enum Command {
     TenantUsers(TenantUsersCmd),
     NamespaceUsers(NamespaceUsersCmd),
     Roles(RolesCmd),
+    Apikey(ApikeyCmd),
 }
 
 pub async fn Run(args: &mut Arguments) -> Result<()> {
@@ -174,6 +183,7 @@ pub async fn Run(args: &mut Arguments) -> Result<()> {
         Command::TenantUsers(cmd) => return cmd.Run(&args.gConfig).await,
         Command::NamespaceUsers(cmd) => return cmd.Run(&args.gConfig).await,
         Command::Roles(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::Apikey(cmd) => return cmd.Run(&args.gConfig).await,
     }
 }
 
@@ -205,6 +215,7 @@ pub fn Parse() -> Result<Arguments> {
         .subcommand(TenantUsersCmd::SubCommand())
         .subcommand(NamespaceUsersCmd::SubCommand())
         .subcommand(RolesCmd::SubCommand())
+        .subcommand(ApikeyCmd::SubCommand())
         .get_matches_from(get_args());
 
     let gatewayUrl = match matches.value_of("server") {
@@ -265,6 +276,10 @@ pub fn Parse() -> Result<Arguments> {
         ("roles", Some(cmd_matches)) => Arguments {
             gConfig: gConfig,
             cmd: Command::Roles(RolesCmd::Init(&cmd_matches)?),
+        },
+        ("apikey", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::Apikey(ApikeyCmd::Init(&cmd_matches)?),
         },
         // We should never reach here because clap already enforces this
         x => panic!("command not recognized {:?}", x),

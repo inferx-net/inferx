@@ -1232,11 +1232,10 @@ async fn CreateApikey(
     Extension(token): Extension<Arc<AccessToken>>,
     Json(obj): Json<Apikey>,
 ) -> SResult<Response, StatusCode> {
-    let username = token.username.clone();
     error!("CreateApikey keyname {}", &obj.keyname);
     match GetTokenCache()
         .await
-        .CreateApikey(&username, &obj.keyname)
+        .CreateApikey(&token, &obj.username, &obj.keyname)
         .await
     {
         Ok(apikey) => {
@@ -1287,11 +1286,10 @@ async fn DeleteApikey(
     Extension(token): Extension<Arc<AccessToken>>,
     Json(apikey): Json<Apikey>,
 ) -> SResult<Response, StatusCode> {
-    let username = token.username.clone();
     error!("DeleteApikey *** {:?}", &apikey);
     match GetTokenCache()
         .await
-        .DeleteApiKey(&apikey.apikey, &username)
+        .DeleteApiKey(&token, &apikey.keyname, &apikey.username)
         .await
     {
         Ok(exist) => {
