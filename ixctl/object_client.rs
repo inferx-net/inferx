@@ -198,7 +198,7 @@ impl ObjectClient {
         )));
     }
 
-    pub async fn Revoke(&self, token: &str, grant: &Grant) -> Result<i64> {
+    pub async fn Revoke(&self, token: &str, grant: &Grant) -> Result<()> {
         let client = self.Client();
         let url = format!("{}/rbac/", &self.url);
         let mut headers = HeaderMap::new();
@@ -214,18 +214,10 @@ impl ObjectClient {
             .json(&grant)
             .send()
             .await?;
+
         let code = resp.status().as_u16();
         if code == StatusCode::OK {
-            let res = resp.text().await?;
-            match res.parse::<i64>() {
-                Err(e) => {
-                    return Err(Error::CommonError(format!(
-                        "can't parse res with error {:?}",
-                        e
-                    )))
-                }
-                Ok(version) => return Ok(version),
-            }
+            return Ok(());
         }
 
         let content = resp.text().await.ok();
@@ -249,7 +241,7 @@ impl ObjectClient {
                 HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
             );
         }
-        
+
         let url = format!(
             "{}/rbac/tenantusers/{}/{}/",
             &self.url,

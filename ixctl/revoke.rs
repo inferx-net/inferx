@@ -22,7 +22,6 @@ pub struct RevokeCmd {
     pub objType: String,
     pub tenant: String,
     pub namespace: String,
-    pub name: String,
     pub role: String,
     pub username: String,
 }
@@ -30,10 +29,9 @@ pub struct RevokeCmd {
 impl RevokeCmd {
     pub fn Init(cmd_matches: &ArgMatches) -> Result<Self> {
         return Ok(Self {
-            objType: cmd_matches.value_of("objType").unwrap().to_string(),
+            objType: cmd_matches.value_of("type").unwrap().to_string(),
             tenant: cmd_matches.value_of("tenant").unwrap().to_string(),
-            namespace: cmd_matches.value_of("namespace").unwrap().to_string(),
-            name: cmd_matches.value_of("name").unwrap().to_string(),
+            namespace: cmd_matches.value_of("namespace").unwrap_or("").to_string(),
             role: cmd_matches.value_of("role").unwrap().to_string(),
             username: cmd_matches.value_of("username").unwrap().to_string(),
         });
@@ -49,28 +47,6 @@ impl RevokeCmd {
                     .takes_value(true),
             )
             .arg(
-                Arg::with_name("tenant")
-                    .required(true)
-                    .help("object tenant")
-                    // .long("tenant")
-                    // .short("t")
-                    .takes_value(true),
-            )
-            .arg(
-                Arg::with_name("namespace")
-                    .required(true)
-                    .help("object namespace")
-                    // .long("namespace")
-                    // .short("ns")
-                    .takes_value(true),
-            )
-            .arg(
-                Arg::with_name("name")
-                    .required(true)
-                    .help("object name")
-                    .takes_value(true),
-            )
-            .arg(
                 Arg::with_name("role")
                     .required(true)
                     .help("role name")
@@ -80,6 +56,22 @@ impl RevokeCmd {
                 Arg::with_name("username")
                     .required(true)
                     .help("user name")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("tenant")
+                    .required(true)
+                    .help("object tenant")
+                    // .long("tenant")
+                    // .short("t")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("namespace")
+                    .required(false)
+                    .help("object namespace")
+                    // .long("namespace")
+                    // .short("ns")
                     .takes_value(true),
             )
             .about("grant role of object to user");
@@ -92,7 +84,6 @@ impl RevokeCmd {
             &self.objType,
             &self.tenant,
             &self.namespace,
-            &self.name,
             &self.role,
             &self.username,
         ) {
@@ -105,15 +96,14 @@ impl RevokeCmd {
         };
 
         let client = gConfig.GetObjectClient();
-        let obj = match client.Revoke(&gConfig.accessToken, &grant).await {
+        match client.Revoke(&gConfig.accessToken, &grant).await {
             Err(e) => {
-                println!("doesn't find obj with {:#?}", e);
-                return Ok(());
+                println!("revoke fail with {:#?}", e);
             }
-            Ok(obj) => obj,
+            Ok(()) => {
+                println!("revoke succesfully");
+            }
         };
-
-        println!("{:#?}", obj);
 
         return Ok(());
     }

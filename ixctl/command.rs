@@ -78,13 +78,12 @@ impl Grant {
         objType: &str,
         tenant: &str,
         namespace: &str,
-        name: &str,
         role: &str,
         username: &str,
     ) -> Result<Self> {
         let objType = match objType {
             "tenant" => ObjectType::Tenant,
-            "namespce" => ObjectType::Namespace,
+            "namespace" => ObjectType::Namespace,
             _ => {
                 return Err(Error::CommonError(format!(
                     "doesn't support object type {}",
@@ -99,14 +98,28 @@ impl Grant {
             _ => return Err(Error::CommonError(format!("doesn't support role {}", role))),
         };
 
-        return Ok(Self {
-            objType: objType,
-            tenant: tenant.to_owned(),
-            namespace: namespace.to_owned(),
-            name: name.to_owned(),
-            role: role,
-            username: username.to_owned(),
-        });
+        match objType {
+            ObjectType::Tenant => {
+                return Ok(Self {
+                    objType: objType,
+                    tenant: "system".to_owned(),
+                    namespace: "system".to_owned(),
+                    name: tenant.to_owned(),
+                    role: role,
+                    username: username.to_owned(),
+                });
+            }
+            ObjectType::Namespace => {
+                return Ok(Self {
+                    objType: objType,
+                    tenant: tenant.to_owned(),
+                    namespace: "system".to_owned(),
+                    name: namespace.to_owned(),
+                    role: role,
+                    username: username.to_owned(),
+                });
+            }
+        }
     }
 }
 
