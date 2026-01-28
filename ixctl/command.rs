@@ -17,11 +17,19 @@ use std::{collections::BTreeSet, env};
 
 use inferxlib::common::*;
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::create::CreateCmd;
 use crate::delete::DeleteCmd;
 use crate::get::GetCmd;
+use crate::grant::GrantCmd;
 use crate::list::ListCmd;
+use crate::namespaceusers::NamespaceUsersCmd;
 use crate::object_client::ObjectClient;
+use crate::revoke::RevokeCmd;
+use crate::roles::RolesCmd;
+use crate::tenantusers::TenantUsersCmd;
 use crate::update::UpdateCmd;
 
 lazy_static::lazy_static! {
@@ -31,6 +39,84 @@ lazy_static::lazy_static! {
 }
 
 pub const INFX_GATEWAY_URL: &str = "INFX_GATEWAY_URL";
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ObjectType {
+    Tenant,
+    Namespace,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+impl UserRole {
+    pub fn String(&self) -> String {
+        match self {
+            Self::Admin => "admin".to_owned(),
+            Self::User => "user".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Grant {
+    pub objType: ObjectType,
+    pub tenant: String,
+    pub namespace: String,
+    pub name: String,
+    pub role: UserRole,
+    pub username: String,
+}
+
+impl Grant {
+    pub fn New(
+        objType: &str,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        role: &str,
+        username: &str,
+    ) -> Result<Self> {
+        let objType = match objType {
+            "tenant" => ObjectType::Tenant,
+            "namespce" => ObjectType::Namespace,
+            _ => {
+                return Err(Error::CommonError(format!(
+                    "doesn't support object type {}",
+                    objType
+                )))
+            }
+        };
+
+        let role = match role {
+            "admin" => UserRole::Admin,
+            "user" => UserRole::User,
+            _ => return Err(Error::CommonError(format!("doesn't support role {}", role))),
+        };
+
+        return Ok(Self {
+            objType: objType,
+            tenant: tenant.to_owned(),
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            role: role,
+            username: username.to_owned(),
+        });
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RoleBinding {
+    pub objType: ObjectType,
+    pub role: UserRole,
+    pub tenant: String,
+    pub namespace: String,
+}
 
 pub struct GlobalConfig {
     pub gatewayUrl: String,
@@ -56,6 +142,11 @@ pub enum Command {
     Get(GetCmd),
     Delete(DeleteCmd),
     Update(UpdateCmd),
+    Grant(GrantCmd),
+    Revoke(RevokeCmd),
+    TenantUsers(TenantUsersCmd),
+    NamespaceUsers(NamespaceUsersCmd),
+    Roles(RolesCmd),
 }
 
 pub async fn Run(args: &mut Arguments) -> Result<()> {
@@ -65,6 +156,11 @@ pub async fn Run(args: &mut Arguments) -> Result<()> {
         Command::Get(cmd) => return cmd.Run(&args.gConfig).await,
         Command::Delete(cmd) => return cmd.Run(&args.gConfig).await,
         Command::Update(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::Grant(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::Revoke(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::TenantUsers(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::NamespaceUsers(cmd) => return cmd.Run(&args.gConfig).await,
+        Command::Roles(cmd) => return cmd.Run(&args.gConfig).await,
     }
 }
 
@@ -91,6 +187,11 @@ pub fn Parse() -> Result<Arguments> {
         .subcommand(GetCmd::SubCommand())
         .subcommand(DeleteCmd::SubCommand())
         .subcommand(UpdateCmd::SubCommand())
+        .subcommand(GrantCmd::SubCommand())
+        .subcommand(RevokeCmd::SubCommand())
+        .subcommand(TenantUsersCmd::SubCommand())
+        .subcommand(NamespaceUsersCmd::SubCommand())
+        .subcommand(RolesCmd::SubCommand())
         .get_matches_from(get_args());
 
     let gatewayUrl = match matches.value_of("server") {
@@ -131,6 +232,26 @@ pub fn Parse() -> Result<Arguments> {
         ("update", Some(cmd_matches)) => Arguments {
             gConfig: gConfig,
             cmd: Command::Update(UpdateCmd::Init(&cmd_matches)?),
+        },
+        ("grant", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::Grant(GrantCmd::Init(&cmd_matches)?),
+        },
+        ("revoke", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::Revoke(RevokeCmd::Init(&cmd_matches)?),
+        },
+        ("tenantusers", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::TenantUsers(TenantUsersCmd::Init(&cmd_matches)?),
+        },
+        ("namespaceusers", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::NamespaceUsers(NamespaceUsersCmd::Init(&cmd_matches)?),
+        },
+        ("roles", Some(cmd_matches)) => Arguments {
+            gConfig: gConfig,
+            cmd: Command::Roles(RolesCmd::Init(&cmd_matches)?),
         },
         // We should never reach here because clap already enforces this
         x => panic!("command not recognized {:?}", x),

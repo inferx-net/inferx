@@ -65,6 +65,8 @@ use crate::print::{set_trace_logging, trace_logging_enabled};
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
+use super::auth_layer::Grant;
+use super::auth_layer::PermissionType;
 use super::auth_layer::{AccessToken, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
 use super::func_agent_mgr::IxTimestamp;
@@ -118,9 +120,13 @@ impl HttpGateway {
         let auth_layer = NODE_CONFIG.keycloakconfig.AuthLayer();
 
         let app = Router::new()
+            .route("/rbac/", post(RbacGrant))
+            .route("/rbac/", delete(RbacRevoke))
+            .route("/rbac/roles/", get(RbacRoleBindingGet))
+            .route("/rbac/tenantusers/:role/:tenant/", get(RbacTenantUsers))
             .route(
-                "/rbac/:permissionType/:objType/:tenant/:namespace/:name/:role/:username/",
-                get(Rbac),
+                "/rbac/namespaceusers/:role/:tenant/:namespace/",
+                get(RbacNamespaceUsers),
             )
             .route("/apikey/", get(GetApikeys))
             .route("/apikey/", put(CreateApikey))
@@ -1645,55 +1651,143 @@ async fn GetNode(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")] // This matches "grant" in URL to PermissionType::Grant
-pub enum PermissionType {
-    Grant,
-    Revoke,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum ObjectType {
-    Tenant,
-    Namespace,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum UserRole {
-    Admin,
-    User,
-}
-
-async fn Rbac(
+async fn RbacGrant(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    Path((permissionType, objType, tenant, namespace, name, role, username)): Path<(
-        PermissionType,
-        ObjectType,
-        String,
-        String,
-        String,
-        UserRole,
-        String,
-    )>,
+    Json(grant): Json<Grant>,
 ) -> SResult<Response, StatusCode> {
     match gw
         .Rbac(
             &token,
-            &permissionType,
-            &objType,
-            &tenant,
-            &namespace,
-            &name,
-            role,
-            &username,
+            &PermissionType::Grant,
+            &grant.objType,
+            &grant.tenant,
+            &grant.namespace,
+            &grant.name,
+            grant.role,
+            &grant.username,
         )
         .await
     {
         Ok(()) => {
             let body = Body::from(format!("{}", "rbac successfully"));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacRevoke(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(grant): Json<Grant>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .Rbac(
+            &token,
+            &PermissionType::Revoke,
+            &grant.objType,
+            &grant.tenant,
+            &grant.namespace,
+            &grant.name,
+            grant.role,
+            &grant.username,
+        )
+        .await
+    {
+        Ok(()) => {
+            let body = Body::from(format!("{}", "rbac successfully"));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacTenantUsers(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((role, tenant)): Path<(String, String)>,
+) -> SResult<Response, StatusCode> {
+    error!("RbacTenantUsers xx ddd 1");
+    match gw.RbacTenantUsers(&token, &role, &tenant).await {
+        Ok(users) => {
+            let data = serde_json::to_string(&users).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacNamespaceUsers(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((role, tenant, namespace)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .RbacNamespaceUsers(&token, &role, &tenant, &namespace)
+        .await
+    {
+        Ok(users) => {
+            let data = serde_json::to_string(&users).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacRoleBindingGet(
+    Extension(token): Extension<Arc<AccessToken>>,
+) -> SResult<Response, StatusCode> {
+    match token.RoleBindings() {
+        Ok(bindings) => {
+            let data = serde_json::to_string(&bindings).unwrap();
+            let body = Body::from(format!("{}", data));
             let resp = Response::builder()
                 .status(StatusCode::OK)
                 .body(body)

@@ -99,6 +99,45 @@ pub fn Username(token: &KeycloakToken<String>) -> String {
     return token.extra.profile.preferred_username.clone();
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")] // This matches "grant" in URL to PermissionType::Grant
+pub enum PermissionType {
+    Grant,
+    Revoke,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ObjectType {
+    Tenant,
+    Namespace,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Grant {
+    pub objType: ObjectType,
+    pub tenant: String,
+    pub namespace: String,
+    pub name: String,
+    pub role: UserRole,
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RoleBinding {
+    pub objType: ObjectType,
+    pub role: UserRole,
+    pub tenant: String,
+    pub namespace: String,
+}
+
 #[derive(Debug)]
 pub struct AccessToken {
     pub username: String,
@@ -310,6 +349,80 @@ impl AccessToken {
         }
 
         return v;
+    }
+
+    pub fn RoleBindings(&self) -> Result<Vec<RoleBinding>> {
+        let mut bindings = Vec::new();
+        for r in &self.roles {
+            let binding = ParseRoleBinding(r)?;
+            bindings.push(binding);
+        }
+
+        return Ok(bindings);
+    }
+}
+
+fn ParseRoleBinding(input: &str) -> Result<RoleBinding> {
+    let parts: Vec<&str> = input.trim_matches('/').split('/').collect();
+
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(Error::CommonError(format!(
+            "invalid ParseRoleBinding 1 path: {}",
+            input
+        )));
+    }
+
+    let role = match parts[1] {
+        "admin" => UserRole::Admin,
+        "user" => UserRole::User,
+        _ => {
+            return Err(Error::CommonError(format!(
+                "unknown role: {} in {:?}",
+                parts[1], parts
+            )))
+        }
+    };
+
+    let objType = match parts[0] {
+        "tenant" => ObjectType::Tenant,
+        "namespace" => ObjectType::Namespace,
+        _ => {
+            return Err(Error::CommonError(format!(
+                "unknown scope: {} in {:?}",
+                parts[0], parts
+            )))
+        }
+    };
+
+    match objType {
+        ObjectType::Tenant => {
+            if parts.len() != 3 {
+                return Err(Error::CommonError(format!(
+                    "invalid ParseRoleBinding 2 path: {:?}",
+                    parts
+                )));
+            }
+            Ok(RoleBinding {
+                objType: objType,
+                role: role,
+                tenant: parts[2].to_string(),
+                namespace: String::new(),
+            })
+        }
+        ObjectType::Namespace => {
+            if parts.len() != 4 {
+                return Err(Error::CommonError(format!(
+                    "invalid ParseRoleBinding 3 path: {:?}",
+                    parts
+                )));
+            }
+            Ok(RoleBinding {
+                objType: objType,
+                role: role,
+                tenant: parts[2].to_string(),
+                namespace: parts[3].to_string(),
+            })
+        }
     }
 }
 
@@ -566,6 +679,22 @@ impl TokenCache {
             .await?;
         self.EvactionToken(token);
         return Ok(());
+    }
+
+    pub async fn GetTenantAdmins(&self, tenant: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetTenantAdmins(tenant).await;
+    }
+
+    pub async fn GetTenantUsers(&self, tenant: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetTenantUsers(tenant).await;
+    }
+
+    pub async fn GetNamespaceAdmins(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetNamespaceAdmins(tenant, namespace).await;
+    }
+
+    pub async fn GetNamespaceUsers(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetNamespaceUsers(tenant, namespace).await;
     }
 }
 

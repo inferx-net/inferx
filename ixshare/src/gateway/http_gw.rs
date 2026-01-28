@@ -20,9 +20,9 @@ use crate::{
 };
 
 use super::{
-    auth_layer::{AccessToken, GetTokenCache},
+    auth_layer::{AccessToken, GetTokenCache, ObjectType, PermissionType, UserRole},
     gw_obj_repo::{FuncBrief, FuncDetail},
-    http_gateway::{HttpGateway, ObjectType, PermissionType, UserRole},
+    http_gateway::HttpGateway,
 };
 
 impl HttpGateway {
@@ -352,6 +352,68 @@ impl HttpGateway {
         }
 
         return Ok(());
+    }
+
+    pub async fn RbacTenantUsers(
+        &self,
+        token: &Arc<AccessToken>,
+        role: &str,
+        tenant: &str,
+    ) -> Result<Vec<String>> {
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenant) {
+            return Err(Error::NoPermission);
+        }
+
+        let users = match role {
+            "admin" => GetTokenCache().await.GetTenantAdmins(tenant).await?,
+            "user" => GetTokenCache().await.GetTenantUsers(tenant).await?,
+            _ => {
+                return Err(Error::CommonError(format!(
+                    "the role name {} is not valid",
+                    role
+                )))
+            }
+        };
+
+        return Ok(users);
+    }
+
+    pub async fn RbacNamespaceUsers(
+        &self,
+        token: &Arc<AccessToken>,
+        role: &str,
+        tenant: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>> {
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let users = match role {
+            "admin" => {
+                GetTokenCache()
+                    .await
+                    .GetNamespaceAdmins(tenant, namespace)
+                    .await?
+            }
+            "user" => {
+                GetTokenCache()
+                    .await
+                    .GetNamespaceUsers(tenant, namespace)
+                    .await?
+            }
+            _ => {
+                return Err(Error::CommonError(format!(
+                    "the role name {} is not valid",
+                    role
+                )))
+            }
+        };
+
+        return Ok(users);
     }
 
     pub async fn UpdateTenant(
