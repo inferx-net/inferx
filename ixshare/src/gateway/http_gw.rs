@@ -633,7 +633,7 @@ impl HttpGateway {
     ) -> Result<Vec<DataObject<Value>>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = token.UserNamespaces();
 
             for (tenant, namespace) in &namespaces {
                 let obj = match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
@@ -646,7 +646,7 @@ impl HttpGateway {
                 objs.push(obj);
             }
         } else if namespace == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = token.UserNamespaces();
             for (t, namespace) in &namespaces {
                 if t != tenant {
                     continue;
