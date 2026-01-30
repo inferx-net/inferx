@@ -39,6 +39,7 @@
 </style>
 
 <div class="tab">
+    <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Models')" style="font-size: 25px;">Models</button>
     <button class="tablinks" onclick="openTab(event, 'Namespaces')" style="font-size: 25px;">Namespaces</button>
     <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
@@ -80,6 +81,8 @@
                 <th>Tenant</th>
                 <th>Namespace</th>
                 <th>Name</th>
+                <th>Admin</th>
+                <th>User</th>
             </tr>
         </thead>
 
@@ -107,6 +110,33 @@
     </form>
 </div>
 
+<div id="Roles" class="tabcontent">
+    <h3>Tenant Roles</h3>
+    <table style="width:100%" id="tenant-roles-table">
+        <thead>
+            <tr>
+                <th>Tenant</th>
+                <th>Role</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <br>
+
+    <h3>Namespace Roles</h3>
+    <table style="width:100%" id="namespace-roles-table">
+        <thead>
+            <tr>
+                <th>Tenant</th>
+                <th>Namespace</th>
+                <th>Role</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
 <div id="Namespaces" class="tabcontent">
     <table style="width:100%" id="namespaces-table">
         <thead>
@@ -114,6 +144,8 @@
                 <th style="width: 150px;">Select</th>
                 <th>Tenant</th>
                 <th>Name</th>
+                <th>IsAdmin</th>
+                <th>IsUser</th>
             </tr>
         </thead>
 
@@ -146,6 +178,8 @@
             <tr>
                 <th style="width: 150px;">Select</th>
                 <th>Name</th>
+                <th>Admin</th>
+                <th>User</th>
             </tr>
         </thead>
 
@@ -194,6 +228,42 @@
 
 <!-- <textarea id="output" rows="20" cols="120"></textarea> -->
 <script>
+    function IsAdmin(data, targetTenant, targetNamespace = "") {
+        if (!data) return false;
+
+        return data.some(rb => {
+            // Normalize strings to lowercase and trim any accidental spaces
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            const rbTenant = String(rb.tenant).toLowerCase().trim();
+            const rbNamespace = String(rb.namespace).toLowerCase().trim();
+
+            const searchTenant = String(targetTenant).toLowerCase().trim();
+            const searchNamespace = String(targetNamespace).toLowerCase().trim();
+
+            const isTenantAdmin = rbObjType === "tenant" &&
+                rbTenant === searchTenant &&
+                rbRole === "admin";
+
+            const isNamespaceAdmin = rbObjType === "namespace" &&
+                rbTenant === searchTenant &&
+                rbNamespace === searchNamespace &&
+                rbRole === "admin";
+
+            return isTenantAdmin || isNamespaceAdmin;
+        });
+    }
+
+    function IsUser(data, targetTenant, targetNamespace = "") {
+        return data.some(rb => {
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            // ... same normalization as above ...
+            return (rbObjType === "tenant" || rbObjType === "namespace") &&
+                rbRole === "user";
+        });
+    }
+
     async function fetchItems() {
         const apikeys_resp = await fetch('/demo/generate_apikeys');
         const apikeys = await apikeys_resp.json();
@@ -213,14 +283,69 @@
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
 
+        const roles_resp = await fetch('/demo/generate_roles');
+        const roles = await roles_resp.json();
+
+        // Target both table bodies
+        const tenant_tbody = document.querySelector('#tenant-roles-table tbody');
+        const namespace_tbody = document.querySelector('#namespace-roles-table tbody');
+
+        // Clear existing content
+        tenant_tbody.innerHTML = '';
+        namespace_tbody.innerHTML = '';
+
+        roles.forEach(key => {
+            // Normalize case as we discovered earlier
+            const type = String(key.objType).toLowerCase();
+
+            if (type === 'tenant') {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+            <td>
+                <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
+                    ${key.tenant}
+                </a>
+            </td>
+            <td>${key.role}</td>
+        `;
+                tenant_tbody.appendChild(row);
+
+            } else if (type === 'namespace') {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+            <td>
+                <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
+                    ${key.tenant}
+                </a>
+            </td>
+            <td>
+                <a href="{{ hosturl }}listfunc?tenant=${key.tenant}&namespace=${key.namespace}">
+                    ${key.namespace}
+                </a>
+            </td>
+            <td>${key.role}</td>
+        `;
+                namespace_tbody.appendChild(row);
+            }
+        });
+
         const funcs_resp = await fetch('/demo/generate_funcs');
         const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
         funcs_tbody.innerHTML = '';
         funcs.forEach(key => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><input type="checkbox" data-id="${key.func.tenant}/${key.func.namespace}/${key.func.name}"></td>
+            const isAdmin = IsAdmin(roles, key.func.tenant, key.func.namespace);
+            const isUser = IsUser(roles, key.func.tenant, key.func.namespace);
+
+            if (isAdmin || isUser) {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td>
+                    <input type="checkbox" 
+                        data-id="${key.tenant}/system/${key.name}"
+                        ${!isAdmin ? 'disabled' : ''} 
+                        style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
+                </td>
                 <td>
                     <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
                         ${key.func.tenant}
@@ -238,9 +363,19 @@
                         ${key.func.name}
                     </a>
                 </td>
+                <td>${isAdmin
+                        ? '<span style="color: green; font-weight: bold;">✓</span>'
+                        : '<span style="color: #666;">-</span>'}
+                </td>
+                <td>${isUser
+                        ? '<span style="color: green; font-weight: bold;">✓</span>'
+                        : '<span style="color: #666;">-</span>'}
+                </td>
             `;
-            funcs_tbody.appendChild(row);
+                funcs_tbody.appendChild(row);
+            }
         });
+
 
         const namespaces_resp = await fetch('/demo/generate_namespaces');
         const namespaces = await namespaces_resp.json();
@@ -248,8 +383,15 @@
         namespaces_tbody.innerHTML = '';
         namespaces.forEach(key => {
             const row = document.createElement('tr');
+            const isAdmin = IsAdmin(roles, key.tenant, key.name);
+            const isUser = IsUser(roles, key.tenant, key.name);
             row.innerHTML = `
-                <td><input type="checkbox" data-id="${key.tenant}/system/${key.name}"></td>
+                <td>
+                    <input type="checkbox" 
+                        data-id="${key.tenant}/system/${key.name}"
+                        ${!isAdmin ? 'disabled' : ''} 
+                        style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
+                </td>
                 <td>
                     <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
                         ${key.tenant}
@@ -260,6 +402,14 @@
                         href="{{ hosturl }}listfunc?tenant=${key.tenant}&&namespace=${key.name}">
                         ${key.name}
                     </a>
+                </td>
+                <td>${isAdmin
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td>${isUser
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
                 </td>
             `;
             namespaces_tbody.appendChild(row);
@@ -276,6 +426,8 @@
         tenants_tbody.innerHTML = '';
         tenants.forEach(key => {
             const row = document.createElement('tr');
+            const isAdmin = IsAdmin(roles, key.name, "");
+            const isUser = IsUser(roles, key.name, "");
             row.innerHTML = `
                 <td><input type="checkbox" data-id="system/system/${key.name}"></td>
                 <td>
@@ -283,6 +435,14 @@
                         href="{{ hosturl }}listfunc?tenant=${key.name}">
                         ${key.name}
                     </a>
+                </td>
+                <td>${isAdmin
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td>${isUser
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
                 </td>
             `;
             tenants_tbody.appendChild(row);

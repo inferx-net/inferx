@@ -59,6 +59,12 @@ pub async fn GetTokenCache() -> &'static TokenCache {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct Permision {
+    pub admin: bool,
+    pub user: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct KeycloadConfig {
     pub url: String,
     pub realm: String,

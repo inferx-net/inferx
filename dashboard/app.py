@@ -335,6 +335,18 @@ def getnode(name: str):
 
     return func
 
+def listroles():
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/roles/".format(apihostaddr)
+    resp = requests.get(url, headers=headers)
+    roles = json.loads(resp.content)
+
+    return roles
+
 def listtenants():
     access_token = session.get('access_token', '')
     if access_token == "":
@@ -526,6 +538,13 @@ def generate_namespaces():
     namespaces = listnamespaces()
     print("namespaces ", namespaces)
     return namespaces
+
+@prefix_bp.route('/generate_roles', methods=['GET'])
+@require_login
+def generate_roles():
+    roles = listroles()
+    print("roles ", roles)
+    return roles
 
 @prefix_bp.route('/generate_funcs', methods=['GET'])
 @require_login

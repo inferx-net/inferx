@@ -26,31 +26,6 @@ use super::{
 };
 
 impl HttpGateway {
-    pub async fn CreateTenant(
-        &self,
-        token: &Arc<AccessToken>,
-        obj: DataObject<Value>,
-    ) -> Result<i64> {
-        let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
-
-        let tenantName = tenant.tenant.clone();
-
-        if &tenantName != "system" || &tenant.namespace != "system" {
-            return Err(Error::CommonError(format!(
-                "invalid tenant or namespace name"
-            )));
-        }
-
-        let version = self.client.Create(&obj).await?;
-
-        GetTokenCache()
-            .await
-            .GrantTenantAdminPermission(token, &tenant.name, &token.username)
-            .await?;
-
-        return Ok(version);
-    }
-
     pub async fn Rbac(
         &self,
         token: &Arc<AccessToken>,
@@ -416,12 +391,49 @@ impl HttpGateway {
         return Ok(users);
     }
 
+    pub async fn CreateTenant(
+        &self,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
+    ) -> Result<i64> {
+        let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
+
+        let tenantName = tenant.tenant.clone();
+
+        if &tenantName != "system" || &tenant.namespace != "system" {
+            return Err(Error::CommonError(format!(
+                "invalid tenant or namespace name"
+            )));
+        }
+
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
+        let version = self.client.Create(&obj).await?;
+
+        // GetTokenCache()
+        //     .await
+        //     .GrantTenantAdminPermission(token, &tenant.name, &token.username)
+        //     .await?;
+
+        return Ok(version);
+    }
+
     pub async fn UpdateTenant(
         &self,
-        _token: &Arc<AccessToken>,
-        _obj: DataObject<Value>,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
     ) -> Result<i64> {
-        return Err(Error::CommonError(format!("doesn't support tenant update")));
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
+        // let mut dataobj = obj;
+        // let tenant = Tenant::FromDataObject(dataobj)?;
+        // dataobj = tenant.DataObject();
+        let version = self.client.Update(&obj, 0).await?;
+        return Ok(version);
     }
 
     pub async fn DeleteTenant(
@@ -437,7 +449,7 @@ impl HttpGateway {
             )));
         }
 
-        if !token.IsTenantAdmin(name) {
+        if !token.IsInferxAdmin() {
             return Err(Error::NoPermission);
         }
 
@@ -451,11 +463,6 @@ impl HttpGateway {
         let version = self
             .client
             .Delete(Tenant::KEY, tenant, namespace, name, 0)
-            .await?;
-
-        GetTokenCache()
-            .await
-            .RevokeTenantAdminPermission(token, name, &token.username)
             .await?;
 
         return Ok(version);
