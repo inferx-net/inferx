@@ -28,6 +28,8 @@ pub struct TenantObject {
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct TenantStatus {
     pub disable: bool,
+    #[serde(default)]
+    pub quota_exceeded: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

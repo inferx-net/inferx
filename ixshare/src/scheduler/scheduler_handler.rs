@@ -41,9 +41,13 @@ use tokio::sync::oneshot::Sender;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
 use tokio::time::{Duration, Interval};
+use uuid::Uuid;
+use chrono::Utc;
 
+use crate::audit::GpuUsageTick;
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::SqlAudit;
+use crate::audit::GPU_USAGE_TICK_AGENT;
 use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
 use crate::gateway::metrics::Nodelabel;
@@ -97,6 +101,25 @@ lazy_static::lazy_static! {
 static GLOBAL_RPC_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| {
     Arc::new(Semaphore::new(16)) // Max 16 concurrent RPCs
 });
+
+/// Billing session for tracking snapshot loading usage
+/// Tracks start time and metadata for generating billing ticks
+#[derive(Debug, Clone)]
+pub struct SnapshotBillingSession {
+    pub session_id: String,
+    pub start_time: Instant,
+    pub last_tick_time: Instant,
+    pub pod_id: String,
+    pub funckey: String,
+    pub nodename: String,
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub gpu_type: String,
+    pub gpu_count: i32,
+    pub vram_mb: i64,
+    pub total_vram_mb: i64,
+}
 
 #[derive(Debug)]
 pub struct PendingPodInner {
@@ -659,6 +682,9 @@ pub struct SchedulerHandler {
 
     delay_interval: Option<Interval>,
 
+    // Billing tick interval for periodic snapshot billing (60 seconds)
+    billing_tick_interval: Option<Interval>,
+
     pub msgTx: mpsc::Sender<WorkerHandlerMsg>,
 
     // Per-node semaphores to limit concurrent operations on the same node
@@ -669,6 +695,10 @@ pub struct SchedulerHandler {
     // Key format: "funckey:nodename"
     // Prevents spawning duplicate RemoveSnapshot RPCs before the first completes
     pending_snapshot_removals: BTreeSet<String>,
+
+    // Snapshot billing sessions for tracking loading time
+    // Key format: "funckey:nodename"
+    snapshot_billing_sessions: BTreeMap<String, SnapshotBillingSession>,
 }
 
 impl Default for SchedulerHandler {
@@ -701,9 +731,11 @@ impl Default for SchedulerHandler {
             taskQueue: TaskQueue::default(),
             delayed_tasks: BinaryHeap::new(),
             delay_interval: None,
+            billing_tick_interval: None,
             msgTx: tx,
             node_semaphores: BTreeMap::new(),
             pending_snapshot_removals: BTreeSet::new(),
+            snapshot_billing_sessions: BTreeMap::new(),
         }
     }
 }
@@ -1931,11 +1963,12 @@ impl SchedulerHandler {
 
     pub fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
+        let nodename = snapshot.object.nodename.clone();
 
-        info!("AddSnapshot: adding snapshot for func {} on node {}", funckey, snapshot.object.nodename);
+        info!("AddSnapshot: adding snapshot for func {} on node {}", funckey, nodename);
 
-        self.RemovePendingSnapshot(&funckey, &snapshot.object.nodename);
-        info!("AddSnapshot: removed from pending snapshots for func {} on node {}", funckey, snapshot.object.nodename);
+        self.RemovePendingSnapshot(&funckey, &nodename);
+        info!("AddSnapshot: removed from pending snapshots for func {} on node {}", funckey, nodename);
 
         if !self.snapshots.contains_key(&funckey) {
             self.snapshots.insert(funckey.clone(), BTreeMap::new());
@@ -1944,15 +1977,17 @@ impl SchedulerHandler {
         self.snapshots
             .get_mut(&funckey)
             .unwrap()
-            .insert(snapshot.object.nodename.clone(), snapshot.object.clone());
+            .insert(nodename.clone(), snapshot.object.clone());
 
-        info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, snapshot.object.nodename);
+        info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, nodename);
 
         return Ok(());
     }
 
     pub fn UpdateSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
+        let nodename = snapshot.object.nodename.clone();
+
         if !self.snapshots.contains_key(&funckey) {
             error!(
                 "UpdateSnapshot get snapshot will non exist funckey {}",
@@ -1964,13 +1999,15 @@ impl SchedulerHandler {
         self.snapshots
             .get_mut(&funckey)
             .unwrap()
-            .insert(snapshot.object.nodename.clone(), snapshot.object.clone());
+            .insert(nodename.clone(), snapshot.object.clone());
 
         return Ok(());
     }
 
     pub async fn RemoveSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
+        let nodename = snapshot.object.nodename.clone();
+
         if !self.snapshots.contains_key(&funckey) {
             return Ok(());
         }
@@ -1978,7 +2015,7 @@ impl SchedulerHandler {
         self.snapshots
             .get_mut(&funckey)
             .unwrap()
-            .remove(&snapshot.object.nodename);
+            .remove(&nodename);
 
         // let nodename = snapshot.spec.nodename.clone();
         // self.RemoveSnapshotFromNode(&nodename, &funckey).await?;
@@ -1986,6 +2023,178 @@ impl SchedulerHandler {
         return Ok(());
     }
 
+    // ============================================================================
+    // Snapshot Pod Billing
+    // Billing tracks GPU usage during snapshot creation process
+    // Pod states: Init → PullingImage → Creating → Loading → Snapshoting → Snapshoted
+    // - Start: when snapshot pod is added (create_type = Snapshot)
+    // - End: when snapshot pod reaches Snapshoted state or is removed
+    // ============================================================================
+
+    /// Start a billing session for snapshot pod creation
+    /// Called when a snapshot pod is added (create_type = Snapshot)
+    fn start_snapshot_pod_billing(&mut self, pod: &FuncPod) {
+        let pod_key = pod.PodKey();
+        let nodename = &pod.object.spec.nodename;
+        let tenant = &pod.tenant;
+        let namespace = &pod.namespace;
+        let funcname = &pod.object.spec.funcname;
+
+        // Get GPU info from pod's allocated resources
+        let gpu_type = pod.object.spec.allocResources.gpuType.0.clone();
+        let gpu_count = pod.object.spec.reqResources.gpu.gpuCount as i32;
+        let vram_mb = pod.object.spec.reqResources.gpu.vRam as i64;
+        let total_vram_mb = (pod.object.spec.allocResources.gpus.TotalVRam() / 1024 / 1024) as i64;
+
+        // Skip if no GPU used
+        if gpu_count == 0 {
+            return;
+        }
+
+        // Generate unique session_id (UUID like gateway)
+        let session_id = Uuid::new_v4().to_string();
+
+        // Capture both time points together for consistency
+        let now = Instant::now();
+        let tick_time = Utc::now();
+
+        let session = SnapshotBillingSession {
+            session_id: session_id.clone(),
+            start_time: now,
+            last_tick_time: now,
+            pod_id: pod.object.spec.id.clone(),
+            funckey: pod.FuncKey(),
+            nodename: nodename.clone(),
+            tenant: tenant.clone(),
+            namespace: namespace.clone(),
+            funcname: funcname.clone(),
+            gpu_type: gpu_type.clone(),
+            gpu_count,
+            vram_mb,
+            total_vram_mb,
+        };
+
+        // Insert start billing tick (interval_ms = 0, tick_type = "start")
+        let tick = GpuUsageTick {
+            session_id: session_id.clone(),
+            tenant: tenant.clone(),
+            namespace: namespace.clone(),
+            funcname: funcname.clone(),
+            nodename: nodename.clone(),
+            pod_id: pod.object.spec.id.clone(),
+            gateway_id: None,
+            gpu_type,
+            gpu_count,
+            vram_mb,
+            total_vram_mb,
+            tick_time,
+            interval_ms: 0,
+            tick_type: "start".to_string(),
+            usage_type: "snapshot".to_string(),
+            is_coldstart: true, // Snapshot creation is always a cold start
+        };
+
+        GPU_USAGE_TICK_AGENT.Audit(tick);
+        info!("start_snapshot_pod_billing: started billing for pod {} with session_id {}", pod_key, session_id);
+
+        self.snapshot_billing_sessions.insert(pod_key, session);
+    }
+
+    /// End a billing session for snapshot pod
+    /// Called when snapshot pod reaches Snapshoted state or is removed
+    fn end_snapshot_pod_billing(&mut self, pod_key: &str) {
+        let session = match self.snapshot_billing_sessions.remove(pod_key) {
+            Some(s) => s,
+            None => {
+                // No billing session exists - might be already ended or never started
+                return;
+            }
+        };
+
+        // Capture both time points together for consistency
+        let now = Instant::now();
+        let tick_time = Utc::now();
+
+        // Interval is from last tick (periodic or start) to now
+        let interval_ms = now.duration_since(session.last_tick_time).as_millis() as i64;
+        let total_duration_ms = now.duration_since(session.start_time).as_millis() as i64;
+
+        // Insert final billing tick
+        let tick = GpuUsageTick {
+            session_id: session.session_id.clone(),
+            tenant: session.tenant,
+            namespace: session.namespace,
+            funcname: session.funcname,
+            nodename: session.nodename,
+            pod_id: session.pod_id,
+            gateway_id: None,
+            gpu_type: session.gpu_type,
+            gpu_count: session.gpu_count,
+            vram_mb: session.vram_mb,
+            total_vram_mb: session.total_vram_mb,
+            tick_time,
+            interval_ms,
+            tick_type: "final".to_string(),
+            usage_type: "snapshot".to_string(),
+            is_coldstart: false, // Only first tick is coldstart
+        };
+
+        GPU_USAGE_TICK_AGENT.Audit(tick);
+        info!("end_snapshot_pod_billing: ended billing for pod {}, interval {}ms, total duration {}ms", pod_key, interval_ms, total_duration_ms);
+    }
+
+    /// Emit periodic billing ticks for all active snapshot pod billing sessions
+    /// Called every 60 seconds from the main loop
+    fn emit_periodic_billing_ticks(&mut self) {
+        if self.snapshot_billing_sessions.is_empty() {
+            return;
+        }
+
+        let now = Instant::now();
+        let tick_time = Utc::now();
+        let mut ticks_to_emit = Vec::new();
+
+        // Collect ticks to emit and keys to update
+        for (pod_key, session) in &self.snapshot_billing_sessions {
+            let interval_ms = now.duration_since(session.last_tick_time).as_millis() as i64;
+
+            // Only emit if there's meaningful interval (> 0)
+            if interval_ms > 0 {
+                let tick = GpuUsageTick {
+                    session_id: session.session_id.clone(),
+                    tenant: session.tenant.clone(),
+                    namespace: session.namespace.clone(),
+                    funcname: session.funcname.clone(),
+                    nodename: session.nodename.clone(),
+                    pod_id: session.pod_id.clone(),
+                    gateway_id: None,
+                    gpu_type: session.gpu_type.clone(),
+                    gpu_count: session.gpu_count,
+                    vram_mb: session.vram_mb,
+                    total_vram_mb: session.total_vram_mb,
+                    tick_time,
+                    interval_ms,
+                    tick_type: "periodic".to_string(),
+                    usage_type: "snapshot".to_string(),
+                    is_coldstart: false,
+                };
+                ticks_to_emit.push((pod_key.clone(), tick));
+            }
+        }
+
+        // Emit ticks and update last_tick_time
+        for (pod_key, tick) in ticks_to_emit {
+            GPU_USAGE_TICK_AGENT.Audit(tick);
+            if let Some(session) = self.snapshot_billing_sessions.get_mut(&pod_key) {
+                session.last_tick_time = now;
+            }
+        }
+
+        if !self.snapshot_billing_sessions.is_empty() {
+            info!("emit_periodic_billing_ticks: emitted periodic ticks for {} active snapshot billing sessions",
+                self.snapshot_billing_sessions.len());
+        }
+    }
 
     /// Remove all snapshots for a funckey (non-blocking, async) with spawn_rpc
     ///
@@ -2198,7 +2407,13 @@ impl SchedulerHandler {
         if self.delay_interval.is_none() {
             self.delay_interval = Some(tokio::time::interval(Duration::from_millis(100)));
         }
+        if self.billing_tick_interval.is_none() {
+            let mut billing_interval = tokio::time::interval(Duration::from_secs(60));
+            billing_interval.tick().await; // Skip first immediate tick
+            self.billing_tick_interval = Some(billing_interval);
+        }
         let delay_interval = self.delay_interval.as_mut().unwrap();
+        let billing_tick_interval = self.billing_tick_interval.as_mut().unwrap();
         tokio::select! {
             biased;
             m = msgRx.recv() => {
@@ -2247,6 +2462,10 @@ impl SchedulerHandler {
             }
             _ = delay_interval.tick() => {
                 self.drain_due_delayed_tasks();
+            }
+            _ = billing_tick_interval.tick() => {
+                // Emit periodic billing ticks for active snapshot pod billing sessions
+                self.emit_periodic_billing_ticks();
             }
             _ = interval.tick() => {
                 if self.listDone {
@@ -4802,6 +5021,12 @@ impl SchedulerHandler {
             && boxPod.pod.object.status.state != PodState::Failed
         {
             self.AddPendingSnapshot(&fpKey, &nodename);
+
+            // Start billing for snapshot pod
+            // Also handles scheduler restart: bills in-flight snapshot pods
+            if !is_snapshot_pod_finished(boxPod.pod.object.status.state) {
+                self.start_snapshot_pod_billing(&boxPod.pod);
+            }
         }
 
         if boxPod.State().IsIdle() && boxPod.pod.object.status.state == PodState::Ready {
@@ -4934,6 +5159,11 @@ impl SchedulerHandler {
         let podKey: String = pod.PodKey();
         let nodeName = pod.object.spec.nodename.clone();
         let funcKey = pod.FuncKey();
+
+        // End billing for snapshot pod if still running (cleanup on removal)
+        if pod.object.spec.create_type == CreatePodType::Snapshot {
+            self.end_snapshot_pod_billing(&podKey);
+        }
 
         match self.pods.remove(&podKey) {
             None => unreachable!(),

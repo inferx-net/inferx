@@ -100,36 +100,68 @@ FOR EACH ROW EXECUTE FUNCTION notification_trigger();
 
 -- https://stackoverflow.com/questions/18664074/getting-error-peer-authentication-failed-for-user-postgres-when-trying-to-ge
 
--- GPU Usage for Billing
--- DROP TABLE GpuUsage;
-CREATE TABLE GpuUsage (
-    seqid           SERIAL PRIMARY KEY,
+-- ============================================================================
+-- GPU Quota & Billing (Periodic Tick)
+-- ============================================================================
+
+-- GPU Usage Tick - each row represents a billing interval (raw data only)
+-- DROP TABLE GpuUsageTick;
+CREATE TABLE GpuUsageTick (
+    id              SERIAL PRIMARY KEY,
+    session_id      VARCHAR(64) NOT NULL,
     tenant          VARCHAR NOT NULL,
     namespace       VARCHAR NOT NULL,
     funcname        VARCHAR NOT NULL,
-    fprevision      BIGINT NOT NULL,
     nodename        VARCHAR NOT NULL,
     pod_id          VARCHAR NOT NULL,
-
-    -- GPU resource (for billing calculation)
-    gpu_type        VARCHAR NOT NULL,       -- GPU type from node (e.g., "A100", "H100")
-    gpu_count       INT NOT NULL,           -- Model's requested GPU count
-    vram_mb         BIGINT NOT NULL,        -- Model's required vRAM in MB
-    total_vram_mb   BIGINT NOT NULL,        -- Node's total vRAM per GPU in MB
-
-    -- Usage tracking
+    gateway_id      BIGINT,
+    gpu_type        VARCHAR NOT NULL,
+    gpu_count       INT NOT NULL,
+    vram_mb         BIGINT NOT NULL,
+    total_vram_mb   BIGINT NOT NULL,
+    tick_time       TIMESTAMPTZ NOT NULL,
+    interval_ms     BIGINT NOT NULL,
+    tick_type       VARCHAR(16) NOT NULL,   -- 'start', 'periodic', 'final'
     usage_type      VARCHAR(16) NOT NULL,   -- 'request' or 'snapshot'
-    start_time      TIMESTAMPTZ NOT NULL,
-    end_time        TIMESTAMPTZ NOT NULL,
-    duration_ms     BIGINT NOT NULL,
-
-    is_coldstart    BOOLEAN DEFAULT FALSE,
-    gateway_id      BIGINT
+    is_coldstart    BOOLEAN DEFAULT FALSE
 );
 
--- Index for billing queries by tenant and time range
-CREATE INDEX idx_gpu_usage_billing ON GpuUsage (tenant, start_time);
+CREATE INDEX idx_tick_tenant ON GpuUsageTick(tenant, tick_time);
+CREATE INDEX idx_tick_session ON GpuUsageTick(session_id);
 
--- Index for per-function analysis
-CREATE INDEX idx_gpu_usage_func ON GpuUsage (tenant, namespace, funcname, start_time);
+-- Tenant Quota - prepaid credit tracking
+-- DROP TABLE TenantQuota;
+CREATE TABLE TenantQuota (
+    tenant          VARCHAR PRIMARY KEY,
+    allowance_ms    BIGINT NOT NULL,        -- Total prepaid credit
+    used_ms         BIGINT DEFAULT 0,       -- Cumulative usage (for caching, can be recalculated)
+    threshold_ms    BIGINT DEFAULT 0,       -- Disable when remaining < this
+    quota_exceeded  BOOLEAN DEFAULT FALSE
+);
+
+-- Tenant Credit History - audit trail for credits added
+-- DROP TABLE TenantCreditHistory;
+CREATE TABLE TenantCreditHistory (
+    id              SERIAL PRIMARY KEY,
+    tenant          VARCHAR NOT NULL,
+    amount_ms       BIGINT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    note            VARCHAR,
+    payment_ref     VARCHAR,
+    added_by        VARCHAR
+);
+
+CREATE INDEX idx_credit_tenant ON TenantCreditHistory(tenant, created_at);
+
+-- GPU Usage Hourly - pre-aggregated for dashboard queries
+-- DROP TABLE GpuUsageHourly;
+CREATE TABLE GpuUsageHourly (
+    id              SERIAL PRIMARY KEY,
+    tenant          VARCHAR NOT NULL,
+    hour            TIMESTAMPTZ NOT NULL,
+    usage_ms        BIGINT NOT NULL,
+    UNIQUE(tenant, hour)
+);
+
+CREATE INDEX idx_hourly_tenant ON GpuUsageHourly(tenant, hour);
 

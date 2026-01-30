@@ -41,7 +41,7 @@ use tokio::sync::Notify;
 lazy_static::lazy_static! {
     pub static ref POD_AUDIT_AGENT: PodAuditAgent = PodAuditAgent::New();
     pub static ref REQ_AUDIT_AGENT: ReqAuditAgent = ReqAuditAgent::New();
-    pub static ref GPU_USAGE_AGENT: GpuUsageAuditAgent = GpuUsageAuditAgent::New();
+    pub static ref GPU_USAGE_TICK_AGENT: GpuUsageTickAuditAgent = GpuUsageTickAuditAgent::New();
 }
 
 #[derive(Debug, Clone)]
@@ -368,15 +368,15 @@ impl ReqAuditAgent {
     }
 }
 
-/// GPU Usage record for billing
-#[derive(Debug, Clone)]
-pub struct GpuUsage {
+/// GPU Usage Tick record for billing
+pub struct GpuUsageTick {
+    pub session_id: String,
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
-    pub fprevision: i64,
     pub nodename: String,
     pub pod_id: String,
+    pub gateway_id: Option<i64>,
 
     // GPU resource info
     pub gpu_type: String,
@@ -384,45 +384,47 @@ pub struct GpuUsage {
     pub vram_mb: i64,
     pub total_vram_mb: i64,
 
-    // Usage tracking
+    // Tick info
+    pub tick_time: DateTime<Utc>,  // Time when interval was calculated
+    pub interval_ms: i64,
+    pub tick_type: String,  // "start", "periodic", "final"
     pub usage_type: String, // "request" or "snapshot"
-    pub start_time: chrono::DateTime<chrono::Utc>,
-    pub end_time: chrono::DateTime<chrono::Utc>,
-    pub duration_ms: i64,
-
     pub is_coldstart: bool,
-    pub gateway_id: Option<i64>,
 }
 
+// ============================================================================
+// GPU Usage Tick Audit Agent
+// ============================================================================
+
 #[derive(Debug)]
-pub struct GpuUsageAuditAgentInner {
+pub struct GpuUsageTickAuditAgentInner {
     pub closeNotify: Arc<Notify>,
     pub stop: AtomicBool,
-    pub tx: mpsc::Sender<GpuUsage>,
+    pub tx: mpsc::Sender<GpuUsageTick>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GpuUsageAuditAgent(Arc<GpuUsageAuditAgentInner>);
+pub struct GpuUsageTickAuditAgent(Arc<GpuUsageTickAuditAgentInner>);
 
-impl Deref for GpuUsageAuditAgent {
-    type Target = Arc<GpuUsageAuditAgentInner>;
+impl Deref for GpuUsageTickAuditAgent {
+    type Target = Arc<GpuUsageTickAuditAgentInner>;
 
-    fn deref(&self) -> &Arc<GpuUsageAuditAgentInner> {
+    fn deref(&self) -> &Arc<GpuUsageTickAuditAgentInner> {
         &self.0
     }
 }
 
-impl GpuUsageAuditAgent {
+impl GpuUsageTickAuditAgent {
     pub fn New() -> Self {
-        let (tx, rx) = mpsc::channel::<GpuUsage>(300);
+        let (tx, rx) = mpsc::channel::<GpuUsageTick>(1000);
 
-        let inner = GpuUsageAuditAgentInner {
+        let inner = GpuUsageTickAuditAgentInner {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
             tx: tx,
         };
 
-        let agent = GpuUsageAuditAgent(Arc::new(inner));
+        let agent = GpuUsageTickAuditAgent(Arc::new(inner));
         let agent1 = agent.clone();
 
         tokio::spawn(async move {
@@ -437,15 +439,15 @@ impl GpuUsageAuditAgent {
         return Ok(());
     }
 
-    pub fn Audit(&self, msg: GpuUsage) {
+    pub fn Audit(&self, tick: GpuUsageTick) {
         // Skip if auditdb is not enabled
         if !Self::Enable() {
             return;
         }
-        match self.tx.try_send(msg) {
+        match self.tx.try_send(tick) {
             Ok(()) => (),
             Err(e) => {
-                error!("GpuUsageAuditAgent: fail to send audit log {:?}", &e);
+                error!("GpuUsageTickAuditAgent: fail to send tick {:?}", &e);
             }
         }
     }
@@ -454,12 +456,11 @@ impl GpuUsageAuditAgent {
         return NA_CONFIG.auditdbAddr.len() > 0;
     }
 
-    pub async fn Process(&self, mut rx: mpsc::Receiver<GpuUsage>) -> Result<()> {
+    pub async fn Process(&self, mut rx: mpsc::Receiver<GpuUsageTick>) -> Result<()> {
         let addr = NA_CONFIG.auditdbAddr.clone();
-        info!("GpuUsageAuditAgent: auditdb address {}", &addr);
+        info!("GpuUsageTickAuditAgent: auditdb address {}", &addr);
         if addr.len() == 0 {
-            // auditdb is not enabled
-            info!("GpuUsageAuditAgent: auditdb is not enabled");
+            info!("GpuUsageTickAuditAgent: auditdb is not enabled");
             return Ok(());
         }
         let sqlaudit = SqlAudit::New(&addr).await?;
@@ -471,11 +472,11 @@ impl GpuUsageAuditAgent {
                     break;
                 }
                 msg = rx.recv() => {
-                    if let Some(msg) = msg {
-                        match sqlaudit.CreateGpuUsageRecord(&msg).await {
+                    if let Some(tick) = msg {
+                        match sqlaudit.CreateGpuUsageTickRecord(&tick).await {
                             Ok(()) => (),
                             Err(e) => {
-                                error!("GpuUsageAuditAgent: fail to create record {:?}", &e);
+                                error!("GpuUsageTickAuditAgent: fail to create tick record {:?}", &e);
                             }
                         }
                     } else {
@@ -540,37 +541,36 @@ impl SqlAudit {
         return Ok(());
     }
 
-    pub async fn CreateGpuUsageRecord(&self, usage: &GpuUsage) -> Result<()> {
+    /// Create GPU usage tick record
+    pub async fn CreateGpuUsageTickRecord(&self, tick: &GpuUsageTick) -> Result<()> {
         let query = r#"
-            INSERT INTO GpuUsage (
-                tenant, namespace, funcname, fprevision, nodename, pod_id,
+            INSERT INTO GpuUsageTick (
+                session_id, tenant, namespace, funcname, nodename, pod_id, gateway_id,
                 gpu_type, gpu_count, vram_mb, total_vram_mb,
-                usage_type, start_time, end_time, duration_ms,
-                is_coldstart, gateway_id
+                tick_time, interval_ms, tick_type, usage_type, is_coldstart
             ) VALUES (
-                $1, $2, $3, $4, $5, $6,
-                $7, $8, $9, $10,
-                $11, $12, $13, $14,
-                $15, $16
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, $10, $11,
+                $12, $13, $14, $15, $16
             )
         "#;
         let _result = sqlx::query(query)
-            .bind(&usage.tenant)
-            .bind(&usage.namespace)
-            .bind(&usage.funcname)
-            .bind(usage.fprevision)
-            .bind(&usage.nodename)
-            .bind(&usage.pod_id)
-            .bind(&usage.gpu_type)
-            .bind(usage.gpu_count)
-            .bind(usage.vram_mb)
-            .bind(usage.total_vram_mb)
-            .bind(&usage.usage_type)
-            .bind(usage.start_time)
-            .bind(usage.end_time)
-            .bind(usage.duration_ms)
-            .bind(usage.is_coldstart)
-            .bind(usage.gateway_id)
+            .bind(&tick.session_id)
+            .bind(&tick.tenant)
+            .bind(&tick.namespace)
+            .bind(&tick.funcname)
+            .bind(&tick.nodename)
+            .bind(&tick.pod_id)
+            .bind(tick.gateway_id)
+            .bind(&tick.gpu_type)
+            .bind(tick.gpu_count)
+            .bind(tick.vram_mb)
+            .bind(tick.total_vram_mb)
+            .bind(tick.tick_time)
+            .bind(tick.interval_ms)
+            .bind(&tick.tick_type)
+            .bind(&tick.usage_type)
+            .bind(tick.is_coldstart)
             .execute(&self.pool)
             .await?;
         return Ok(());

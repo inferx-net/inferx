@@ -48,6 +48,9 @@ use super::func_agent_mgr::{FuncAgent, IxTimestamp, WorkerUpdate, GW_OBJREPO};
 use super::http_gateway::GatewayId;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use serde_json::json;
+use uuid::Uuid;
+use chrono::Utc;
+use crate::audit::{GpuUsageTick, GPU_USAGE_TICK_AGENT};
 
 /// GPU tracking info for billing
 #[derive(Debug, Clone, Default)]
@@ -59,6 +62,9 @@ pub struct GpuTrackingInfo {
     pub total_vram_mb: i64,
     pub lease_start: Option<std::time::Instant>,
     pub is_coldstart: bool,
+    // Fields for periodic tick billing
+    pub session_id: Option<String>,
+    pub last_tick_time: Option<std::time::Instant>,
 }
 
 pub const FUNCCALL_URL: &str = "http://127.0.0.1/funccall";
@@ -333,6 +339,9 @@ impl FuncWorker {
             self.State() == FuncWorkerState::Idle || self.State() == FuncWorkerState::Processing
         );
 
+        // Insert final billing tick for remaining time
+        self.insert_final_billing_tick().await;
+
         self.funcAgent
             .activeReqCnt
             .fetch_sub(self.ongoingReqCnt.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -496,6 +505,11 @@ impl FuncWorker {
             let mut tracking_info = self.gpuTrackingInfo.lock().unwrap();
             tracking_info.lease_start = Some(std::time::Instant::now());
             tracking_info.is_coldstart = !keepalive;
+            // Initialize session for periodic tick billing
+            // session_id: unique identifier for this billing session
+            // last_tick_time: used to calculate elapsed time for each tick
+            tracking_info.session_id = Some(Uuid::new_v4().to_string());
+            tracking_info.last_tick_time = Some(std::time::Instant::now());
 
             if let Some(obj_repo) = GW_OBJREPO.get() {
                 if let Ok(pod) = obj_repo.GetFuncPod(&self.tenant, &self.namespace, &pod_name) {
@@ -516,6 +530,9 @@ impl FuncWorker {
             }
         }
 
+        // Insert start billing tick (interval_ms = 0) to mark session beginning
+        self.insert_start_billing_tick();
+
         self.connPool
             .Init(id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
             .await;
@@ -526,6 +543,10 @@ impl FuncWorker {
             .SendWorkerStatusUpdate(WorkerUpdate::Ready(self.clone()));
         self.SetState(FuncWorkerState::Processing);
         let reqQueue = self.funcAgent.reqQueue.clone();
+
+        // Billing tick interval (60 seconds)
+        let mut billing_tick_interval = tokio::time::interval(Duration::from_secs(60));
+        billing_tick_interval.tick().await; // Skip first immediate tick
 
         loop {
             let isScaleInWorker =
@@ -575,7 +596,10 @@ impl FuncWorker {
                                     self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
                                     return Ok(())
                                 }
-
+                                // Billing tick (every 60 seconds)
+                                _ = billing_tick_interval.tick() => {
+                                    self.insert_billing_tick().await;
+                                }
                             }
                         }
                     } else {
@@ -594,7 +618,10 @@ impl FuncWorker {
                                 self.funcAgent.SendWorkerStatusUpdate(WorkerUpdate::IdleTimeout(self.clone()));
                                 return Ok(())
                             }
-
+                            // Billing tick (every 60 seconds)
+                            _ = billing_tick_interval.tick() => {
+                                self.insert_billing_tick().await;
+                            }
                         }
                     }
                 }
@@ -677,6 +704,10 @@ impl FuncWorker {
                                     }
                                 }
                             }
+                            // Billing tick (every 60 seconds)
+                            _ = billing_tick_interval.tick() => {
+                                self.insert_billing_tick().await;
+                            }
                         }
                         trace!(
                             "FuncWorker::Process 1.1, id: {}, activeCnt: {}, ongingCnt: {}",
@@ -714,6 +745,10 @@ impl FuncWorker {
                                         }
                                     }
                                 }
+                            }
+                            // Billing tick (every 60 seconds)
+                            _ = billing_tick_interval.tick() => {
+                                self.insert_billing_tick().await;
                             }
                         }
                         trace!(
@@ -761,41 +796,162 @@ impl FuncWorker {
         })
     }
 
-    /// Create GpuUsage record for billing when worker is returned
-    pub fn CreateGpuUsageRecord(&self) -> Option<crate::audit::GpuUsage> {
-        let tracking_info = self.gpuTrackingInfo.lock().unwrap();
+    /// Insert periodic billing tick
+    async fn insert_billing_tick(&self) {
+        let mut tracking_info = self.gpuTrackingInfo.lock().unwrap();
 
-        // Skip if lease_start is not set (shouldn't happen in normal flow)
-        let lease_start = tracking_info.lease_start?;
+        // Skip if session_id or last_tick_time is not set
+        let session_id = match &tracking_info.session_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let last_tick = match tracking_info.last_tick_time {
+            Some(t) => t,
+            None => return,
+        };
 
         // Skip if gpu_count is 0 (no GPU used)
         if tracking_info.gpu_count == 0 {
-            return None;
+            return;
         }
 
-        let duration = lease_start.elapsed();
-        let duration_ms = duration.as_millis() as i64;
-        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
-        let start_time = now - chrono::Duration::milliseconds(duration_ms);
+        // Capture both time points together for consistency
+        let now = std::time::Instant::now();
+        let tick_time = Utc::now();
 
-        Some(crate::audit::GpuUsage {
+        // Calculate actual elapsed time since last tick
+        let interval_ms = now.duration_since(last_tick).as_millis() as i64;
+
+        // Update last_tick_time for next tick
+        tracking_info.last_tick_time = Some(now);
+
+        let tick = GpuUsageTick {
+            session_id,
             tenant: self.tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
-            fprevision: self.fprevision,
             nodename: tracking_info.nodename.clone(),
             pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            gateway_id: Some(GatewayId()),
             gpu_type: tracking_info.gpu_type.clone(),
             gpu_count: tracking_info.gpu_count,
             vram_mb: tracking_info.vram_mb,
             total_vram_mb: tracking_info.total_vram_mb,
+            tick_time,
+            interval_ms,
+            tick_type: "periodic".to_string(),
             usage_type: "request".to_string(),
-            start_time,
-            end_time: now,
-            duration_ms,
             is_coldstart: tracking_info.is_coldstart,
+        };
+
+        // Clear is_coldstart after first periodic tick
+        tracking_info.is_coldstart = false;
+
+        // Release lock before async call
+        drop(tracking_info);
+
+        GPU_USAGE_TICK_AGENT.Audit(tick);
+    }
+
+    /// Insert start billing tick when session begins (interval_ms = 0)
+    /// This marks the beginning of the billing session and records coldstart status
+    fn insert_start_billing_tick(&self) {
+        let tracking_info = self.gpuTrackingInfo.lock().unwrap();
+
+        // Skip if session_id is not set
+        let session_id = match &tracking_info.session_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        // Skip if gpu_count is 0 (no GPU used)
+        if tracking_info.gpu_count == 0 {
+            return;
+        }
+
+        let tick = GpuUsageTick {
+            session_id,
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            nodename: tracking_info.nodename.clone(),
+            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
             gateway_id: Some(GatewayId()),
-        })
+            gpu_type: tracking_info.gpu_type.clone(),
+            gpu_count: tracking_info.gpu_count,
+            vram_mb: tracking_info.vram_mb,
+            total_vram_mb: tracking_info.total_vram_mb,
+            tick_time: Utc::now(),
+            interval_ms: 0, // Start tick has zero interval
+            tick_type: "start".to_string(),
+            usage_type: "request".to_string(),
+            is_coldstart: tracking_info.is_coldstart,
+        };
+
+        // Release lock before async call
+        drop(tracking_info);
+
+        GPU_USAGE_TICK_AGENT.Audit(tick);
+    }
+
+    /// Insert final billing tick when worker finishes (partial tick for remaining time)
+    async fn insert_final_billing_tick(&self) {
+        let mut tracking_info = self.gpuTrackingInfo.lock().unwrap();
+
+        // Skip if session_id or last_tick_time is not set
+        let session_id = match &tracking_info.session_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let last_tick = match tracking_info.last_tick_time {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Skip if gpu_count is 0 (no GPU used)
+        if tracking_info.gpu_count == 0 {
+            return;
+        }
+
+        // Capture both time points together for consistency
+        let now = std::time::Instant::now();
+        let tick_time = Utc::now();
+
+        // Calculate elapsed time since last tick (partial tick)
+        let interval_ms = now.duration_since(last_tick).as_millis() as i64;
+
+        // Only insert if there's meaningful time elapsed (> 100ms)
+        if interval_ms < 100 {
+            return;
+        }
+
+        // Clear session to prevent duplicate final ticks
+        tracking_info.session_id = None;
+        tracking_info.last_tick_time = None;
+
+        let tick = GpuUsageTick {
+            session_id,
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            nodename: tracking_info.nodename.clone(),
+            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            gateway_id: Some(GatewayId()),
+            gpu_type: tracking_info.gpu_type.clone(),
+            gpu_count: tracking_info.gpu_count,
+            vram_mb: tracking_info.vram_mb,
+            total_vram_mb: tracking_info.total_vram_mb,
+            tick_time,
+            interval_ms,
+            tick_type: "final".to_string(),
+            usage_type: "request".to_string(),
+            is_coldstart: tracking_info.is_coldstart,
+        };
+
+        // Release lock before async call
+        drop(tracking_info);
+
+        GPU_USAGE_TICK_AGENT.Audit(tick);
     }
 }
 

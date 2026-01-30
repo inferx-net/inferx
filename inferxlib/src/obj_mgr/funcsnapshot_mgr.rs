@@ -119,13 +119,17 @@ impl ContainerSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, PartialEq, Eq)]
 pub enum SnapshotState {
+    /// Snapshot data exists on disk, not loaded into GPU memory
+    Available,
+    /// Actively loading into GPU memory
     Loading,
+    /// Loaded into GPU, ready for inference
     Ready,
 }
 
 impl Default for SnapshotState {
     fn default() -> Self {
-        return Self::Loading;
+        return Self::Available;
     }
 }
 
