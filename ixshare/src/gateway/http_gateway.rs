@@ -1728,7 +1728,6 @@ async fn RbacTenantUsers(
     State(gw): State<HttpGateway>,
     Path((role, tenant)): Path<(String, String)>,
 ) -> SResult<Response, StatusCode> {
-    error!("RbacTenantUsers xx ddd 1");
     match gw.RbacTenantUsers(&token, &role, &tenant).await {
         Ok(users) => {
             let data = serde_json::to_string(&users).unwrap();

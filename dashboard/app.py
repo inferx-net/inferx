@@ -206,12 +206,12 @@ def logout():
     # return redirect(end_session_endpoint)
 
     session.clear()
-    # # Redirect to Keycloak to clear SSO session
-    return redirect(
-        f"{end_session_endpoint}?"
-        f"post_logout_redirect_uri={url_for('prefix.ListFunc', _external=True)}&"
-        f"id_token_hint={id_token}"
-    )
+
+    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={url_for('prefix.ListFunc', _external=True)}"
+    if id_token:
+        logout_url += f"&id_token_hint={id_token}"
+        
+    return redirect(logout_url)
 
 def getapikeys():
     access_token = session.get('token')['access_token']
@@ -294,6 +294,31 @@ def listfuncs(tenant: str, namespace: str):
     funcs = json.loads(resp.content)  
 
     return funcs
+
+def list_tenantusers(role: str, tenant: str):
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/tenantusers/{}/{}/".format(apihostaddr, role, tenant)
+    resp = requests.get(url, headers=headers)
+    funcs = json.loads(resp.content)  
+
+    return funcs
+
+def list_namespaceusers(role: str, tenant: str, namespace: str):
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/namespaceusers/{}/{}/{}/".format(apihostaddr, role, tenant, namespace)
+    resp = requests.get(url, headers=headers)
+    funcs = json.loads(resp.content)  
+
+    return funcs
+
 
 
 def getfunc(tenant: str, namespace: str, funcname: str):
@@ -551,6 +576,23 @@ def generate_roles():
 def generate_funcs():
     funcs = listfuncs("", "")
     return funcs
+
+@prefix_bp.route('/generate_tenantuser', methods=['GET'])
+@require_login
+def generate_tenantuser():
+    role = request.args.get('role')
+    tenant = request.args.get('tenant')
+    users = list_tenantusers(role, tenant)
+    return users
+
+@prefix_bp.route('/generate_namespaceuser', methods=['GET'])
+@require_login
+def generate_namespaceuser():
+    role = request.args.get('role')
+    tenant = request.args.get('tenant')
+    namespace = request.args.get('namespace')
+    users = list_namespaceusers(role, tenant, namespace)
+    return users
 
 @prefix_bp.route('/generate', methods=['POST'])
 @not_require_login

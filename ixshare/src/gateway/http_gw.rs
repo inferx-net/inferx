@@ -86,10 +86,12 @@ impl HttpGateway {
     ) -> Result<()> {
         match self.objRepo.tenantMgr.Get("system", "system", tenantname) {
             Err(e) => {
-                return Err(Error::NotExist(format!(
-                    "fail to get tenant {} with error {:?}",
-                    tenantname, e
-                )));
+                if tenantname != AccessToken::SYSTEM_TENANT {
+                    return Err(Error::NotExist(format!(
+                        "fail to get tenant {} with error {:?}",
+                        tenantname, e
+                    )));
+                }
             }
             Ok(_o) => (),
         };
@@ -147,10 +149,12 @@ impl HttpGateway {
     ) -> Result<()> {
         match self.objRepo.tenantMgr.Get("system", "system", tenant) {
             Err(e) => {
-                return Err(Error::NotExist(format!(
-                    "fail to get tenant {} with error {:?}",
-                    tenant, e
-                )));
+                if tenant != AccessToken::SYSTEM_TENANT {
+                    return Err(Error::NotExist(format!(
+                        "fail to get tenant {} with error {:?}",
+                        tenant, e
+                    )));
+                }
             }
             Ok(_o) => (),
         };
@@ -609,7 +613,7 @@ impl HttpGateway {
         _tenant: &str,
         _namespace: &str,
     ) -> Result<Vec<DataObject<Value>>> {
-        let tenants = token.AdminTenants();
+        let tenants = self.AdminTenants(token);
         let mut objs = Vec::new();
         for tenant in &tenants {
             let obj = match self.objRepo.tenantMgr.Get("system", "system", tenant) {
@@ -633,7 +637,7 @@ impl HttpGateway {
     ) -> Result<Vec<DataObject<Value>>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in &namespaces {
                 let obj = match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
@@ -646,7 +650,7 @@ impl HttpGateway {
                 objs.push(obj);
             }
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (t, namespace) in &namespaces {
                 if t != tenant {
                     continue;
@@ -680,7 +684,7 @@ impl HttpGateway {
     ) -> Result<Vec<DataObject<Value>>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.AdminNamespaces(token);
 
             for (tenant, namespace) in &namespaces {
                 match self.objRepo.funcMgr.GetObjects(tenant, namespace) {
@@ -695,7 +699,7 @@ impl HttpGateway {
                 };
             }
         } else if namespace == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.AdminNamespaces(token);
             for (t, namespace) in &namespaces {
                 if t != tenant {
                     continue;
@@ -743,7 +747,7 @@ impl HttpGateway {
 
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 let mut list = self
@@ -759,7 +763,7 @@ impl HttpGateway {
                 .await?;
             objs.append(&mut list.objs);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -781,6 +785,58 @@ impl HttpGateway {
         return Ok(objs);
     }
 
+    pub fn UserTenants(&self, token: &Arc<AccessToken>) -> Vec<String> {
+        if token.IsInferxAdmin() {
+            let mut tenants = Vec::new();
+            for ns in self.objRepo.tenantMgr.GetObjects("", "").unwrap() {
+                tenants.push(ns.Name());
+            }
+
+            return tenants;
+        }
+
+        return token.UserTenants();
+    }
+
+    pub fn AdminTenants(&self, token: &Arc<AccessToken>) -> Vec<String> {
+        if token.IsInferxAdmin() {
+            let mut tenants = Vec::new();
+            for ns in self.objRepo.tenantMgr.GetObjects("", "").unwrap() {
+                tenants.push(ns.Name());
+            }
+
+            return tenants;
+        }
+
+        return token.AdminTenants();
+    }
+
+    pub fn AdminNamespaces(&self, token: &Arc<AccessToken>) -> Vec<(String, String)> {
+        if token.IsInferxAdmin() {
+            let mut namespaces = Vec::new();
+            for ns in self.objRepo.namespaceMgr.GetObjects("", "").unwrap() {
+                namespaces.push((ns.Tenant(), ns.Name()))
+            }
+
+            return namespaces;
+        }
+
+        return token.AdminNamespaces();
+    }
+
+    pub fn UserNamespaces(&self, token: &Arc<AccessToken>) -> Vec<(String, String)> {
+        if token.IsInferxAdmin() {
+            let mut namespaces = Vec::new();
+            for ns in self.objRepo.namespaceMgr.GetObjects("", "").unwrap() {
+                namespaces.push((ns.Tenant(), ns.Name()))
+            }
+
+            return namespaces;
+        }
+
+        return token.UserNamespaces();
+    }
+
     pub fn ListFuncBrief(
         &self,
         token: &Arc<AccessToken>,
@@ -789,7 +845,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncBrief>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant != "public" {
@@ -801,7 +857,7 @@ impl HttpGateway {
             let mut list = self.objRepo.ListFunc("public", &namespace)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -844,7 +900,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncSnapshot>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant == "public" {
@@ -857,7 +913,7 @@ impl HttpGateway {
             let mut list = self.objRepo.GetSnapshots("public", &namespace)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -900,7 +956,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncPod>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant == "public" {
@@ -913,7 +969,7 @@ impl HttpGateway {
             let mut list = self.objRepo.GetFuncPods("public", &namespace, funcname)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;

@@ -154,6 +154,11 @@ pub struct AccessToken {
 
 impl AccessToken {
     pub const INERX_ADMIN: &str = "inferx_admin";
+    pub const SYSTEM_TENANT: &str = "system";
+    pub const TENANT_ADMIN: &str = "/tenant/admin/";
+    pub const TENANT_USER: &str = "/tenant/user/";
+    pub const NAMSPACE_ADMIN: &str = "/namespace/admin/";
+    pub const NAMSPACE_USER: &str = "/namespace/user/";
 
     pub fn New(username: &str, groups: Vec<String>, apikeys: Vec<String>) -> Self {
         let mut set = BTreeSet::new();
@@ -180,7 +185,11 @@ impl AccessToken {
     }
 
     pub fn IsInferxAdmin(&self) -> bool {
-        return &self.username == Self::INERX_ADMIN;
+        let prefix = Self::TENANT_ADMIN;
+        let systemtenant = Self::SYSTEM_TENANT;
+        let isSystemAdmin = self.roles.contains(&format!("{prefix}{systemtenant}"));
+
+        return &self.username == Self::INERX_ADMIN || isSystemAdmin;
     }
 
     pub fn UserKey(&self) -> String {
@@ -199,11 +208,6 @@ impl AccessToken {
             }
         }
     }
-
-    pub const TENANT_ADMIN: &str = "/tenant/admin/";
-    pub const TENANT_USER: &str = "/tenant/user/";
-    pub const NAMSPACE_ADMIN: &str = "/namespace/admin/";
-    pub const NAMSPACE_USER: &str = "/namespace/user/";
 
     pub fn TenantUserRole(tenant: &str) -> String {
         let prefix = Self::TENANT_USER;

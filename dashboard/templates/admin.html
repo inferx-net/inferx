@@ -39,10 +39,10 @@
 </style>
 
 <div class="tab">
-    <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Models')" style="font-size: 25px;">Models</button>
     <button class="tablinks" onclick="openTab(event, 'Namespaces')" style="font-size: 25px;">Namespaces</button>
     <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
+    <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
 </div>
 
@@ -160,6 +160,8 @@
                 <th rowspan="2">Namespace</th>
 
                 <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th rowspan="2" style="text-align: center;">Admins</th>
+                <th rowspan="2" style="text-align: center;">Users</th>
             </tr>
             <tr>
                 <th style="width: 100px; text-align: center;">IsAdmin</th>
@@ -194,10 +196,14 @@
     <table style="width:100%" id="tenants-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
-                <th>Name</th>
-                <th>Admin</th>
-                <th>User</th>
+                <th rowspan="2">Tenant</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th rowspan="2" style="text-align: center;">Admins</th>
+                <th rowspan="2" style="text-align: center;">Users</th>
+            </tr>
+            <tr>
+                <th style="width: 100px; text-align: center;">IsAdmin</th>
+                <th style="width: 100px; text-align: center;">IsUser</th>
             </tr>
         </thead>
 
@@ -205,16 +211,6 @@
 
         </tbody>
     </table>
-
-    <form id="delete-tenant-form">
-        <button id="delete-tenant-button" type="submit" onclick="delete_tenants()"">Delete Tenants</button>
-    </form>
-    
-    <h2>Add Tenant</h2>
-    <form id=" add-tenant-form">
-            <input type="text" id="tenant_name" placeholder="Enter Tenant name" required>
-            <button type="submit" onclick="create_tenant()">Create Tenant</button>
-    </form>
 </div>
 
 <script>
@@ -259,6 +255,10 @@
             const searchTenant = String(targetTenant).toLowerCase().trim();
             const searchNamespace = String(targetNamespace).toLowerCase().trim();
 
+            const isSystemAdmin = rbObjType === "tenant" &&
+                rbTenant === "system" &&
+                rbRole === "admin";
+
             const isTenantAdmin = rbObjType === "tenant" &&
                 rbTenant === searchTenant &&
                 rbRole === "admin";
@@ -268,7 +268,7 @@
                 rbNamespace === searchNamespace &&
                 rbRole === "admin";
 
-            return isTenantAdmin || isNamespaceAdmin;
+            return isSystemAdmin || isTenantAdmin || isNamespaceAdmin;
         });
     }
 
@@ -306,6 +306,73 @@
 
             return false;
         });
+    }
+
+    async function getTenantUsers(role, tenant) {
+        // 1. Build the URL with parameters
+        const params = new URLSearchParams({
+            role: role,
+            tenant: tenant
+        });
+
+        const url = `/demo/generate_tenantuser?${params.toString()}`;
+        try {
+            const response = await fetch(url);
+
+            // 2. Check if the request was successful
+            if (!response.ok) {
+                // If status is 401 or 403, the user might be logged out
+                if (response.status === 401 || response.status === 403) {
+                    console.error("Session expired or unauthorized. Redirecting to login...");
+                    window.location.href = "/login";
+                    return [];
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // 3. Parse and return the JSON data
+            const users = await response.json();
+            return users;
+
+        } catch (error) {
+            console.error("Could not fetch tenant users:", error);
+            return []; // Return empty array to prevent code from crashing later
+        }
+    }
+
+    async function getNamespaceUsers(role, tenant, namespace) {
+        // 1. Construct the query parameters safely
+        const params = new URLSearchParams({
+            role: role,
+            tenant: tenant,
+            namespace: namespace
+        });
+
+        const url = `/demo/generate_namespaceuser?${params.toString()}`;
+
+        try {
+            const response = await fetch(url);
+
+            // 2. Handle Authentication/Redirects
+            // If require_login redirects to a login page, the response.url will change
+            if (response.redirected) {
+                console.warn("User session expired, redirecting to login page...");
+                window.location.href = response.url;
+                return [];
+            }
+
+            if (!response.ok) {
+                throw new Error(`Server responded with status: ${response.status}`);
+            }
+
+            // 3. Parse JSON result
+            const users = await response.json();
+            return users;
+
+        } catch (error) {
+            console.error("Error fetching namespace users:", error);
+            return [];
+        }
     }
 
     async function fetchItems() {
@@ -431,10 +498,17 @@
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
-        namespaces.forEach(key => {
+        for (const key of namespaces) {
             const row = document.createElement('tr');
             const isAdmin = IsAdmin(roles, key.tenant, key.name);
             const isUser = IsUser(roles, key.tenant, key.name);
+
+            const adminList = await getNamespaceUsers("admin", key.tenant, key.name);
+            const userList = await getNamespaceUsers("user", key.tenant, key.name);
+
+            const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
+            const userNames = userList.length > 0 ? userList.join(', ') : '-';
+
             row.innerHTML = `
                 <td style="text-align: center; vertical-align: middle;">
                     <input type="checkbox" 
@@ -461,25 +535,36 @@
                     ? '<span style="color: green; font-weight: bold;">✓</span>'
                     : '<span style="color: #666;">-</span>'}
                 </td>
-            `;
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${adminNames}</td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${userNames}</td>
+           `;
             namespaces_tbody.appendChild(row);
 
-            const option = document.createElement("option");
-            option.value = key.tenant + "/" + key.name;
-            option.textContent = key.tenant + "/" + key.name;
-            namespace_dropdown.appendChild(option);
-        });
+            if (isAdmin) {
+                const option = document.createElement("option");
+                option.value = key.tenant + "/" + key.name;
+                option.textContent = key.tenant + "/" + key.name;
+                namespace_dropdown.appendChild(option);
+            }
+
+        };
 
         const tenants_resp = await fetch('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
-        tenants.forEach(key => {
+        for (const key of tenants) {
             const row = document.createElement('tr');
             const isAdmin = IsAdmin(roles, key.name, "");
             const isUser = IsUser(roles, key.name, "");
+
+            const adminList = await getTenantUsers("admin", key.name);
+            const userList = await getTenantUsers("user", key.name);
+
+            const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
+            const userNames = userList.length > 0 ? userList.join(', ') : '-';
+
             row.innerHTML = `
-                <td style="text-align: center; vertical-align: middle;"><input type="checkbox" data-id="system/system/${key.name}"></td>
                 <td style="text-align: center; vertical-align: middle;">
                     <a
                         href="{{ hosturl }}listfunc?tenant=${key.name}">
@@ -494,6 +579,9 @@
                     ? '<span style="color: green; font-weight: bold;">✓</span>'
                     : '<span style="color: #666;">-</span>'}
                 </td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${adminNames}</td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${userNames}</td>
+                
             `;
             tenants_tbody.appendChild(row);
 
@@ -501,7 +589,7 @@
             option.value = key.name;
             option.textContent = key.name;
             tenant_dropdown.appendChild(option);
-        });
+        };
     }
 
     async function create_func() {

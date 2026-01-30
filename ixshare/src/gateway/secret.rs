@@ -174,8 +174,6 @@ impl SqlSecret {
             tenant
         );
 
-        error!("GetTenantAdmins sql {}", query);
-
         let selectQuery = sqlx::query_as::<_, User>(&query);
         let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
