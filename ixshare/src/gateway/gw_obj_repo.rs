@@ -597,15 +597,16 @@ impl GwObjRepo {
                             let SchedulerInfo = SchedulerInfo::FromDataObject(obj)?;
                             match SCHEDULER_CLIENT
                                 .Connect(&SchedulerInfo.SchedulerUrl())
-                                .await {
-                                    Ok(_) => {
-                                        info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
-                                    }
-                                    Err(e) => {
-                                        error!("EventType::Added scheduler set url {}, connect failed with error: {:?}", SchedulerInfo.SchedulerUrl(), e);
-                                        // Don't panic - let service discovery retry with the next scheduler info
-                                    }
+                                .await
+                            {
+                                Ok(_) => {
+                                    info!("********************EventType::Added scheduler set url {}...************", SchedulerInfo.SchedulerUrl());
                                 }
+                                Err(e) => {
+                                    error!("EventType::Added scheduler set url {}, connect failed with error: {:?}", SchedulerInfo.SchedulerUrl(), e);
+                                    // Don't panic - let service discovery retry with the next scheduler info
+                                }
+                            }
                         }
                         FuncPolicy::KEY => {
                             let p = FuncPolicy::FromDataObject(obj)?;
@@ -853,12 +854,15 @@ impl GwObjRepo {
     ) -> Result<FuncDetail> {
         let func = self.GetFunc(tenant, namespace, funcname)?;
 
-        let policy = match &func.object.spec.policy {
-            ObjRef::Link(l) => match self.funcpolicyMgr.Get(tenant, &l.namespace, &l.name) {
-                Ok(p) => p.object,
-                _ => FuncPolicySpec::default(),
+        let policy = match self.funcpolicyMgr.Get(tenant, namespace, funcname) {
+            Ok(p) => p.object,
+            _ => match &func.object.spec.policy {
+                ObjRef::Link(l) => match self.funcpolicyMgr.Get(tenant, &l.namespace, &l.name) {
+                    Ok(p) => p.object,
+                    _ => FuncPolicySpec::default(),
+                },
+                ObjRef::Obj(o) => o.clone(),
             },
-            ObjRef::Obj(o) => o.clone(),
         };
 
         let snapshotPrefix = format!("{}/{}/{}", tenant, namespace, funcname);

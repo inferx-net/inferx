@@ -270,6 +270,11 @@ impl AccessToken {
             return true;
         }
 
+        let prefix = Self::TENANT_ADMIN;
+        if self.roles.contains(&format!("{prefix}{tenant}")) {
+            return true;
+        }
+
         let prefix = Self::NAMSPACE_ADMIN;
         return self
             .roles

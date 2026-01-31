@@ -21,6 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use opentelemetry::global::ObjectSafeSpan;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::Tracer;
@@ -1232,7 +1233,6 @@ async fn CreateApikey(
     Extension(token): Extension<Arc<AccessToken>>,
     Json(obj): Json<Apikey>,
 ) -> SResult<Response, StatusCode> {
-    error!("CreateApikey keyname {}", &obj.keyname);
     match GetTokenCache()
         .await
         .CreateApikey(&token, &obj.username, &obj.keyname)
@@ -1332,6 +1332,7 @@ async fn CreateObj(
         Tenant::KEY => gw.CreateTenant(&token, dataobj).await,
         Namespace::KEY => gw.CreateNamespace(&token, dataobj).await,
         Function::KEY => gw.CreateFunc(&token, dataobj).await,
+        FuncPolicy::KEY => gw.CreateFuncPolicy(&token, dataobj).await,
         _ => gw.client.Create(&dataobj).await,
     };
 
@@ -1367,6 +1368,7 @@ async fn UpdateObj(
         Tenant::KEY => gw.UpdateTenant(&token, dataobj).await,
         Namespace::KEY => gw.UpdateNamespace(&token, dataobj).await,
         Function::KEY => gw.UpdateFunc(&token, dataobj).await,
+        FuncPolicy::KEY => gw.UpdateFuncPolicy(&token, dataobj).await,
         _ => gw.client.Update(&dataobj, 0).await,
     };
 
@@ -1399,6 +1401,10 @@ async fn DeleteObj(
         Tenant::KEY => gw.DeleteTenant(&token, &tenant, &namespace, &name).await,
         Namespace::KEY => gw.DeleteNamespace(&token, &tenant, &namespace, &name).await,
         Function::KEY => gw.DeleteFunc(&token, &tenant, &namespace, &name).await,
+        FuncPolicy::KEY => {
+            gw.DeleteFuncPolicy(&token, &tenant, &namespace, &name)
+                .await
+        }
         _ => {
             gw.client
                 .Delete(&objType, &tenant, &namespace, &name, 0)
@@ -1592,17 +1598,6 @@ async fn GetFuncDetail(
 }
 
 async fn GetNodes(State(gw): State<HttpGateway>) -> SResult<Response, StatusCode> {
-    // match gw
-    //     .client
-    //     .List("node_info", "system", "system", &ListOption::default())
-    //     .await
-    // {
-    //     Ok(l) => {
-    //         error!("GetNodes the nodes xxxx is {:#?}", &l);
-    //     }
-    //     Err(_) => (),
-    // }
-
     match gw.objRepo.GetNodes() {
         Ok(list) => {
             let data = serde_json::to_string(&list).unwrap();

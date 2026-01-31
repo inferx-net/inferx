@@ -4,6 +4,7 @@ use inferxlib::{
     data_obj::DataObject,
     obj_mgr::{
         func_mgr::{FuncStatus, Function},
+        funcpolicy_mgr::FuncPolicy,
         funcsnapshot_mgr::FuncSnapshot,
         namespace_mgr::Namespace,
         pod_mgr::FuncPod,
@@ -569,6 +570,25 @@ impl HttpGateway {
         return self.client.Create(&dataobj).await;
     }
 
+    pub async fn CreateFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
+    ) -> Result<i64> {
+        let dataobj = obj;
+
+        let funcpolicy = FuncPolicy::FromDataObject(dataobj.clone())?;
+
+        let tenant = funcpolicy.tenant.clone();
+        let namespace = funcpolicy.namespace.clone();
+
+        if !token.IsNamespaceAdmin(&tenant, &namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        return self.client.Create(&dataobj).await;
+    }
+
     pub async fn UpdateFunc(
         &self,
         token: &Arc<AccessToken>,
@@ -588,6 +608,25 @@ impl HttpGateway {
         return Ok(version);
     }
 
+    pub async fn UpdateFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
+    ) -> Result<i64> {
+        let dataobj = obj;
+
+        let funcpolicy = FuncPolicy::FromDataObject(dataobj.clone())?;
+
+        let tenant = funcpolicy.tenant.clone();
+        let namespace = funcpolicy.namespace.clone();
+
+        if !token.IsNamespaceAdmin(&tenant, &namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        return self.client.Update(&dataobj, 0).await;
+    }
+
     pub async fn DeleteFunc(
         &self,
         token: &Arc<AccessToken>,
@@ -602,6 +641,25 @@ impl HttpGateway {
         let version = self
             .client
             .Delete(Function::KEY, tenant, namespace, name, 0)
+            .await?;
+
+        return Ok(version);
+    }
+
+    pub async fn DeleteFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<i64> {
+        if !token.IsNamespaceAdmin(tenant, namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        let version = self
+            .client
+            .Delete(FuncPolicy::KEY, tenant, namespace, name, 0)
             .await?;
 
         return Ok(version);
