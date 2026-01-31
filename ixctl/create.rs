@@ -41,7 +41,7 @@ impl CreateCmd {
                     .help("file name")
                     .takes_value(true),
             )
-            .about("Create a python function package");
+            .about("Create a inferx object");
     }
 
     pub async fn Run(&self, gConfig: &GlobalConfig) -> Result<()> {

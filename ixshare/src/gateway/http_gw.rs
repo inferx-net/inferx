@@ -4,6 +4,7 @@ use inferxlib::{
     data_obj::DataObject,
     obj_mgr::{
         func_mgr::{FuncStatus, Function},
+        funcpolicy_mgr::FuncPolicy,
         funcsnapshot_mgr::FuncSnapshot,
         namespace_mgr::Namespace,
         pod_mgr::FuncPod,
@@ -20,12 +21,381 @@ use crate::{
 };
 
 use super::{
-    auth_layer::{AccessToken, GetTokenCache},
+    auth_layer::{AccessToken, GetTokenCache, ObjectType, PermissionType, UserRole},
     gw_obj_repo::{FuncBrief, FuncDetail},
     http_gateway::HttpGateway,
 };
 
 impl HttpGateway {
+    pub async fn Rbac(
+        &self,
+        token: &Arc<AccessToken>,
+        permissionType: &PermissionType,
+        objType: &ObjectType,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match objType {
+            ObjectType::Tenant => {
+                if tenant != "system" || namespace != "system" {
+                    return Err(Error::CommonError(format!(
+                        "invalid tenant or namespace name"
+                    )));
+                }
+
+                match permissionType {
+                    PermissionType::Grant => {
+                        return self.GrantTenantRole(token, name, role, username).await;
+                    }
+                    PermissionType::Revoke => {
+                        return self.RevokeTenantRole(token, name, role, username).await;
+                    }
+                }
+            }
+            ObjectType::Namespace => {
+                if namespace != "system" {
+                    return Err(Error::CommonError(format!(
+                        "invalid tenant or namespace name"
+                    )));
+                }
+
+                match permissionType {
+                    PermissionType::Grant => {
+                        return self
+                            .GrantNamespaceRole(token, tenant, name, role, username)
+                            .await;
+                    }
+                    PermissionType::Revoke => {
+                        return self
+                            .RevokeNamespaceRole(token, tenant, name, role, username)
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn GrantTenantRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenantname: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.tenantMgr.Get("system", "system", tenantname) {
+            Err(e) => {
+                if tenantname != AccessToken::SYSTEM_TENANT {
+                    return Err(Error::NotExist(format!(
+                        "fail to get tenant {} with error {:?}",
+                        tenantname, e
+                    )));
+                }
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenantname) {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenantname, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if usertoken.IsTenantAdmin(tenantname) {
+                    return Err(Error::Exist(format!(
+                        "user {} already tenant {} admin",
+                        username, tenantname
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantTenantAdminPermission(&usertoken, tenantname, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if usertoken.IsTenantUser(tenantname) {
+                    return Err(Error::Exist(format!(
+                        "user {} already tenant {} user",
+                        username, tenantname
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantTenantUserPermission(&usertoken, tenantname, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RevokeTenantRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.tenantMgr.Get("system", "system", tenant) {
+            Err(e) => {
+                if tenant != AccessToken::SYSTEM_TENANT {
+                    return Err(Error::NotExist(format!(
+                        "fail to get tenant {} with error {:?}",
+                        tenant, e
+                    )));
+                }
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenant) {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if !usertoken.IsTenantAdmin(tenant) {
+                    return Err(Error::NotExist(format!(
+                        "user {} is not tenant {} admin",
+                        username, tenant
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeTenantAdminPermission(&usertoken, tenant, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if !usertoken.IsTenantUser(tenant) {
+                    return Err(Error::NotExist(format!(
+                        "user {} already tenant {} user",
+                        username, tenant
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeTenantUserPermission(token, tenant, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn GrantNamespaceRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get namespace {}/{} with error {:?}",
+                    tenant, namespace, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if usertoken.IsNamespaceAdmin(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} already namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantNamespaceAdminPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if usertoken.IsNamespaceUser(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} already namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .GrantNamespaceUserPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RevokeNamespaceRole(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        role: UserRole,
+        username: &str,
+    ) -> Result<()> {
+        match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get namespace {}/{} with error {:?}",
+                    tenant, namespace, e
+                )));
+            }
+            Ok(_o) => (),
+        };
+
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let usertoken = match GetTokenCache().await.GetTokenByUsername(username).await {
+            Err(e) => {
+                return Err(Error::NotExist(format!(
+                    "fail to get access token for user {} with error {:?}",
+                    tenant, e
+                )));
+            }
+            Ok(t) => t,
+        };
+
+        match role {
+            UserRole::Admin => {
+                if !usertoken.IsNamespaceAdmin(tenant, namespace) {
+                    return Err(Error::NotExist(format!(
+                        "user {} is not namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeNamespaceAdminPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+            UserRole::User => {
+                if !usertoken.IsNamespaceUser(tenant, namespace) {
+                    return Err(Error::Exist(format!(
+                        "user {} is not namespace {}/{} admin",
+                        username, tenant, namespace
+                    )));
+                }
+                GetTokenCache()
+                    .await
+                    .RevokeNamespaceUserPermission(&usertoken, tenant, namespace, username)
+                    .await?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub async fn RbacTenantUsers(
+        &self,
+        token: &Arc<AccessToken>,
+        role: &str,
+        tenant: &str,
+    ) -> Result<Vec<String>> {
+        if !token.IsInferxAdmin() && !token.IsTenantAdmin(tenant) {
+            return Err(Error::NoPermission);
+        }
+
+        let users = match role {
+            "admin" => GetTokenCache().await.GetTenantAdmins(tenant).await?,
+            "user" => GetTokenCache().await.GetTenantUsers(tenant).await?,
+            _ => {
+                return Err(Error::CommonError(format!(
+                    "the role name {} is not valid",
+                    role
+                )))
+            }
+        };
+
+        return Ok(users);
+    }
+
+    pub async fn RbacNamespaceUsers(
+        &self,
+        token: &Arc<AccessToken>,
+        role: &str,
+        tenant: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>> {
+        if !token.IsInferxAdmin()
+            && !token.IsTenantAdmin(tenant)
+            && !token.IsNamespaceAdmin(tenant, namespace)
+        {
+            return Err(Error::NoPermission);
+        }
+
+        let users = match role {
+            "admin" => {
+                GetTokenCache()
+                    .await
+                    .GetNamespaceAdmins(tenant, namespace)
+                    .await?
+            }
+            "user" => {
+                GetTokenCache()
+                    .await
+                    .GetNamespaceUsers(tenant, namespace)
+                    .await?
+            }
+            _ => {
+                return Err(Error::CommonError(format!(
+                    "the role name {} is not valid",
+                    role
+                )))
+            }
+        };
+
+        return Ok(users);
+    }
+
     pub async fn CreateTenant(
         &self,
         token: &Arc<AccessToken>,
@@ -41,22 +411,34 @@ impl HttpGateway {
             )));
         }
 
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
         let version = self.client.Create(&obj).await?;
 
-        GetTokenCache()
-            .await
-            .GrantTenantAdminPermission(token, &tenant.name, &token.username)
-            .await?;
+        // GetTokenCache()
+        //     .await
+        //     .GrantTenantAdminPermission(token, &tenant.name, &token.username)
+        //     .await?;
 
         return Ok(version);
     }
 
     pub async fn UpdateTenant(
         &self,
-        _token: &Arc<AccessToken>,
-        _obj: DataObject<Value>,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
     ) -> Result<i64> {
-        return Err(Error::CommonError(format!("doesn't support tenant update")));
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
+        // let mut dataobj = obj;
+        // let tenant = Tenant::FromDataObject(dataobj)?;
+        // dataobj = tenant.DataObject();
+        let version = self.client.Update(&obj, 0).await?;
+        return Ok(version);
     }
 
     pub async fn DeleteTenant(
@@ -72,7 +454,7 @@ impl HttpGateway {
             )));
         }
 
-        if !token.IsTenantAdmin(name) {
+        if !token.IsInferxAdmin() {
             return Err(Error::NoPermission);
         }
 
@@ -86,11 +468,6 @@ impl HttpGateway {
         let version = self
             .client
             .Delete(Tenant::KEY, tenant, namespace, name, 0)
-            .await?;
-
-        GetTokenCache()
-            .await
-            .RevokeTenantAdminPermission(token, name, &token.username)
             .await?;
 
         return Ok(version);
@@ -193,6 +570,25 @@ impl HttpGateway {
         return self.client.Create(&dataobj).await;
     }
 
+    pub async fn CreateFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
+    ) -> Result<i64> {
+        let dataobj = obj;
+
+        let funcpolicy = FuncPolicy::FromDataObject(dataobj.clone())?;
+
+        let tenant = funcpolicy.tenant.clone();
+        let namespace = funcpolicy.namespace.clone();
+
+        if !token.IsNamespaceAdmin(&tenant, &namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        return self.client.Create(&dataobj).await;
+    }
+
     pub async fn UpdateFunc(
         &self,
         token: &Arc<AccessToken>,
@@ -210,6 +606,25 @@ impl HttpGateway {
         dataobj = func.DataObject();
         let version = self.client.Update(&dataobj, 0).await?;
         return Ok(version);
+    }
+
+    pub async fn UpdateFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
+    ) -> Result<i64> {
+        let dataobj = obj;
+
+        let funcpolicy = FuncPolicy::FromDataObject(dataobj.clone())?;
+
+        let tenant = funcpolicy.tenant.clone();
+        let namespace = funcpolicy.namespace.clone();
+
+        if !token.IsNamespaceAdmin(&tenant, &namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        return self.client.Update(&dataobj, 0).await;
     }
 
     pub async fn DeleteFunc(
@@ -231,13 +646,32 @@ impl HttpGateway {
         return Ok(version);
     }
 
+    pub async fn DeleteFuncPolicy(
+        &self,
+        token: &Arc<AccessToken>,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+    ) -> Result<i64> {
+        if !token.IsNamespaceAdmin(tenant, namespace) {
+            return Err(Error::NoPermission);
+        }
+
+        let version = self
+            .client
+            .Delete(FuncPolicy::KEY, tenant, namespace, name, 0)
+            .await?;
+
+        return Ok(version);
+    }
+
     pub async fn ListTenant(
         &self,
         token: &Arc<AccessToken>,
         _tenant: &str,
         _namespace: &str,
     ) -> Result<Vec<DataObject<Value>>> {
-        let tenants = token.AdminTenants();
+        let tenants = self.AdminTenants(token);
         let mut objs = Vec::new();
         for tenant in &tenants {
             let obj = match self.objRepo.tenantMgr.Get("system", "system", tenant) {
@@ -261,7 +695,7 @@ impl HttpGateway {
     ) -> Result<Vec<DataObject<Value>>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in &namespaces {
                 let obj = match self.objRepo.namespaceMgr.Get(tenant, "system", namespace) {
@@ -274,7 +708,7 @@ impl HttpGateway {
                 objs.push(obj);
             }
         } else if namespace == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (t, namespace) in &namespaces {
                 if t != tenant {
                     continue;
@@ -308,7 +742,7 @@ impl HttpGateway {
     ) -> Result<Vec<DataObject<Value>>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.AdminNamespaces(token);
 
             for (tenant, namespace) in &namespaces {
                 match self.objRepo.funcMgr.GetObjects(tenant, namespace) {
@@ -323,7 +757,7 @@ impl HttpGateway {
                 };
             }
         } else if namespace == "" {
-            let namespaces = token.AdminNamespaces();
+            let namespaces = self.AdminNamespaces(token);
             for (t, namespace) in &namespaces {
                 if t != tenant {
                     continue;
@@ -371,7 +805,7 @@ impl HttpGateway {
 
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 let mut list = self
@@ -387,7 +821,7 @@ impl HttpGateway {
                 .await?;
             objs.append(&mut list.objs);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -409,6 +843,58 @@ impl HttpGateway {
         return Ok(objs);
     }
 
+    pub fn UserTenants(&self, token: &Arc<AccessToken>) -> Vec<String> {
+        if token.IsInferxAdmin() {
+            let mut tenants = Vec::new();
+            for ns in self.objRepo.tenantMgr.GetObjects("", "").unwrap() {
+                tenants.push(ns.Name());
+            }
+
+            return tenants;
+        }
+
+        return token.UserTenants();
+    }
+
+    pub fn AdminTenants(&self, token: &Arc<AccessToken>) -> Vec<String> {
+        if token.IsInferxAdmin() {
+            let mut tenants = Vec::new();
+            for ns in self.objRepo.tenantMgr.GetObjects("", "").unwrap() {
+                tenants.push(ns.Name());
+            }
+
+            return tenants;
+        }
+
+        return token.AdminTenants();
+    }
+
+    pub fn AdminNamespaces(&self, token: &Arc<AccessToken>) -> Vec<(String, String)> {
+        if token.IsInferxAdmin() {
+            let mut namespaces = Vec::new();
+            for ns in self.objRepo.namespaceMgr.GetObjects("", "").unwrap() {
+                namespaces.push((ns.Tenant(), ns.Name()))
+            }
+
+            return namespaces;
+        }
+
+        return token.AdminNamespaces();
+    }
+
+    pub fn UserNamespaces(&self, token: &Arc<AccessToken>) -> Vec<(String, String)> {
+        if token.IsInferxAdmin() {
+            let mut namespaces = Vec::new();
+            for ns in self.objRepo.namespaceMgr.GetObjects("", "").unwrap() {
+                namespaces.push((ns.Tenant(), ns.Name()))
+            }
+
+            return namespaces;
+        }
+
+        return token.UserNamespaces();
+    }
+
     pub fn ListFuncBrief(
         &self,
         token: &Arc<AccessToken>,
@@ -417,7 +903,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncBrief>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant != "public" {
@@ -429,7 +915,7 @@ impl HttpGateway {
             let mut list = self.objRepo.ListFunc("public", &namespace)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -472,7 +958,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncSnapshot>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant == "public" {
@@ -485,7 +971,7 @@ impl HttpGateway {
             let mut list = self.objRepo.GetSnapshots("public", &namespace)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;
@@ -528,7 +1014,7 @@ impl HttpGateway {
     ) -> Result<Vec<FuncPod>> {
         let mut objs = Vec::new();
         if tenant == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
 
             for (tenant, namespace) in namespaces {
                 if &tenant == "public" {
@@ -541,7 +1027,7 @@ impl HttpGateway {
             let mut list = self.objRepo.GetFuncPods("public", &namespace, funcname)?;
             objs.append(&mut list);
         } else if namespace == "" {
-            let namespaces = token.UserNamespaces();
+            let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
                     break;

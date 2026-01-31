@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use core::panic;
 use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
@@ -20,11 +21,10 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use core::panic;
-use std::collections::{BTreeMap, BTreeSet};
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
@@ -227,11 +227,7 @@ impl NodeStatus {
         return Ok(());
     }
 
-    pub fn RemovePod(
-        &mut self,
-        podKey: &str,
-        resources: &NodeResources,
-    ) -> Result<()> {
+    pub fn RemovePod(&mut self, podKey: &str, resources: &NodeResources) -> Result<()> {
         let pendingExist = self.pendingPods.remove(podKey).is_some();
         let exist = match self.pods.remove(podKey) {
             Some(_pod) => true,
@@ -418,7 +414,7 @@ impl FuncStatus {
                     continue;
                 }
             }
-            break;  // Found a fresh request, stop (rest are newer)
+            break; // Found a fresh request, stop (rest are newer)
         }
 
         removed_count
@@ -1051,10 +1047,7 @@ impl SchedulerHandler {
                                 );
                             }
 
-                            info!(
-                                "Removed pod {} from func {} pending pods",
-                                pod_key, funcid
-                            );
+                            info!("Removed pod {} from func {} pending pods", pod_key, funcid);
                         }
 
                         info!("Restored pod {} to Standby state", pod_key);
@@ -1188,11 +1181,7 @@ impl SchedulerHandler {
         }
     }
 
-    pub fn ProcessStopWorkerComplete(
-        &mut self,
-        pod_key: &str,
-        result: Result<()>,
-    ) {
+    pub fn ProcessStopWorkerComplete(&mut self, pod_key: &str, result: Result<()>) {
         match result {
             Ok(()) => {
                 info!(
@@ -1207,10 +1196,7 @@ impl SchedulerHandler {
                 // This ensures resources are freed exactly once
             }
             Err(e) => {
-                error!(
-                    "StopWorker RPC failed for pod {}: {:?}",
-                    pod_key, e
-                );
+                error!("StopWorker RPC failed for pod {}: {:?}", pod_key, e);
                 // Don't take any action - pod might already be deleted or in bad state
                 // Informer events will handle cleanup if pod gets deleted
                 // If pod still exists, it can be retried later
@@ -1233,7 +1219,8 @@ impl SchedulerHandler {
                 // RPC succeeded - pod will become Ready via informer event
                 trace!(
                     "StartWorker RPC succeeded for {:?} pod {} - waiting for Ready event",
-                    create_type, podkey
+                    create_type,
+                    podkey
                 );
                 Ok(())
             }
@@ -1394,7 +1381,9 @@ impl SchedulerHandler {
 
                         trace!(
                             "user GPU desc timeout {:?} {} {}",
-                            &worker.pod.object.spec.funcname, gpuCnt, cnt
+                            &worker.pod.object.spec.funcname,
+                            gpuCnt,
+                            cnt
                         );
 
                         worker.SetIdle(SetIdleSource::ProcessGatewayTimeout);
@@ -1611,7 +1600,7 @@ impl SchedulerHandler {
             &req.tenant, &req.namespace, &req.funcname, req.fprevision
         );
 
-        let fp = match self.funcs.get(&funcname) {
+        let func = match self.funcs.get(&funcname) {
             None => {
                 let resp = na::LeaseWorkerResp {
                     error: format!(
@@ -1631,7 +1620,12 @@ impl SchedulerHandler {
             Some(fpStatus) => fpStatus.func.clone(),
         };
 
-        let policy = self.FuncPolicy(&req.tenant, &fp.object.spec.policy);
+        let policy = self.FuncPolicy(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            &func.object.spec.policy,
+        );
 
         let readyCnt = self.ReadyPodCount(&funcname);
 
@@ -1932,10 +1926,16 @@ impl SchedulerHandler {
     pub fn AddSnapshot(&mut self, snapshot: &FuncSnapshot) -> Result<()> {
         let funckey = snapshot.object.funckey.clone();
 
-        info!("AddSnapshot: adding snapshot for func {} on node {}", funckey, snapshot.object.nodename);
+        info!(
+            "AddSnapshot: adding snapshot for func {} on node {}",
+            funckey, snapshot.object.nodename
+        );
 
         self.RemovePendingSnapshot(&funckey, &snapshot.object.nodename);
-        info!("AddSnapshot: removed from pending snapshots for func {} on node {}", funckey, snapshot.object.nodename);
+        info!(
+            "AddSnapshot: removed from pending snapshots for func {} on node {}",
+            funckey, snapshot.object.nodename
+        );
 
         if !self.snapshots.contains_key(&funckey) {
             self.snapshots.insert(funckey.clone(), BTreeMap::new());
@@ -1946,7 +1946,10 @@ impl SchedulerHandler {
             .unwrap()
             .insert(snapshot.object.nodename.clone(), snapshot.object.clone());
 
-        info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, snapshot.object.nodename);
+        info!(
+            "AddSnapshot: snapshot added to snapshots map for func {} on node {}",
+            funckey, snapshot.object.nodename
+        );
 
         return Ok(());
     }
@@ -1985,7 +1988,6 @@ impl SchedulerHandler {
 
         return Ok(());
     }
-
 
     /// Remove all snapshots for a funckey (non-blocking, async) with spawn_rpc
     ///
@@ -2119,7 +2121,6 @@ impl SchedulerHandler {
         return Ok(remove);
     }
 
-
     /// Remove snapshot from node (non-blocking, async) with spawn_rpc
     ///
     /// This spawns the remove snapshot RPC in the background with:
@@ -2136,9 +2137,10 @@ impl SchedulerHandler {
             return Ok(());
         }
 
-        let nodeStatus = self.nodes.get(nodename).ok_or_else(|| {
-            Error::CommonError(format!("Node {} not found", nodename))
-        })?;
+        let nodeStatus = self
+            .nodes
+            .get(nodename)
+            .ok_or_else(|| Error::CommonError(format!("Node {} not found", nodename)))?;
         let nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
 
         // Mark this removal as pending
@@ -2158,8 +2160,10 @@ impl SchedulerHandler {
                 let nodename_clone = nodename_for_rpc.clone();
                 async move {
                     let mut client =
-                        na::node_agent_service_client::NodeAgentServiceClient::connect(nodeAgentUrl)
-                            .await?;
+                        na::node_agent_service_client::NodeAgentServiceClient::connect(
+                            nodeAgentUrl,
+                        )
+                        .await?;
 
                     let request = tonic::Request::new(RemoveSnapshotReq {
                         funckey: funckey_clone.clone(),
@@ -3108,7 +3112,14 @@ impl SchedulerHandler {
             count
         };
 
-        let policy = self.FuncPolicy(&pod.pod.tenant, &pod.pod.object.spec.funcspec.policy);
+        let funcpod = &pod.pod;
+
+        let policy = self.FuncPolicy(
+            &funcpod.tenant,
+            &funcpod.namespace,
+            &funcpod.object.spec.funcname,
+            &funcpod.object.spec.funcspec.policy,
+        );
 
         if self.ReadyPodCount(&evictfuncname) - totalevictcnt <= policy.minReplica as usize {
             return false;
@@ -3214,7 +3225,6 @@ impl SchedulerHandler {
             .await;
     }
 
-
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
         // Check if snapshot already exists
         match self.snapshots.get(funcId) {
@@ -3237,13 +3247,20 @@ impl SchedulerHandler {
             Some(m) => {
                 if m.contains(nodename) {
                     // doing snapshot in the node
-                    info!("TryCreateSnapshotOnNode: snapshot already pending for func {} on node {}", funcId, nodename);
+                    info!(
+                        "TryCreateSnapshotOnNode: snapshot already pending for func {} on node {}",
+                        funcId, nodename
+                    );
                     return Ok(());
                 }
             }
         }
 
-        trace!("TryCreateSnapshotOnNode: proceeding to create snapshot for func {} on node {}", funcId, nodename);
+        trace!(
+            "TryCreateSnapshotOnNode: proceeding to create snapshot for func {} on node {}",
+            funcId,
+            nodename
+        );
 
         let func = match self.funcs.get(funcId) {
             None => return Ok(()),
@@ -3413,7 +3430,10 @@ impl SchedulerHandler {
             .await
         {
             Err(e) => {
-                error!("TryCreateSnapshotOnNode: RPC failed for func {} on node {} - {:?}", funcId, nodename, e);
+                error!(
+                    "TryCreateSnapshotOnNode: RPC failed for func {} on node {} - {:?}",
+                    funcId, nodename, e
+                );
                 self.SetSnapshotStatus(
                     funcId,
                     nodename,
@@ -3450,7 +3470,20 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub fn FuncPolicy(&self, tenant: &str, p: &ObjRef<FuncPolicySpec>) -> FuncPolicySpec {
+    pub fn FuncPolicy(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        p: &ObjRef<FuncPolicySpec>,
+    ) -> FuncPolicySpec {
+        // if there is funcpolicy with same name, will override the current one
+        let key = format!("{}/{}/{}", tenant, namespace, name);
+        match self.funcpolicy.get(&key) {
+            None => (),
+            Some(p) => return p.clone(),
+        }
+
         match p {
             ObjRef::Obj(p) => return p.clone(),
             ObjRef::Link(l) => {
@@ -3472,7 +3505,6 @@ impl SchedulerHandler {
             }
         }
     }
-
 
     /// Adjust standby pods on a node following the async pattern from ResumePod
     ///
@@ -3554,7 +3586,12 @@ impl SchedulerHandler {
 
             let tenant = func.func.tenant.clone();
 
-            let policy = self.FuncPolicy(&tenant, &func.func.object.spec.policy);
+            let policy = self.FuncPolicy(
+                &tenant,
+                &func.func.namespace,
+                &func.func.name,
+                &func.func.object.spec.policy,
+            );
 
             if policy.standbyPerNode > cnt {
                 // Need more standby pods
@@ -3700,7 +3737,9 @@ impl SchedulerHandler {
 
         trace!(
             "CreateStandby RPC spawned for func {} on node {}, pod {}, waiting for completion",
-            funcId, nodename, podKey
+            funcId,
+            nodename,
+            podKey
         );
 
         return Ok(());
@@ -3726,7 +3765,12 @@ impl SchedulerHandler {
             return false;
         }
 
-        let policy = self.FuncPolicy(&func.tenant, &func.object.spec.policy);
+        let policy = self.FuncPolicy(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            &func.object.spec.policy,
+        );
         if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
             match self.ResumePod(&funcid).await {
                 Err(e) => {
@@ -3949,7 +3993,6 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-
     /// Create worker using spawn_rpc for proper concurrency control
     /// Returns the generated pod ID immediately, RPC executes in background
     pub async fn StartWorker(
@@ -4010,7 +4053,7 @@ impl SchedulerHandler {
 
         // Get function spec
         let mut spec = func.object.spec.clone();
-        let policy = self.FuncPolicy(&tenant, &spec.policy);
+        let policy = self.FuncPolicy(&tenant, &func.namespace, &func.name, &spec.policy);
         spec.policy = ObjRef::Obj(policy);
 
         let msgTx = self.msgTx.clone();
@@ -4130,7 +4173,7 @@ impl SchedulerHandler {
         }
 
         let mut spec = func.object.spec.clone();
-        let policy = self.FuncPolicy(&tenant, &spec.policy);
+        let policy = self.FuncPolicy(&tenant, &func.namespace, &func.name, &spec.policy);
         spec.policy = ObjRef::Obj(policy);
 
         let request = tonic::Request::new(na::CreateFuncPodReq {
@@ -4253,7 +4296,6 @@ impl SchedulerHandler {
         Ok(())
     }
 
-
     /// Stop/terminate a worker pod (non-blocking, async) with spawn_rpc
     ///
     /// Uses spawn_rpc pattern.
@@ -4261,9 +4303,10 @@ impl SchedulerHandler {
     /// Pod deletion will be detected via Kubernetes informer events.
     pub fn StopWorker(&mut self, pod: &FuncPod) -> Result<()> {
         let nodename = pod.object.spec.nodename.clone();
-        let nodeStatus = self.nodes.get(&nodename).ok_or_else(|| {
-            Error::CommonError(format!("Node {} not found", nodename))
-        })?;
+        let nodeStatus = self
+            .nodes
+            .get(&nodename)
+            .ok_or_else(|| Error::CommonError(format!("Node {} not found", nodename)))?;
         let naUrl = nodeStatus.node.NodeAgentUrl();
 
         self.StopWorkerInner(
@@ -4276,7 +4319,6 @@ impl SchedulerHandler {
             &pod.object.spec.id,
         )
     }
-
 
     /// Stop/terminate a worker pod (non-blocking, async) with spawn_rpc
     ///
@@ -4352,10 +4394,7 @@ impl SchedulerHandler {
     }
 
     // return whether all list done
-    pub async fn ListDone(
-        &mut self,
-        listType: ListType,
-    ) -> Result<bool> {
+    pub async fn ListDone(&mut self, listType: ListType) -> Result<bool> {
         match listType {
             ListType::Func => self.funcListDone = true,
             ListType::FuncStatus => self.funcstatusListDone = true,
@@ -4378,7 +4417,9 @@ impl SchedulerHandler {
             // RefreshScheduling and InitSnapshotTask will be called once warm-up is complete
             self.warmupStartTime = Some(std::time::Instant::now());
             self.warmupComplete = false;
-            info!("Initialization complete, starting warm-up stage to wait for gateways to reconnect");
+            info!(
+                "Initialization complete, starting warm-up stage to wait for gateways to reconnect"
+            );
 
             return Ok(true);
         }
@@ -4440,7 +4481,10 @@ impl SchedulerHandler {
         nodename: &str,
         new_node_info: &Node,
     ) -> Result<()> {
-        info!("=== Starting reconciliation for node {} after NodeAgent restart ===", nodename);
+        info!(
+            "=== Starting reconciliation for node {} after NodeAgent restart ===",
+            nodename
+        );
 
         // Get mutable reference to node status
         let nodeStatus = match self.nodes.get_mut(nodename) {
@@ -4484,10 +4528,16 @@ impl SchedulerHandler {
         nodeStatus.stoppingPods.clear();
 
         if pending_count > 0 {
-            info!("Cleared {} pending pods from node {}", pending_count, nodename);
+            info!(
+                "Cleared {} pending pods from node {}",
+                pending_count, nodename
+            );
         }
         if stopping_count > 0 {
-            info!("Cleared {} stopping pods from node {}", stopping_count, nodename);
+            info!(
+                "Cleared {} stopping pods from node {}",
+                stopping_count, nodename
+            );
         }
 
         // Step 4: Clean up per-func tracking structures
@@ -4617,7 +4667,10 @@ impl SchedulerHandler {
             total_removed += removed;
         }
         if total_removed > 0 {
-            info!("Reconciled {} stuck lease requests (timeout {}ms)", total_removed, timeout_ms);
+            info!(
+                "Reconciled {} stuck lease requests (timeout {}ms)",
+                total_removed, timeout_ms
+            );
         }
         total_removed
     }
@@ -4749,7 +4802,8 @@ impl SchedulerHandler {
         // Clean pending snapshot removal RPCs for this node
         // Format: "funckey:nodename" - remove all entries ending with ":nodename"
         let suffix = format!(":{}", nodename);
-        self.pending_snapshot_removals.retain(|key| !key.ends_with(&suffix));
+        self.pending_snapshot_removals
+            .retain(|key| !key.ends_with(&suffix));
 
         // Clean snapshot schedule entries for this node
         // BiIndex tracks (funcid, nodename) pairs for scheduled snapshots
@@ -4961,7 +5015,9 @@ impl SchedulerHandler {
 
                         trace!(
                             "user GPU desc fail pod {:?} {} {}",
-                            &worker.pod.object.spec.funcname, gpuCnt, cnt
+                            &worker.pod.object.spec.funcname,
+                            gpuCnt,
+                            cnt
                         );
                     }
                     _ => (),
@@ -5104,7 +5160,7 @@ impl SchedulerHandler {
 
         self.funcs.remove(&key);
         self.funcPods.remove(&key);
-        self.funcstatus.remove(&key); 
+        self.funcstatus.remove(&key);
 
         // Clean up pending snapshots for this function
         self.pendingsnapshots.remove(&key);

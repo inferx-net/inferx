@@ -42,6 +42,7 @@
     <button class="tablinks" onclick="openTab(event, 'Models')" style="font-size: 25px;">Models</button>
     <button class="tablinks" onclick="openTab(event, 'Namespaces')" style="font-size: 25px;">Namespaces</button>
     <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
+    <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
 </div>
 
@@ -76,10 +77,16 @@
     <table style="width:100%" id="models-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
-                <th>Tenant</th>
-                <th>Namespace</th>
-                <th>Name</th>
+                <th rowspan="2" style="width: 100px;">Select</th>
+                <th rowspan="2">Tenant</th>
+                <th rowspan="2">Namespace</th>
+                <th rowspan="2">Name</th>
+
+                <th colspan="2" style="text-align: center; border-bottom: 2px solid #eee;">Role</th>
+            </tr>
+            <tr>
+                <th style="width: 80px; text-align: center;">Admin</th>
+                <th style="width: 80px; text-align: center;">User</th>
             </tr>
         </thead>
 
@@ -107,13 +114,58 @@
     </form>
 </div>
 
+<div id="Roles" class="tabcontent">
+    <h3>Tenant Roles</h3>
+    <table style="width:100%" id="tenant-roles-table">
+        <thead>
+            <tr>
+                <th rowspan="2">Tenant</th>
+
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+            </tr>
+            <tr>
+                <th style="width: 100px; text-align: center;">IsAdmin</th>
+                <th style="width: 100px; text-align: center;">IsUser</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <br>
+
+    <h3>Namespace Roles</h3>
+    <table style="width:100%" id="namespace-roles-table">
+        <thead>
+            <tr>
+                <th rowspan="2">Tenant</th>
+                <th rowspan="2">Namespace</th>
+
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+            </tr>
+            <tr>
+                <th style="width: 100px; text-align: center;">IsAdmin</th>
+                <th style="width: 100px; text-align: center;">IsUser</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
 <div id="Namespaces" class="tabcontent">
     <table style="width:100%" id="namespaces-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
-                <th>Tenant</th>
-                <th>Name</th>
+                <th rowspan="2" style="width: 150px;">Select</th>
+                <th rowspan="2">Tenant</th>
+                <th rowspan="2">Namespace</th>
+
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th rowspan="2" style="text-align: center;">Admins</th>
+                <th rowspan="2" style="text-align: center;">Users</th>
+            </tr>
+            <tr>
+                <th style="width: 100px; text-align: center;">IsAdmin</th>
+                <th style="width: 100px; text-align: center;">IsUser</th>
             </tr>
         </thead>
 
@@ -144,8 +196,14 @@
     <table style="width:100%" id="tenants-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
-                <th>Name</th>
+                <th rowspan="2">Tenant</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th rowspan="2" style="text-align: center;">Admins</th>
+                <th rowspan="2" style="text-align: center;">Users</th>
+            </tr>
+            <tr>
+                <th style="width: 100px; text-align: center;">IsAdmin</th>
+                <th style="width: 100px; text-align: center;">IsUser</th>
             </tr>
         </thead>
 
@@ -153,16 +211,6 @@
 
         </tbody>
     </table>
-
-    <form id="delete-tenant-form">
-        <button id="delete-tenant-button" type="submit" onclick="delete_tenants()"">Delete Tenants</button>
-    </form>
-    
-    <h2>Add Tenant</h2>
-    <form id=" add-tenant-form">
-            <input type="text" id="tenant_name" placeholder="Enter Tenant name" required>
-            <button type="submit" onclick="create_tenant()">Create Tenant</button>
-    </form>
 </div>
 
 <script>
@@ -194,6 +242,139 @@
 
 <!-- <textarea id="output" rows="20" cols="120"></textarea> -->
 <script>
+    function IsAdmin(data, targetTenant, targetNamespace = "") {
+        if (!data) return false;
+
+        return data.some(rb => {
+            // Normalize strings to lowercase and trim any accidental spaces
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            const rbTenant = String(rb.tenant).toLowerCase().trim();
+            const rbNamespace = String(rb.namespace).toLowerCase().trim();
+
+            const searchTenant = String(targetTenant).toLowerCase().trim();
+            const searchNamespace = String(targetNamespace).toLowerCase().trim();
+
+            const isSystemAdmin = rbObjType === "tenant" &&
+                rbTenant === "system" &&
+                rbRole === "admin";
+
+            const isTenantAdmin = rbObjType === "tenant" &&
+                rbTenant === searchTenant &&
+                rbRole === "admin";
+
+            const isNamespaceAdmin = rbObjType === "namespace" &&
+                rbTenant === searchTenant &&
+                rbNamespace === searchNamespace &&
+                rbRole === "admin";
+
+            return isSystemAdmin || isTenantAdmin || isNamespaceAdmin;
+        });
+    }
+
+    function IsUser(data, targetTenant, targetNamespace = "") {
+        // Ensure data exists
+        if (!data || !Array.isArray(data)) return false;
+
+        // Normalize target values once
+        const searchTenant = String(targetTenant).toLowerCase().trim();
+        const searchNamespace = String(targetNamespace).toLowerCase().trim();
+
+        return data.some(rb => {
+            // 1. Normalize row values
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            const rbTenant = String(rb.tenant).toLowerCase().trim();
+            const rbNamespace = String(rb.namespace || "").toLowerCase().trim();
+
+            // 2. Define Matches
+            const isCorrectTenant = rbTenant === searchTenant;
+            const isCorrectNamespace = rbNamespace === searchNamespace;
+
+            // 3. Logic: Match if Admin (of this tenant/namespace) OR User (of this tenant/namespace)
+            const hasRequiredRole = (rbRole === "user");
+
+            if (rbObjType === "tenant") {
+                // Tenant-level roles inherit to everything inside that tenant
+                return isCorrectTenant && hasRequiredRole;
+            }
+
+            if (rbObjType === "namespace") {
+                // Namespace-level roles only apply to that specific namespace
+                return isCorrectTenant && isCorrectNamespace && hasRequiredRole;
+            }
+
+            return false;
+        });
+    }
+
+    async function getTenantUsers(role, tenant) {
+        // 1. Build the URL with parameters
+        const params = new URLSearchParams({
+            role: role,
+            tenant: tenant
+        });
+
+        const url = `/demo/generate_tenantuser?${params.toString()}`;
+        try {
+            const response = await fetch(url);
+
+            // 2. Check if the request was successful
+            if (!response.ok) {
+                // If status is 401 or 403, the user might be logged out
+                if (response.status === 401 || response.status === 403) {
+                    console.error("Session expired or unauthorized. Redirecting to login...");
+                    window.location.href = "/login";
+                    return [];
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // 3. Parse and return the JSON data
+            const users = await response.json();
+            return users;
+
+        } catch (error) {
+            console.error("Could not fetch tenant users:", error);
+            return []; // Return empty array to prevent code from crashing later
+        }
+    }
+
+    async function getNamespaceUsers(role, tenant, namespace) {
+        // 1. Construct the query parameters safely
+        const params = new URLSearchParams({
+            role: role,
+            tenant: tenant,
+            namespace: namespace
+        });
+
+        const url = `/demo/generate_namespaceuser?${params.toString()}`;
+
+        try {
+            const response = await fetch(url);
+
+            // 2. Handle Authentication/Redirects
+            // If require_login redirects to a login page, the response.url will change
+            if (response.redirected) {
+                console.warn("User session expired, redirecting to login page...");
+                window.location.href = response.url;
+                return [];
+            }
+
+            if (!response.ok) {
+                throw new Error(`Server responded with status: ${response.status}`);
+            }
+
+            // 3. Parse JSON result
+            const users = await response.json();
+            return users;
+
+        } catch (error) {
+            console.error("Error fetching namespace users:", error);
+            return [];
+        }
+    }
+
     async function fetchItems() {
         const apikeys_resp = await fetch('/demo/generate_apikeys');
         const apikeys = await apikeys_resp.json();
@@ -202,10 +383,10 @@
         apikeys.forEach(key => {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td><input type="checkbox" data-id="${key.apikey}"></td>
-                <td>${key.keyname}</td>
-                <td>${key.username}</td>
-                <td>${key.apikey}</td>
+                <td style="text-align: center;"><input type="checkbox" data-id="${key.apikey}"></td>
+                <td style="text-align: center;">${key.keyname}</td>
+                <td style="text-align: center;">${key.username}</td>
+                <td style="text-align: center;">${key.apikey}</td>
             `;
             apikey_tbody.appendChild(row);
         });
@@ -213,77 +394,194 @@
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
 
+        const roles_resp = await fetch('/demo/generate_roles');
+        const roles = await roles_resp.json();
+
+        // Target both table bodies
+        const tenant_tbody = document.querySelector('#tenant-roles-table tbody');
+        const namespace_tbody = document.querySelector('#namespace-roles-table tbody');
+
+        const consolidated = roles.reduce((acc, curr) => {
+            const type = String(curr.objType).toLowerCase();
+            // Create a unique key for grouping
+            const key = type === 'tenant' ? curr.tenant : `${curr.tenant}/${curr.namespace}`;
+
+            if (!acc[key]) {
+                acc[key] = { ...curr, isAdmin: false, isUser: false };
+            }
+
+            const role = String(curr.role).toLowerCase();
+            if (role === 'admin') acc[key].isAdmin = true;
+            if (role === 'user') acc[key].isUser = true;
+
+            return acc;
+        }, {});
+
+        // Clear existing content
+        tenant_tbody.innerHTML = '';
+        namespace_tbody.innerHTML = '';
+
+        Object.values(consolidated).forEach(item => {
+            const type = String(item.objType).toLowerCase();
+            const row = document.createElement('tr');
+
+            // helper to render a checkmark or dash
+            const check = (val) => val ? '<span style="color: green; font-weight: bold;">✓</span>' : '<span style="color: #ccc;">-</span>';
+
+            if (type === 'tenant') {
+                row.innerHTML = `
+            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${item.tenant}</a></td>
+            <td style="text-align:center">${check(item.isAdmin)}</td>
+            <td style="text-align:center">${check(item.isUser)}</td>
+        `;
+                tenant_tbody.appendChild(row);
+            } else {
+                row.innerHTML = `
+            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${item.tenant}</a></td>
+            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}&namespace=${item.namespace}">${item.namespace}</a></td>
+            <td style="text-align:center">${check(item.isAdmin)}</td>
+            <td style="text-align:center">${check(item.isUser)}</td>
+        `;
+                namespace_tbody.appendChild(row);
+            }
+        });
+
         const funcs_resp = await fetch('/demo/generate_funcs');
         const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
         funcs_tbody.innerHTML = '';
         funcs.forEach(key => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><input type="checkbox" data-id="${key.func.tenant}/${key.func.namespace}/${key.func.name}"></td>
-                <td>
+            const isAdmin = IsAdmin(roles, key.func.tenant, key.func.namespace);
+            const isUser = IsUser(roles, key.func.tenant, key.func.namespace);
+
+            if (isAdmin || isUser) {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" 
+                        data-id="${key.tenant}/system/${key.name}"
+                        ${!isAdmin ? 'disabled' : ''} 
+                        style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
+                </td>
+                <td style="text-align: center;">
                     <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
                         ${key.func.tenant}
                     </a>
                 </td>
-                <td>
+                <td style="text-align: center;">
                     <a
                         href="{{ hosturl }}listfunc?tenant=${key.func.tenant}&&namespace=${key.func.namespace}">
                         ${key.func.namespace}
                     </a>
                 </td>
-                <td>
+                <td style="text-align: center;">
                     <a
                         href="{{ hosturl }}func?tenant=${key.func.tenant}&&namespace=${key.func.namespace}&&name=${key.func.name}">
                         ${key.func.name}
                     </a>
                 </td>
+                <td style="text-align: center;">${isAdmin
+                        ? '<span style="color: green; font-weight: bold;">✓</span>'
+                        : '<span style="color: #666;">-</span>'}
+                </td>
+                <td style="text-align: center;">${isUser
+                        ? '<span style="color: green; font-weight: bold;">✓</span>'
+                        : '<span style="color: #666;">-</span>'}
+                </td>
             `;
-            funcs_tbody.appendChild(row);
+                funcs_tbody.appendChild(row);
+            }
         });
+
 
         const namespaces_resp = await fetch('/demo/generate_namespaces');
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
-        namespaces.forEach(key => {
+        for (const key of namespaces) {
             const row = document.createElement('tr');
+            const isAdmin = IsAdmin(roles, key.tenant, key.name);
+            const isUser = IsUser(roles, key.tenant, key.name);
+
+            const adminList = await getNamespaceUsers("admin", key.tenant, key.name);
+            const userList = await getNamespaceUsers("user", key.tenant, key.name);
+
+            const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
+            const userNames = userList.length > 0 ? userList.join(', ') : '-';
+
             row.innerHTML = `
-                <td><input type="checkbox" data-id="${key.tenant}/system/${key.name}"></td>
-                <td>
+                <td style="text-align: center; vertical-align: middle;">
+                    <input type="checkbox" 
+                        data-id="${key.tenant}/system/${key.name}"
+                        ${!isAdmin ? 'disabled' : ''} 
+                        style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
+                </td>
+                <td style="text-align: center; vertical-align: middle;">
                     <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
                         ${key.tenant}
                     </a>
                 </td>
-                <td>
+                <td style="text-align: center;">
                     <a
                         href="{{ hosturl }}listfunc?tenant=${key.tenant}&&namespace=${key.name}">
                         ${key.name}
                     </a>
                 </td>
-            `;
+                <td style="text-align: center;">${isAdmin
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td style="text-align: center;">${isUser
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${adminNames}</td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${userNames}</td>
+           `;
             namespaces_tbody.appendChild(row);
 
-            const option = document.createElement("option");
-            option.value = key.tenant + "/" + key.name;
-            option.textContent = key.tenant + "/" + key.name;
-            namespace_dropdown.appendChild(option);
-        });
+            if (isAdmin) {
+                const option = document.createElement("option");
+                option.value = key.tenant + "/" + key.name;
+                option.textContent = key.tenant + "/" + key.name;
+                namespace_dropdown.appendChild(option);
+            }
+
+        };
 
         const tenants_resp = await fetch('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
-        tenants.forEach(key => {
+        for (const key of tenants) {
             const row = document.createElement('tr');
+            const isAdmin = IsAdmin(roles, key.name, "");
+            const isUser = IsUser(roles, key.name, "");
+
+            const adminList = await getTenantUsers("admin", key.name);
+            const userList = await getTenantUsers("user", key.name);
+
+            const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
+            const userNames = userList.length > 0 ? userList.join(', ') : '-';
+
             row.innerHTML = `
-                <td><input type="checkbox" data-id="system/system/${key.name}"></td>
-                <td>
+                <td style="text-align: center; vertical-align: middle;">
                     <a
                         href="{{ hosturl }}listfunc?tenant=${key.name}">
                         ${key.name}
                     </a>
                 </td>
+                <td style="text-align: center;">${isAdmin
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td style="text-align: center;">${isUser
+                    ? '<span style="color: green; font-weight: bold;">✓</span>'
+                    : '<span style="color: #666;">-</span>'}
+                </td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${adminNames}</td>
+                <td style="text-align: center; font-size: 0.9em; color: #555;">${userNames}</td>
+                
             `;
             tenants_tbody.appendChild(row);
 
@@ -291,7 +589,7 @@
             option.value = key.name;
             option.textContent = key.name;
             tenant_dropdown.appendChild(option);
-        });
+        };
     }
 
     async function create_func() {

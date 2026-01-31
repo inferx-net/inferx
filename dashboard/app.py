@@ -137,7 +137,7 @@ def not_require_login(func):
             return func(*args, **kwargs)
 
         current_path = request.url
-        redirect_uri = url_for('login', redirectpath=current_path, _external=True)
+        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -150,7 +150,7 @@ def require_login(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         current_path = request.url
-        redirect_uri = url_for('login', redirectpath=current_path, _external=True)
+        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -164,7 +164,7 @@ def login():
     nonce = generate_token(20)
     session['keycloak_nonce'] = nonce
     redirectpath=request.args.get('redirectpath', '')
-    redirect_uri = url_for('auth_callback', redirectpath=redirectpath,  _external=True)
+    redirect_uri = url_for('prefix.auth_callback', redirectpath=redirectpath,  _external=True)
     return keycloak.authorize_redirect(
         redirect_uri=redirect_uri,
         nonce=nonce  # Pass nonce to Keycloak
@@ -190,7 +190,7 @@ def auth_callback():
         session['id_token'] = token.get('id_token')
 
         if redirectpath=='':
-            return redirect(url_for('ListFunc'))
+            return redirect(url_for('prefix.ListFunc'))
         return redirect(redirectpath)
     except Exception as e:
         return f"Authentication failed: {str(e)}", 403
@@ -206,12 +206,12 @@ def logout():
     # return redirect(end_session_endpoint)
 
     session.clear()
-    # # Redirect to Keycloak to clear SSO session
-    return redirect(
-        f"{end_session_endpoint}?"
-        f"post_logout_redirect_uri={url_for('ListFunc', _external=True)}&"
-        f"id_token_hint={id_token}"
-    )
+
+    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={url_for('prefix.ListFunc', _external=True)}"
+    if id_token:
+        logout_url += f"&id_token_hint={id_token}"
+        
+    return redirect(logout_url)
 
 def getapikeys():
     access_token = session.get('token')['access_token']
@@ -295,6 +295,31 @@ def listfuncs(tenant: str, namespace: str):
 
     return funcs
 
+def list_tenantusers(role: str, tenant: str):
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/tenantusers/{}/{}/".format(apihostaddr, role, tenant)
+    resp = requests.get(url, headers=headers)
+    funcs = json.loads(resp.content)  
+
+    return funcs
+
+def list_namespaceusers(role: str, tenant: str, namespace: str):
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/namespaceusers/{}/{}/{}/".format(apihostaddr, role, tenant, namespace)
+    resp = requests.get(url, headers=headers)
+    funcs = json.loads(resp.content)  
+
+    return funcs
+
+
 
 def getfunc(tenant: str, namespace: str, funcname: str):
     access_token = session.get('access_token', '')
@@ -334,6 +359,18 @@ def getnode(name: str):
     func = json.loads(resp.content)
 
     return func
+
+def listroles():
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {}
+    else:
+        headers = {'Authorization': f'Bearer {access_token}'}
+    url = "{}/rbac/roles/".format(apihostaddr)
+    resp = requests.get(url, headers=headers)
+    roles = json.loads(resp.content)
+
+    return roles
 
 def listtenants():
     access_token = session.get('access_token', '')
@@ -527,11 +564,35 @@ def generate_namespaces():
     print("namespaces ", namespaces)
     return namespaces
 
+@prefix_bp.route('/generate_roles', methods=['GET'])
+@require_login
+def generate_roles():
+    roles = listroles()
+    print("roles ", roles)
+    return roles
+
 @prefix_bp.route('/generate_funcs', methods=['GET'])
 @require_login
 def generate_funcs():
     funcs = listfuncs("", "")
     return funcs
+
+@prefix_bp.route('/generate_tenantuser', methods=['GET'])
+@require_login
+def generate_tenantuser():
+    role = request.args.get('role')
+    tenant = request.args.get('tenant')
+    users = list_tenantusers(role, tenant)
+    return users
+
+@prefix_bp.route('/generate_namespaceuser', methods=['GET'])
+@require_login
+def generate_namespaceuser():
+    role = request.args.get('role')
+    tenant = request.args.get('tenant')
+    namespace = request.args.get('namespace')
+    users = list_namespaceusers(role, tenant, namespace)
+    return users
 
 @prefix_bp.route('/generate', methods=['POST'])
 @not_require_login
@@ -824,8 +885,6 @@ def GetFunc():
         path=sample["path"]
     )
 
-
-# @app.route("/demo/")
 @prefix_bp.route("/listnode")
 @not_require_login
 def ListNode():

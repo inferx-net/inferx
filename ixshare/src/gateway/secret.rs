@@ -19,6 +19,11 @@ pub struct Role {
     pub rolename: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct User {
+    pub username: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlSecret {
     pub pool: PgPool,
@@ -85,10 +90,10 @@ impl SqlSecret {
         return Ok(keys);
     }
 
-    pub async fn DeleteApikey(&self, apikey: &str, username: &str) -> bool {
+    pub async fn DeleteApikey(&self, keyname: &str, username: &str) -> bool {
         let query = format!(
-            "delete from Apikey where apikey = '{}' and username='{}'",
-            apikey, username
+            "delete from Apikey where keyname = '{}' and username='{}'",
+            keyname, username
         );
         let result = sqlx::query(&query).execute(&self.pool).await;
 
@@ -98,7 +103,9 @@ impl SqlSecret {
                 return false;
             }
 
-            Ok(_res) => return true,
+            Ok(res) => {
+                return res.rows_affected() > 0;
+            }
         }
     }
 
@@ -159,5 +166,65 @@ impl SqlSecret {
 
             Ok(_res) => return Ok(()),
         }
+    }
+
+    pub async fn GetTenantAdmins(&self, tenant: &str) -> Result<Vec<String>> {
+        let query = format!(
+            "select username from UserRole where rolename = '/tenant/admin/{}'",
+            tenant
+        );
+
+        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
+        let mut v = Vec::new();
+        for r in roles {
+            v.push(r.username);
+        }
+        return Ok(v);
+    }
+
+    pub async fn GetTenantUsers(&self, tenant: &str) -> Result<Vec<String>> {
+        let query = format!(
+            "select username from UserRole where rolename = '/tenant/user/{}'",
+            tenant
+        );
+
+        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
+        let mut v = Vec::new();
+        for r in roles {
+            v.push(r.username);
+        }
+        return Ok(v);
+    }
+
+    pub async fn GetNamespaceAdmins(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        let query = format!(
+            "select username from UserRole where rolename = '/namespace/admin/{}/{}'",
+            tenant, namespace
+        );
+
+        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
+        let mut v = Vec::new();
+        for r in roles {
+            v.push(r.username);
+        }
+        return Ok(v);
+    }
+
+    pub async fn GetNamespaceUsers(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        let query = format!(
+            "select username from UserRole where rolename = '/namespace/user/{}/{}'",
+            tenant, namespace
+        );
+
+        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
+        let mut v = Vec::new();
+        for r in roles {
+            v.push(r.username);
+        }
+        return Ok(v);
     }
 }
