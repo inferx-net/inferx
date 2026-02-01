@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
+use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use inferxlib::obj_mgr::funcstatus_mgr::{FunctionStatus, FunctionStatusDef};
+use inferxlib::resource::StandbyType;
 use serde_json::Value;
 
 use super::state_svc::*;
 use crate::common::*;
-use inferxlib::data_obj::DataObject;
+use inferxlib::data_obj::{DataObject, ObjRef};
 use inferxlib::obj_mgr::func_mgr::{FuncState, Function};
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
 use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
@@ -211,6 +212,11 @@ impl StateSvc {
         let func = Function::FromDataObject(obj.clone())?;
         self.ContainersNamespace(&func.tenant, &func.namespace)?;
 
+        let tenant = self.tenantMgr.Get("system", "system", &func.tenant)?;
+        let limit = &tenant.object.spec.resourceLimit;
+
+        let funccnt = self.funcMgr.GetObjectsByPrefix(&func.tenant, "", "")?.len();
+
         if self
             .funcMgr
             .Contains(&obj.tenant, &obj.namespace, &obj.name)
@@ -218,21 +224,77 @@ impl StateSvc {
             return Err(Error::Exist(format!("StateSvc exists func {}", &obj.Key())));
         }
 
+        error!(
+            "CreateFuncCheck funccnt {} tenant {} {:#?}",
+            funccnt, &func.tenant, &tenant
+        );
+        if funccnt >= limit.maxFuncCnt as usize {
+            return Err(Error::NotExist(format!(
+                "Func count {} exceed tenant limit {}",
+                &funccnt, limit.maxFuncCnt
+            )));
+        }
+
+        if !limit.allocMemStandby {
+            let standby = &func.object.spec.standby;
+            if standby.gpuMem == StandbyType::Mem
+                || standby.pageableMem == StandbyType::Mem
+                || standby.pinndMem == StandbyType::Mem
+            {
+                return Err(Error::NotExist(format!(
+                    "Standby {:?} is not allowed in tenant allocMemStandby==false",
+                    standby
+                )));
+            }
+        }
+
+        match &func.object.spec.policy {
+            ObjRef::Link(_) => (),
+            ObjRef::Obj(p) => self.FuncPolicyCheck(&func.tenant, p)?,
+        }
+
         return Ok(());
     }
 
     pub fn CreateFuncPolicyCheck(&self, obj: &DataObject<Value>) -> Result<()> {
-        let _polic = FuncPolicy::FromDataObject(obj.clone())?;
+        let p = FuncPolicy::FromDataObject(obj.clone())?;
+
+        self.FuncPolicyCheck(&p.tenant, &p.object)?;
+        return Ok(());
+    }
+
+    pub fn FuncPolicyCheck(&self, tenant: &str, p: &FuncPolicySpec) -> Result<()> {
+        let tenant = self.tenantMgr.Get("system", "system", tenant)?;
+        let limit = &tenant.object.spec.resourceLimit;
+
+        if p.maxReplica > limit.maxReplica {
+            return Err(Error::CommonError(format!(
+                "policy maxReplica {} exceed limit {}",
+                p.maxReplica, limit.maxReplica
+            )));
+        }
+
+        if p.standbyPerNode > limit.maxStandby {
+            return Err(Error::CommonError(format!(
+                "policy standbyPerNode {} exceed limit {}",
+                p.standbyPerNode, limit.maxStandby
+            )));
+        }
+
+        if p.queueLen > limit.maxQueueLen {
+            return Err(Error::CommonError(format!(
+                "policy QueueLen {} exceed limit {}",
+                p.queueLen, limit.maxQueueLen
+            )));
+        }
+
         return Ok(());
     }
 
     pub fn UpdateObjCheck(&self, obj: &DataObject<Value>) -> Result<()> {
         match obj.objType.as_str() {
             Namespace::KEY => {
-                return Err(Error::CommonError(format!(
-                    "{} is not allowed update",
-                    &obj.objType
-                )));
+                return Ok(());
             }
             Tenant::KEY => {
                 return self.UpdateTenantCheck(obj);
@@ -310,6 +372,7 @@ impl StateSvc {
             Function::KEY => {
                 return self.DeleteFuncCheck(tenant, namespace, name);
             }
+            FuncPolicy::KEY => return Ok(()),
             _ => {
                 return Err(Error::CommonError(format!(
                     "{} is not allowed delete",

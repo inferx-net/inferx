@@ -21,6 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
+use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use opentelemetry::global::ObjectSafeSpan;
 use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::Tracer;
@@ -65,6 +66,8 @@ use crate::print::{set_trace_logging, trace_logging_enabled};
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
+use super::auth_layer::Grant;
+use super::auth_layer::PermissionType;
 use super::auth_layer::{AccessToken, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
 use super::func_agent_mgr::IxTimestamp;
@@ -118,6 +121,14 @@ impl HttpGateway {
         let auth_layer = NODE_CONFIG.keycloakconfig.AuthLayer();
 
         let app = Router::new()
+            .route("/rbac/", post(RbacGrant))
+            .route("/rbac/", delete(RbacRevoke))
+            .route("/rbac/roles/", get(RbacRoleBindingGet))
+            .route("/rbac/tenantusers/:role/:tenant/", get(RbacTenantUsers))
+            .route(
+                "/rbac/namespaceusers/:role/:tenant/:namespace/",
+                get(RbacNamespaceUsers),
+            )
             .route("/apikey/", get(GetApikeys))
             .route("/apikey/", put(CreateApikey))
             .route("/apikey/", delete(DeleteApikey))
@@ -185,10 +196,7 @@ impl HttpGateway {
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route("/tenant/:tenant/credits/history", get(GetTenantCreditHistory))
             .route("/metrics", get(GetMetrics))
-            .route(
-                "/debug/trace_logging/:state",
-                post(SetTraceLogging),
-            )
+            .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
@@ -1228,11 +1236,9 @@ async fn CreateApikey(
     Extension(token): Extension<Arc<AccessToken>>,
     Json(obj): Json<Apikey>,
 ) -> SResult<Response, StatusCode> {
-    let username = token.username.clone();
-    error!("CreateApikey keyname {}", &obj.keyname);
     match GetTokenCache()
         .await
-        .CreateApikey(&username, &obj.keyname)
+        .CreateApikey(&token, &obj.username, &obj.keyname)
         .await
     {
         Ok(apikey) => {
@@ -1283,11 +1289,10 @@ async fn DeleteApikey(
     Extension(token): Extension<Arc<AccessToken>>,
     Json(apikey): Json<Apikey>,
 ) -> SResult<Response, StatusCode> {
-    let username = token.username.clone();
     error!("DeleteApikey *** {:?}", &apikey);
     match GetTokenCache()
         .await
-        .DeleteApiKey(&apikey.apikey, &username)
+        .DeleteApiKey(&token, &apikey.keyname, &apikey.username)
         .await
     {
         Ok(exist) => {
@@ -1339,6 +1344,7 @@ async fn CreateObj(
         Tenant::KEY => gw.CreateTenant(&token, dataobj).await,
         Namespace::KEY => gw.CreateNamespace(&token, dataobj).await,
         Function::KEY => gw.CreateFunc(&token, dataobj).await,
+        FuncPolicy::KEY => gw.CreateFuncPolicy(&token, dataobj).await,
         _ => gw.client.Create(&dataobj).await,
     };
 
@@ -1374,6 +1380,7 @@ async fn UpdateObj(
         Tenant::KEY => gw.UpdateTenant(&token, dataobj).await,
         Namespace::KEY => gw.UpdateNamespace(&token, dataobj).await,
         Function::KEY => gw.UpdateFunc(&token, dataobj).await,
+        FuncPolicy::KEY => gw.UpdateFuncPolicy(&token, dataobj).await,
         _ => gw.client.Update(&dataobj, 0).await,
     };
 
@@ -1406,6 +1413,10 @@ async fn DeleteObj(
         Tenant::KEY => gw.DeleteTenant(&token, &tenant, &namespace, &name).await,
         Namespace::KEY => gw.DeleteNamespace(&token, &tenant, &namespace, &name).await,
         Function::KEY => gw.DeleteFunc(&token, &tenant, &namespace, &name).await,
+        FuncPolicy::KEY => {
+            gw.DeleteFuncPolicy(&token, &tenant, &namespace, &name)
+                .await
+        }
         _ => {
             gw.client
                 .Delete(&objType, &tenant, &namespace, &name, 0)
@@ -1845,17 +1856,6 @@ async fn GetFuncDetail(
 }
 
 async fn GetNodes(State(gw): State<HttpGateway>) -> SResult<Response, StatusCode> {
-    // match gw
-    //     .client
-    //     .List("node_info", "system", "system", &ListOption::default())
-    //     .await
-    // {
-    //     Ok(l) => {
-    //         error!("GetNodes the nodes xxxx is {:#?}", &l);
-    //     }
-    //     Err(_) => (),
-    // }
-
     match gw.objRepo.GetNodes() {
         Ok(list) => {
             let data = serde_json::to_string(&list).unwrap();
@@ -1884,6 +1884,159 @@ async fn GetNode(
     match gw.objRepo.GetNode(&nodename) {
         Ok(list) => {
             let data = serde_json::to_string_pretty(&list).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacGrant(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(grant): Json<Grant>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .Rbac(
+            &token,
+            &PermissionType::Grant,
+            &grant.objType,
+            &grant.tenant,
+            &grant.namespace,
+            &grant.name,
+            grant.role,
+            &grant.username,
+        )
+        .await
+    {
+        Ok(()) => {
+            let body = Body::from(format!("{}", "rbac successfully"));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacRevoke(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(grant): Json<Grant>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .Rbac(
+            &token,
+            &PermissionType::Revoke,
+            &grant.objType,
+            &grant.tenant,
+            &grant.namespace,
+            &grant.name,
+            grant.role,
+            &grant.username,
+        )
+        .await
+    {
+        Ok(()) => {
+            let body = Body::from(format!("{}", "rbac successfully"));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacTenantUsers(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((role, tenant)): Path<(String, String)>,
+) -> SResult<Response, StatusCode> {
+    match gw.RbacTenantUsers(&token, &role, &tenant).await {
+        Ok(users) => {
+            let data = serde_json::to_string(&users).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacNamespaceUsers(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((role, tenant, namespace)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .RbacNamespaceUsers(&token, &role, &tenant, &namespace)
+        .await
+    {
+        Ok(users) => {
+            let data = serde_json::to_string(&users).unwrap();
+            let body = Body::from(format!("{}", data));
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn RbacRoleBindingGet(
+    Extension(token): Extension<Arc<AccessToken>>,
+) -> SResult<Response, StatusCode> {
+    match token.RoleBindings() {
+        Ok(bindings) => {
+            let data = serde_json::to_string(&bindings).unwrap();
             let body = Body::from(format!("{}", data));
             let resp = Response::builder()
                 .status(StatusCode::OK)

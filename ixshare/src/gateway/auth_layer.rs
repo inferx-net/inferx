@@ -59,6 +59,12 @@ pub async fn GetTokenCache() -> &'static TokenCache {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct Permision {
+    pub admin: bool,
+    pub user: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct KeycloadConfig {
     pub url: String,
     pub realm: String,
@@ -99,6 +105,45 @@ pub fn Username(token: &KeycloakToken<String>) -> String {
     return token.extra.profile.preferred_username.clone();
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")] // This matches "grant" in URL to PermissionType::Grant
+pub enum PermissionType {
+    Grant,
+    Revoke,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ObjectType {
+    Tenant,
+    Namespace,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Grant {
+    pub objType: ObjectType,
+    pub tenant: String,
+    pub namespace: String,
+    pub name: String,
+    pub role: UserRole,
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RoleBinding {
+    pub objType: ObjectType,
+    pub role: UserRole,
+    pub tenant: String,
+    pub namespace: String,
+}
+
 #[derive(Debug)]
 pub struct AccessToken {
     pub username: String,
@@ -109,6 +154,11 @@ pub struct AccessToken {
 
 impl AccessToken {
     pub const INERX_ADMIN: &str = "inferx_admin";
+    pub const SYSTEM_TENANT: &str = "system";
+    pub const TENANT_ADMIN: &str = "/tenant/admin/";
+    pub const TENANT_USER: &str = "/tenant/user/";
+    pub const NAMSPACE_ADMIN: &str = "/namespace/admin/";
+    pub const NAMSPACE_USER: &str = "/namespace/user/";
 
     pub fn New(username: &str, groups: Vec<String>, apikeys: Vec<String>) -> Self {
         let mut set = BTreeSet::new();
@@ -135,7 +185,11 @@ impl AccessToken {
     }
 
     pub fn IsInferxAdmin(&self) -> bool {
-        return &self.username == Self::INERX_ADMIN;
+        let prefix = Self::TENANT_ADMIN;
+        let systemtenant = Self::SYSTEM_TENANT;
+        let isSystemAdmin = self.roles.contains(&format!("{prefix}{systemtenant}"));
+
+        return &self.username == Self::INERX_ADMIN || isSystemAdmin;
     }
 
     pub fn UserKey(&self) -> String {
@@ -154,11 +208,6 @@ impl AccessToken {
             }
         }
     }
-
-    pub const TENANT_ADMIN: &str = "/tenant/admin/";
-    pub const TENANT_USER: &str = "/tenant/user/";
-    pub const NAMSPACE_ADMIN: &str = "/namespace/admin/";
-    pub const NAMSPACE_USER: &str = "/namespace/user/";
 
     pub fn TenantUserRole(tenant: &str) -> String {
         let prefix = Self::TENANT_USER;
@@ -218,6 +267,11 @@ impl AccessToken {
 
     pub fn IsNamespaceAdmin(&self, tenant: &str, namespace: &str) -> bool {
         if self.IsInferxAdmin() {
+            return true;
+        }
+
+        let prefix = Self::TENANT_ADMIN;
+        if self.roles.contains(&format!("{prefix}{tenant}")) {
             return true;
         }
 
@@ -310,6 +364,80 @@ impl AccessToken {
         }
 
         return v;
+    }
+
+    pub fn RoleBindings(&self) -> Result<Vec<RoleBinding>> {
+        let mut bindings = Vec::new();
+        for r in &self.roles {
+            let binding = ParseRoleBinding(r)?;
+            bindings.push(binding);
+        }
+
+        return Ok(bindings);
+    }
+}
+
+fn ParseRoleBinding(input: &str) -> Result<RoleBinding> {
+    let parts: Vec<&str> = input.trim_matches('/').split('/').collect();
+
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(Error::CommonError(format!(
+            "invalid ParseRoleBinding 1 path: {}",
+            input
+        )));
+    }
+
+    let role = match parts[1] {
+        "admin" => UserRole::Admin,
+        "user" => UserRole::User,
+        _ => {
+            return Err(Error::CommonError(format!(
+                "unknown role: {} in {:?}",
+                parts[1], parts
+            )))
+        }
+    };
+
+    let objType = match parts[0] {
+        "tenant" => ObjectType::Tenant,
+        "namespace" => ObjectType::Namespace,
+        _ => {
+            return Err(Error::CommonError(format!(
+                "unknown scope: {} in {:?}",
+                parts[0], parts
+            )))
+        }
+    };
+
+    match objType {
+        ObjectType::Tenant => {
+            if parts.len() != 3 {
+                return Err(Error::CommonError(format!(
+                    "invalid ParseRoleBinding 2 path: {:?}",
+                    parts
+                )));
+            }
+            Ok(RoleBinding {
+                objType: objType,
+                role: role,
+                tenant: parts[2].to_string(),
+                namespace: String::new(),
+            })
+        }
+        ObjectType::Namespace => {
+            if parts.len() != 4 {
+                return Err(Error::CommonError(format!(
+                    "invalid ParseRoleBinding 3 path: {:?}",
+                    parts
+                )));
+            }
+            Ok(RoleBinding {
+                objType: objType,
+                role: role,
+                tenant: parts[2].to_string(),
+                namespace: parts[3].to_string(),
+            })
+        }
     }
 }
 
@@ -433,16 +561,48 @@ impl TokenCache {
         return Ok(newToken);
     }
 
-    pub async fn CreateApikey(&self, username: &str, keyname: &str) -> Result<String> {
+    pub async fn CreateApikey(
+        &self,
+        token: &Arc<AccessToken>,
+        username: &str,
+        keyname: &str,
+    ) -> Result<String> {
+        let username = if username.len() == 0 {
+            token.username.clone()
+        } else if username == &token.username {
+            token.username.clone()
+        } else {
+            if !token.IsInferxAdmin() {
+                return Err(Error::NoPermission);
+            }
+            token.username.clone()
+        };
+
         let apikey = uuid::Uuid::new_v4().to_string();
         self.sqlstore
-            .CreateApikey(&apikey, username, keyname)
+            .CreateApikey(&apikey, &username, keyname)
             .await?;
         return Ok(apikey);
     }
 
-    pub async fn DeleteApiKey(&self, apikey: &str, username: &str) -> Result<bool> {
-        let res = self.sqlstore.DeleteApikey(apikey, username).await;
+    pub async fn DeleteApiKey(
+        &self,
+        token: &Arc<AccessToken>,
+        keyname: &str,
+        username: &str,
+    ) -> Result<bool> {
+        let username = if username.len() == 0 {
+            token.username.clone()
+        } else if username == &token.username {
+            token.username.clone()
+        } else {
+            if !token.IsInferxAdmin() {
+                return Err(Error::NoPermission);
+            }
+            token.username.clone()
+        };
+
+        let res = self.sqlstore.DeleteApikey(keyname, &username).await;
         return Ok(res);
     }
 
@@ -566,6 +726,22 @@ impl TokenCache {
             .await?;
         self.EvactionToken(token);
         return Ok(());
+    }
+
+    pub async fn GetTenantAdmins(&self, tenant: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetTenantAdmins(tenant).await;
+    }
+
+    pub async fn GetTenantUsers(&self, tenant: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetTenantUsers(tenant).await;
+    }
+
+    pub async fn GetNamespaceAdmins(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetNamespaceAdmins(tenant, namespace).await;
+    }
+
+    pub async fn GetNamespaceUsers(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
+        return self.sqlstore.GetNamespaceUsers(tenant, namespace).await;
     }
 }
 

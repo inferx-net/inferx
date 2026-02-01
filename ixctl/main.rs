@@ -28,9 +28,15 @@ pub mod create;
 // pub mod create_pypackage;
 pub mod delete;
 pub mod get;
+pub mod grant;
 pub mod list;
+pub mod namespaceusers;
 pub mod object_client;
+pub mod revoke;
+pub mod roles;
+pub mod tenantusers;
 pub mod update;
+pub mod apikey;
 
 use oauth2::{
     basic::BasicClient, reqwest::async_http_client, AuthUrl, ClientId, ClientSecret,

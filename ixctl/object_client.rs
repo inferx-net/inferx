@@ -7,6 +7,8 @@ use std::time::Duration;
 use inferxlib::common::*;
 use serde_json::Value;
 
+use crate::command::{Apikey, Grant, RoleBinding, UserRole};
+
 pub struct ObjectClient {
     pub url: String,
 }
@@ -163,6 +165,250 @@ impl ObjectClient {
         return Err(Error::CommonError(format!(
             "Delete fail with resp http code {:?}",
             code
+        )));
+    }
+
+    pub async fn Grant(&self, token: &str, grant: &Grant) -> Result<()> {
+        let client = self.Client();
+        let url = format!("{}/rbac/", &self.url);
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+        let resp = client
+            .post(&url)
+            .headers(headers)
+            .json(&grant)
+            .send()
+            .await?;
+        let code = resp.status().as_u16();
+        if code == StatusCode::OK {
+            // let res = resp.text().await?;
+            println!("Grant success for {:#?}", grant);
+            return Ok(());
+        }
+
+        let content = resp.text().await.ok();
+        return Err(Error::CommonError(format!(
+            "Grant fail with resp code {} content {:?}",
+            code, content
+        )));
+    }
+
+    pub async fn Revoke(&self, token: &str, grant: &Grant) -> Result<()> {
+        let client = self.Client();
+        let url = format!("{}/rbac/", &self.url);
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+        let resp = client
+            .delete(&url)
+            .headers(headers)
+            .json(&grant)
+            .send()
+            .await?;
+
+        let code = resp.status().as_u16();
+        if code == StatusCode::OK {
+            return Ok(());
+        }
+
+        let content = resp.text().await.ok();
+        return Err(Error::CommonError(format!(
+            "Revoke fail with resp code {} content {:?}",
+            code, content
+        )));
+    }
+
+    pub async fn TenantUsers(
+        &self,
+        token: &str,
+        role: &UserRole,
+        tenant: &str,
+    ) -> Result<Vec<String>> {
+        let client = self.Client();
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let url = format!(
+            "{}/rbac/tenantusers/{}/{}/",
+            &self.url,
+            role.String(),
+            tenant
+        );
+        let body = client
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?
+            .text()
+            .await?;
+        let obj = serde_json::from_str(&body)?;
+        return Ok(obj);
+    }
+
+    pub async fn NamespaceUsers(
+        &self,
+        token: &str,
+        role: &UserRole,
+        tenant: &str,
+        namespace: &str,
+    ) -> Result<Vec<String>> {
+        let client = self.Client();
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let url = format!(
+            "{}/rbac/namespaceusers/{}/{}/{}/",
+            &self.url,
+            role.String(),
+            tenant,
+            namespace
+        );
+        let body = client
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?
+            .text()
+            .await?;
+        let obj = serde_json::from_str(&body)?;
+        return Ok(obj);
+    }
+
+    pub async fn Roles(&self, token: &str) -> Result<Vec<RoleBinding>> {
+        let client = self.Client();
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let url = format!("{}/rbac/roles/", &self.url);
+        let body = client
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await?
+            .text()
+            .await?;
+        let obj = serde_json::from_str(&body)?;
+        return Ok(obj);
+    }
+
+    pub async fn CreateApikey(&self, token: &str, keyname: &str, username: &str) -> Result<String> {
+        let client = self.Client();
+        let url = format!("{}/apikey/", &self.url);
+        println!("CreateApikey url {}", &url);
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let key = Apikey {
+            username: username.to_owned(),
+            keyname: keyname.to_owned(),
+            apikey: String::new(),
+        };
+
+        let resp = client.put(&url).headers(headers).json(&key).send().await?;
+        let code = resp.status().as_u16();
+        if code == StatusCode::OK {
+            let key = resp.text().await?;
+            return Ok(key);
+        }
+
+        let content = resp.text().await?;
+        return Err(Error::CommonError(format!(
+            "Create fail with resp {}",
+            content
+        )));
+    }
+
+    pub async fn DeleteApikey(&self, token: &str, keyname: &str, username: &str) -> Result<()> {
+        let client = self.Client();
+        let url = format!("{}/apikey/", &self.url);
+        println!("DeleteApikey url {}", &url);
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let key = Apikey {
+            username: username.to_owned(),
+            keyname: keyname.to_owned(),
+            apikey: String::new(),
+        };
+
+        let resp = client
+            .delete(&url)
+            .headers(headers)
+            .json(&key)
+            .send()
+            .await?;
+        let code = resp.status().as_u16();
+        let content = resp.text().await?;
+        println!("DeleteApikey code {:?} content {}", code, &content);
+        if code == StatusCode::OK {
+            println!("successfully delete key {}", content);
+            return Ok(());
+        }
+
+        return Err(Error::CommonError(format!(
+            "Create fail with resp {}",
+            content
+        )));
+    }
+
+    pub async fn ListApikeys(&self, token: &str) -> Result<Vec<Apikey>> {
+        let client = self.Client();
+        let url = format!("{}/apikey/", &self.url);
+        println!("GetApikey url {}", &url);
+        let mut headers = HeaderMap::new();
+        if token.len() > 0 {
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            );
+        }
+
+        let resp = client.get(&url).headers(headers).send().await?;
+        let code = resp.status().as_u16();
+        if code == StatusCode::OK {
+            let res = resp.text().await?;
+            let apikeys = serde_json::from_str(&res)?;
+            return Ok(apikeys);
+        }
+
+        let content = resp.text().await?;
+        return Err(Error::CommonError(format!(
+            "Create fail with resp {}",
+            content
         )));
     }
 }

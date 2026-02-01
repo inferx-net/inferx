@@ -428,7 +428,9 @@ impl FuncAgent {
                 if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
                     trace!(
                         "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
-                        reqCnt, totalSlotCnt, waitReqcnt
+                        reqCnt,
+                        totalSlotCnt,
+                        waitReqcnt
                     );
 
                     return true;
@@ -564,6 +566,16 @@ impl FuncAgent {
     }
 
     pub fn FuncPolicy(&self, tenant: &str) -> Result<FuncPolicySpec> {
+        // if there is funcpolicy with same name, will override the current one
+        match GW_OBJREPO.get().unwrap().funcpolicyMgr.Get(
+            &self.func.tenant,
+            &self.func.namespace,
+            &self.func.name,
+        ) {
+            Err(_) => (),
+            Ok(p) => return Ok(p.object),
+        }
+
         match &self.func.object.spec.policy {
             ObjRef::Obj(p) => return Ok(p.clone()),
             ObjRef::Link(l) => {
