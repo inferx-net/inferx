@@ -494,6 +494,16 @@ pub struct SqlAudit {
     pub pool: PgPool,
 }
 
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct TenantCreditHistoryRecord {
+    pub id: i64,
+    pub amount_ms: i64,
+    pub note: Option<String>,
+    pub payment_ref: Option<String>,
+    pub added_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 impl SqlAudit {
     pub async fn New(sqlSvcAddr: &str) -> Result<Self> {
         let url_parts = url::Url::parse(sqlSvcAddr).expect("Failed to parse URL");
@@ -817,27 +827,123 @@ impl SqlAudit {
         Ok(row.0 as i64)
     }
 
+    /// List tenant credit history with pagination
+    pub async fn ListTenantCreditHistory(
+        &self,
+        tenant: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<TenantCreditHistoryRecord>, i64)> {
+        let records: Vec<TenantCreditHistoryRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                id::bigint as id,
+                amount_ms,
+                note,
+                payment_ref,
+                added_by,
+                created_at
+            FROM TenantCreditHistory
+            WHERE tenant = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(tenant)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM TenantCreditHistory
+            WHERE tenant = $1
+            "#,
+        )
+        .bind(tenant)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((records, total.0))
+    }
+
+    /// Recalculate quota_exceeded for tenant based on credits and used_ms.
+    pub async fn RecalculateTenantQuota(&self, tenant: &str) -> Result<bool> {
+        // First, log current values for debugging
+        let debug_row: (i64, i64, i64, bool) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE(q.used_ms, 0)::bigint AS used_ms,
+                COALESCE(q.threshold_ms, 0)::bigint AS threshold_ms,
+                COALESCE(q.quota_exceeded, false) AS quota_exceeded
+            FROM TenantQuota q
+            WHERE q.tenant = $1
+            "#
+        )
+            .bind(tenant)
+            .fetch_optional(&self.pool)
+            .await?
+            .unwrap_or((0, 0, 0, false));
+        error!(
+            "RecalculateTenantQuota: tenant={}, total_credits={}, used_ms={}, threshold_ms={}, old_quota_exceeded={}",
+            tenant, debug_row.0, debug_row.1, debug_row.2, debug_row.3
+        );
+
+        let query = r#"
+            WITH ensure AS (
+                INSERT INTO TenantQuota (tenant)
+                VALUES ($1)
+                ON CONFLICT (tenant) DO NOTHING
+            ),
+            credits AS (
+                SELECT COALESCE(SUM(amount_ms), 0)::bigint AS total_credits
+                FROM TenantCreditHistory
+                WHERE tenant = $1
+            )
+            UPDATE TenantQuota q
+            SET quota_exceeded =
+                (COALESCE(c.total_credits, 0) - q.used_ms) <= q.threshold_ms
+            FROM credits c
+            WHERE q.tenant = $1
+            RETURNING q.quota_exceeded
+        "#;
+        let row: (bool,) = sqlx::query_as(query)
+            .bind(tenant)
+            .fetch_one(&self.pool)
+            .await?;
+        error!(
+            "RecalculateTenantQuota: tenant={}, new_quota_exceeded={}",
+            tenant, row.0
+        );
+        Ok(row.0)
+    }
+
     /// Get tenant credit balance (total credits - total usage)
     pub async fn GetTenantCreditBalance(&self, tenant: &str) -> Result<i64> {
-        // Total credits from TenantCreditHistory
-        let credits_row: (Option<i64>,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(amount_ms), 0) FROM TenantCreditHistory WHERE tenant = $1"
+        // Use a single query to get both total credits and used_ms from TenantQuota
+        let row: (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE((SELECT used_ms FROM TenantQuota WHERE tenant = $1), 0)::bigint AS used_ms
+            "#
         )
             .bind(tenant)
             .fetch_one(&self.pool)
             .await?;
-        let total_credits = credits_row.0.unwrap_or(0);
+        let total_credits = row.0;
+        let used_ms = row.1;
 
-        // Total usage from GpuUsageTick
-        let usage_row: (Option<i64>,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(interval_ms), 0) FROM GpuUsageTick WHERE tenant = $1"
-        )
-            .bind(tenant)
-            .fetch_one(&self.pool)
-            .await?;
-        let total_usage = usage_row.0.unwrap_or(0);
+        let balance = total_credits - used_ms;
+        error!(
+            "GetTenantCreditBalance: tenant={}, total_credits={}, used_ms={}, balance={}",
+            tenant, total_credits, used_ms, balance
+        );
 
-        Ok(total_credits - total_usage)
+        Ok(balance)
     }
 
     pub async fn FuncCount(

@@ -26,7 +26,7 @@ use opentelemetry::trace::TraceContextExt;
 use opentelemetry::trace::Tracer;
 use opentelemetry::KeyValue;
 
-use axum::extract::{Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::HeaderValue;
 use axum::response::Response;
 use axum::Json;
@@ -37,7 +37,7 @@ use axum::{
 
 use hyper::header::CONTENT_TYPE;
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
-use inferxlib::obj_mgr::tenant_mgr::Tenant;
+use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 use opentelemetry::Context;
 use prometheus_client::encoding::text::encode;
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ use hyper::{StatusCode, Uri};
 
 use tokio::sync::mpsc;
 
-use crate::audit::{ReqAudit, SqlAudit, REQ_AUDIT_AGENT};
+use crate::audit::{ReqAudit, SqlAudit, TenantCreditHistoryRecord, REQ_AUDIT_AGENT};
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
@@ -183,6 +183,7 @@ impl HttpGateway {
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
             .route("/tenant/:tenant/credits", post(AddTenantCredits))
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
+            .route("/tenant/:tenant/credits/history", get(GetTenantCreditHistory))
             .route("/metrics", get(GetMetrics))
             .route(
                 "/debug/trace_logging/:state",
@@ -1553,9 +1554,22 @@ struct AddCreditsRequest {
     payment_ref: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct CreditHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
 // Response for credit operations
 #[derive(Serialize)]
 struct CreditResponse {
+    balance_ms: i64,
+}
+
+#[derive(Serialize)]
+struct CreditHistoryResponse {
+    records: Vec<TenantCreditHistoryRecord>,
+    total: i64,
     balance_ms: i64,
 }
 
@@ -1582,6 +1596,10 @@ async fn AddTenantCredits(
 
     // Add credits to tenant
     let added_by = Some(token.username.as_str());
+    error!(
+        "AddTenantCredits: tenant={}, amount_ms={}, note={:?}, payment_ref={:?}, added_by={:?}",
+        &tenant, req.amount_ms, req.note, req.payment_ref, added_by
+    );
     match gw.sqlAudit.AddTenantCredit(
         &tenant,
         req.amount_ms,
@@ -1590,8 +1608,86 @@ async fn AddTenantCredits(
         added_by,
     ).await {
         Ok(id) => {
+            error!("AddTenantCredits: credit added with id={}", id);
+            let quota_exceeded = match gw.sqlAudit.RecalculateTenantQuota(&tenant).await {
+                Ok(v) => v,
+                Err(e) => {
+                    let body = Body::from(format!("Failed to recalc tenant quota: {:?}", e));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            };
+
+            let tenant_obj = match gw
+                .client
+                .Get(Tenant::KEY, SYSTEM_TENANT, SYSTEM_NAMESPACE, &tenant, 0)
+                .await
+            {
+                Ok(obj) => obj,
+                Err(e) => {
+                    let body = Body::from(format!("Failed to read tenant object: {:?}", e));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            };
+
+            let tenant_obj = match tenant_obj {
+                Some(obj) => obj,
+                None => {
+                    let body = Body::from(format!("Tenant {} not found", tenant));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            };
+
+            let mut tenant_obj: Tenant = match Tenant::FromDataObject(tenant_obj) {
+                Ok(obj) => obj,
+                Err(e) => {
+                    let body = Body::from(format!("Failed to parse tenant object: {:?}", e));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            };
+
+            error!(
+                "AddTenantCredits: tenant={}, old_quota_exceeded={}, new_quota_exceeded={}",
+                &tenant, tenant_obj.object.status.quota_exceeded, quota_exceeded
+            );
+            if tenant_obj.object.status.quota_exceeded != quota_exceeded {
+                tenant_obj.object.status.quota_exceeded = quota_exceeded;
+                error!("AddTenantCredits: updating tenant quota_exceeded to {}", quota_exceeded);
+                if let Err(e) = gw.client.Update(&tenant_obj.DataObject(), 0).await {
+                    let body =
+                        Body::from(format!("Failed to update tenant quota status: {:?}", e));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            }
+
             // Get updated balance
-            let balance = gw.sqlAudit.GetTenantCreditBalance(&tenant).await.unwrap_or(0);
+            let balance = match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
+                Ok(b) => b,
+                Err(e) => {
+                    error!("AddTenantCredits: GetTenantCreditBalance failed: {:?}", e);
+                    0
+                }
+            };
+            error!("AddTenantCredits: returning id={}, balance_ms={}", id, balance);
             let resp_body = AddCreditsResponse { id, balance_ms: balance };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
@@ -1631,6 +1727,62 @@ async fn GetTenantCredits(
         }
         Err(e) => {
             let body = Body::from(format!("Failed to get credits: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantCreditHistory(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<CreditHistoryQuery>,
+) -> SResult<Response, StatusCode> {
+    // TODO: add auth/permission check (e.g., inferx admin or tenant admin).
+    let mut limit = params.limit.unwrap_or(20);
+    let mut offset = params.offset.unwrap_or(0);
+    if limit < 0 {
+        limit = 0;
+    }
+    if offset < 0 {
+        offset = 0;
+    }
+
+    match gw
+        .sqlAudit
+        .ListTenantCreditHistory(&tenant, limit, offset)
+        .await
+    {
+        Ok((records, total)) => match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
+            Ok(balance) => {
+                let resp_body = CreditHistoryResponse {
+                    records,
+                    total,
+                    balance_ms: balance,
+                };
+                let data = serde_json::to_string(&resp_body).unwrap();
+                let body = Body::from(data);
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let body = Body::from(format!("Failed to get credits balance: {:?}", e));
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        },
+        Err(e) => {
+            let body = Body::from(format!("Failed to get credit history: {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(body)
