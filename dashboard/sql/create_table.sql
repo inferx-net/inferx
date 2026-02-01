@@ -123,21 +123,23 @@ CREATE TABLE GpuUsageTick (
     interval_ms     BIGINT NOT NULL,
     tick_type       VARCHAR(16) NOT NULL,   -- 'start', 'periodic', 'final'
     usage_type      VARCHAR(16) NOT NULL,   -- 'request' or 'snapshot'
-    is_coldstart    BOOLEAN DEFAULT FALSE
+    is_coldstart    BOOLEAN DEFAULT FALSE,
+    processed_at    TIMESTAMPTZ             -- NULL = unprocessed, set when billing processed
 );
 
 CREATE INDEX idx_tick_tenant ON GpuUsageTick(tenant, tick_time);
 CREATE INDEX idx_tick_session ON GpuUsageTick(session_id);
+CREATE INDEX idx_tick_unprocessed ON GpuUsageTick(id) WHERE processed_at IS NULL;
 
 -- Tenant Quota - prepaid credit tracking
 -- DROP TABLE TenantQuota;
 CREATE TABLE TenantQuota (
-    tenant          VARCHAR PRIMARY KEY,
-    allowance_ms    BIGINT NOT NULL,        -- Total prepaid credit
-    used_ms         BIGINT DEFAULT 0,       -- Cumulative usage (for caching, can be recalculated)
-    threshold_ms    BIGINT DEFAULT 0,       -- Disable when remaining < this
-    quota_exceeded  BOOLEAN DEFAULT FALSE
+    tenant                 VARCHAR PRIMARY KEY,
+    used_ms                BIGINT DEFAULT 0,       -- Cumulative usage (from processed GpuUsageTick)
+    threshold_ms           BIGINT DEFAULT 0,       -- Disable when remaining < this
+    quota_exceeded         BOOLEAN DEFAULT FALSE
 );
+-- Note: credits are calculated as SUM(TenantCreditHistory.amount_ms) each time (rare, no race)
 
 -- Tenant Credit History - audit trail for credits added
 -- DROP TABLE TenantCreditHistory;
@@ -164,4 +166,3 @@ CREATE TABLE GpuUsageHourly (
 );
 
 CREATE INDEX idx_hourly_tenant ON GpuUsageHourly(tenant, hour);
-

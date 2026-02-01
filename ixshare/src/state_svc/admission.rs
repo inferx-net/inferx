@@ -228,11 +228,14 @@ impl StateSvc {
 
     pub fn UpdateObjCheck(&self, obj: &DataObject<Value>) -> Result<()> {
         match obj.objType.as_str() {
-            Tenant::KEY | Namespace::KEY => {
+            Namespace::KEY => {
                 return Err(Error::CommonError(format!(
                     "{} is not allowed update",
                     &obj.objType
                 )));
+            }
+            Tenant::KEY => {
+                return self.UpdateTenantCheck(obj);
             }
             FunctionStatus::KEY => return Ok(()),
             Function::KEY => {
@@ -248,6 +251,29 @@ impl StateSvc {
                 )));
             }
         }
+    }
+
+    pub fn UpdateTenantCheck(&self, obj: &DataObject<Value>) -> Result<()> {
+        let tenant = Tenant::FromDataObject(obj.clone())?;
+
+        if &tenant.tenant != SYSTEM_TENANT || &tenant.namespace != SYSTEM_NAMESPACE {
+            return Err(Error::CommonError(format!(
+                "tenant must be in tenant {} and namespace {}",
+                SYSTEM_TENANT, SYSTEM_NAMESPACE
+            )));
+        }
+
+        if !self
+            .tenantMgr
+            .Contains(SYSTEM_TENANT, SYSTEM_NAMESPACE, &tenant.name)
+        {
+            return Err(Error::NotExist(format!(
+                "StateSvc doesn't exist tenant {}",
+                &tenant.name
+            )));
+        }
+
+        return Ok(());
     }
 
     pub fn UpdateFuncCheck(&self, obj: &DataObject<Value>) -> Result<()> {

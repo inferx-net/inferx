@@ -31,6 +31,10 @@ impl HttpGateway {
         token: &Arc<AccessToken>,
         obj: DataObject<Value>,
     ) -> Result<i64> {
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
         let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
 
         let tenantName = tenant.tenant.clone();
@@ -53,10 +57,25 @@ impl HttpGateway {
 
     pub async fn UpdateTenant(
         &self,
-        _token: &Arc<AccessToken>,
-        _obj: DataObject<Value>,
+        token: &Arc<AccessToken>,
+        obj: DataObject<Value>,
     ) -> Result<i64> {
-        return Err(Error::CommonError(format!("doesn't support tenant update")));
+        let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
+
+        // Only allow updating tenant in system/system
+        if &tenant.tenant != "system" || &tenant.namespace != "system" {
+            return Err(Error::CommonError(format!(
+                "invalid tenant or namespace name"
+            )));
+        }
+
+        // Check permission - must be tenant admin
+        if !token.IsTenantAdmin(&tenant.name) {
+            return Err(Error::NoPermission);
+        }
+
+        let version = self.client.Update(&obj, 0).await?;
+        return Ok(version);
     }
 
     pub async fn DeleteTenant(

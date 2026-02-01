@@ -181,6 +181,8 @@ impl HttpGateway {
                 get(GetSnapshot),
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
+            .route("/tenant/:tenant/credits", post(AddTenantCredits))
+            .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route("/metrics", get(GetMetrics))
             .route(
                 "/debug/trace_logging/:state",
@@ -1323,6 +1325,15 @@ async fn CreateObj(
     let dataobj = obj;
 
     error!("CreateObj obj is {:#?}", &dataobj);
+    if dataobj.objType.as_str() == Tenant::KEY && !token.IsInferxAdmin() {
+        let body = Body::from("service failure: No permission");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     let res = match dataobj.objType.as_str() {
         Tenant::KEY => gw.CreateTenant(&token, dataobj).await,
         Namespace::KEY => gw.CreateNamespace(&token, dataobj).await,
@@ -1525,6 +1536,101 @@ async fn GetSnapshot(
         }
         Err(e) => {
             let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+// Request body for adding tenant credits
+#[derive(Deserialize)]
+struct AddCreditsRequest {
+    amount_ms: i64,
+    note: Option<String>,
+    payment_ref: Option<String>,
+}
+
+// Response for credit operations
+#[derive(Serialize)]
+struct CreditResponse {
+    balance_ms: i64,
+}
+
+#[derive(Serialize)]
+struct AddCreditsResponse {
+    id: i64,
+    balance_ms: i64,
+}
+
+async fn AddTenantCredits(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Json(req): Json<AddCreditsRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("service failure: No permission");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    // Add credits to tenant
+    let added_by = Some(token.username.as_str());
+    match gw.sqlAudit.AddTenantCredit(
+        &tenant,
+        req.amount_ms,
+        req.note.as_deref(),
+        req.payment_ref.as_deref(),
+        added_by,
+    ).await {
+        Ok(id) => {
+            // Get updated balance
+            let balance = gw.sqlAudit.GetTenantCreditBalance(&tenant).await.unwrap_or(0);
+            let resp_body = AddCreditsResponse { id, balance_ms: balance };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to add credits: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantCredits(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+) -> SResult<Response, StatusCode> {
+    // TODO: add auth/permission check (e.g., inferx admin or tenant admin).
+    match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
+        Ok(balance) => {
+            let resp_body = CreditResponse { balance_ms: balance };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get credits: {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(body)

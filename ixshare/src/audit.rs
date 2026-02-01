@@ -792,6 +792,54 @@ impl SqlAudit {
         return Ok(());
     }
 
+    /// Add credits to tenant (insert into TenantCreditHistory)
+    pub async fn AddTenantCredit(
+        &self,
+        tenant: &str,
+        amount_ms: i64,
+        note: Option<&str>,
+        payment_ref: Option<&str>,
+        added_by: Option<&str>,
+    ) -> Result<i64> {
+        let query = r#"
+            INSERT INTO TenantCreditHistory (tenant, amount_ms, note, payment_ref, added_by)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+        "#;
+        let row: (i32,) = sqlx::query_as(query)
+            .bind(tenant)
+            .bind(amount_ms)
+            .bind(note)
+            .bind(payment_ref)
+            .bind(added_by)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.0 as i64)
+    }
+
+    /// Get tenant credit balance (total credits - total usage)
+    pub async fn GetTenantCreditBalance(&self, tenant: &str) -> Result<i64> {
+        // Total credits from TenantCreditHistory
+        let credits_row: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(amount_ms), 0) FROM TenantCreditHistory WHERE tenant = $1"
+        )
+            .bind(tenant)
+            .fetch_one(&self.pool)
+            .await?;
+        let total_credits = credits_row.0.unwrap_or(0);
+
+        // Total usage from GpuUsageTick
+        let usage_row: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(interval_ms), 0) FROM GpuUsageTick WHERE tenant = $1"
+        )
+            .bind(tenant)
+            .fetch_one(&self.pool)
+            .await?;
+        let total_usage = usage_row.0.unwrap_or(0);
+
+        Ok(total_credits - total_usage)
+    }
+
     pub async fn FuncCount(
         &self,
         tenant: &str,

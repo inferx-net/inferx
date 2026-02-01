@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billing-sql-scripts
+data:
+  # SQL to incrementally update usage and check quota
+  # Returns tenants with their quota status
+  update-and-check-quota.sql: |
+    -- Step 1: Insert any new tenants found in ticks or credits
+    INSERT INTO TenantQuota (tenant)
+    SELECT DISTINCT tenant
+    FROM (
+      SELECT tenant FROM GpuUsageTick WHERE processed_at IS NULL
+      UNION
+      SELECT tenant FROM TenantCreditHistory
+    ) all_tenants
+    ON CONFLICT (tenant) DO NOTHING;
+
+    -- Step 2: Process unprocessed ticks and check quota (all in one atomic statement)
+    -- Returns only tenants whose quota_exceeded flag changed in this run.
+    WITH
+    -- 1) Grab a batch of unprocessed ticks and lock them so other workers skip them
+    batch AS (
+      SELECT
+        t.id,
+        t.tenant,
+        (t.interval_ms::numeric * t.gpu_count::numeric)::bigint AS usage_ms
+      FROM GpuUsageTick t
+      WHERE t.processed_at IS NULL
+      ORDER BY t.id
+      LIMIT 10000
+      FOR UPDATE SKIP LOCKED
+    ),
+
+    -- 2) Aggregate delta usage per tenant in this batch
+    agg AS (
+      SELECT
+        tenant,
+        SUM(usage_ms)::bigint AS delta_ms
+      FROM batch
+      GROUP BY tenant
+    ),
+
+    -- 3) Snapshot old quota_exceeded for ONLY affected tenants
+    old_state AS (
+      SELECT
+        q.tenant,
+        q.quota_exceeded AS old_exceeded
+      FROM TenantQuota q
+      WHERE q.tenant IN (SELECT tenant FROM agg)
+    ),
+
+    -- 4) Sum credits per tenant (source of truth)
+    credits AS (
+      SELECT
+        h.tenant,
+        COALESCE(SUM(h.amount_ms), 0)::bigint AS total_credits
+      FROM TenantCreditHistory h
+      GROUP BY h.tenant
+    ),
+
+    -- 5) Update usage + quota_exceeded for affected tenants
+    updated AS (
+      UPDATE TenantQuota q
+      SET
+        used_ms = q.used_ms + a.delta_ms,
+        quota_exceeded =
+          (COALESCE(c.total_credits, 0) - (q.used_ms + a.delta_ms)) <= q.threshold_ms
+      FROM agg a
+      LEFT JOIN credits c ON c.tenant = a.tenant
+      WHERE q.tenant = a.tenant
+      RETURNING
+        q.tenant,
+        q.used_ms,
+        q.quota_exceeded,
+        COALESCE(c.total_credits, 0) AS credits_ms
+    ),
+
+    -- 6) Mark exactly the locked batch rows as processed
+    mark_processed AS (
+      UPDATE GpuUsageTick t
+      SET processed_at = now()
+      WHERE t.id IN (SELECT id FROM batch)
+      RETURNING t.id
+    )
+
+    -- 7) Return only tenants where quota_exceeded changed
+    SELECT
+      u.tenant,
+      u.credits_ms,
+      u.used_ms,
+      (u.credits_ms - u.used_ms) AS balance_ms,
+      CASE WHEN u.quota_exceeded THEN 'true' ELSE 'false' END AS quota_exceeded
+    FROM updated u
+    JOIN old_state o ON o.tenant = u.tenant
+    WHERE u.quota_exceeded <> o.old_exceeded
+      -- ensures mark_processed executes; also prevents output when batch is empty
+      AND EXISTS (SELECT 1 FROM mark_processed);
+
+  # Shell script to check quotas and update etcd via gateway API
+  quota-check.sh: |
+    #!/bin/sh
+    set -e
+
+    GATEWAY_URL="${GATEWAY_URL:-http://gateway:4000}"
+    API_KEY="${API_KEY:-}"
+
+    echo "Checking tenant quotas (incremental)..."
+
+    # Update usage and quota_exceeded atomically in SQL, returns only changed tenants
+    psql -t -A -F',' -f /scripts/update-and-check-quota.sql | while IFS=',' read -r tenant credits used balance quota_exceeded; do
+      # Skip empty lines
+      [ -z "$tenant" ] && continue
+
+      echo "Tenant: $tenant, Credits: $credits, Used: $used, Balance: $balance, QuotaExceeded: $quota_exceeded"
+
+      # Update tenant status in etcd via gateway API
+      curl -s -X POST "${GATEWAY_URL}/object/" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -d "{
+          \"objType\": \"tenant\",
+          \"tenant\": \"system\",
+          \"namespace\": \"system\",
+          \"name\": \"${tenant}\",
+          \"object\": {
+            \"spec\": {},
+            \"status\": {
+              \"disable\": false,
+              \"quota_exceeded\": ${quota_exceeded}
+            }
+          }
+        }" || echo "Failed to update tenant $tenant"
+
+      echo ""
+    done
+
+    echo "Quota check completed."
+
+  hourly-aggregate.sql: |
+    -- Aggregate ticks from the previous hour into GpuUsageHourly
+    -- Run at minute 5 to ensure all ticks from the previous hour are recorded
+    INSERT INTO GpuUsageHourly (tenant, hour, usage_ms)
+    SELECT
+      tenant,
+      date_trunc('hour', tick_time) as hour,
+      SUM(interval_ms) as usage_ms
+    FROM GpuUsageTick
+    WHERE tick_time >= date_trunc('hour', NOW() - INTERVAL '1 hour')
+      AND tick_time < date_trunc('hour', NOW())
+    GROUP BY tenant, date_trunc('hour', tick_time)
+    ON CONFLICT (tenant, hour)
+    DO UPDATE SET usage_ms = EXCLUDED.usage_ms;
+
+  tick-cleanup.sql: |
+    -- Delete tick records older than 7 days
+    -- Keep raw data for 7 days, then rely on hourly aggregates
+    DELETE FROM GpuUsageTick
+    WHERE tick_time < NOW() - INTERVAL '7 days';
+
+    -- Log deleted count (for monitoring)
+    SELECT 'Deleted ticks older than 7 days' as action,
+           (SELECT COUNT(*) FROM GpuUsageTick WHERE tick_time < NOW() - INTERVAL '7 days') as count;
