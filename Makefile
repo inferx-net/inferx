@@ -1,5 +1,6 @@
 ARCH := ${shell uname -m}
 VERSION := v0.2.0
+VERSION1 := v0.2.0t1
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -23,9 +24,9 @@ svcdeploy: svc
 	cp ./deployment/svc.Dockerfile ./target/svc/Dockerfile
 	cp nodeconfig/node*.json ./target/svc/inferx/config
 	cp ./deployment/svc-entrypoint.sh ./target/svc/svc-entrypoint.sh
-	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION) ./target/svc
+	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION1) ./target/svc
 	sudo docker image prune -f
-	# sudo docker push inferx/inferx_platform:$(VERSION)
+	# sudo docker push inferx/inferx_platform:$(VERSION1)
 
 hf:
 	- mkdir -p ./target/hf
@@ -35,6 +36,20 @@ hf:
 
 pushhf: hf
 	sudo docker push inferx/inferx_hfdownload:v0.1.0
+
+util:
+	- mkdir -p ./target/util
+	cp -f ./deployment/inferx_util.Dockerfile ./target/util/Dockerfile
+	sudo docker build -t inferx/inferx_util:v0.1.0 ./target/util
+
+pushutil: util
+	# sudo docker login -u inferx
+	sudo docker push inferx/inferx_util:v0.1.0
+
+util_slim: 
+	- mkdir -p ./target/util
+	cp -f ./deployment/inferx_util_slim.Dockerfile ./target/util/Dockerfile
+	sudo docker build -t inferx/inferx_util_slim:v0.1.0 ./target/util
 
 # make download MODEL=remodlai/Qwen3-VL-30B-A3B-Instruct-AWQ
 download:
@@ -275,14 +290,14 @@ runallnb:
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/secretdb.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/secretdb.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/ixproxy-nb.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/nodeagent-nb.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
 	sudo kubectl apply -f k8s/ingress.yaml
 
 runallnbmg:
