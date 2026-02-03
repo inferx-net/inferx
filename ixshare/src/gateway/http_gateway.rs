@@ -29,6 +29,7 @@ use opentelemetry::KeyValue;
 
 use axum::extract::{Query, Request, State};
 use axum::http::HeaderValue;
+use axum::middleware::{from_fn_with_state, Next};
 use axum::response::Response;
 use axum::Json;
 use axum::{
@@ -67,6 +68,7 @@ use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 
 use super::auth_layer::Grant;
+use super::auth_layer::ObjectType;
 use super::auth_layer::PermissionType;
 use super::auth_layer::{AccessToken, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
@@ -90,6 +92,159 @@ lazy_static::lazy_static! {
 
 pub fn GatewayId() -> i64 {
     return GATEWAY_ID.load(std::sync::atomic::Ordering::Relaxed);
+}
+
+fn tenant_from_path(path: &str) -> Option<&str> {
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    match parts[1] {
+        "rbac" => match parts.get(2) {
+            Some(&"tenantusers") => parts.get(4).copied(),
+            Some(&"namespaceusers") => parts.get(4).copied(),
+            _ => None,
+        },
+        "object" => match parts.get(2) {
+            Some(&"tenant") => parts.get(5).copied(),
+            _ => parts.get(3).copied(),
+        },
+        "objects" => match parts.get(2) {
+            Some(&"tenant") => None,
+            _ => parts.get(3).copied(),
+        },
+        "readypods" => parts.get(2).copied(),
+        "directfunccall" => parts.get(2).copied(),
+        "funccall" => parts.get(2).copied(),
+        "sampleccall" => parts.get(2).copied(),
+        "podlog" => parts.get(2).copied(),
+        "podauditlog" => parts.get(2).copied(),
+        "SnapshotSchedule" => parts.get(2).copied(),
+        "faillogs" => parts.get(2).copied(),
+        "faillog" => parts.get(2).copied(),
+        "getreqs" => parts.get(2).copied(),
+        "pods" => parts.get(2).copied(),
+        "pod" => parts.get(2).copied(),
+        "functions" => parts.get(2).copied(),
+        "function" => parts.get(2).copied(),
+        "snapshot" => parts.get(2).copied(),
+        "snapshots" => parts.get(2).copied(),
+        "tenant" => parts.get(2).copied(),
+        _ => None,
+    }
+}
+
+fn tenant_quota_exceeded(gw: &HttpGateway, tenant: &str) -> Result<bool> {
+    if tenant.is_empty() {
+        return Ok(false);
+    }
+
+    match gw
+        .objRepo
+        .tenantMgr
+        .Get(SYSTEM_TENANT, SYSTEM_NAMESPACE, tenant)
+    {
+        Ok(t) => Ok(t.object.status.quota_exceeded),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn quota_exceeded_response(tenant: &str) -> Response<Body> {
+    let body = Body::from(format!(
+        "service failure: tenant {} quota exceeded",
+        tenant
+    ));
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .body(body)
+        .unwrap()
+}
+
+fn quota_lookup_failed_response(tenant: &str) -> Response<Body> {
+    let body = Body::from(format!(
+        "service failure: tenant {} quota lookup failed",
+        tenant
+    ));
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body(body)
+        .unwrap()
+}
+
+fn enforce_tenant_quota(
+    token: &Arc<AccessToken>,
+    gw: &HttpGateway,
+    tenant: &str,
+) -> Option<Response<Body>> {
+    if token.IsInferxAdmin() {
+        return None;
+    }
+
+    match tenant_quota_exceeded(gw, tenant) {
+        Ok(true) => return Some(quota_exceeded_response(tenant)),
+        Ok(false) => {}
+        Err(e) => {
+            error!("tenant quota lookup failed for {}: {:?}", tenant, e);
+            return Some(quota_lookup_failed_response(tenant));
+        }
+    };
+
+    None
+}
+
+async fn TenantQuotaGuard(
+    State(gw): State<HttpGateway>,
+    req: Request,
+    next: Next,
+) -> SResult<Response, StatusCode> {
+    let tenant = match tenant_from_path(req.uri().path()) {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            trace!(
+                "TenantQuotaGuard skip: no tenant in path {}",
+                req.uri().path()
+            );
+            return Ok(next.run(req).await);
+        }
+    };
+
+    let token = match req.extensions().get::<Arc<AccessToken>>() {
+        Some(t) => t,
+        None => {
+            trace!(
+                "TenantQuotaGuard skip: no token for tenant {} path {}",
+                tenant,
+                req.uri().path()
+            );
+            return Ok(next.run(req).await);
+        }
+    };
+
+    if token.IsInferxAdmin() {
+        trace!(
+            "TenantQuotaGuard skip: inferx admin tenant {} path {}",
+            tenant,
+            req.uri().path()
+        );
+        return Ok(next.run(req).await);
+    }
+
+    if let Some(resp) = enforce_tenant_quota(token, &gw, tenant) {
+        trace!(
+            "TenantQuotaGuard block: tenant {} path {}",
+            tenant,
+            req.uri().path()
+        );
+        return Ok(resp);
+    }
+
+    trace!(
+        "TenantQuotaGuard allow: tenant {} path {}",
+        tenant,
+        req.uri().path()
+    );
+    Ok(next.run(req).await)
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +354,7 @@ impl HttpGateway {
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
             .layer(cors)
+            .layer(from_fn_with_state(self.clone(), TenantQuotaGuard))
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
             .layer(auth_layer);
 
@@ -366,10 +522,14 @@ async fn GetSampleRestCall(
 
 // test func, remove later
 async fn PostPrompt(
+    Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     Json(req): Json<PromptReq>,
 ) -> SResult<Response, StatusCode> {
     error!("PostPrompt req is {:?}", &req);
+    if let Some(resp) = enforce_tenant_quota(&token, &gw, &req.tenant) {
+        return Ok(resp);
+    }
     let client = reqwest::Client::new();
 
     let tenant = req.tenant.clone();
@@ -717,7 +877,7 @@ async fn RetryGetClient(
             Err(e) => {
                 _retry += 1;
                 if timestamp.Elapsed() < timeout {
-                    // info!(
+                    // trace!(
                     //     "RetryGetClient retry {} {}/{}/{} timeout {}",
                     //     retry,
                     //     tenant,
@@ -732,7 +892,7 @@ async fn RetryGetClient(
             }
             Ok(client) => {
                 if _retry > 0 {
-                    // info!("RetryGetClient retry success {} ", retry);
+                    // trace!("RetryGetClient retry success {} ", retry);
                 }
 
                 return Ok(client);
@@ -1331,6 +1491,14 @@ async fn CreateObj(
     let dataobj = obj;
 
     error!("CreateObj obj is {:#?}", &dataobj);
+    let tenant_target = if dataobj.objType.as_str() == Tenant::KEY {
+        dataobj.name.as_str()
+    } else {
+        dataobj.tenant.as_str()
+    };
+    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+        return Ok(resp);
+    }
     if dataobj.objType.as_str() == Tenant::KEY && !token.IsInferxAdmin() {
         let body = Body::from("service failure: No permission");
         let resp = Response::builder()
@@ -1375,6 +1543,14 @@ async fn UpdateObj(
     Json(obj): Json<DataObject<Value>>,
 ) -> SResult<Response, StatusCode> {
     let dataobj = obj;
+    let tenant_target = if dataobj.objType.as_str() == Tenant::KEY {
+        dataobj.name.as_str()
+    } else {
+        dataobj.tenant.as_str()
+    };
+    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+        return Ok(resp);
+    }
 
     let res = match dataobj.objType.as_str() {
         Tenant::KEY => gw.UpdateTenant(&token, dataobj).await,
@@ -1907,6 +2083,13 @@ async fn RbacGrant(
     State(gw): State<HttpGateway>,
     Json(grant): Json<Grant>,
 ) -> SResult<Response, StatusCode> {
+    let tenant_target = match grant.objType {
+        ObjectType::Tenant => grant.name.as_str(),
+        ObjectType::Namespace => grant.tenant.as_str(),
+    };
+    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+        return Ok(resp);
+    }
     match gw
         .Rbac(
             &token,
@@ -1944,6 +2127,13 @@ async fn RbacRevoke(
     State(gw): State<HttpGateway>,
     Json(grant): Json<Grant>,
 ) -> SResult<Response, StatusCode> {
+    let tenant_target = match grant.objType {
+        ObjectType::Tenant => grant.name.as_str(),
+        ObjectType::Namespace => grant.tenant.as_str(),
+    };
+    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+        return Ok(resp);
+    }
     match gw
         .Rbac(
             &token,
