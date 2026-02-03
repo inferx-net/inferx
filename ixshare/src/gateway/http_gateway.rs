@@ -172,7 +172,7 @@ fn quota_lookup_failed_response(tenant: &str) -> Response<Body> {
         .unwrap()
 }
 
-fn enforce_tenant_quota(
+fn enforce_tenant_quota_for_write(
     token: &Arc<AccessToken>,
     gw: &HttpGateway,
     tenant: &str,
@@ -183,6 +183,48 @@ fn enforce_tenant_quota(
 
     match tenant_quota_exceeded(gw, tenant) {
         Ok(true) => return Some(quota_exceeded_response(tenant)),
+        Ok(false) => {}
+        Err(e) => {
+            error!("tenant quota lookup failed for {}: {:?}", tenant, e);
+            return Some(quota_lookup_failed_response(tenant));
+        }
+    };
+
+    None
+}
+
+fn is_funccall_path(path: &str) -> bool {
+    path.starts_with("/funccall/")
+        || path.starts_with("/directfunccall/")
+        || path.starts_with("/sampleccall/")
+}
+
+fn enforce_tenant_quota_for_request(
+    token: &Arc<AccessToken>,
+    gw: &HttpGateway,
+    tenant: &str,
+    method: &axum::http::Method,
+    path: &str,
+) -> Option<Response<Body>> {
+    if token.IsInferxAdmin() {
+        return None;
+    }
+
+    match tenant_quota_exceeded(gw, tenant) {
+        Ok(true) => {
+            if is_funccall_path(path) {
+                return Some(quota_exceeded_response(tenant));
+            }
+
+            if *method == axum::http::Method::GET
+                || *method == axum::http::Method::HEAD
+                || *method == axum::http::Method::OPTIONS
+            {
+                return None;
+            }
+
+            return Some(quota_exceeded_response(tenant));
+        }
         Ok(false) => {}
         Err(e) => {
             error!("tenant quota lookup failed for {}: {:?}", tenant, e);
@@ -230,7 +272,13 @@ async fn TenantQuotaGuard(
         return Ok(next.run(req).await);
     }
 
-    if let Some(resp) = enforce_tenant_quota(token, &gw, tenant) {
+    if let Some(resp) = enforce_tenant_quota_for_request(
+        token,
+        &gw,
+        tenant,
+        req.method(),
+        req.uri().path(),
+    ) {
         trace!(
             "TenantQuotaGuard block: tenant {} path {}",
             tenant,
@@ -527,7 +575,7 @@ async fn PostPrompt(
     Json(req): Json<PromptReq>,
 ) -> SResult<Response, StatusCode> {
     error!("PostPrompt req is {:?}", &req);
-    if let Some(resp) = enforce_tenant_quota(&token, &gw, &req.tenant) {
+    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, &req.tenant) {
         return Ok(resp);
     }
     let client = reqwest::Client::new();
@@ -1496,7 +1544,7 @@ async fn CreateObj(
     } else {
         dataobj.tenant.as_str()
     };
-    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
         return Ok(resp);
     }
     if dataobj.objType.as_str() == Tenant::KEY && !token.IsInferxAdmin() {
@@ -1548,7 +1596,7 @@ async fn UpdateObj(
     } else {
         dataobj.tenant.as_str()
     };
-    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
         return Ok(resp);
     }
 
@@ -2087,7 +2135,7 @@ async fn RbacGrant(
         ObjectType::Tenant => grant.name.as_str(),
         ObjectType::Namespace => grant.tenant.as_str(),
     };
-    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
         return Ok(resp);
     }
     match gw
@@ -2131,7 +2179,7 @@ async fn RbacRevoke(
         ObjectType::Tenant => grant.name.as_str(),
         ObjectType::Namespace => grant.tenant.as_str(),
     };
-    if let Some(resp) = enforce_tenant_quota(&token, &gw, tenant_target) {
+    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
         return Ok(resp);
     }
     match gw
