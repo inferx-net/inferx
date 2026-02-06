@@ -36,6 +36,96 @@
     .tabcontent.active {
         display: block;
     }
+
+    /* Billing tab styles */
+    .summary-card {
+        border: 1px solid #ccc;
+        padding: 15px 25px;
+        text-align: center;
+        min-width: 140px;
+        background: #fafafa;
+    }
+
+    .summary-card h4 {
+        margin: 0 0 10px 0;
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+    }
+
+    .summary-card > div:first-of-type {
+        font-size: 20px;
+        font-weight: bold;
+    }
+
+    .summary-card .subtext {
+        font-size: 12px;
+        color: #888;
+        margin-top: 5px;
+    }
+
+    .status-active {
+        color: green;
+    }
+
+    .status-exceeded {
+        color: red;
+    }
+
+    .usage-bar {
+        background-color: #4CAF50;
+        min-width: 8px;
+        flex: 1;
+        transition: height 0.3s ease;
+    }
+
+    .usage-bar:hover {
+        background-color: #45a049;
+    }
+
+    #billing-pagination-controls {
+        margin-top: 10px;
+        text-align: center;
+    }
+
+    #billing-pagination-controls button {
+        margin: 0 10px;
+        padding: 5px 15px;
+    }
+
+    #billing-pagination-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    #add-credits-form div {
+        margin: 10px 0;
+    }
+
+    #add-credits-form label {
+        display: inline-block;
+        width: 120px;
+    }
+
+    #add-credits-form input {
+        width: 300px;
+        padding: 5px;
+    }
+
+    #add-credits-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .amount-positive { color: green; }
+    .amount-negative { color: red; }
+    .amount-zero { color: #888; }
+
+    #usage-range-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
 </style>
 
 <div class="tab">
@@ -44,6 +134,7 @@
     <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
     <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
+    <button class="tablinks" onclick="openTab(event, 'Billing')" style="font-size: 25px;">Billing</button>
 </div>
 
 <div id="Apikeys" class="tabcontent">
@@ -213,7 +304,227 @@
     </table>
 </div>
 
+<div id="Billing" class="tabcontent">
+    <!-- Tenant Selector -->
+    <div style="margin-bottom: 20px;">
+        <label for="billing_tenant_select" style="font-size: 16px; font-weight: bold;">Tenant: </label>
+        <select id="billing_tenant_select" onchange="loadBillingData()" style="padding: 5px; font-size: 14px;">
+            <option value="" disabled selected>Select a tenant</option>
+        </select>
+    </div>
+
+    <!-- No tenant selected message -->
+    <div id="billing-no-tenant" style="color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Select a tenant to view billing information
+    </div>
+
+    <!-- Billing content (hidden until tenant selected) -->
+    <div id="billing-content" style="display: none;">
+        <!-- Credit Summary Cards -->
+        <div id="billing-summary" style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
+            <div class="summary-card">
+                <h4>Current Balance</h4>
+                <div id="balance-value">--</div>
+                <div id="balance-hours" class="subtext">--</div>
+            </div>
+            <div class="summary-card">
+                <h4>Total Used</h4>
+                <div id="used-value">--</div>
+                <div id="used-hours" class="subtext">--</div>
+            </div>
+            <div class="summary-card">
+                <h4>Quota Limit</h4>
+                <div id="threshold-value">--</div>
+                <div class="subtext">threshold</div>
+            </div>
+            <div class="summary-card">
+                <h4>Status</h4>
+                <div id="status-value">--</div>
+            </div>
+        </div>
+
+        <!-- Usage Chart -->
+        <div id="usage-chart-container" style="margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                <h3 style="margin: 0;">Usage</h3>
+                <div id="usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <button type="button" onclick="setUsageRangeHours(24)" id="usage-range-24h">Last 24h</button>
+                    <button type="button" onclick="setUsageRangeHours(24 * 7)" id="usage-range-7d">Last 7d</button>
+                    <button type="button" onclick="setUsageRangeHours(24 * 30)" id="usage-range-30d">Last 30d</button>
+                </div>
+            </div>
+            <div id="usage-chart" style="display: flex; align-items: flex-end; height: 100px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+                <!-- Bars generated by JS -->
+            </div>
+            <div id="usage-chart-labels" style="display: flex; gap: 2px; font-size: 10px; color: #666;">
+                <!-- Labels generated by JS -->
+            </div>
+            <div style="text-align: right; font-size: 10px; color: #888;">(UTC)</div>
+        </div>
+
+        <!-- Usage Analytics Section -->
+        <div id="usage-analytics-container" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 15px;">
+            <h3 style="cursor: pointer; margin: 0;" onclick="toggleUsageAnalytics()">
+                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▶</span>
+            </h3>
+
+            <div id="usage-analytics-content" style="display: none; margin-top: 15px;">
+                <div id="analytics-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
+                    <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+                    <input type="datetime-local" id="usage-start" style="font-size: 12px;">
+                    <span style="font-size: 12px;">to</span>
+                    <input type="datetime-local" id="usage-end" style="font-size: 12px;">
+                    <button type="button" onclick="applyCustomUsageRange()">Apply</button>
+                </div>
+                <!-- Summary Cards -->
+                <div id="analytics-summary-cards" style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <div class="summary-card" style="min-width: 120px;">
+                        <h4>Total Used</h4>
+                        <div id="analytics-total-value">--</div>
+                        <div class="subtext">GPU-hours</div>
+                    </div>
+                    <div class="summary-card" style="min-width: 120px;">
+                        <h4>Top Model</h4>
+                        <div id="analytics-top-model">--</div>
+                        <div id="analytics-top-model-hours" class="subtext">--</div>
+                    </div>
+                    <div class="summary-card" style="min-width: 120px;">
+                        <h4>Top Namespace</h4>
+                        <div id="analytics-top-namespace">--</div>
+                        <div id="analytics-top-namespace-hours" class="subtext">--</div>
+                    </div>
+                    <div class="summary-card" style="min-width: 120px;">
+                        <h4>Peak Hour</h4>
+                        <div id="analytics-peak-hour">--</div>
+                        <div id="analytics-peak-hour-value" class="subtext">--</div>
+                    </div>
+                </div>
+
+                <!-- Time Range Selector -->
+                <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <label>Time Range:</label>
+                    <select id="analytics-time-range" onchange="onAnalyticsTimeRangeChange()">
+                        <option value="24">Last 24 Hours</option>
+                        <option value="168">Last 7 Days</option>
+                        <option value="720">Last 30 Days</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                    <div id="analytics-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" onclick="setAnalyticsRangeHours(24)" id="analytics-range-24h">24h</button>
+                        <button type="button" onclick="setAnalyticsRangeHours(24 * 7)" id="analytics-range-7d">7d</button>
+                        <button type="button" onclick="setAnalyticsRangeHours(24 * 30)" id="analytics-range-30d">30d</button>
+                    </div>
+
+                    <span id="analytics-loading" style="display: none; margin-left: 10px; color: #888;">
+                        Loading...
+                    </span>
+                </div>
+
+                <!-- View Mode Selector -->
+                <div style="margin-bottom: 15px;">
+                    <label>View By:</label>
+                    <input type="radio" name="analytics-view" value="hourly" checked onchange="loadAnalyticsView()"> Hourly
+                    <input type="radio" name="analytics-view" value="model" onchange="loadAnalyticsView()"> Model
+                    <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
+                </div>
+
+                <!-- Results Area -->
+                <div id="analytics-chart-area" style="display: none;">
+                    <!-- Chart rendered here -->
+                </div>
+
+                <div id="analytics-table-area" style="display: none;">
+                    <table id="analytics-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #333;">
+                                <th id="analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('name')">
+                                    Group <span id="sort-name-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('hours')">
+                                    GPU-Hours <span id="sort-hours-icon">▼</span>
+                                </th>
+                                <th style="text-align: right; padding: 8px; width: 200px;">% of Total</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr style="font-weight: bold; border-top: 2px solid #333;">
+                                <td style="padding: 8px;">Total</td>
+                                <td id="analytics-table-total" style="text-align: right; padding: 8px;">--</td>
+                                <td style="text-align: right; padding: 8px;">100%</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <!-- Empty State -->
+                <div id="analytics-empty" style="display: none; text-align: center; padding: 40px; color: #888;">
+                    <p>No usage data for the selected period.</p>
+                </div>
+
+                <!-- Error State -->
+                <div id="analytics-error" style="display: none; text-align: center; padding: 20px; color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;">
+                    <p><strong>Failed to load analytics</strong></p>
+                    <p id="analytics-error-message" style="font-size: 12px;"></p>
+                    <button onclick="loadAnalytics()">Retry</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Credit History -->
+        <div id="credit-history-container">
+            <h3>Credit History</h3>
+            <table style="width:100%" id="credit-history-table">
+                <thead>
+                    <tr>
+                        <th>Date/Time (Local)</th>
+                        <th style="text-align: right;">Amount (ms)</th>
+                        <th style="text-align: right;">GPU-Hours</th>
+                        <th>Note</th>
+                        <th>Payment Ref</th>
+                        <th>Added By</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <div id="billing-pagination-controls">
+                <button id="prev-page-btn" onclick="billingPrevPage()" disabled>&laquo; Prev</button>
+                <span id="billing-page-info">Page 1 of 1</span>
+                <button id="next-page-btn" onclick="billingNextPage()" disabled>Next &raquo;</button>
+            </div>
+        </div>
+
+        <!-- Add Credits Form (Admin Only) -->
+        <div id="add-credits-form" style="display: none; margin-top: 20px; border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+            <h3>Add Credits</h3>
+            <p style="font-size: 12px; color: #666;">Server enforces admin-only access</p>
+            <div>
+                <label>Amount (ms):</label>
+                <input type="number" id="credit-amount" placeholder="e.g., 3600000 for 1 GPU-hour">
+            </div>
+            <div>
+                <label>Note:</label>
+                <input type="text" id="credit-note" placeholder="Optional note">
+            </div>
+            <div>
+                <label>Payment Ref:</label>
+                <input type="text" id="credit-payment-ref" placeholder="Invoice number">
+            </div>
+            <button id="add-credits-btn" onclick="addCredits()" style="margin-top: 10px; padding: 8px 20px;">Add Credits</button>
+        </div>
+    </div>
+</div>
+
 <script>
+    async function fetchWithAuth(url, options) {
+        const resp = await fetch(url, options);
+        if (resp.status === 401 || resp.status === 403 || resp.redirected) {
+            window.location.href = '/demo/login';
+            throw new Error('Session expired');
+        }
+        return resp;
+    }
+
     function openTab(evt, tabName) {
         const tabcontent = document.getElementsByClassName("tabcontent");
         for (let i = 0; i < tabcontent.length; i++) {
@@ -237,6 +548,918 @@
         // Simulate click on the savedTab tab button
         openTab(fakeEvent, savedTab);
     };
+
+    // =====================================================
+    // Billing Tab Functions
+    // =====================================================
+
+    // Billing state
+    let billingCurrentPage = 0;
+    let billingTotalPages = 1;
+    const billingPageSize = 20;
+    let billingIsSubmitting = false;
+    let billingTenantsPopulated = false;
+    let billingUsageRange = { mode: 'hours', hours: 24 };
+    let analyticsUsageRange = { mode: 'hours', hours: 24 };
+
+    // Called when Billing tab is opened
+    async function populateBillingTenants() {
+        if (billingTenantsPopulated) return;
+
+        const dropdown = document.getElementById('billing_tenant_select');
+
+        try {
+            const [roles, tenants] = await Promise.all([
+                fetchWithAuth('/demo/generate_roles').then(r => r.json()),
+                fetchWithAuth('/demo/generate_tenants').then(r => r.json())
+            ]);
+
+            tenants.forEach(t => {
+                if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
+                    const option = document.createElement('option');
+                    option.value = t.name;
+                    option.textContent = t.name;
+                    dropdown.appendChild(option);
+                }
+            });
+
+            billingTenantsPopulated = true;
+        } catch (error) {
+            console.error('Failed to populate billing tenants:', error);
+        }
+    }
+
+    function updateUsageRangeButtons() {
+        const btn24 = document.getElementById('usage-range-24h');
+        const btn7d = document.getElementById('usage-range-7d');
+        const btn30d = document.getElementById('usage-range-30d');
+        if (!btn24 || !btn7d || !btn30d) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+
+        if (billingUsageRange.mode === 'hours') {
+            if (billingUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (billingUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (billingUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        }
+    }
+
+    function setUsageRangeHours(hours) {
+        billingUsageRange = { mode: 'hours', hours: hours };
+        updateUsageRangeButtons();
+        updateAnalyticsRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) {
+            loadUsageChart(tenant);
+        }
+    }
+
+    function updateAnalyticsRangeButtons() {
+        const btn24 = document.getElementById('analytics-range-24h');
+        const btn7d = document.getElementById('analytics-range-7d');
+        const btn30d = document.getElementById('analytics-range-30d');
+        if (!btn24 || !btn7d || !btn30d) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+
+        if (analyticsUsageRange && analyticsUsageRange.mode === 'hours') {
+            if (analyticsUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (analyticsUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (analyticsUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        }
+    }
+
+    function setAnalyticsRangeHours(hours) {
+        analyticsUsageRange = { mode: 'hours', hours: hours };
+        const rangeSelect = document.getElementById('analytics-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = String(hours);
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
+        updateAnalyticsRangeButtons();
+        if (analyticsExpanded) {
+            loadAnalytics();
+        }
+    }
+
+    function applyCustomUsageRange() {
+        const startInput = document.getElementById('usage-start');
+        const endInput = document.getElementById('usage-end');
+        if (!startInput || !endInput) return;
+
+        if (!startInput.value || !endInput.value) {
+            alert('Please select both start and end time (Local)');
+            return;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            alert('Invalid date range');
+            return;
+        }
+
+        if (end <= start) {
+            alert('End time must be after start time');
+            return;
+        }
+
+        const maxRangeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            alert('Custom range is limited to 90 days');
+            return;
+        }
+
+        analyticsUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+
+        const rangeSelect = document.getElementById('analytics-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = 'custom';
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateAnalyticsRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant && analyticsExpanded) {
+            loadAnalytics();
+        }
+    }
+
+    function setDefaultCustomRangeInputs() {
+        const startInput = document.getElementById('usage-start');
+        const endInput = document.getElementById('usage-end');
+        if (!startInput || !endInput) return;
+
+        if (startInput.value && endInput.value) return;
+
+        const end = new Date();
+        const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+        startInput.value = toLocalDatetimeValue(start);
+        endInput.value = toLocalDatetimeValue(end);
+    }
+
+    function toLocalDatetimeValue(date) {
+        const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000;
+        const local = new Date(date.getTime() - tzOffsetMs);
+        return local.toISOString().slice(0, 16);
+    }
+
+    // Called when tenant selection changes
+    async function loadBillingData() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+
+        // Handle no selection
+        if (!tenant) {
+            document.getElementById('billing-no-tenant').style.display = 'block';
+            document.getElementById('billing-content').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('billing-no-tenant').style.display = 'none';
+        document.getElementById('billing-content').style.display = 'block';
+
+        updateUsageRangeButtons();
+
+        // Load all data in parallel
+        await Promise.all([
+            loadBillingSummary(tenant),
+            loadUsageChart(tenant),
+            loadCreditHistory(tenant, 0)
+        ]);
+
+        // Check if user is InferxAdmin (system tenant admin) to show add credits form
+        // Only system admins can add credits, not regular tenant admins
+        try {
+            const roles = await fetchWithAuth('/demo/generate_roles').then(r => r.json());
+            const isInferxAdmin = IsInferxAdmin(roles);
+            document.getElementById('add-credits-form').style.display = isInferxAdmin ? 'block' : 'none';
+        } catch (error) {
+            console.error('Failed to check admin status:', error);
+            document.getElementById('add-credits-form').style.display = 'none';
+        }
+    }
+
+    // Check if user is InferxAdmin (system tenant admin)
+    function IsInferxAdmin(roles) {
+        if (!roles || !Array.isArray(roles)) return false;
+
+        return roles.some(rb => {
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            const rbTenant = String(rb.tenant).toLowerCase().trim();
+
+            return rbObjType === "tenant" &&
+                   rbTenant === "system" &&
+                   rbRole === "admin";
+        });
+    }
+
+    async function loadBillingSummary(tenant) {
+        try {
+            // Try billing-summary endpoint first (Phase 3), fall back to credits + tenant status (Phase 1)
+            let data;
+            let hasBillingSummary = false;
+            let tenantStatus = null;
+
+            try {
+                const summaryResp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/billing-summary`);
+                if (summaryResp.ok) {
+                    data = await summaryResp.json();
+                    hasBillingSummary = true;
+                }
+            } catch (e) {
+                // billing-summary not available, fall back to credits
+            }
+
+            if (!hasBillingSummary) {
+                // Phase 1 fallback: use existing /credits endpoint + tenant object for status
+                const [creditsResp, tenantResp] = await Promise.all([
+                    fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`),
+                    fetchWithAuth(`/demo/proxy1/object/tenant/system/system/${tenant}/`)
+                ]);
+
+                if (!creditsResp.ok) throw new Error(`Credits HTTP ${creditsResp.status}`);
+                data = await creditsResp.json();
+
+                // Try to get quota_exceeded from tenant object
+                if (tenantResp.ok) {
+                    try {
+                        const tenantObj = await tenantResp.json();
+                        tenantStatus = tenantObj.object?.status || tenantObj.status || null;
+                    } catch (e) {
+                        console.warn('Failed to parse tenant object:', e);
+                    }
+                }
+            }
+
+            // Balance (available in both endpoints)
+            const balanceMs = data.balance_ms || 0;
+            const balanceHours = (balanceMs / 3600000).toFixed(2);
+            document.getElementById('balance-value').textContent = formatMs(balanceMs);
+            document.getElementById('balance-hours').textContent = `(${balanceHours} GPU-hours)`;
+
+            if (hasBillingSummary) {
+                // Phase 3: Full data from billing-summary
+                const usedMs = data.used_ms || 0;
+                const usedHours = (usedMs / 3600000).toFixed(2);
+                document.getElementById('used-value').textContent = formatMs(usedMs);
+                document.getElementById('used-hours').textContent = `(${usedHours} GPU-hours)`;
+
+                const thresholdMs = data.threshold_ms || 0;
+                document.getElementById('threshold-value').textContent = formatMs(thresholdMs);
+
+                // Status - use quota_exceeded from server
+                const statusEl = document.getElementById('status-value');
+                if (data.quota_exceeded) {
+                    statusEl.textContent = '● Quota Exceeded';
+                    statusEl.className = 'status-exceeded';
+                } else {
+                    statusEl.textContent = '● Active';
+                    statusEl.className = 'status-active';
+                }
+            } else {
+                // Phase 1: Only balance available, show placeholders for used/threshold
+                document.getElementById('used-value').textContent = '--';
+                document.getElementById('used-hours').textContent = '(Phase 3)';
+                document.getElementById('threshold-value').textContent = '--';
+
+                // Get status from tenant object
+                // Treat missing/null/undefined quota_exceeded as false (active)
+                const statusEl = document.getElementById('status-value');
+                if (tenantStatus) {
+                    if (tenantStatus.quota_exceeded === true) {
+                        statusEl.textContent = '● Quota Exceeded';
+                        statusEl.className = 'status-exceeded';
+                    } else {
+                        // quota_exceeded is false, null, undefined, or missing = active
+                        statusEl.textContent = '● Active';
+                        statusEl.className = 'status-active';
+                    }
+                } else {
+                    // Couldn't fetch tenant object at all
+                    statusEl.textContent = '● Unknown';
+                    statusEl.className = '';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load billing summary:', error);
+            // Show error state
+            document.getElementById('balance-value').textContent = 'Error';
+            document.getElementById('used-value').textContent = 'Error';
+            document.getElementById('threshold-value').textContent = 'Error';
+            document.getElementById('status-value').textContent = '● Unknown';
+        }
+    }
+
+    async function loadUsageChart(tenant) {
+        const chartEl = document.getElementById('usage-chart');
+        const labelsEl = document.getElementById('usage-chart-labels');
+
+        try {
+            const params = new URLSearchParams();
+            if (billingUsageRange.mode === 'custom') {
+                params.set('start', billingUsageRange.start);
+                params.set('end', billingUsageRange.end);
+            } else {
+                params.set('hours', String(billingUsageRange.hours || 24));
+            }
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
+
+            // Phase 1: endpoint doesn't exist yet, show placeholder
+            if (resp.status === 404) {
+                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart available in Phase 3</div>';
+                labelsEl.innerHTML = '';
+                return;
+            }
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (!data.usage || data.usage.length === 0) {
+                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">No usage data</div>';
+                labelsEl.innerHTML = '';
+                return;
+            }
+
+            // Find max for scaling
+            const maxUsage = Math.max(...data.usage.map(u => u.usage_ms), 1);
+
+            // Build chart bars
+            chartEl.innerHTML = data.usage.map(u => {
+                const height = Math.max(2, (u.usage_ms / maxUsage) * 100);
+                const hours = (u.usage_ms / 3600000).toFixed(2);
+                return `<div class="usage-bar" style="height: ${height}%" title="${hours} GPU-hours"></div>`;
+            }).join('');
+
+            // Build labels (show ~6 labels max)
+            const labelEvery = Math.max(1, Math.ceil(data.usage.length / 6));
+            labelsEl.innerHTML = data.usage.map((u, i) => {
+                const hour = new Date(u.hour).getUTCHours();
+                const label = (i % labelEvery === 0) ? hour.toString().padStart(2, '0') : '';
+                return `<div style="flex: 1; text-align: center;">${label}</div>`;
+            }).join('');
+
+        } catch (error) {
+            console.error('Failed to load usage chart:', error);
+            chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart unavailable</div>';
+            labelsEl.innerHTML = '';
+        }
+    }
+
+    async function loadCreditHistory(tenant, page) {
+        billingCurrentPage = page;
+        const offset = page * billingPageSize;
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits/history?limit=${billingPageSize}&offset=${offset}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            const tbody = document.querySelector('#credit-history-table tbody');
+            tbody.innerHTML = '';
+
+            if (data.records && data.records.length > 0) {
+                data.records.forEach(record => {
+                    const row = document.createElement('tr');
+                    const date = new Date(record.created_at).toLocaleString();
+                    const gpuHours = (Math.abs(record.amount_ms) / 3600000).toFixed(2);
+
+                    // Format amount with proper sign and color
+                    let amountClass, amountText;
+                    if (record.amount_ms > 0) {
+                        amountClass = 'amount-positive';
+                        amountText = '+' + record.amount_ms.toLocaleString();
+                    } else if (record.amount_ms < 0) {
+                        amountClass = 'amount-negative';
+                        amountText = record.amount_ms.toLocaleString(); // Already has minus
+                    } else {
+                        amountClass = 'amount-zero';
+                        amountText = '0';
+                    }
+
+                    row.innerHTML = `
+                        <td>${date}</td>
+                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
+                        <td style="text-align: right;">${gpuHours}</td>
+                        <td>${record.note || '-'}</td>
+                        <td>${record.payment_ref || '-'}</td>
+                        <td>${record.added_by || '-'}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888;">No credit history</td></tr>';
+            }
+
+            // Update pagination
+            // Phase 1 fallback: if `total` not in response, use records.length to determine hasNext
+            const hasTotal = typeof data.total === 'number';
+            const total = data.total || 0;
+            const recordCount = data.records ? data.records.length : 0;
+
+            if (hasTotal) {
+                // Phase 3: Use total for accurate pagination
+                billingTotalPages = Math.max(1, Math.ceil(total / billingPageSize));
+                document.getElementById('billing-page-info').textContent = `Page ${page + 1} of ${billingTotalPages}`;
+            } else {
+                // Phase 1 fallback: Show page number only, estimate hasNext from record count
+                billingTotalPages = (recordCount === billingPageSize) ? page + 2 : page + 1;
+                document.getElementById('billing-page-info').textContent = `Page ${page + 1}`;
+            }
+
+            // Enable/disable pagination buttons
+            document.getElementById('prev-page-btn').disabled = (page <= 0);
+            document.getElementById('next-page-btn').disabled = hasTotal
+                ? (page >= billingTotalPages - 1)
+                : (recordCount < billingPageSize); // Phase 1: disable if fewer records than page size
+
+        } catch (error) {
+            console.error('Failed to load credit history:', error);
+            const tbody = document.querySelector('#credit-history-table tbody');
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: red;">Failed to load credit history</td></tr>';
+        }
+    }
+
+    function billingPrevPage() {
+        if (billingCurrentPage > 0) {
+            const tenant = document.getElementById('billing_tenant_select').value;
+            loadCreditHistory(tenant, billingCurrentPage - 1);
+        }
+    }
+
+    function billingNextPage() {
+        if (billingCurrentPage < billingTotalPages - 1) {
+            const tenant = document.getElementById('billing_tenant_select').value;
+            loadCreditHistory(tenant, billingCurrentPage + 1);
+        }
+    }
+
+    async function addCredits() {
+        if (billingIsSubmitting) return; // Prevent double-submit
+
+        const tenant = document.getElementById('billing_tenant_select').value;
+        const amount = parseInt(document.getElementById('credit-amount').value);
+        const note = document.getElementById('credit-note').value;
+        const paymentRef = document.getElementById('credit-payment-ref').value;
+
+        if (!amount || isNaN(amount)) {
+            alert('Please enter a valid amount');
+            return;
+        }
+
+        // Disable button during request
+        const btn = document.getElementById('add-credits-btn');
+        billingIsSubmitting = true;
+        btn.disabled = true;
+        btn.textContent = 'Adding...';
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    amount_ms: amount,
+                    note: note || null,
+                    payment_ref: paymentRef || null
+                })
+            });
+
+            if (resp.ok) {
+                alert('Credits added successfully!');
+                document.getElementById('credit-amount').value = '';
+                document.getElementById('credit-note').value = '';
+                document.getElementById('credit-payment-ref').value = '';
+                loadBillingData(); // Refresh all data
+            } else if (resp.status === 403) {
+                alert('Permission denied. Only administrators can add credits.');
+            } else {
+                const error = await resp.text();
+                alert('Failed to add credits: ' + error);
+            }
+        } catch (error) {
+            alert('Error adding credits: ' + error);
+        } finally {
+            // Re-enable button
+            billingIsSubmitting = false;
+            btn.disabled = false;
+            btn.textContent = 'Add Credits';
+        }
+    }
+
+    // Helper: format milliseconds with thousands separator
+    function formatMs(ms) {
+        return ms.toLocaleString() + ' ms';
+    }
+
+    // Hook into tab switching to populate tenants when Billing tab opens
+    const originalOpenTab = openTab;
+    openTab = function(evt, tabName) {
+        originalOpenTab(evt, tabName);
+        if (tabName === 'Billing') {
+            populateBillingTenants();
+        }
+    };
+
+    // =====================================================
+    // Usage Analytics Functions
+    // =====================================================
+
+    let analyticsExpanded = false;
+    let analyticsData = null;
+    let analyticsSortColumn = 'hours';
+    let analyticsSortDirection = 'desc';
+
+    function toggleUsageAnalytics() {
+        analyticsExpanded = !analyticsExpanded;
+        document.getElementById('usage-analytics-content').style.display =
+            analyticsExpanded ? 'block' : 'none';
+        document.getElementById('analytics-toggle-icon').textContent =
+            analyticsExpanded ? '▼' : '▶';
+
+        if (analyticsExpanded) {
+            const customEl = document.getElementById('analytics-custom-range');
+            if (customEl) {
+                const range = document.getElementById('analytics-time-range').value;
+                customEl.style.display = range === 'custom' ? 'flex' : 'none';
+            }
+            updateAnalyticsRangeButtons();
+            loadAnalytics();
+        }
+    }
+
+    function onAnalyticsTimeRangeChange() {
+        const range = document.getElementById('analytics-time-range').value;
+        if (range !== 'custom') {
+            const hours = parseInt(range, 10);
+            if (!Number.isNaN(hours)) {
+                setAnalyticsRangeHours(hours);
+                return;
+            }
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = range === 'custom' ? 'flex' : 'none';
+        }
+        if (range === 'custom') {
+            setDefaultCustomRangeInputs();
+        }
+        loadAnalytics();
+    }
+
+    function getAnalyticsTimeParams() {
+        const range = document.getElementById('analytics-time-range').value;
+        if (range === 'custom') {
+            if (!analyticsUsageRange || analyticsUsageRange.mode !== 'custom') return null;
+            if (!analyticsUsageRange.start || !analyticsUsageRange.end) return null;
+            return `start=${encodeURIComponent(analyticsUsageRange.start)}&end=${encodeURIComponent(analyticsUsageRange.end)}`;
+        }
+        return `hours=${range}`;
+    }
+
+    function getAnalyticsViewMode() {
+        return document.querySelector('input[name="analytics-view"]:checked').value;
+    }
+
+    function showAnalyticsLoading(show) {
+        document.getElementById('analytics-loading').style.display = show ? 'inline' : 'none';
+    }
+
+    function showAnalyticsError(message) {
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-table-area').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+
+        const el = document.getElementById('analytics-error');
+        document.getElementById('analytics-error-message').textContent = message || 'Unknown error';
+        el.style.display = 'block';
+    }
+
+    function showAnalyticsEmpty() {
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-table-area').style.display = 'none';
+        document.getElementById('analytics-error').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'block';
+    }
+
+    async function loadAnalytics() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        showAnalyticsLoading(true);
+        document.getElementById('analytics-error').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+
+        try {
+            // Load summary cards
+            await loadAnalyticsSummary(tenant, timeParams);
+
+            // Load current view
+            await loadAnalyticsView();
+        } catch (error) {
+            console.error('Failed to load analytics:', error);
+            showAnalyticsError(error.message);
+        } finally {
+            showAnalyticsLoading(false);
+        }
+    }
+
+    async function loadAnalyticsSummary(tenant, timeParams) {
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/summary?${timeParams}`);
+
+            if (resp.status === 404) {
+                document.getElementById('analytics-summary-cards').style.display = 'none';
+                return;
+            }
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            document.getElementById('analytics-summary-cards').style.display = 'flex';
+
+            // Total
+            document.getElementById('analytics-total-value').textContent =
+                data.total_gpu_hours?.toFixed(2) || '0.00';
+
+            // Top Model
+            if (data.top_model) {
+                document.getElementById('analytics-top-model').textContent =
+                    truncateText(data.top_model.funcname, 15);
+                document.getElementById('analytics-top-model-hours').textContent =
+                    `${data.top_model.gpu_hours?.toFixed(2) || '0.00'} hrs`;
+            } else {
+                document.getElementById('analytics-top-model').textContent = '--';
+                document.getElementById('analytics-top-model-hours').textContent = 'No data';
+            }
+
+            // Top Namespace
+            if (data.top_namespace) {
+                document.getElementById('analytics-top-namespace').textContent =
+                    truncateText(data.top_namespace.namespace, 15);
+                document.getElementById('analytics-top-namespace-hours').textContent =
+                    `${data.top_namespace.gpu_hours?.toFixed(2) || '0.00'} hrs`;
+            } else {
+                document.getElementById('analytics-top-namespace').textContent = '--';
+                document.getElementById('analytics-top-namespace-hours').textContent = 'No data';
+            }
+
+            // Peak Hour
+            if (data.peak_hour) {
+                const peakDate = new Date(data.peak_hour.hour);
+                document.getElementById('analytics-peak-hour').textContent =
+                    peakDate.getUTCHours().toString().padStart(2, '0') + ':00 UTC';
+                document.getElementById('analytics-peak-hour-value').textContent =
+                    `${data.peak_hour.gpu_hours?.toFixed(2) || '0.00'} hrs`;
+            } else {
+                document.getElementById('analytics-peak-hour').textContent = '--';
+                document.getElementById('analytics-peak-hour-value').textContent = 'No data';
+            }
+        } catch (error) {
+            console.warn('Failed to load summary:', error);
+            document.getElementById('analytics-summary-cards').style.display = 'none';
+        }
+    }
+
+    async function loadAnalyticsView() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        const viewMode = getAnalyticsViewMode();
+        let endpoint;
+
+        switch (viewMode) {
+            case 'model':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}&limit=10`;
+                break;
+            case 'namespace':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}&limit=10`;
+                break;
+            case 'hourly':
+            default:
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                break;
+        }
+
+        showAnalyticsLoading(true);
+
+        try {
+            const resp = await fetchWithAuth(endpoint);
+
+            if (resp.status === 404) {
+                showAnalyticsError('This endpoint is not yet implemented');
+                return;
+            }
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (viewMode === 'hourly') {
+                renderAnalyticsHourlyChart(data);
+            } else {
+                analyticsData = data;
+                renderGroupedTable(data, viewMode);
+            }
+        } catch (error) {
+            console.error('Failed to load analytics view:', error);
+            showAnalyticsError(error.message);
+        } finally {
+            showAnalyticsLoading(false);
+        }
+    }
+
+    function renderGroupedTable(data, viewMode) {
+        document.getElementById('analytics-error').style.display = 'none';
+
+        if (!data.usage || data.usage.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        const tbody = document.querySelector('#analytics-table tbody');
+        tbody.innerHTML = '';
+
+        // Update header based on view mode
+        const headerEl = document.getElementById('analytics-group-header');
+        headerEl.innerHTML = (viewMode === 'model' ? 'Model' : 'Namespace') +
+            ' <span id="sort-name-icon">' + (analyticsSortColumn === 'name' ? (analyticsSortDirection === 'asc' ? '▲' : '▼') : '') + '</span>';
+
+        const totalMs = data.total_ms || data.usage.reduce((sum, u) => sum + u.usage_ms, 0);
+        const totalHours = totalMs / 3600000;
+
+        // Sort data
+        let sortedData = [...data.usage];
+        sortedData.sort((a, b) => {
+            let aVal, bVal;
+            if (analyticsSortColumn === 'name') {
+                aVal = viewMode === 'model' ? a.funcname : a.namespace;
+                bVal = viewMode === 'model' ? b.funcname : b.namespace;
+                return analyticsSortDirection === 'asc'
+                    ? aVal.localeCompare(bVal)
+                    : bVal.localeCompare(aVal);
+            } else {
+                aVal = a.usage_ms;
+                bVal = b.usage_ms;
+                return analyticsSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+            }
+        });
+
+        sortedData.forEach(item => {
+            const row = document.createElement('tr');
+            row.style.borderBottom = '1px solid #eee';
+            const groupName = viewMode === 'model' ? item.funcname : item.namespace;
+            const gpuHours = (item.usage_ms / 3600000).toFixed(2);
+            const percent = totalMs > 0 ? ((item.usage_ms / totalMs) * 100).toFixed(1) : 0;
+
+            const barWidth = Math.min(percent, 100);
+            const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+
+            row.innerHTML = `
+                <td style="padding: 8px;" title="${groupName}">${truncateText(groupName, 40)}</td>
+                <td style="text-align: right; padding: 8px;">${gpuHours}</td>
+                <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Add "Other" row if present
+        if (data.other && data.other.count > 0) {
+            const row = document.createElement('tr');
+            row.style.color = '#888';
+            row.style.fontStyle = 'italic';
+            row.style.borderBottom = '1px solid #eee';
+            const gpuHours = (data.other.usage_ms / 3600000).toFixed(2);
+            const percent = totalMs > 0 ? ((data.other.usage_ms / totalMs) * 100).toFixed(1) : 0;
+            const barWidth = Math.min(percent, 100);
+            const bar = `<div style="background: #ccc; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+
+            row.innerHTML = `
+                <td style="padding: 8px;">Other (${data.other.count} ${viewMode === 'model' ? 'models' : 'namespaces'})</td>
+                <td style="text-align: right; padding: 8px;">${gpuHours}</td>
+                <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
+            `;
+            tbody.appendChild(row);
+        }
+
+        // Update totals
+        document.getElementById('analytics-table-total').textContent = totalHours.toFixed(2);
+
+        // Update sort icons
+        document.getElementById('sort-hours-icon').textContent =
+            analyticsSortColumn === 'hours' ? (analyticsSortDirection === 'asc' ? '▲' : '▼') : '';
+
+        // Show table, hide chart and empty state
+        document.getElementById('analytics-table-area').style.display = 'block';
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+    }
+
+    function sortAnalyticsTable(column) {
+        if (analyticsSortColumn === column) {
+            analyticsSortDirection = analyticsSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            analyticsSortColumn = column;
+            analyticsSortDirection = column === 'name' ? 'asc' : 'desc';
+        }
+
+        if (analyticsData) {
+            const viewMode = getAnalyticsViewMode();
+            renderGroupedTable(analyticsData, viewMode);
+        }
+    }
+
+    function renderAnalyticsHourlyChart(data) {
+        document.getElementById('analytics-error').style.display = 'none';
+        const chartEl = document.getElementById('analytics-chart-area');
+
+        if (!data.usage || data.usage.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        // For longer time ranges, aggregate to daily
+        const hours = data.usage.length;
+        const aggregateToDaily = hours > 48;
+
+        let displayData = data.usage;
+        if (aggregateToDaily) {
+            displayData = aggregateAnalyticsToDays(data.usage);
+        }
+
+        const maxUsage = Math.max(...displayData.map(u => u.usage_ms), 1);
+
+        chartEl.innerHTML = `
+            <div style="display: flex; align-items: flex-end; height: 120px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+                ${displayData.map(u => {
+                    const height = Math.max(2, (u.usage_ms / maxUsage) * 100);
+                    const gpuHours = (u.usage_ms / 3600000).toFixed(2);
+                    const label = aggregateToDaily
+                        ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'})
+                        : new Date(u.hour).getUTCHours() + ':00 UTC';
+                    return `<div class="usage-bar" style="height: ${height}%; flex: 1;"
+                                title="${label}: ${gpuHours} GPU-hours"></div>`;
+                }).join('')}
+            </div>
+            <div style="display: flex; gap: 2px; font-size: 10px; color: #666;">
+                ${displayData.map((u, i) => {
+                    const showLabel = aggregateToDaily
+                        ? (i % 5 === 0)
+                        : (i % 6 === 0);
+                    const label = showLabel
+                        ? (aggregateToDaily
+                            ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'})
+                            : new Date(u.hour).getUTCHours().toString().padStart(2, '0'))
+                        : '';
+                    return `<div style="flex: 1; text-align: center;">${label}</div>`;
+                }).join('')}
+            </div>
+            <div style="text-align: right; font-size: 10px; color: #888;">
+                (${aggregateToDaily ? 'Daily' : 'Hourly'} - UTC)
+            </div>
+        `;
+
+        chartEl.style.display = 'block';
+        document.getElementById('analytics-table-area').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+    }
+
+    function aggregateAnalyticsToDays(hourlyData) {
+        const dayMap = {};
+
+        hourlyData.forEach(h => {
+            const date = h.hour.substring(0, 10);
+            if (!dayMap[date]) {
+                dayMap[date] = { hour: date + 'T00:00:00Z', usage_ms: 0 };
+            }
+            dayMap[date].usage_ms += h.usage_ms;
+        });
+
+        return Object.values(dayMap).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function truncateText(text, maxLength) {
+        if (!text) return '--';
+        return text.length > maxLength ? text.substring(0, maxLength - 3) + '...' : text;
+    }
 </script>
 
 
@@ -317,7 +1540,7 @@
 
         const url = `/demo/generate_tenantuser?${params.toString()}`;
         try {
-            const response = await fetch(url);
+            const response = await fetchWithAuth(url);
 
             // 2. Check if the request was successful
             if (!response.ok) {
@@ -351,7 +1574,7 @@
         const url = `/demo/generate_namespaceuser?${params.toString()}`;
 
         try {
-            const response = await fetch(url);
+            const response = await fetchWithAuth(url);
 
             // 2. Handle Authentication/Redirects
             // If require_login redirects to a login page, the response.url will change
@@ -376,7 +1599,7 @@
     }
 
     async function fetchItems() {
-        const apikeys_resp = await fetch('/demo/generate_apikeys');
+        const apikeys_resp = await fetchWithAuth('/demo/generate_apikeys');
         const apikeys = await apikeys_resp.json();
         const apikey_tbody = document.querySelector('#items-table tbody');
         apikey_tbody.innerHTML = '';
@@ -394,7 +1617,7 @@
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
 
-        const roles_resp = await fetch('/demo/generate_roles');
+        const roles_resp = await fetchWithAuth('/demo/generate_roles');
         const roles = await roles_resp.json();
 
         // Target both table bodies
@@ -446,7 +1669,7 @@
             }
         });
 
-        const funcs_resp = await fetch('/demo/generate_funcs');
+        const funcs_resp = await fetchWithAuth('/demo/generate_funcs');
         const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
         funcs_tbody.innerHTML = '';
@@ -494,7 +1717,7 @@
         });
 
 
-        const namespaces_resp = await fetch('/demo/generate_namespaces');
+        const namespaces_resp = await fetchWithAuth('/demo/generate_namespaces');
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
@@ -549,7 +1772,7 @@
 
         };
 
-        const tenants_resp = await fetch('/demo/generate_tenants');
+        const tenants_resp = await fetchWithAuth('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
@@ -643,7 +1866,7 @@
                 })
             };
 
-            const response = await fetch("/demo/proxy/object/", options);
+            const response = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await response.text();
             if (response.status == '200') {
                 alert("Create Model successfully! " + text);
@@ -667,7 +1890,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/function/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/function/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -724,7 +1947,7 @@
                 })
             };
 
-            const apikeys_resp = await fetch("/demo/proxy/object/", options);
+            const apikeys_resp = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await apikeys_resp.text();
 
             if (apikeys_resp.status === 200) {
@@ -745,7 +1968,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/namespace/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/namespace/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -789,7 +2012,7 @@
                 })
             };
 
-            const resp = await fetch("/demo/proxy/object/", options);
+            const resp = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await resp.text();
 
             if (resp.status === 200) {
@@ -810,7 +2033,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/tenant/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/tenant/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -840,7 +2063,7 @@
                         "keyname": keyname
                     })
                 };
-                await fetch("/demo/apikeys", body);
+                await fetchWithAuth("/demo/apikeys", body);
                 nameInput.value = '';
                 fetchItems();
             }
@@ -860,7 +2083,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch("/demo/apikeys", {
+                    fetchWithAuth("/demo/apikeys", {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

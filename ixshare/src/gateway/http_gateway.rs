@@ -45,6 +45,7 @@ use prometheus_client::encoding::text::encode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
+use chrono::{DateTime, Timelike, Utc};
 
 use axum_server::tls_rustls::RustlsConfig;
 use http_body_util::BodyExt;
@@ -398,6 +399,11 @@ impl HttpGateway {
             .route("/tenant/:tenant/credits", post(AddTenantCredits))
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route("/tenant/:tenant/credits/history", get(GetTenantCreditHistory))
+            .route("/tenant/:tenant/billing-summary", get(GetTenantBillingSummary))
+            .route("/tenant/:tenant/usage/hourly", get(GetTenantHourlyUsage))
+            .route("/tenant/:tenant/usage/by-model", get(GetTenantUsageByModel))
+            .route("/tenant/:tenant/usage/by-namespace", get(GetTenantUsageByNamespace))
+            .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
             .route("/metrics", get(GetMetrics))
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
@@ -1814,6 +1820,107 @@ struct AddCreditsResponse {
     balance_ms: i64,
 }
 
+#[derive(Serialize)]
+struct BillingSummaryResponse {
+    balance_ms: i64,
+    used_ms: i64,
+    threshold_ms: i64,
+    quota_exceeded: bool,
+    total_credits_ms: i64,
+}
+
+#[derive(Serialize)]
+struct HourlyUsageRecord {
+    hour: String,
+    usage_ms: i64,
+}
+
+#[derive(Serialize)]
+struct HourlyUsageResponse {
+    usage: Vec<HourlyUsageRecord>,
+    timezone: String,
+}
+
+#[derive(Deserialize)]
+struct HourlyUsageQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UsageByGroupQuery {
+    hours: Option<i32>,
+    limit: Option<i32>,
+}
+
+#[derive(Serialize)]
+struct ModelUsageItem {
+    funcname: String,
+    namespace: String,
+    usage_ms: i64,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct NamespaceUsageItem {
+    namespace: String,
+    usage_ms: i64,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct OtherBucket {
+    count: i64,
+    usage_ms: i64,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct UsageByModelResponse {
+    usage: Vec<ModelUsageItem>,
+    other: OtherBucket,
+    total_ms: i64,
+    total_gpu_hours: f64,
+    timezone: String,
+}
+
+#[derive(Serialize)]
+struct UsageByNamespaceResponse {
+    usage: Vec<NamespaceUsageItem>,
+    other: OtherBucket,
+    total_ms: i64,
+    total_gpu_hours: f64,
+    timezone: String,
+}
+
+#[derive(Serialize)]
+struct TopModelInfo {
+    funcname: String,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct TopNamespaceInfo {
+    namespace: String,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct PeakHourInfo {
+    hour: String,
+    gpu_hours: f64,
+}
+
+#[derive(Serialize)]
+struct UsageSummaryResponse {
+    total_gpu_hours: f64,
+    top_model: Option<TopModelInfo>,
+    top_namespace: Option<TopNamespaceInfo>,
+    peak_hour: Option<PeakHourInfo>,
+    timezone: String,
+}
+
 async fn AddTenantCredits(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -1821,9 +1928,9 @@ async fn AddTenantCredits(
     Json(req): Json<AddCreditsRequest>,
 ) -> SResult<Response, StatusCode> {
     if !token.IsInferxAdmin() {
-        let body = Body::from("service failure: No permission");
+        let body = Body::from("Permission denied: Only InferxAdmin can add credits");
         let resp = Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
+            .status(StatusCode::FORBIDDEN)
             .body(body)
             .unwrap();
         return Ok(resp);
@@ -1944,11 +2051,19 @@ async fn AddTenantCredits(
 }
 
 async fn GetTenantCredits(
-    Extension(_token): Extension<Arc<AccessToken>>,
+    Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     Path(tenant): Path<String>,
 ) -> SResult<Response, StatusCode> {
-    // TODO: add auth/permission check (e.g., inferx admin or tenant admin).
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
         Ok(balance) => {
             let resp_body = CreditResponse { balance_ms: balance };
@@ -1972,12 +2087,20 @@ async fn GetTenantCredits(
 }
 
 async fn GetTenantCreditHistory(
-    Extension(_token): Extension<Arc<AccessToken>>,
+    Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     Path(tenant): Path<String>,
     Query(params): Query<CreditHistoryQuery>,
 ) -> SResult<Response, StatusCode> {
-    // TODO: add auth/permission check (e.g., inferx admin or tenant admin).
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     let mut limit = params.limit.unwrap_or(20);
     let mut offset = params.offset.unwrap_or(0);
     if limit < 0 {
@@ -2018,6 +2141,373 @@ async fn GetTenantCreditHistory(
         },
         Err(e) => {
             let body = Body::from(format!("Failed to get credit history: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantBillingSummary(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
+        Ok((balance_ms, used_ms, threshold_ms, quota_exceeded, total_credits_ms)) => {
+            let resp_body = BillingSummaryResponse {
+                balance_ms,
+                used_ms,
+                threshold_ms,
+                quota_exceeded,
+                total_credits_ms,
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get billing summary: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantHourlyUsage(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<HourlyUsageQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let (start_hour, end_hour, total_hours) = if params.start.is_some() || params.end.is_some() {
+        let start_str = match params.start {
+            Some(s) => s,
+            None => {
+                let body = Body::from("Missing start parameter");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        let end_str = match params.end {
+            Some(s) => s,
+            None => {
+                let body = Body::from("Missing end parameter");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let start = match DateTime::parse_from_rfc3339(&start_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => {
+                let body = Body::from("Invalid start format (use RFC3339)");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        let end = match DateTime::parse_from_rfc3339(&end_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => {
+                let body = Body::from("Invalid end format (use RFC3339)");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        if end <= start {
+            let body = Body::from("Invalid range: end must be after start");
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+
+        let max_range = chrono::Duration::days(90);
+        if end - start > max_range {
+            let body = Body::from("Range too large (max 90 days)");
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+
+        let start_hour_naive = start.date_naive().and_hms_opt(start.hour(), 0, 0).unwrap();
+        let end_hour_naive = end.date_naive().and_hms_opt(end.hour(), 0, 0).unwrap();
+        let start_hour = DateTime::<Utc>::from_naive_utc_and_offset(start_hour_naive, Utc);
+        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+
+        let total_hours = ((end_hour - start_hour).num_hours() + 1).max(1) as i32;
+        (start_hour, end_hour, total_hours)
+    } else {
+        let hours = params.hours.unwrap_or(24).min(720).max(1); // 1 to 720 hours (30 days max)
+        let now = Utc::now();
+        let end_hour_naive = now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap();
+        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+        let start_hour = end_hour - chrono::Duration::hours((hours - 1) as i64);
+        (start_hour, end_hour, hours)
+    };
+
+    match gw
+        .sqlAudit
+        .GetTenantHourlyUsageRange(&tenant, start_hour, end_hour)
+        .await
+    {
+        Ok(records) => {
+            // Build a map of existing records for quick lookup
+            let mut usage_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+            for (hour, usage_ms) in records {
+                // Truncate to hour boundary for consistent key
+                let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+                usage_map.insert(hour_key, usage_ms);
+            }
+
+            // Generate all hours in the range, zero-fill missing ones
+            let mut usage: Vec<HourlyUsageRecord> = Vec::with_capacity(total_hours as usize);
+            for i in 0..total_hours {
+                let hour = start_hour + chrono::Duration::hours(i as i64);
+                let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+                let usage_ms = usage_map.get(&hour_key).copied().unwrap_or(0);
+                usage.push(HourlyUsageRecord {
+                    hour: hour_key,
+                    usage_ms,
+                });
+            }
+
+            let resp_body = HourlyUsageResponse {
+                usage,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get hourly usage: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantUsageByModel(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<UsageByGroupQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let hours = params.hours.unwrap_or(24).min(720).max(1);
+    let limit = params.limit.unwrap_or(10).min(50).max(1);
+
+    match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours, limit).await {
+        Ok((top_items, other_count, other_usage_ms, total_ms)) => {
+            let usage: Vec<ModelUsageItem> = top_items
+                .into_iter()
+                .map(|(funcname, namespace, usage_ms)| ModelUsageItem {
+                    funcname,
+                    namespace,
+                    usage_ms,
+                    gpu_hours: usage_ms as f64 / 3600000.0,
+                })
+                .collect();
+
+            let resp_body = UsageByModelResponse {
+                usage,
+                other: OtherBucket {
+                    count: other_count,
+                    usage_ms: other_usage_ms,
+                    gpu_hours: other_usage_ms as f64 / 3600000.0,
+                },
+                total_ms,
+                total_gpu_hours: total_ms as f64 / 3600000.0,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get usage by model: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantUsageByNamespace(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<UsageByGroupQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let hours = params.hours.unwrap_or(24).min(720).max(1);
+    let limit = params.limit.unwrap_or(10).min(50).max(1);
+
+    match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours, limit).await {
+        Ok((top_items, other_count, other_usage_ms, total_ms)) => {
+            let usage: Vec<NamespaceUsageItem> = top_items
+                .into_iter()
+                .map(|(namespace, usage_ms)| NamespaceUsageItem {
+                    namespace,
+                    usage_ms,
+                    gpu_hours: usage_ms as f64 / 3600000.0,
+                })
+                .collect();
+
+            let resp_body = UsageByNamespaceResponse {
+                usage,
+                other: OtherBucket {
+                    count: other_count,
+                    usage_ms: other_usage_ms,
+                    gpu_hours: other_usage_ms as f64 / 3600000.0,
+                },
+                total_ms,
+                total_gpu_hours: total_ms as f64 / 3600000.0,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get usage by namespace: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantUsageSummary(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<HourlyUsageQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let hours = params.hours.unwrap_or(24).min(720).max(1);
+
+    match gw.sqlAudit.GetTenantAnalyticsSummary(&tenant, hours).await {
+        Ok((total_ms, top_model_name, top_model_ms, top_namespace_name, top_namespace_ms, peak_hour, peak_hour_ms)) => {
+            let top_model = top_model_name.map(|name| TopModelInfo {
+                funcname: name,
+                gpu_hours: top_model_ms as f64 / 3600000.0,
+            });
+
+            let top_namespace = top_namespace_name.map(|name| TopNamespaceInfo {
+                namespace: name,
+                gpu_hours: top_namespace_ms as f64 / 3600000.0,
+            });
+
+            let peak_hour_info = peak_hour.map(|hour| PeakHourInfo {
+                hour: hour.format("%Y-%m-%dT%H:00:00Z").to_string(),
+                gpu_hours: peak_hour_ms as f64 / 3600000.0,
+            });
+
+            let resp_body = UsageSummaryResponse {
+                total_gpu_hours: total_ms as f64 / 3600000.0,
+                top_model,
+                top_namespace: top_namespace,
+                peak_hour: peak_hour_info,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get usage summary: {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(body)

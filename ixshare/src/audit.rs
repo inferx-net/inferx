@@ -892,13 +892,23 @@ impl SqlAudit {
             tenant, debug_row.0, debug_row.1, debug_row.2, debug_row.3
         );
 
+        // Step 1: Ensure TenantQuota row exists (INSERT if not exists)
+        // This must be a separate statement because PostgreSQL CTEs operate on the same snapshot,
+        // so an INSERT in a CTE isn't visible to an UPDATE in the same statement.
+        sqlx::query(
+            r#"
+            INSERT INTO TenantQuota (tenant)
+            VALUES ($1)
+            ON CONFLICT (tenant) DO NOTHING
+            "#
+        )
+            .bind(tenant)
+            .execute(&self.pool)
+            .await?;
+
+        // Step 2: Update quota_exceeded based on current credits and usage
         let query = r#"
-            WITH ensure AS (
-                INSERT INTO TenantQuota (tenant)
-                VALUES ($1)
-                ON CONFLICT (tenant) DO NOTHING
-            ),
-            credits AS (
+            WITH credits AS (
                 SELECT COALESCE(SUM(amount_ms), 0)::bigint AS total_credits
                 FROM TenantCreditHistory
                 WHERE tenant = $1
@@ -944,6 +954,312 @@ impl SqlAudit {
         );
 
         Ok(balance)
+    }
+
+    /// Get tenant billing summary (balance, used, threshold, quota_exceeded, total_credits)
+    pub async fn GetTenantBillingSummary(
+        &self,
+        tenant: &str,
+    ) -> Result<(i64, i64, i64, bool, i64)> {
+        // Get total credits, used_ms, threshold_ms, and quota_exceeded in one query
+        let row: (i64, i64, i64, bool) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE(q.used_ms, 0)::bigint AS used_ms,
+                COALESCE(q.threshold_ms, 0)::bigint AS threshold_ms,
+                COALESCE(q.quota_exceeded, false) AS quota_exceeded
+            FROM TenantQuota q
+            WHERE q.tenant = $1
+            "#,
+        )
+            .bind(tenant)
+            .fetch_optional(&self.pool)
+            .await?
+            .unwrap_or((0, 0, 0, false));
+
+        let total_credits_ms = row.0;
+        let used_ms = row.1;
+        let threshold_ms = row.2;
+        let quota_exceeded = row.3;
+        let balance_ms = total_credits_ms - used_ms;
+
+        Ok((balance_ms, used_ms, threshold_ms, quota_exceeded, total_credits_ms))
+    }
+
+    /// Get tenant hourly usage for the last N hours
+    pub async fn GetTenantHourlyUsage(
+        &self,
+        tenant: &str,
+        hours: i32,
+    ) -> Result<Vec<(DateTime<Utc>, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                hour,
+                usage_ms
+            FROM GpuUsageHourly
+            WHERE tenant = $1
+              AND hour >= NOW() - ($2 || ' hours')::interval
+            ORDER BY hour ASC
+            "#,
+        )
+            .bind(tenant)
+            .bind(hours)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(records)
+    }
+
+    /// Get tenant hourly usage for a UTC time range [start, end]
+    pub async fn GetTenantHourlyUsageRange(
+        &self,
+        tenant: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<(DateTime<Utc>, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                hour,
+                usage_ms
+            FROM GpuUsageHourly
+            WHERE tenant = $1
+              AND hour >= $2
+              AND hour <= $3
+            ORDER BY hour ASC
+            "#,
+        )
+            .bind(tenant)
+            .bind(start)
+            .bind(end)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(records)
+    }
+
+    /// Get tenant usage by model with Top-N aggregation
+    /// Returns: (top_items, other_count, other_usage_ms, total_ms)
+    pub async fn GetTenantUsageByModel(
+        &self,
+        tenant: &str,
+        hours: i32,
+        limit: i32,
+    ) -> Result<(Vec<(String, String, i64)>, i64, i64, i64)> {
+        // Query with Top-N and "Other" aggregation
+        let rows: Vec<(String, Option<String>, Option<String>, i64, Option<i64>)> = sqlx::query_as(
+            r#"
+            WITH ranked AS (
+                SELECT
+                    funcname,
+                    namespace,
+                    SUM(interval_ms * gpu_count)::bigint AS usage_ms,
+                    ROW_NUMBER() OVER (ORDER BY SUM(interval_ms * gpu_count) DESC) AS rn
+                FROM GpuUsageTick
+                WHERE tenant = $1
+                  AND tick_time >= NOW() - ($2 || ' hours')::interval
+                GROUP BY funcname, namespace
+            ),
+            top_n AS (
+                SELECT funcname, namespace, usage_ms FROM ranked WHERE rn <= $3
+            ),
+            other AS (
+                SELECT
+                    COUNT(*)::bigint AS count,
+                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms
+                FROM ranked WHERE rn > $3
+            ),
+            total AS (
+                SELECT COALESCE(SUM(usage_ms), 0)::bigint AS total_ms FROM ranked
+            )
+            SELECT
+                'top' AS category, funcname, namespace, usage_ms, NULL::bigint AS other_count
+            FROM top_n
+            UNION ALL
+            SELECT
+                'other' AS category, NULL, NULL, usage_ms, count
+            FROM other
+            UNION ALL
+            SELECT
+                'total' AS category, NULL, NULL, total_ms, NULL
+            FROM total
+            "#,
+        )
+        .bind(tenant)
+        .bind(hours)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut top_items: Vec<(String, String, i64)> = Vec::new();
+        let mut other_count: i64 = 0;
+        let mut other_usage_ms: i64 = 0;
+        let mut total_ms: i64 = 0;
+
+        for row in rows {
+            match row.0.as_str() {
+                "top" => {
+                    if let (Some(funcname), Some(namespace)) = (row.1, row.2) {
+                        top_items.push((funcname, namespace, row.3));
+                    }
+                }
+                "other" => {
+                    other_usage_ms = row.3;
+                    other_count = row.4.unwrap_or(0);
+                }
+                "total" => {
+                    total_ms = row.3;
+                }
+                _ => {}
+            }
+        }
+
+        Ok((top_items, other_count, other_usage_ms, total_ms))
+    }
+
+    /// Get tenant usage by namespace with Top-N aggregation
+    /// Returns: (top_items, other_count, other_usage_ms, total_ms)
+    pub async fn GetTenantUsageByNamespace(
+        &self,
+        tenant: &str,
+        hours: i32,
+        limit: i32,
+    ) -> Result<(Vec<(String, i64)>, i64, i64, i64)> {
+        let rows: Vec<(String, Option<String>, i64, Option<i64>)> = sqlx::query_as(
+            r#"
+            WITH ranked AS (
+                SELECT
+                    namespace,
+                    SUM(interval_ms * gpu_count)::bigint AS usage_ms,
+                    ROW_NUMBER() OVER (ORDER BY SUM(interval_ms * gpu_count) DESC) AS rn
+                FROM GpuUsageTick
+                WHERE tenant = $1
+                  AND tick_time >= NOW() - ($2 || ' hours')::interval
+                GROUP BY namespace
+            ),
+            top_n AS (
+                SELECT namespace, usage_ms FROM ranked WHERE rn <= $3
+            ),
+            other AS (
+                SELECT
+                    COUNT(*)::bigint AS count,
+                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms
+                FROM ranked WHERE rn > $3
+            ),
+            total AS (
+                SELECT COALESCE(SUM(usage_ms), 0)::bigint AS total_ms FROM ranked
+            )
+            SELECT
+                'top' AS category, namespace, usage_ms, NULL::bigint AS other_count
+            FROM top_n
+            UNION ALL
+            SELECT
+                'other' AS category, NULL, usage_ms, count
+            FROM other
+            UNION ALL
+            SELECT
+                'total' AS category, NULL, total_ms, NULL
+            FROM total
+            "#,
+        )
+        .bind(tenant)
+        .bind(hours)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut top_items: Vec<(String, i64)> = Vec::new();
+        let mut other_count: i64 = 0;
+        let mut other_usage_ms: i64 = 0;
+        let mut total_ms: i64 = 0;
+
+        for row in rows {
+            match row.0.as_str() {
+                "top" => {
+                    if let Some(namespace) = row.1 {
+                        top_items.push((namespace, row.2));
+                    }
+                }
+                "other" => {
+                    other_usage_ms = row.2;
+                    other_count = row.3.unwrap_or(0);
+                }
+                "total" => {
+                    total_ms = row.2;
+                }
+                _ => {}
+            }
+        }
+
+        Ok((top_items, other_count, other_usage_ms, total_ms))
+    }
+
+    /// Get tenant analytics summary for summary cards
+    /// Returns: (total_ms, top_model_name, top_model_ms, top_namespace, top_namespace_ms, peak_hour, peak_hour_ms)
+    pub async fn GetTenantAnalyticsSummary(
+        &self,
+        tenant: &str,
+        hours: i32,
+    ) -> Result<(i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64)> {
+        let row: (i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64) = sqlx::query_as(
+            r#"
+            WITH period_usage AS (
+                SELECT
+                    funcname,
+                    namespace,
+                    date_trunc('hour', tick_time) AS hour,
+                    SUM(interval_ms * gpu_count)::bigint AS usage_ms
+                FROM GpuUsageTick
+                WHERE tenant = $1
+                  AND tick_time >= NOW() - ($2 || ' hours')::interval
+                GROUP BY funcname, namespace, date_trunc('hour', tick_time)
+            ),
+            total AS (
+                SELECT COALESCE(SUM(usage_ms), 0)::bigint AS total_ms FROM period_usage
+            ),
+            top_model AS (
+                SELECT funcname, SUM(usage_ms)::bigint AS usage_ms
+                FROM period_usage
+                GROUP BY funcname
+                ORDER BY usage_ms DESC
+                LIMIT 1
+            ),
+            top_namespace AS (
+                SELECT namespace, SUM(usage_ms)::bigint AS usage_ms
+                FROM period_usage
+                GROUP BY namespace
+                ORDER BY usage_ms DESC
+                LIMIT 1
+            ),
+            peak_hour AS (
+                SELECT hour, SUM(usage_ms)::bigint AS usage_ms
+                FROM period_usage
+                GROUP BY hour
+                ORDER BY usage_ms DESC
+                LIMIT 1
+            )
+            SELECT
+                t.total_ms,
+                tm.funcname AS top_model_name,
+                COALESCE(tm.usage_ms, 0)::bigint AS top_model_ms,
+                tn.namespace AS top_namespace_name,
+                COALESCE(tn.usage_ms, 0)::bigint AS top_namespace_ms,
+                ph.hour AS peak_hour,
+                COALESCE(ph.usage_ms, 0)::bigint AS peak_hour_ms
+            FROM total t
+            LEFT JOIN top_model tm ON true
+            LEFT JOIN top_namespace tn ON true
+            LEFT JOIN peak_hour ph ON true
+            "#,
+        )
+        .bind(tenant)
+        .bind(hours)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row)
     }
 
     pub async fn FuncCount(
