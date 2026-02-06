@@ -108,13 +108,14 @@ data:
     echo "Checking tenant quotas (incremental)..."
 
     # Update usage and quota_exceeded atomically in SQL, returns only changed tenants
-    psql -t -A -F',' -f /scripts/update-and-check-quota.sql | while IFS=',' read -r tenant credits used balance quota_exceeded; do
+    psql -q -t -A -F',' -f /scripts/update-and-check-quota.sql | while IFS=',' read -r tenant credits used balance quota_exceeded; do
       # Skip empty lines
       [ -z "$tenant" ] && continue
 
       echo "Tenant: $tenant, Credits: $credits, Used: $used, Balance: $balance, QuotaExceeded: $quota_exceeded"
 
       # Update tenant status in etcd via gateway API
+      # echo "curl -s -X POST \"${GATEWAY_URL}/object/\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer ${API_KEY}\" -d \"{\\\"objType\\\": \\\"tenant\\\", \\\"tenant\\\": \\\"system\\\", \\\"namespace\\\": \\\"system\\\", \\\"name\\\": \\\"${tenant}\\\", \\\"object\\\": {\\\"spec\\\": {}, \\\"status\\\": {\\\"disable\\\": false, \\\"quota_exceeded\\\": ${quota_exceeded}}}}\""
       curl -s -X POST "${GATEWAY_URL}/object/" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${API_KEY}" \
