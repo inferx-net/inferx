@@ -1,0 +1,12 @@
+{
+    "type": "tenant",
+    "tenant": "system",
+    "namespace": "system",
+    "name": "tenant3",
+    "object": {
+        "spec": {},
+        "status": {
+            "disable": false
+        }
+    }
+}
