@@ -50,7 +50,7 @@ use super::scheduler_client::SCHEDULER_CLIENT;
 use serde_json::json;
 use uuid::Uuid;
 use chrono::Utc;
-use crate::audit::{GpuUsageTick, GPU_USAGE_TICK_AGENT};
+use crate::audit::{UsageTick, USAGE_TICK_AGENT};
 
 /// GPU tracking info for billing
 #[derive(Debug, Clone, Default)]
@@ -825,13 +825,14 @@ impl FuncWorker {
         // Update last_tick_time for next tick
         tracking_info.last_tick_time = Some(now);
 
-        let tick = GpuUsageTick {
+        let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
-            nodename: tracking_info.nodename.clone(),
-            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            fprevision: self.fprevision,
+            nodename: Some(tracking_info.nodename.clone()),
+            pod_id: Some(format!("{}", self.id.load(Ordering::Relaxed))),
             gateway_id: Some(GatewayId()),
             gpu_type: tracking_info.gpu_type.clone(),
             gpu_count: tracking_info.gpu_count,
@@ -850,7 +851,7 @@ impl FuncWorker {
         // Release lock before async call
         drop(tracking_info);
 
-        GPU_USAGE_TICK_AGENT.Audit(tick);
+        USAGE_TICK_AGENT.Audit(tick);
     }
 
     /// Insert start billing tick when session begins (interval_ms = 0)
@@ -869,13 +870,14 @@ impl FuncWorker {
             return;
         }
 
-        let tick = GpuUsageTick {
+        let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
-            nodename: tracking_info.nodename.clone(),
-            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            fprevision: self.fprevision,
+            nodename: Some(tracking_info.nodename.clone()),
+            pod_id: Some(format!("{}", self.id.load(Ordering::Relaxed))),
             gateway_id: Some(GatewayId()),
             gpu_type: tracking_info.gpu_type.clone(),
             gpu_count: tracking_info.gpu_count,
@@ -891,7 +893,7 @@ impl FuncWorker {
         // Release lock before async call
         drop(tracking_info);
 
-        GPU_USAGE_TICK_AGENT.Audit(tick);
+        USAGE_TICK_AGENT.Audit(tick);
     }
 
     /// Insert final billing tick when worker finishes (partial tick for remaining time)
@@ -929,13 +931,14 @@ impl FuncWorker {
         tracking_info.session_id = None;
         tracking_info.last_tick_time = None;
 
-        let tick = GpuUsageTick {
+        let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
-            nodename: tracking_info.nodename.clone(),
-            pod_id: format!("{}", self.id.load(Ordering::Relaxed)),
+            fprevision: self.fprevision,
+            nodename: Some(tracking_info.nodename.clone()),
+            pod_id: Some(format!("{}", self.id.load(Ordering::Relaxed))),
             gateway_id: Some(GatewayId()),
             gpu_type: tracking_info.gpu_type.clone(),
             gpu_count: tracking_info.gpu_count,
@@ -951,7 +954,7 @@ impl FuncWorker {
         // Release lock before async call
         drop(tracking_info);
 
-        GPU_USAGE_TICK_AGENT.Audit(tick);
+        USAGE_TICK_AGENT.Audit(tick);
     }
 }
 

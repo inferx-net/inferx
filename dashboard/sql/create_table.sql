@@ -101,19 +101,20 @@ FOR EACH ROW EXECUTE FUNCTION notification_trigger();
 -- https://stackoverflow.com/questions/18664074/getting-error-peer-authentication-failed-for-user-postgres-when-trying-to-ge
 
 -- ============================================================================
--- GPU Quota & Billing (Periodic Tick)
+-- Billing v4: Money-Based Credits with Independent Standby
 -- ============================================================================
 
--- GPU Usage Tick - each row represents a billing interval (raw data only)
--- DROP TABLE GpuUsageTick;
-CREATE TABLE GpuUsageTick (
+-- Usage Tick - each row represents a billing interval (raw data only)
+-- DROP TABLE UsageTick;
+CREATE TABLE UsageTick (
     id              SERIAL PRIMARY KEY,
     session_id      VARCHAR(64) NOT NULL,
     tenant          VARCHAR NOT NULL,
     namespace       VARCHAR NOT NULL,
     funcname        VARCHAR NOT NULL,
-    nodename        VARCHAR NOT NULL,
-    pod_id          VARCHAR NOT NULL,
+    fprevision      BIGINT NOT NULL,        -- model version
+    nodename        VARCHAR,                -- NULL for standby ticks
+    pod_id          VARCHAR,                -- NULL for standby ticks
     gateway_id      BIGINT,
     gpu_type        VARCHAR NOT NULL,
     gpu_count       INT NOT NULL,
@@ -122,31 +123,33 @@ CREATE TABLE GpuUsageTick (
     tick_time       TIMESTAMPTZ NOT NULL,
     interval_ms     BIGINT NOT NULL,
     tick_type       VARCHAR(16) NOT NULL,   -- 'start', 'periodic', 'final'
-    usage_type      VARCHAR(16) NOT NULL,   -- 'request' or 'snapshot'
+    usage_type      VARCHAR(16) NOT NULL,   -- 'request', 'snapshot', or 'standby'
     is_coldstart    BOOLEAN DEFAULT FALSE,
     processed_at    TIMESTAMPTZ             -- NULL = unprocessed, set when billing processed
 );
 
-CREATE INDEX idx_tick_tenant ON GpuUsageTick(tenant, tick_time);
-CREATE INDEX idx_tick_session ON GpuUsageTick(session_id);
-CREATE INDEX idx_tick_unprocessed ON GpuUsageTick(id) WHERE processed_at IS NULL;
+CREATE INDEX idx_tick_tenant ON UsageTick(tenant, tick_time);
+CREATE INDEX idx_tick_session ON UsageTick(session_id);
+CREATE INDEX idx_tick_unprocessed ON UsageTick(id) WHERE processed_at IS NULL;
 
--- Tenant Quota - prepaid credit tracking
+-- Tenant Quota - prepaid credit tracking (USD cents)
 -- DROP TABLE TenantQuota;
 CREATE TABLE TenantQuota (
     tenant                 VARCHAR PRIMARY KEY,
-    used_ms                BIGINT DEFAULT 0,       -- Cumulative usage (from processed GpuUsageTick)
-    threshold_ms           BIGINT DEFAULT 0,       -- Disable when remaining < this
-    quota_exceeded         BOOLEAN DEFAULT FALSE
+    balance_cents          BIGINT DEFAULT 0,       -- Stored explicitly (total_credits - used)
+    used_cents             BIGINT DEFAULT 0,       -- Cumulative usage in cents
+    threshold_cents        BIGINT DEFAULT 0,       -- Disable when remaining < this
+    quota_exceeded         BOOLEAN DEFAULT FALSE,
+    currency               VARCHAR(3) DEFAULT 'USD'
 );
--- Note: credits are calculated as SUM(TenantCreditHistory.amount_ms) each time (rare, no race)
 
--- Tenant Credit History - audit trail for credits added
+-- Tenant Credit History - audit trail for credits added (USD cents)
 -- DROP TABLE TenantCreditHistory;
 CREATE TABLE TenantCreditHistory (
     id              SERIAL PRIMARY KEY,
     tenant          VARCHAR NOT NULL,
-    amount_ms       BIGINT NOT NULL,
+    amount_cents    BIGINT NOT NULL,
+    currency        VARCHAR(3) NOT NULL DEFAULT 'USD',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     note            VARCHAR,
     payment_ref     VARCHAR,
@@ -155,14 +158,20 @@ CREATE TABLE TenantCreditHistory (
 
 CREATE INDEX idx_credit_tenant ON TenantCreditHistory(tenant, created_at);
 
--- GPU Usage Hourly - pre-aggregated for dashboard queries
--- DROP TABLE GpuUsageHourly;
-CREATE TABLE GpuUsageHourly (
-    id              SERIAL PRIMARY KEY,
-    tenant          VARCHAR NOT NULL,
-    hour            TIMESTAMPTZ NOT NULL,
-    usage_ms        BIGINT NOT NULL,
+-- Usage Hourly - pre-aggregated for dashboard queries
+-- DROP TABLE UsageHourly;
+CREATE TABLE UsageHourly (
+    id               SERIAL PRIMARY KEY,
+    tenant           VARCHAR NOT NULL,
+    hour             TIMESTAMPTZ NOT NULL,
+    -- Cost tracking (cents)
+    charge_cents     BIGINT NOT NULL,
+    inference_cents  BIGINT NOT NULL DEFAULT 0,
+    standby_cents    BIGINT NOT NULL DEFAULT 0,
+    -- Time tracking (milliseconds) for display as GPU-hours
+    inference_ms     BIGINT NOT NULL DEFAULT 0,
+    standby_ms       BIGINT NOT NULL DEFAULT 0,
     UNIQUE(tenant, hour)
 );
 
-CREATE INDEX idx_hourly_tenant ON GpuUsageHourly(tenant, hour);
+CREATE INDEX idx_hourly_tenant ON UsageHourly(tenant, hour);

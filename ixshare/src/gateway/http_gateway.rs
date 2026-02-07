@@ -1790,7 +1790,7 @@ async fn GetSnapshot(
 // Request body for adding tenant credits
 #[derive(Deserialize)]
 struct AddCreditsRequest {
-    amount_ms: i64,
+    amount_cents: i64,
     note: Option<String>,
     payment_ref: Option<String>,
 }
@@ -1804,35 +1804,40 @@ struct CreditHistoryQuery {
 // Response for credit operations
 #[derive(Serialize)]
 struct CreditResponse {
-    balance_ms: i64,
+    balance_cents: i64,
 }
 
 #[derive(Serialize)]
 struct CreditHistoryResponse {
     records: Vec<TenantCreditHistoryRecord>,
     total: i64,
-    balance_ms: i64,
+    balance_cents: i64,
 }
 
 #[derive(Serialize)]
 struct AddCreditsResponse {
     id: i64,
-    balance_ms: i64,
+    balance_cents: i64,
 }
 
 #[derive(Serialize)]
 struct BillingSummaryResponse {
-    balance_ms: i64,
-    used_ms: i64,
-    threshold_ms: i64,
+    balance_cents: i64,
+    used_cents: i64,
+    threshold_cents: i64,
     quota_exceeded: bool,
-    total_credits_ms: i64,
+    total_credits_cents: i64,
+    currency: String,
 }
 
 #[derive(Serialize)]
 struct HourlyUsageRecord {
     hour: String,
-    usage_ms: i64,
+    charge_cents: i64,
+    inference_cents: i64,
+    standby_cents: i64,
+    inference_ms: i64,
+    standby_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -1939,12 +1944,12 @@ async fn AddTenantCredits(
     // Add credits to tenant
     let added_by = Some(token.username.as_str());
     error!(
-        "AddTenantCredits: tenant={}, amount_ms={}, note={:?}, payment_ref={:?}, added_by={:?}",
-        &tenant, req.amount_ms, req.note, req.payment_ref, added_by
+        "AddTenantCredits: tenant={}, amount_cents={}, note={:?}, payment_ref={:?}, added_by={:?}",
+        &tenant, req.amount_cents, req.note, req.payment_ref, added_by
     );
     match gw.sqlAudit.AddTenantCredit(
         &tenant,
-        req.amount_ms,
+        req.amount_cents,
         req.note.as_deref(),
         req.payment_ref.as_deref(),
         added_by,
@@ -2029,8 +2034,8 @@ async fn AddTenantCredits(
                     0
                 }
             };
-            error!("AddTenantCredits: returning id={}, balance_ms={}", id, balance);
-            let resp_body = AddCreditsResponse { id, balance_ms: balance };
+            error!("AddTenantCredits: returning id={}, balance_cents={}", id, balance);
+            let resp_body = AddCreditsResponse { id, balance_cents: balance };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -2066,7 +2071,7 @@ async fn GetTenantCredits(
 
     match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
         Ok(balance) => {
-            let resp_body = CreditResponse { balance_ms: balance };
+            let resp_body = CreditResponse { balance_cents: balance };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -2120,7 +2125,7 @@ async fn GetTenantCreditHistory(
                 let resp_body = CreditHistoryResponse {
                     records,
                     total,
-                    balance_ms: balance,
+                    balance_cents: balance,
                 };
                 let data = serde_json::to_string(&resp_body).unwrap();
                 let body = Body::from(data);
@@ -2165,13 +2170,14 @@ async fn GetTenantBillingSummary(
     }
 
     match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
-        Ok((balance_ms, used_ms, threshold_ms, quota_exceeded, total_credits_ms)) => {
+        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency)) => {
             let resp_body = BillingSummaryResponse {
-                balance_ms,
-                used_ms,
-                threshold_ms,
+                balance_cents,
+                used_cents,
+                threshold_cents,
                 quota_exceeded,
-                total_credits_ms,
+                total_credits_cents,
+                currency,
             };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
@@ -2296,11 +2302,10 @@ async fn GetTenantHourlyUsage(
     {
         Ok(records) => {
             // Build a map of existing records for quick lookup
-            let mut usage_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-            for (hour, usage_ms) in records {
-                // Truncate to hour boundary for consistent key
+            let mut usage_map: std::collections::HashMap<String, (i64, i64, i64, i64, i64)> = std::collections::HashMap::new();
+            for (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) in records {
                 let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-                usage_map.insert(hour_key, usage_ms);
+                usage_map.insert(hour_key, (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms));
             }
 
             // Generate all hours in the range, zero-fill missing ones
@@ -2308,10 +2313,15 @@ async fn GetTenantHourlyUsage(
             for i in 0..total_hours {
                 let hour = start_hour + chrono::Duration::hours(i as i64);
                 let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-                let usage_ms = usage_map.get(&hour_key).copied().unwrap_or(0);
+                let (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) =
+                    usage_map.get(&hour_key).copied().unwrap_or((0, 0, 0, 0, 0));
                 usage.push(HourlyUsageRecord {
                     hour: hour_key,
-                    usage_ms,
+                    charge_cents,
+                    inference_cents,
+                    standby_cents,
+                    inference_ms,
+                    standby_ms,
                 });
             }
 

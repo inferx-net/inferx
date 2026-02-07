@@ -10,7 +10,7 @@ data:
     INSERT INTO TenantQuota (tenant)
     SELECT DISTINCT tenant
     FROM (
-      SELECT tenant FROM GpuUsageTick WHERE processed_at IS NULL
+      SELECT tenant FROM UsageTick WHERE processed_at IS NULL
       UNION
       SELECT tenant FROM TenantCreditHistory
     ) all_tenants
@@ -24,19 +24,25 @@ data:
       SELECT
         t.id,
         t.tenant,
-        (t.interval_ms::numeric * t.gpu_count::numeric)::bigint AS usage_ms
-      FROM GpuUsageTick t
+        t.gpu_count,
+        t.interval_ms,
+        t.usage_type
+      FROM UsageTick t
       WHERE t.processed_at IS NULL
       ORDER BY t.id
       LIMIT 10000
       FOR UPDATE SKIP LOCKED
     ),
 
-    -- 2) Aggregate delta usage per tenant in this batch
+    -- 2) Aggregate delta charge per tenant in this batch
+    -- Sum raw values first, divide once at end to minimize truncation
+    -- Inference/snapshot: $8/hr/GPU = 800 cents/hr, Standby: $0.20/hr/GPU = 20 cents/hr
     agg AS (
       SELECT
         tenant,
-        SUM(usage_ms)::bigint AS delta_ms
+        (SUM(gpu_count::numeric * interval_ms::numeric
+          * CASE WHEN usage_type = 'standby' THEN 20 ELSE 800 END)
+          / 3600000)::bigint AS delta_cents
       FROM batch
       GROUP BY tenant
     ),
@@ -54,31 +60,33 @@ data:
     credits AS (
       SELECT
         h.tenant,
-        COALESCE(SUM(h.amount_ms), 0)::bigint AS total_credits
+        COALESCE(SUM(h.amount_cents), 0)::bigint AS total_credits
       FROM TenantCreditHistory h
       GROUP BY h.tenant
     ),
 
-    -- 5) Update usage + quota_exceeded for affected tenants
+    -- 5) Update usage + balance + quota_exceeded for affected tenants
     updated AS (
       UPDATE TenantQuota q
       SET
-        used_ms = q.used_ms + a.delta_ms,
+        used_cents = q.used_cents + a.delta_cents,
+        balance_cents = COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents),
         quota_exceeded =
-          (COALESCE(c.total_credits, 0) - (q.used_ms + a.delta_ms)) <= q.threshold_ms
+          (COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents)) <= q.threshold_cents
       FROM agg a
       LEFT JOIN credits c ON c.tenant = a.tenant
       WHERE q.tenant = a.tenant
       RETURNING
         q.tenant,
-        q.used_ms,
+        q.used_cents,
+        q.balance_cents,
         q.quota_exceeded,
-        COALESCE(c.total_credits, 0) AS credits_ms
+        COALESCE(c.total_credits, 0) AS credits_cents
     ),
 
     -- 6) Mark exactly the locked batch rows as processed
     mark_processed AS (
-      UPDATE GpuUsageTick t
+      UPDATE UsageTick t
       SET processed_at = now()
       WHERE t.id IN (SELECT id FROM batch)
       RETURNING t.id
@@ -87,9 +95,9 @@ data:
     -- 7) Return only tenants where quota_exceeded changed
     SELECT
       u.tenant,
-      u.credits_ms,
-      u.used_ms,
-      (u.credits_ms - u.used_ms) AS balance_ms,
+      u.credits_cents,
+      u.used_cents,
+      u.balance_cents,
       CASE WHEN u.quota_exceeded THEN 'true' ELSE 'false' END AS quota_exceeded
     FROM updated u
     JOIN old_state o ON o.tenant = u.tenant
@@ -112,10 +120,9 @@ data:
       # Skip empty lines
       [ -z "$tenant" ] && continue
 
-      echo "Tenant: $tenant, Credits: $credits, Used: $used, Balance: $balance, QuotaExceeded: $quota_exceeded"
+      echo "Tenant: $tenant, Credits: $credits cents, Used: $used cents, Balance: $balance cents, QuotaExceeded: $quota_exceeded"
 
       # Update tenant status in etcd via gateway API
-      # echo "curl -s -X POST \"${GATEWAY_URL}/object/\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer ${API_KEY}\" -d \"{\\\"objType\\\": \\\"tenant\\\", \\\"tenant\\\": \\\"system\\\", \\\"namespace\\\": \\\"system\\\", \\\"name\\\": \\\"${tenant}\\\", \\\"object\\\": {\\\"spec\\\": {}, \\\"status\\\": {\\\"disable\\\": false, \\\"quota_exceeded\\\": ${quota_exceeded}}}}\""
       curl -s -X POST "${GATEWAY_URL}/object/" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${API_KEY}" \
@@ -139,26 +146,48 @@ data:
     echo "Quota check completed."
 
   hourly-aggregate.sql: |
-    -- Aggregate ticks from the previous hour into GpuUsageHourly
+    -- Aggregate ticks from the previous hour into UsageHourly
     -- Run at minute 5 to ensure all ticks from the previous hour are recorded
-    INSERT INTO GpuUsageHourly (tenant, hour, usage_ms)
+    INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
     SELECT
       tenant,
       date_trunc('hour', tick_time) as hour,
-      SUM(interval_ms) as usage_ms
-    FROM GpuUsageTick
+      -- Total charge in cents (sum raw values first, divide once to minimize truncation)
+      (SUM(gpu_count::numeric * interval_ms::numeric
+        * CASE WHEN usage_type = 'standby' THEN 20 ELSE 800 END)
+        / 3600000)::bigint as charge_cents,
+      -- Inference charge (request + snapshot)
+      (SUM(CASE WHEN usage_type != 'standby'
+        THEN gpu_count::numeric * interval_ms::numeric * 800 ELSE 0 END)
+        / 3600000)::bigint as inference_cents,
+      -- Standby charge
+      (SUM(CASE WHEN usage_type = 'standby'
+        THEN gpu_count::numeric * interval_ms::numeric * 20 ELSE 0 END)
+        / 3600000)::bigint as standby_cents,
+      -- Inference GPU-time in ms (interval * gpu_count for GPU-hours display)
+      SUM(CASE WHEN usage_type != 'standby'
+        THEN interval_ms::bigint * gpu_count::bigint ELSE 0 END) as inference_ms,
+      -- Standby GPU-time in ms (interval * gpu_count for GPU-hours display)
+      SUM(CASE WHEN usage_type = 'standby'
+        THEN interval_ms::bigint * gpu_count::bigint ELSE 0 END) as standby_ms
+    FROM UsageTick
     WHERE tick_time >= date_trunc('hour', NOW() - INTERVAL '1 hour')
       AND tick_time < date_trunc('hour', NOW())
     GROUP BY tenant, date_trunc('hour', tick_time)
     ON CONFLICT (tenant, hour)
-    DO UPDATE SET usage_ms = EXCLUDED.usage_ms;
+    DO UPDATE SET
+      charge_cents = EXCLUDED.charge_cents,
+      inference_cents = EXCLUDED.inference_cents,
+      standby_cents = EXCLUDED.standby_cents,
+      inference_ms = EXCLUDED.inference_ms,
+      standby_ms = EXCLUDED.standby_ms;
 
   tick-cleanup.sql: |
     -- Delete tick records older than 7 days
     -- Keep raw data for 7 days, then rely on hourly aggregates
-    DELETE FROM GpuUsageTick
+    DELETE FROM UsageTick
     WHERE tick_time < NOW() - INTERVAL '7 days';
 
     -- Log deleted count (for monitoring)
     SELECT 'Deleted ticks older than 7 days' as action,
-           (SELECT COUNT(*) FROM GpuUsageTick WHERE tick_time < NOW() - INTERVAL '7 days') as count;
+           (SELECT COUNT(*) FROM UsageTick WHERE tick_time < NOW() - INTERVAL '7 days') as count;

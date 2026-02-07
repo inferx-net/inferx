@@ -41,7 +41,7 @@ use tokio::sync::Notify;
 lazy_static::lazy_static! {
     pub static ref POD_AUDIT_AGENT: PodAuditAgent = PodAuditAgent::New();
     pub static ref REQ_AUDIT_AGENT: ReqAuditAgent = ReqAuditAgent::New();
-    pub static ref GPU_USAGE_TICK_AGENT: GpuUsageTickAuditAgent = GpuUsageTickAuditAgent::New();
+    pub static ref USAGE_TICK_AGENT: UsageTickAuditAgent = UsageTickAuditAgent::New();
 }
 
 #[derive(Debug, Clone)]
@@ -368,14 +368,15 @@ impl ReqAuditAgent {
     }
 }
 
-/// GPU Usage Tick record for billing
-pub struct GpuUsageTick {
+/// Usage Tick record for billing (v4: supports request, snapshot, and standby)
+pub struct UsageTick {
     pub session_id: String,
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
-    pub nodename: String,
-    pub pod_id: String,
+    pub fprevision: i64,            // model version
+    pub nodename: Option<String>,   // NULL for standby ticks
+    pub pod_id: Option<String>,     // NULL for standby ticks
     pub gateway_id: Option<i64>,
 
     // GPU resource info
@@ -388,7 +389,7 @@ pub struct GpuUsageTick {
     pub tick_time: DateTime<Utc>,  // Time when interval was calculated
     pub interval_ms: i64,
     pub tick_type: String,  // "start", "periodic", "final"
-    pub usage_type: String, // "request" or "snapshot"
+    pub usage_type: String, // "request", "snapshot", or "standby"
     pub is_coldstart: bool,
 }
 
@@ -397,34 +398,34 @@ pub struct GpuUsageTick {
 // ============================================================================
 
 #[derive(Debug)]
-pub struct GpuUsageTickAuditAgentInner {
+pub struct UsageTickAuditAgentInner {
     pub closeNotify: Arc<Notify>,
     pub stop: AtomicBool,
-    pub tx: mpsc::Sender<GpuUsageTick>,
+    pub tx: mpsc::Sender<UsageTick>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GpuUsageTickAuditAgent(Arc<GpuUsageTickAuditAgentInner>);
+pub struct UsageTickAuditAgent(Arc<UsageTickAuditAgentInner>);
 
-impl Deref for GpuUsageTickAuditAgent {
-    type Target = Arc<GpuUsageTickAuditAgentInner>;
+impl Deref for UsageTickAuditAgent {
+    type Target = Arc<UsageTickAuditAgentInner>;
 
-    fn deref(&self) -> &Arc<GpuUsageTickAuditAgentInner> {
+    fn deref(&self) -> &Arc<UsageTickAuditAgentInner> {
         &self.0
     }
 }
 
-impl GpuUsageTickAuditAgent {
+impl UsageTickAuditAgent {
     pub fn New() -> Self {
-        let (tx, rx) = mpsc::channel::<GpuUsageTick>(1000);
+        let (tx, rx) = mpsc::channel::<UsageTick>(1000);
 
-        let inner = GpuUsageTickAuditAgentInner {
+        let inner = UsageTickAuditAgentInner {
             closeNotify: Arc::new(Notify::new()),
             stop: AtomicBool::new(false),
             tx: tx,
         };
 
-        let agent = GpuUsageTickAuditAgent(Arc::new(inner));
+        let agent = UsageTickAuditAgent(Arc::new(inner));
         let agent1 = agent.clone();
 
         tokio::spawn(async move {
@@ -439,7 +440,7 @@ impl GpuUsageTickAuditAgent {
         return Ok(());
     }
 
-    pub fn Audit(&self, tick: GpuUsageTick) {
+    pub fn Audit(&self, tick: UsageTick) {
         // Skip if auditdb is not enabled
         if !Self::Enable() {
             return;
@@ -447,7 +448,7 @@ impl GpuUsageTickAuditAgent {
         match self.tx.try_send(tick) {
             Ok(()) => (),
             Err(e) => {
-                error!("GpuUsageTickAuditAgent: fail to send tick {:?}", &e);
+                error!("UsageTickAuditAgent: fail to send tick {:?}", &e);
             }
         }
     }
@@ -456,11 +457,11 @@ impl GpuUsageTickAuditAgent {
         return NA_CONFIG.auditdbAddr.len() > 0;
     }
 
-    pub async fn Process(&self, mut rx: mpsc::Receiver<GpuUsageTick>) -> Result<()> {
+    pub async fn Process(&self, mut rx: mpsc::Receiver<UsageTick>) -> Result<()> {
         let addr = NA_CONFIG.auditdbAddr.clone();
-        info!("GpuUsageTickAuditAgent: auditdb address {}", &addr);
+        info!("UsageTickAuditAgent: auditdb address {}", &addr);
         if addr.len() == 0 {
-            info!("GpuUsageTickAuditAgent: auditdb is not enabled");
+            info!("UsageTickAuditAgent: auditdb is not enabled");
             return Ok(());
         }
         let sqlaudit = SqlAudit::New(&addr).await?;
@@ -473,10 +474,10 @@ impl GpuUsageTickAuditAgent {
                 }
                 msg = rx.recv() => {
                     if let Some(tick) = msg {
-                        match sqlaudit.CreateGpuUsageTickRecord(&tick).await {
+                        match sqlaudit.CreateUsageTickRecord(&tick).await {
                             Ok(()) => (),
                             Err(e) => {
-                                error!("GpuUsageTickAuditAgent: fail to create tick record {:?}", &e);
+                                error!("UsageTickAuditAgent: fail to create tick record {:?}", &e);
                             }
                         }
                     } else {
@@ -497,7 +498,8 @@ pub struct SqlAudit {
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct TenantCreditHistoryRecord {
     pub id: i64,
-    pub amount_ms: i64,
+    pub amount_cents: i64,
+    pub currency: String,
     pub note: Option<String>,
     pub payment_ref: Option<String>,
     pub added_by: Option<String>,
@@ -551,17 +553,17 @@ impl SqlAudit {
         return Ok(());
     }
 
-    /// Create GPU usage tick record
-    pub async fn CreateGpuUsageTickRecord(&self, tick: &GpuUsageTick) -> Result<()> {
+    /// Create usage tick record (v4: supports request, snapshot, and standby)
+    pub async fn CreateUsageTickRecord(&self, tick: &UsageTick) -> Result<()> {
         let query = r#"
-            INSERT INTO GpuUsageTick (
-                session_id, tenant, namespace, funcname, nodename, pod_id, gateway_id,
+            INSERT INTO UsageTick (
+                session_id, tenant, namespace, funcname, fprevision, nodename, pod_id, gateway_id,
                 gpu_type, gpu_count, vram_mb, total_vram_mb,
                 tick_time, interval_ms, tick_type, usage_type, is_coldstart
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11,
-                $12, $13, $14, $15, $16
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12,
+                $13, $14, $15, $16, $17
             )
         "#;
         let _result = sqlx::query(query)
@@ -569,6 +571,7 @@ impl SqlAudit {
             .bind(&tick.tenant)
             .bind(&tick.namespace)
             .bind(&tick.funcname)
+            .bind(tick.fprevision)
             .bind(&tick.nodename)
             .bind(&tick.pod_id)
             .bind(tick.gateway_id)
@@ -802,23 +805,23 @@ impl SqlAudit {
         return Ok(());
     }
 
-    /// Add credits to tenant (insert into TenantCreditHistory)
+    /// Add credits to tenant in cents (insert into TenantCreditHistory)
     pub async fn AddTenantCredit(
         &self,
         tenant: &str,
-        amount_ms: i64,
+        amount_cents: i64,
         note: Option<&str>,
         payment_ref: Option<&str>,
         added_by: Option<&str>,
     ) -> Result<i64> {
         let query = r#"
-            INSERT INTO TenantCreditHistory (tenant, amount_ms, note, payment_ref, added_by)
+            INSERT INTO TenantCreditHistory (tenant, amount_cents, note, payment_ref, added_by)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id
         "#;
         let row: (i32,) = sqlx::query_as(query)
             .bind(tenant)
-            .bind(amount_ms)
+            .bind(amount_cents)
             .bind(note)
             .bind(payment_ref)
             .bind(added_by)
@@ -838,7 +841,8 @@ impl SqlAudit {
             r#"
             SELECT
                 id::bigint as id,
-                amount_ms,
+                amount_cents,
+                currency,
                 note,
                 payment_ref,
                 added_by,
@@ -869,15 +873,15 @@ impl SqlAudit {
         Ok((records, total.0))
     }
 
-    /// Recalculate quota_exceeded for tenant based on credits and used_ms.
+    /// Recalculate quota_exceeded for tenant based on credits and used_cents.
     pub async fn RecalculateTenantQuota(&self, tenant: &str) -> Result<bool> {
         // First, log current values for debugging
         let debug_row: (i64, i64, i64, bool) = sqlx::query_as(
             r#"
             SELECT
-                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
-                COALESCE(q.used_ms, 0)::bigint AS used_ms,
-                COALESCE(q.threshold_ms, 0)::bigint AS threshold_ms,
+                COALESCE((SELECT SUM(amount_cents) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE(q.used_cents, 0)::bigint AS used_cents,
+                COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
                 COALESCE(q.quota_exceeded, false) AS quota_exceeded
             FROM TenantQuota q
             WHERE q.tenant = $1
@@ -888,7 +892,7 @@ impl SqlAudit {
             .await?
             .unwrap_or((0, 0, 0, false));
         error!(
-            "RecalculateTenantQuota: tenant={}, total_credits={}, used_ms={}, threshold_ms={}, old_quota_exceeded={}",
+            "RecalculateTenantQuota: tenant={}, total_credits_cents={}, used_cents={}, threshold_cents={}, old_quota_exceeded={}",
             tenant, debug_row.0, debug_row.1, debug_row.2, debug_row.3
         );
 
@@ -906,16 +910,18 @@ impl SqlAudit {
             .execute(&self.pool)
             .await?;
 
-        // Step 2: Update quota_exceeded based on current credits and usage
+        // Step 2: Update balance_cents and quota_exceeded based on current credits and usage
         let query = r#"
             WITH credits AS (
-                SELECT COALESCE(SUM(amount_ms), 0)::bigint AS total_credits
+                SELECT COALESCE(SUM(amount_cents), 0)::bigint AS total_credits
                 FROM TenantCreditHistory
                 WHERE tenant = $1
             )
             UPDATE TenantQuota q
-            SET quota_exceeded =
-                (COALESCE(c.total_credits, 0) - q.used_ms) <= q.threshold_ms
+            SET
+                balance_cents = COALESCE(c.total_credits, 0) - q.used_cents,
+                quota_exceeded =
+                    (COALESCE(c.total_credits, 0) - q.used_cents) <= q.threshold_cents
             FROM credits c
             WHERE q.tenant = $1
             RETURNING q.quota_exceeded
@@ -931,44 +937,43 @@ impl SqlAudit {
         Ok(row.0)
     }
 
-    /// Get tenant credit balance (total credits - total usage)
+    /// Get tenant credit balance in cents (total credits - total usage)
     pub async fn GetTenantCreditBalance(&self, tenant: &str) -> Result<i64> {
-        // Use a single query to get both total credits and used_ms from TenantQuota
         let row: (i64, i64) = sqlx::query_as(
             r#"
             SELECT
-                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
-                COALESCE((SELECT used_ms FROM TenantQuota WHERE tenant = $1), 0)::bigint AS used_ms
+                COALESCE((SELECT SUM(amount_cents) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE((SELECT used_cents FROM TenantQuota WHERE tenant = $1), 0)::bigint AS used_cents
             "#
         )
             .bind(tenant)
             .fetch_one(&self.pool)
             .await?;
         let total_credits = row.0;
-        let used_ms = row.1;
+        let used_cents = row.1;
 
-        let balance = total_credits - used_ms;
+        let balance = total_credits - used_cents;
         error!(
-            "GetTenantCreditBalance: tenant={}, total_credits={}, used_ms={}, balance={}",
-            tenant, total_credits, used_ms, balance
+            "GetTenantCreditBalance: tenant={}, total_credits_cents={}, used_cents={}, balance_cents={}",
+            tenant, total_credits, used_cents, balance
         );
 
         Ok(balance)
     }
 
-    /// Get tenant billing summary (balance, used, threshold, quota_exceeded, total_credits)
+    /// Get tenant billing summary in cents (balance, used, threshold, quota_exceeded, total_credits, currency)
     pub async fn GetTenantBillingSummary(
         &self,
         tenant: &str,
-    ) -> Result<(i64, i64, i64, bool, i64)> {
-        // Get total credits, used_ms, threshold_ms, and quota_exceeded in one query
-        let row: (i64, i64, i64, bool) = sqlx::query_as(
+    ) -> Result<(i64, i64, i64, bool, i64, String)> {
+        let row: (i64, i64, i64, bool, String) = sqlx::query_as(
             r#"
             SELECT
-                COALESCE((SELECT SUM(amount_ms) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
-                COALESCE(q.used_ms, 0)::bigint AS used_ms,
-                COALESCE(q.threshold_ms, 0)::bigint AS threshold_ms,
-                COALESCE(q.quota_exceeded, false) AS quota_exceeded
+                COALESCE((SELECT SUM(amount_cents) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
+                COALESCE(q.used_cents, 0)::bigint AS used_cents,
+                COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
+                COALESCE(q.quota_exceeded, false) AS quota_exceeded,
+                COALESCE(q.currency, 'USD') AS currency
             FROM TenantQuota q
             WHERE q.tenant = $1
             "#,
@@ -976,29 +981,35 @@ impl SqlAudit {
             .bind(tenant)
             .fetch_optional(&self.pool)
             .await?
-            .unwrap_or((0, 0, 0, false));
+            .unwrap_or((0, 0, 0, false, "USD".to_string()));
 
-        let total_credits_ms = row.0;
-        let used_ms = row.1;
-        let threshold_ms = row.2;
+        let total_credits_cents = row.0;
+        let used_cents = row.1;
+        let threshold_cents = row.2;
         let quota_exceeded = row.3;
-        let balance_ms = total_credits_ms - used_ms;
+        let currency = row.4;
+        let balance_cents = total_credits_cents - used_cents;
 
-        Ok((balance_ms, used_ms, threshold_ms, quota_exceeded, total_credits_ms))
+        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency))
     }
 
-    /// Get tenant hourly usage for the last N hours
+    /// Get tenant hourly usage for the last N hours (v4: returns cost + time breakdown)
     pub async fn GetTenantHourlyUsage(
         &self,
         tenant: &str,
         hours: i32,
-    ) -> Result<Vec<(DateTime<Utc>, i64)>> {
-        let records: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
+        // Returns: (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             SELECT
                 hour,
-                usage_ms
-            FROM GpuUsageHourly
+                charge_cents,
+                inference_cents,
+                standby_cents,
+                inference_ms,
+                standby_ms
+            FROM UsageHourly
             WHERE tenant = $1
               AND hour >= NOW() - ($2 || ' hours')::interval
             ORDER BY hour ASC
@@ -1012,19 +1023,23 @@ impl SqlAudit {
         Ok(records)
     }
 
-    /// Get tenant hourly usage for a UTC time range [start, end]
+    /// Get tenant hourly usage for a UTC time range [start, end] (v4: returns cost + time breakdown)
     pub async fn GetTenantHourlyUsageRange(
         &self,
         tenant: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> Result<Vec<(DateTime<Utc>, i64)>> {
-        let records: Vec<(DateTime<Utc>, i64)> = sqlx::query_as(
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             SELECT
                 hour,
-                usage_ms
-            FROM GpuUsageHourly
+                charge_cents,
+                inference_cents,
+                standby_cents,
+                inference_ms,
+                standby_ms
+            FROM UsageHourly
             WHERE tenant = $1
               AND hour >= $2
               AND hour <= $3
@@ -1057,7 +1072,7 @@ impl SqlAudit {
                     namespace,
                     SUM(interval_ms * gpu_count)::bigint AS usage_ms,
                     ROW_NUMBER() OVER (ORDER BY SUM(interval_ms * gpu_count) DESC) AS rn
-                FROM GpuUsageTick
+                FROM UsageTick
                 WHERE tenant = $1
                   AND tick_time >= NOW() - ($2 || ' hours')::interval
                 GROUP BY funcname, namespace
@@ -1134,7 +1149,7 @@ impl SqlAudit {
                     namespace,
                     SUM(interval_ms * gpu_count)::bigint AS usage_ms,
                     ROW_NUMBER() OVER (ORDER BY SUM(interval_ms * gpu_count) DESC) AS rn
-                FROM GpuUsageTick
+                FROM UsageTick
                 WHERE tenant = $1
                   AND tick_time >= NOW() - ($2 || ' hours')::interval
                 GROUP BY namespace
@@ -1211,7 +1226,7 @@ impl SqlAudit {
                     namespace,
                     date_trunc('hour', tick_time) AS hour,
                     SUM(interval_ms * gpu_count)::bigint AS usage_ms
-                FROM GpuUsageTick
+                FROM UsageTick
                 WHERE tenant = $1
                   AND tick_time >= NOW() - ($2 || ' hours')::interval
                 GROUP BY funcname, namespace, date_trunc('hour', tick_time)

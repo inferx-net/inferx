@@ -44,10 +44,10 @@ use tokio::time::{Duration, Interval};
 use uuid::Uuid;
 use chrono::Utc;
 
-use crate::audit::GpuUsageTick;
+use crate::audit::UsageTick;
 use crate::audit::SnapshotScheduleAudit;
 use crate::audit::SqlAudit;
-use crate::audit::GPU_USAGE_TICK_AGENT;
+use crate::audit::USAGE_TICK_AGENT;
 use crate::audit::POD_AUDIT_AGENT;
 use crate::common::*;
 use crate::gateway::metrics::Nodelabel;
@@ -115,6 +115,7 @@ pub struct SnapshotBillingSession {
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
+    pub fprevision: i64,
     pub gpu_type: String,
     pub gpu_count: i32,
     pub vram_mb: i64,
@@ -2051,6 +2052,8 @@ impl SchedulerHandler {
         let now = Instant::now();
         let tick_time = Utc::now();
 
+        let fprevision = pod.object.spec.fprevision;
+
         let session = SnapshotBillingSession {
             session_id: session_id.clone(),
             start_time: now,
@@ -2061,6 +2064,7 @@ impl SchedulerHandler {
             tenant: tenant.clone(),
             namespace: namespace.clone(),
             funcname: funcname.clone(),
+            fprevision,
             gpu_type: gpu_type.clone(),
             gpu_count,
             vram_mb,
@@ -2068,13 +2072,14 @@ impl SchedulerHandler {
         };
 
         // Insert start billing tick (interval_ms = 0, tick_type = "start")
-        let tick = GpuUsageTick {
+        let tick = UsageTick {
             session_id: session_id.clone(),
             tenant: tenant.clone(),
             namespace: namespace.clone(),
             funcname: funcname.clone(),
-            nodename: nodename.clone(),
-            pod_id: pod.object.spec.id.clone(),
+            fprevision,
+            nodename: Some(nodename.clone()),
+            pod_id: Some(pod.object.spec.id.clone()),
             gateway_id: None,
             gpu_type,
             gpu_count,
@@ -2087,7 +2092,7 @@ impl SchedulerHandler {
             is_coldstart: true, // Snapshot creation is always a cold start
         };
 
-        GPU_USAGE_TICK_AGENT.Audit(tick);
+        USAGE_TICK_AGENT.Audit(tick);
         info!("start_snapshot_pod_billing: started billing for pod {} with session_id {}", pod_key, session_id);
 
         self.snapshot_billing_sessions.insert(pod_key, session);
@@ -2113,13 +2118,14 @@ impl SchedulerHandler {
         let total_duration_ms = now.duration_since(session.start_time).as_millis() as i64;
 
         // Insert final billing tick
-        let tick = GpuUsageTick {
+        let tick = UsageTick {
             session_id: session.session_id.clone(),
             tenant: session.tenant,
             namespace: session.namespace,
             funcname: session.funcname,
-            nodename: session.nodename,
-            pod_id: session.pod_id,
+            fprevision: session.fprevision,
+            nodename: Some(session.nodename),
+            pod_id: Some(session.pod_id),
             gateway_id: None,
             gpu_type: session.gpu_type,
             gpu_count: session.gpu_count,
@@ -2132,7 +2138,7 @@ impl SchedulerHandler {
             is_coldstart: false, // Only first tick is coldstart
         };
 
-        GPU_USAGE_TICK_AGENT.Audit(tick);
+        USAGE_TICK_AGENT.Audit(tick);
         info!("end_snapshot_pod_billing: ended billing for pod {}, interval {}ms, total duration {}ms", pod_key, interval_ms, total_duration_ms);
     }
 
@@ -2153,13 +2159,14 @@ impl SchedulerHandler {
 
             // Only emit if there's meaningful interval (> 0)
             if interval_ms > 0 {
-                let tick = GpuUsageTick {
+                let tick = UsageTick {
                     session_id: session.session_id.clone(),
                     tenant: session.tenant.clone(),
                     namespace: session.namespace.clone(),
                     funcname: session.funcname.clone(),
-                    nodename: session.nodename.clone(),
-                    pod_id: session.pod_id.clone(),
+                    fprevision: session.fprevision,
+                    nodename: Some(session.nodename.clone()),
+                    pod_id: Some(session.pod_id.clone()),
                     gateway_id: None,
                     gpu_type: session.gpu_type.clone(),
                     gpu_count: session.gpu_count,
@@ -2177,7 +2184,7 @@ impl SchedulerHandler {
 
         // Emit ticks and update last_tick_time
         for (pod_key, tick) in ticks_to_emit {
-            GPU_USAGE_TICK_AGENT.Audit(tick);
+            USAGE_TICK_AGENT.Audit(tick);
             if let Some(session) = self.snapshot_billing_sessions.get_mut(&pod_key) {
                 session.last_tick_time = now;
             }
