@@ -114,7 +114,7 @@ CREATE TABLE UsageTick (
     funcname        VARCHAR NOT NULL,
     fprevision      BIGINT NOT NULL,        -- model version
     nodename        VARCHAR,                -- NULL for standby ticks
-    pod_id          VARCHAR,                -- NULL for standby ticks
+    pod_id          BIGINT,                 -- NULL for standby ticks
     gateway_id      BIGINT,
     gpu_type        VARCHAR NOT NULL,
     gpu_count       INT NOT NULL,

@@ -376,7 +376,7 @@ pub struct UsageTick {
     pub funcname: String,
     pub fprevision: i64,            // model version
     pub nodename: Option<String>,   // NULL for standby ticks
-    pub pod_id: Option<String>,     // NULL for standby ticks
+    pub pod_id: Option<i64>,        // NULL for standby ticks
     pub gateway_id: Option<i64>,
 
     // GPU resource info

@@ -109,9 +109,29 @@ pub struct SnapshotBillingSession {
     pub session_id: String,
     pub start_time: Instant,
     pub last_tick_time: Instant,
-    pub pod_id: String,
+    pub pod_id: i64,
     pub funckey: String,
     pub nodename: String,
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub fprevision: i64,
+    pub gpu_type: String,
+    pub gpu_count: i32,
+    pub vram_mb: i64,
+    pub total_vram_mb: i64,
+}
+
+/// Standby billing session — one per model (funckey).
+/// Charges $0.20/hr/GPU while any snapshot exists for this model, independent of inference.
+/// Key format: funckey (e.g. "tenant/namespace/funcname/fprevision")
+/// Only one charge per model regardless of how many nodes have the snapshot.
+#[derive(Debug, Clone)]
+pub struct StandbyBillingSession {
+    pub session_id: String,
+    pub start_time: Instant,
+    pub last_tick_time: Instant,
+    pub funckey: String,
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
@@ -696,6 +716,13 @@ pub struct SchedulerHandler {
     // Snapshot billing sessions for tracking loading time
     // Key format: "funckey:nodename"
     snapshot_billing_sessions: BTreeMap<String, SnapshotBillingSession>,
+
+    // Standby billing sessions — one per snapshot-on-node, charges $0.20/hr/GPU
+    // Key format: "funckey:nodename"
+    standby_billing_sessions: BTreeMap<String, StandbyBillingSession>,
+
+    // Standby billing tick interval (10 minutes)
+    standby_billing_interval: Option<Interval>,
 }
 
 impl Default for SchedulerHandler {
@@ -733,6 +760,8 @@ impl Default for SchedulerHandler {
             node_semaphores: BTreeMap::new(),
             pending_snapshot_removals: BTreeSet::new(),
             snapshot_billing_sessions: BTreeMap::new(),
+            standby_billing_sessions: BTreeMap::new(),
+            standby_billing_interval: None,
         }
     }
 }
@@ -1975,6 +2004,12 @@ impl SchedulerHandler {
             .insert(nodename.clone(), snapshot.object.clone());
 
         info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, nodename);
+
+        // Start standby billing only when snapshot is Ready (loaded on GPU)
+        if snapshot.object.state == SnapshotState::Ready {
+            self.start_standby_billing(&funckey);
+        }
+
         return Ok(());
     }
 
@@ -1995,6 +2030,11 @@ impl SchedulerHandler {
             .unwrap()
             .insert(nodename.clone(), snapshot.object.clone());
 
+        // Start standby billing when snapshot transitions to Ready state
+        if snapshot.object.state == SnapshotState::Ready {
+            self.start_standby_billing(&funckey);
+        }
+
         return Ok(());
     }
 
@@ -2010,9 +2050,6 @@ impl SchedulerHandler {
             .get_mut(&funckey)
             .unwrap()
             .remove(&nodename);
-
-        // let nodename = snapshot.spec.nodename.clone();
-        // self.RemoveSnapshotFromNode(&nodename, &funckey).await?;
 
         return Ok(());
     }
@@ -2058,7 +2095,7 @@ impl SchedulerHandler {
             session_id: session_id.clone(),
             start_time: now,
             last_tick_time: now,
-            pod_id: pod.object.spec.id.clone(),
+            pod_id: pod.object.spec.id.parse::<i64>().unwrap_or(0),
             funckey: pod.FuncKey(),
             nodename: nodename.clone(),
             tenant: tenant.clone(),
@@ -2079,7 +2116,7 @@ impl SchedulerHandler {
             funcname: funcname.clone(),
             fprevision,
             nodename: Some(nodename.clone()),
-            pod_id: Some(pod.object.spec.id.clone()),
+            pod_id: Some(pod.object.spec.id.parse::<i64>().unwrap_or(0)),
             gateway_id: None,
             gpu_type,
             gpu_count,
@@ -2166,7 +2203,7 @@ impl SchedulerHandler {
                     funcname: session.funcname.clone(),
                     fprevision: session.fprevision,
                     nodename: Some(session.nodename.clone()),
-                    pod_id: Some(session.pod_id.clone()),
+                    pod_id: Some(session.pod_id),
                     gateway_id: None,
                     gpu_type: session.gpu_type.clone(),
                     gpu_count: session.gpu_count,
@@ -2193,6 +2230,215 @@ impl SchedulerHandler {
         if !self.snapshot_billing_sessions.is_empty() {
             info!("emit_periodic_billing_ticks: emitted periodic ticks for {} active snapshot billing sessions",
                 self.snapshot_billing_sessions.len());
+        }
+    }
+
+    // ============================================================================
+    // Standby Billing: $0.20/hr/GPU per model (one charge regardless of node count)
+    // - Start: when first snapshot for a funckey reaches Ready state
+    // - Periodic: every 10 minutes
+    // - End: when RemoveFunc() is called (function delete or modify/version change)
+    // - Recovery: on startup, rediscover all funckeys with Ready snapshots
+    // ============================================================================
+
+    /// Start standby billing for a model (funckey).
+    /// One session per model regardless of how many nodes have the snapshot.
+    /// Called when the first snapshot for this funckey reaches Ready state.
+    fn start_standby_billing(&mut self, funckey: &str) {
+        // Idempotent: skip if session already exists for this model
+        if self.standby_billing_sessions.contains_key(funckey) {
+            return;
+        }
+
+        // Get GPU info from Function spec
+        let func = match self.funcs.get(funckey) {
+            Some(f) => f,
+            None => {
+                info!("start_standby_billing: func {} not found, skipping standby billing", funckey);
+                return;
+            }
+        };
+
+        let gpu = &func.func.object.spec.resources.gpu;
+        let gpu_count = gpu.gpuCount as i32;
+        if gpu_count == 0 {
+            return;
+        }
+
+        let gpu_type = gpu.type_.0.clone();
+        let vram_mb = gpu.vRam as i64;
+        let total_vram_mb = gpu_count as i64 * vram_mb;
+
+        // Parse tenant/namespace/funcname/fprevision from funckey
+        let parts: Vec<&str> = funckey.split('/').collect();
+        if parts.len() < 4 {
+            error!("start_standby_billing: invalid funckey format: {}", funckey);
+            return;
+        }
+        let tenant = parts[0].to_string();
+        let namespace = parts[1].to_string();
+        let funcname = parts[2].to_string();
+        let fprevision: i64 = match parts[3].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                error!("start_standby_billing: invalid fprevision in funckey: {}", funckey);
+                return;
+            }
+        };
+
+        let session_id = Uuid::new_v4().to_string();
+        let now = Instant::now();
+        let tick_time = Utc::now();
+
+        let session = StandbyBillingSession {
+            session_id: session_id.clone(),
+            start_time: now,
+            last_tick_time: now,
+            funckey: funckey.to_string(),
+            tenant: tenant.clone(),
+            namespace: namespace.clone(),
+            funcname: funcname.clone(),
+            fprevision,
+            gpu_type: gpu_type.clone(),
+            gpu_count,
+            vram_mb,
+            total_vram_mb,
+        };
+
+        // Emit start tick — model-level, no specific node
+        let tick = UsageTick {
+            session_id: session_id.clone(),
+            tenant,
+            namespace,
+            funcname,
+            fprevision,
+            nodename: None,
+            pod_id: None,
+            gateway_id: None,
+            gpu_type,
+            gpu_count,
+            vram_mb,
+            total_vram_mb,
+            tick_time,
+            interval_ms: 0,
+            tick_type: "start".to_string(),
+            usage_type: "standby".to_string(),
+            is_coldstart: false,
+        };
+
+        USAGE_TICK_AGENT.Audit(tick);
+        info!("start_standby_billing: started for {} with session_id {}", funckey, session_id);
+
+        self.standby_billing_sessions.insert(funckey.to_string(), session);
+    }
+
+    /// End standby billing for a model (funckey).
+    /// Called from RemoveFunc() on function delete or modify (old version removal).
+    fn end_standby_billing(&mut self, funckey: &str) {
+        let session = match self.standby_billing_sessions.remove(funckey) {
+            Some(s) => s,
+            None => return, // No session — already ended or never started
+        };
+
+        let now = Instant::now();
+        let tick_time = Utc::now();
+        let interval_ms = now.duration_since(session.last_tick_time).as_millis() as i64;
+
+        let tick = UsageTick {
+            session_id: session.session_id.clone(),
+            tenant: session.tenant,
+            namespace: session.namespace,
+            funcname: session.funcname,
+            fprevision: session.fprevision,
+            nodename: None,
+            pod_id: None,
+            gateway_id: None,
+            gpu_type: session.gpu_type,
+            gpu_count: session.gpu_count,
+            vram_mb: session.vram_mb,
+            total_vram_mb: session.total_vram_mb,
+            tick_time,
+            interval_ms,
+            tick_type: "final".to_string(),
+            usage_type: "standby".to_string(),
+            is_coldstart: false,
+        };
+
+        USAGE_TICK_AGENT.Audit(tick);
+        let total_duration_ms = now.duration_since(session.start_time).as_millis() as i64;
+        info!("end_standby_billing: ended for {}, interval {}ms, total duration {}ms",
+            funckey, interval_ms, total_duration_ms);
+    }
+
+    /// Emit periodic standby billing ticks for all active standby sessions.
+    /// Called every 10 minutes from the main loop.
+    fn emit_periodic_standby_ticks(&mut self) {
+        if self.standby_billing_sessions.is_empty() {
+            return;
+        }
+
+        let now = Instant::now();
+        let tick_time = Utc::now();
+        let mut ticks_to_emit = Vec::new();
+
+        for (key, session) in &self.standby_billing_sessions {
+            let interval_ms = now.duration_since(session.last_tick_time).as_millis() as i64;
+
+            if interval_ms > 0 {
+                let tick = UsageTick {
+                    session_id: session.session_id.clone(),
+                    tenant: session.tenant.clone(),
+                    namespace: session.namespace.clone(),
+                    funcname: session.funcname.clone(),
+                    fprevision: session.fprevision,
+                    nodename: None,
+                    pod_id: None,
+                    gateway_id: None,
+                    gpu_type: session.gpu_type.clone(),
+                    gpu_count: session.gpu_count,
+                    vram_mb: session.vram_mb,
+                    total_vram_mb: session.total_vram_mb,
+                    tick_time,
+                    interval_ms,
+                    tick_type: "periodic".to_string(),
+                    usage_type: "standby".to_string(),
+                    is_coldstart: false,
+                };
+                ticks_to_emit.push((key.clone(), tick));
+            }
+        }
+
+        for (key, tick) in ticks_to_emit {
+            USAGE_TICK_AGENT.Audit(tick);
+            if let Some(session) = self.standby_billing_sessions.get_mut(&key) {
+                session.last_tick_time = now;
+            }
+        }
+
+        info!("emit_periodic_standby_ticks: emitted periodic ticks for {} active standby sessions",
+            self.standby_billing_sessions.len());
+    }
+
+    /// Recover standby billing sessions on scheduler startup.
+    /// Called after all lists are loaded (listDone = true).
+    /// Creates fresh sessions for all snapshots in Ready state.
+    fn recover_standby_billing(&mut self) {
+        let mut count = 0;
+        // Collect funckeys that have at least one Ready snapshot
+        let funckeys: Vec<String> = self.snapshots.iter()
+            .filter(|(_, node_map)| {
+                node_map.values().any(|snapshot| snapshot.state == SnapshotState::Ready)
+            })
+            .map(|(funckey, _)| funckey.clone())
+            .collect();
+
+        for funckey in funckeys {
+            self.start_standby_billing(&funckey);
+            count += 1;
+        }
+
+        if count > 0 {
+            info!("recover_standby_billing: recovered {} standby billing sessions", count);
         }
     }
 
@@ -2414,8 +2660,15 @@ impl SchedulerHandler {
             billing_interval.tick().await; // Skip first immediate tick
             self.billing_tick_interval = Some(billing_interval);
         }
+        if self.standby_billing_interval.is_none() {
+            // let mut standby_interval = tokio::time::interval(Duration::from_secs(600));
+            let mut standby_interval = tokio::time::interval(Duration::from_secs(60));
+            standby_interval.tick().await; // Skip first immediate tick
+            self.standby_billing_interval = Some(standby_interval);
+        }
         let delay_interval = self.delay_interval.as_mut().unwrap();
         let billing_tick_interval = self.billing_tick_interval.as_mut().unwrap();
+        let standby_billing_interval = self.standby_billing_interval.as_mut().unwrap();
         tokio::select! {
             biased;
             m = msgRx.recv() => {
@@ -2468,6 +2721,10 @@ impl SchedulerHandler {
             _ = billing_tick_interval.tick() => {
                 // Emit periodic billing ticks for active snapshot pod billing sessions
                 self.emit_periodic_billing_ticks();
+            }
+            _ = standby_billing_interval.tick() => {
+                // Emit periodic standby billing ticks (every 10 minutes)
+                self.emit_periodic_standby_ticks();
             }
             _ = interval.tick() => {
                 if self.listDone {
@@ -2615,7 +2872,6 @@ impl SchedulerHandler {
                                     let spec = Function::FromDataObject(obj)?;
                                     self.ProcessRemoveFunc(&spec).await?;
                                     self.RemoveFunc(spec)?;
-
                                 }
                                 FunctionStatus::KEY => {
                                     let funcstatus = FunctionStatus::FromDataObject(obj)?;
@@ -4630,6 +4886,9 @@ impl SchedulerHandler {
         {
             self.listDone = true;
 
+            // Recover standby billing sessions for all existing Ready snapshots
+            self.recover_standby_billing();
+
             // Start warm-up stage: wait for gateways to reconnect before scheduling work
             // RefreshScheduling and InitSnapshotTask will be called once warm-up is complete
             self.warmupStartTime = Some(std::time::Instant::now());
@@ -4996,7 +5255,7 @@ impl SchedulerHandler {
             self.RemovePod(&wp.pod).await.ok();
         }
 
-        // remove all snapshots on this node
+        // remove all snapshots on this node (standby billing ends via RemoveFunc, not here)
         let funcIds: Vec<String> = self.snapshots.keys().cloned().collect();
         for funcId in funcIds {
             if let Some(snapshots_for_func) = self.snapshots.get_mut(&funcId) {
@@ -5392,6 +5651,9 @@ impl SchedulerHandler {
 
         // Clean up pending snapshots for this function
         self.pendingsnapshots.remove(&key);
+
+        // End standby billing for this function version
+        self.end_standby_billing(&key);
 
         return Ok(());
     }
