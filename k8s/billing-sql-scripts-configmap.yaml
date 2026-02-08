@@ -26,7 +26,8 @@ data:
         t.tenant,
         t.gpu_count,
         t.interval_ms,
-        t.usage_type
+        t.usage_type,
+        t.tick_time
       FROM UsageTick t
       WHERE t.processed_at IS NULL
       ORDER BY t.id
@@ -35,16 +36,18 @@ data:
     ),
 
     -- 2) Aggregate delta charge per tenant in this batch
-    -- Sum raw values first, divide once at end to minimize truncation
-    -- Inference/snapshot: $8/hr/GPU = 800 cents/hr, Standby: $0.20/hr/GPU = 20 cents/hr
+    -- Rate lookup is centralized in GetBillingRateCents(...)
     agg AS (
       SELECT
-        tenant,
-        (SUM(gpu_count::numeric * interval_ms::numeric
-          * CASE WHEN usage_type = 'standby' THEN 20 ELSE 800 END)
+        b.tenant,
+        (SUM(
+          b.gpu_count::numeric
+          * b.interval_ms::numeric
+          * GetBillingRateCents(b.usage_type, b.tick_time, b.tenant)::numeric
+        )
           / 3600000)::bigint AS delta_cents
-      FROM batch
-      GROUP BY tenant
+      FROM batch b
+      GROUP BY b.tenant
     ),
 
     -- 3) Snapshot old quota_exceeded for ONLY affected tenants
@@ -148,32 +151,50 @@ data:
   hourly-aggregate.sql: |
     -- Aggregate ticks from the previous hour into UsageHourly
     -- Run at minute 5 to ensure all ticks from the previous hour are recorded
+    -- Rate lookup is centralized in GetBillingRateCents(...)
+    WITH tick_with_rate AS (
+      SELECT
+        t.tenant,
+        t.tick_time,
+        t.interval_ms,
+        t.gpu_count,
+        t.usage_type,
+        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+      FROM UsageTick t
+      WHERE t.tick_time >= date_trunc('hour', NOW() - INTERVAL '1 hour')
+        AND t.tick_time < date_trunc('hour', NOW())
+    )
     INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
     SELECT
-      tenant,
-      date_trunc('hour', tick_time) as hour,
+      t.tenant,
+      date_trunc('hour', t.tick_time) as hour,
       -- Total charge in cents (sum raw values first, divide once to minimize truncation)
-      (SUM(gpu_count::numeric * interval_ms::numeric
-        * CASE WHEN usage_type = 'standby' THEN 20 ELSE 800 END)
+      (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
         / 3600000)::bigint as charge_cents,
       -- Inference charge (request + snapshot)
-      (SUM(CASE WHEN usage_type != 'standby'
-        THEN gpu_count::numeric * interval_ms::numeric * 800 ELSE 0 END)
+      (SUM(CASE WHEN t.usage_type != 'standby'
+        THEN t.gpu_count::numeric
+          * t.interval_ms::numeric
+          * t.rate_cents_per_hour
+        ELSE 0
+      END)
         / 3600000)::bigint as inference_cents,
       -- Standby charge
-      (SUM(CASE WHEN usage_type = 'standby'
-        THEN gpu_count::numeric * interval_ms::numeric * 20 ELSE 0 END)
+      (SUM(CASE WHEN t.usage_type = 'standby'
+        THEN t.gpu_count::numeric
+          * t.interval_ms::numeric
+          * t.rate_cents_per_hour
+        ELSE 0
+      END)
         / 3600000)::bigint as standby_cents,
       -- Inference GPU-time in ms (interval * gpu_count for GPU-hours display)
-      SUM(CASE WHEN usage_type != 'standby'
-        THEN interval_ms::bigint * gpu_count::bigint ELSE 0 END) as inference_ms,
+      SUM(CASE WHEN t.usage_type != 'standby'
+        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as inference_ms,
       -- Standby GPU-time in ms (interval * gpu_count for GPU-hours display)
-      SUM(CASE WHEN usage_type = 'standby'
-        THEN interval_ms::bigint * gpu_count::bigint ELSE 0 END) as standby_ms
-    FROM UsageTick
-    WHERE tick_time >= date_trunc('hour', NOW() - INTERVAL '1 hour')
-      AND tick_time < date_trunc('hour', NOW())
-    GROUP BY tenant, date_trunc('hour', tick_time)
+      SUM(CASE WHEN t.usage_type = 'standby'
+        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as standby_ms
+    FROM tick_with_rate t
+    GROUP BY t.tenant, date_trunc('hour', t.tick_time)
     ON CONFLICT (tenant, hour)
     DO UPDATE SET
       charge_cents = EXCLUDED.charge_cents,

@@ -175,3 +175,47 @@ CREATE TABLE UsageHourly (
 );
 
 CREATE INDEX idx_hourly_tenant ON UsageHourly(tenant, hour);
+
+-- Billing Rate - configurable rates with effective dates
+-- Enables rate changes and per-tenant pricing without code changes
+-- DROP TABLE BillingRate;
+CREATE TABLE BillingRate (
+    id                  SERIAL PRIMARY KEY,
+    usage_type          VARCHAR(16) NOT NULL,   -- 'inference' or 'standby'
+    rate_cents_per_hour INT NOT NULL,           -- per GPU-hour
+    effective_from      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    effective_to        TIMESTAMPTZ,            -- NULL = currently active
+    tenant              VARCHAR                 -- NULL = global default, set = per-tenant override
+);
+
+CREATE INDEX idx_rate_lookup ON BillingRate(usage_type, effective_from);
+
+-- Shared rate lookup used by quota check, hourly aggregation, and analytics.
+-- Prefers tenant-specific rate over global rate, and returns 0 when no match.
+CREATE OR REPLACE FUNCTION GetBillingRateCents(
+    p_usage_type VARCHAR,
+    p_tick_time TIMESTAMPTZ,
+    p_tenant VARCHAR
+) RETURNS INT
+LANGUAGE SQL
+STABLE
+AS $$
+SELECT COALESCE((
+    SELECT r.rate_cents_per_hour
+    FROM BillingRate r
+    WHERE r.usage_type = CASE
+            WHEN p_usage_type = 'standby' THEN 'standby'
+            ELSE 'inference'
+        END
+      AND r.effective_from <= p_tick_time
+      AND (r.effective_to IS NULL OR p_tick_time < r.effective_to)
+      AND (r.tenant IS NULL OR r.tenant = p_tenant)
+    ORDER BY (r.tenant IS NOT NULL) DESC, r.effective_from DESC
+    LIMIT 1
+), 0);
+$$;
+
+-- Initial global rates
+INSERT INTO BillingRate (usage_type, rate_cents_per_hour, effective_from)
+VALUES ('inference', 800, '2025-01-01'),
+       ('standby',   20, '2025-01-01');

@@ -1791,6 +1791,7 @@ async fn GetSnapshot(
 #[derive(Deserialize)]
 struct AddCreditsRequest {
     amount_cents: i64,
+    currency: Option<String>,
     note: Option<String>,
     payment_ref: Option<String>,
 }
@@ -1805,6 +1806,9 @@ struct CreditHistoryQuery {
 #[derive(Serialize)]
 struct CreditResponse {
     balance_cents: i64,
+    used_cents: i64,
+    currency: String,
+    quota_exceeded: bool,
 }
 
 #[derive(Serialize)]
@@ -1816,8 +1820,17 @@ struct CreditHistoryResponse {
 
 #[derive(Serialize)]
 struct AddCreditsResponse {
-    id: i64,
-    balance_cents: i64,
+    success: bool,
+    credit_id: i64,
+    new_balance_cents: i64,
+}
+
+#[derive(Serialize)]
+struct BillingSummaryPeriod {
+    inference_cents: i64,
+    standby_cents: i64,
+    inference_hours: f64,
+    standby_hours: f64,
 }
 
 #[derive(Serialize)]
@@ -1828,6 +1841,7 @@ struct BillingSummaryResponse {
     quota_exceeded: bool,
     total_credits_cents: i64,
     currency: String,
+    period: BillingSummaryPeriod,
 }
 
 #[derive(Serialize)]
@@ -1865,6 +1879,7 @@ struct ModelUsageItem {
     namespace: String,
     usage_ms: i64,
     gpu_hours: f64,
+    charge_cents: i64,
 }
 
 #[derive(Serialize)]
@@ -1872,6 +1887,7 @@ struct NamespaceUsageItem {
     namespace: String,
     usage_ms: i64,
     gpu_hours: f64,
+    charge_cents: i64,
 }
 
 #[derive(Serialize)]
@@ -1879,6 +1895,7 @@ struct OtherBucket {
     count: i64,
     usage_ms: i64,
     gpu_hours: f64,
+    charge_cents: i64,
 }
 
 #[derive(Serialize)]
@@ -1887,6 +1904,7 @@ struct UsageByModelResponse {
     other: OtherBucket,
     total_ms: i64,
     total_gpu_hours: f64,
+    total_cents: i64,
     timezone: String,
 }
 
@@ -1896,6 +1914,7 @@ struct UsageByNamespaceResponse {
     other: OtherBucket,
     total_ms: i64,
     total_gpu_hours: f64,
+    total_cents: i64,
     timezone: String,
 }
 
@@ -1920,6 +1939,7 @@ struct PeakHourInfo {
 #[derive(Serialize)]
 struct UsageSummaryResponse {
     total_gpu_hours: f64,
+    total_cents: i64,
     top_model: Option<TopModelInfo>,
     top_namespace: Option<TopNamespaceInfo>,
     peak_hour: Option<PeakHourInfo>,
@@ -1941,15 +1961,27 @@ async fn AddTenantCredits(
         return Ok(resp);
     }
 
+    // Validate currency (only USD supported for now)
+    let currency = req.currency.as_deref().unwrap_or("USD");
+    if currency != "USD" {
+        let body = Body::from(format!("Unsupported currency: {}. Only USD is supported.", currency));
+        let resp = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     // Add credits to tenant
     let added_by = Some(token.username.as_str());
     error!(
-        "AddTenantCredits: tenant={}, amount_cents={}, note={:?}, payment_ref={:?}, added_by={:?}",
-        &tenant, req.amount_cents, req.note, req.payment_ref, added_by
+        "AddTenantCredits: tenant={}, amount_cents={}, currency={}, note={:?}, payment_ref={:?}, added_by={:?}",
+        &tenant, req.amount_cents, currency, req.note, req.payment_ref, added_by
     );
     match gw.sqlAudit.AddTenantCredit(
         &tenant,
         req.amount_cents,
+        currency,
         req.note.as_deref(),
         req.payment_ref.as_deref(),
         added_by,
@@ -2035,7 +2067,7 @@ async fn AddTenantCredits(
                 }
             };
             error!("AddTenantCredits: returning id={}, balance_cents={}", id, balance);
-            let resp_body = AddCreditsResponse { id, balance_cents: balance };
+            let resp_body = AddCreditsResponse { success: true, credit_id: id, new_balance_cents: balance };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -2069,9 +2101,9 @@ async fn GetTenantCredits(
         return Ok(resp);
     }
 
-    match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
-        Ok(balance) => {
-            let resp_body = CreditResponse { balance_cents: balance };
+    match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
+        Ok((balance_cents, used_cents, _threshold, quota_exceeded, _total_credits, currency, _, _, _, _)) => {
+            let resp_body = CreditResponse { balance_cents, used_cents, currency, quota_exceeded };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -2170,7 +2202,8 @@ async fn GetTenantBillingSummary(
     }
 
     match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
-        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency)) => {
+        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency,
+            inference_cents, standby_cents, inference_ms, standby_ms)) => {
             let resp_body = BillingSummaryResponse {
                 balance_cents,
                 used_cents,
@@ -2178,6 +2211,12 @@ async fn GetTenantBillingSummary(
                 quota_exceeded,
                 total_credits_cents,
                 currency,
+                period: BillingSummaryPeriod {
+                    inference_cents,
+                    standby_cents,
+                    inference_hours: inference_ms as f64 / 3600000.0,
+                    standby_hours: standby_ms as f64 / 3600000.0,
+                },
             };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
@@ -2367,14 +2406,15 @@ async fn GetTenantUsageByModel(
     let limit = params.limit.unwrap_or(10).min(50).max(1);
 
     match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours, limit).await {
-        Ok((top_items, other_count, other_usage_ms, total_ms)) => {
+        Ok((top_items, other_count, other_usage_ms, other_cents, total_ms, total_cents)) => {
             let usage: Vec<ModelUsageItem> = top_items
                 .into_iter()
-                .map(|(funcname, namespace, usage_ms)| ModelUsageItem {
+                .map(|(funcname, namespace, usage_ms, charge_cents)| ModelUsageItem {
                     funcname,
                     namespace,
                     usage_ms,
                     gpu_hours: usage_ms as f64 / 3600000.0,
+                    charge_cents,
                 })
                 .collect();
 
@@ -2384,9 +2424,11 @@ async fn GetTenantUsageByModel(
                     count: other_count,
                     usage_ms: other_usage_ms,
                     gpu_hours: other_usage_ms as f64 / 3600000.0,
+                    charge_cents: other_cents,
                 },
                 total_ms,
                 total_gpu_hours: total_ms as f64 / 3600000.0,
+                total_cents,
                 timezone: "UTC".to_string(),
             };
             let data = serde_json::to_string(&resp_body).unwrap();
@@ -2427,13 +2469,14 @@ async fn GetTenantUsageByNamespace(
     let limit = params.limit.unwrap_or(10).min(50).max(1);
 
     match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours, limit).await {
-        Ok((top_items, other_count, other_usage_ms, total_ms)) => {
+        Ok((top_items, other_count, other_usage_ms, other_cents, total_ms, total_cents)) => {
             let usage: Vec<NamespaceUsageItem> = top_items
                 .into_iter()
-                .map(|(namespace, usage_ms)| NamespaceUsageItem {
+                .map(|(namespace, usage_ms, charge_cents)| NamespaceUsageItem {
                     namespace,
                     usage_ms,
                     gpu_hours: usage_ms as f64 / 3600000.0,
+                    charge_cents,
                 })
                 .collect();
 
@@ -2443,9 +2486,11 @@ async fn GetTenantUsageByNamespace(
                     count: other_count,
                     usage_ms: other_usage_ms,
                     gpu_hours: other_usage_ms as f64 / 3600000.0,
+                    charge_cents: other_cents,
                 },
                 total_ms,
                 total_gpu_hours: total_ms as f64 / 3600000.0,
+                total_cents,
                 timezone: "UTC".to_string(),
             };
             let data = serde_json::to_string(&resp_body).unwrap();
@@ -2485,7 +2530,7 @@ async fn GetTenantUsageSummary(
     let hours = params.hours.unwrap_or(24).min(720).max(1);
 
     match gw.sqlAudit.GetTenantAnalyticsSummary(&tenant, hours).await {
-        Ok((total_ms, top_model_name, top_model_ms, top_namespace_name, top_namespace_ms, peak_hour, peak_hour_ms)) => {
+        Ok((total_ms, total_cents, top_model_name, top_model_ms, top_namespace_name, top_namespace_ms, peak_hour, peak_hour_ms)) => {
             let top_model = top_model_name.map(|name| TopModelInfo {
                 funcname: name,
                 gpu_hours: top_model_ms as f64 / 3600000.0,
@@ -2503,6 +2548,7 @@ async fn GetTenantUsageSummary(
 
             let resp_body = UsageSummaryResponse {
                 total_gpu_hours: total_ms as f64 / 3600000.0,
+                total_cents,
                 top_model,
                 top_namespace: top_namespace,
                 peak_hour: peak_hour_info,
