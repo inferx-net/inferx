@@ -196,7 +196,7 @@ impl HttpGateway {
                 }
                 GetTokenCache()
                     .await
-                    .RevokeTenantUserPermission(token, tenant, username)
+                    .RevokeTenantUserPermission(&usertoken, tenant, username)
                     .await?;
             }
         }
