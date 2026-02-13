@@ -109,36 +109,54 @@
         background-color: #45a049;
     }
 
-    #billing-pagination-controls {
+    #billing-pagination-controls,
+    #billing-admin-credit-pagination-controls,
+    #billing-admin-rate-pagination-controls {
         margin-top: 10px;
         text-align: center;
     }
 
-    #billing-pagination-controls button {
+    #billing-pagination-controls button,
+    #billing-admin-credit-pagination-controls button,
+    #billing-admin-rate-pagination-controls button {
         margin: 0 10px;
         padding: 5px 15px;
     }
 
-    #billing-pagination-controls button:disabled {
+    #billing-pagination-controls button:disabled,
+    #billing-admin-credit-pagination-controls button:disabled,
+    #billing-admin-rate-pagination-controls button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
     }
 
-    #add-credits-form div {
+    #billing-admin-credits-form div,
+    #billing-admin-rate-form div,
+    #billing-admin-credit-history-section div,
+    #billing-admin-rate-history-section div {
         margin: 10px 0;
     }
 
-    #add-credits-form label {
+    #billing-admin-credits-form label,
+    #billing-admin-rate-form label,
+    #billing-admin-credit-history-section label,
+    #billing-admin-rate-history-section label {
         display: inline-block;
-        width: 120px;
+        width: 190px;
     }
 
-    #add-credits-form input {
+    #billing-admin-credits-form input,
+    #billing-admin-rate-form input,
+    #billing-admin-credits-form select,
+    #billing-admin-rate-form select,
+    #billing-admin-credit-history-section select,
+    #billing-admin-rate-history-section select {
         width: 300px;
         padding: 5px;
     }
 
-    #add-credits-btn:disabled {
+    #billing-admin-add-credits-btn:disabled,
+    #billing-admin-add-rate-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
     }
@@ -161,6 +179,7 @@
     <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
     <button class="tablinks" onclick="openTab(event, 'Billing')" style="font-size: 25px;">Billing</button>
+    <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="font-size: 25px; display: none;">Billing Admin</button>
 </div>
 
 <div id="Apikeys" class="tabcontent">
@@ -393,7 +412,7 @@
                     <span style="display: inline-block; width: 10px; height: 10px; background: #4CAF50;"></span> Inference
                     <span style="display: inline-block; width: 10px; height: 10px; background: #2196F3; margin-left: 10px;"></span> Standby
                 </div>
-                <div>(UTC)</div>
+                <div>(Local)</div>
             </div>
         </div>
 
@@ -527,25 +546,144 @@
                 <button id="next-page-btn" onclick="billingNextPage()" disabled>Next &raquo;</button>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- Add Credits Form (Admin Only) -->
-        <div id="add-credits-form" style="display: none; margin-top: 20px; border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
-            <h3>Add Credits</h3>
-            <p style="font-size: 12px; color: #666;">Server enforces admin-only access</p>
-            <div>
-                <label>Amount (USD):</label>
-                <input type="number" id="credit-amount" step="0.01" min="0.01" placeholder="e.g., 50.00 for $50">
+<div id="BillingAdmin" class="tabcontent">
+    <div id="billing-admin-no-access" style="display: none; color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Billing Admin is only available to Inferx administrators.
+    </div>
+
+    <div id="billing-admin-content" style="display: none;">
+        <div id="billing-admin-message" style="display: none; margin-bottom: 15px; padding: 10px; border-radius: 4px; position: sticky; top: 10px; z-index: 10;"></div>
+        <div style="display: grid; gap: 20px;">
+            <div id="billing-admin-credits-form" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="margin-top: 0;">Add Credits</h3>
+                <p style="font-size: 12px; color: #666;">Admin-only action. Amount is in USD.</p>
+                <div>
+                    <label>Tenant:</label>
+                    <select id="billing-admin-credit-tenant">
+                        <option value="" disabled selected>Select a tenant</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Amount (USD):</label>
+                    <input type="number" id="billing-admin-credit-amount" step="0.01" placeholder="e.g., 50.00 or -50.00">
+                </div>
+                <div>
+                    <label>Note:</label>
+                    <input type="text" id="billing-admin-credit-note" placeholder="Optional note">
+                </div>
+                <div>
+                    <label>Payment Ref:</label>
+                    <input type="text" id="billing-admin-credit-payment-ref" placeholder="Invoice number">
+                </div>
+                <button id="billing-admin-add-credits-btn" onclick="addCredits()" style="margin-top: 10px; padding: 8px 20px;">Add Credits</button>
             </div>
-            <div>
-                <label>Note:</label>
-                <input type="text" id="credit-note" placeholder="Optional note">
+
+            <div id="billing-admin-credit-history-section" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="cursor: pointer; margin-top: 0;" onclick="toggleBillingAdminCreditHistory()">
+                    Credit History <span id="billing-admin-credit-toggle-icon">▶</span>
+                </h3>
+                <div id="billing-admin-credit-history-content" style="display: none;">
+                    <div>
+                        <label>Tenant:</label>
+                        <select id="billing-admin-credit-history-tenant" onchange="loadBillingAdminCreditHistory(0)">
+                            <option value="all" selected>All Tenants</option>
+                        </select>
+                    </div>
+                    <table style="width:100%" id="billing-admin-credit-history-table">
+                        <thead>
+                            <tr>
+                                <th>Tenant</th>
+                                <th>Date/Time (Local)</th>
+                                <th style="text-align: right;">Amount (USD)</th>
+                                <th>Note</th>
+                                <th>Payment Ref</th>
+                                <th>Added By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="6" style="text-align: center; color: #888;">No credit history</td></tr>
+                        </tbody>
+                    </table>
+                    <div id="billing-admin-credit-pagination-controls">
+                        <button id="billing-admin-credit-prev-page-btn" onclick="billingAdminCreditPrevPage()" disabled>&laquo; Prev</button>
+                        <span id="billing-admin-credit-page-info">Page 1 of 1</span>
+                        <button id="billing-admin-credit-next-page-btn" onclick="billingAdminCreditNextPage()" disabled>Next &raquo;</button>
+                    </div>
+                </div>
             </div>
-            <div>
-                <label>Payment Ref:</label>
-                <input type="text" id="credit-payment-ref" placeholder="Invoice number">
+
+            <div id="billing-admin-rate-form" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="margin-top: 0;">Add Billing Rate</h3>
+                <p style="font-size: 12px; color: #666;">Admin-only action. Rate unit is cents per GPU-hour.</p>
+                <div>
+                    <label>Usage Type:</label>
+                    <select id="billing-rate-usage-type">
+                        <option value="inference" selected>Inference</option>
+                        <option value="standby">Standby</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Rate (cents/hour):</label>
+                    <input type="number" id="billing-rate-cents" min="0" step="1" placeholder="e.g., 800">
+                </div>
+                <div>
+                    <label>Scope:</label>
+                    <select id="billing-rate-scope" onchange="onBillingRateScopeChange()">
+                        <option value="global" selected>Global</option>
+                        <option value="tenant">Tenant Override</option>
+                    </select>
+                </div>
+                <div id="billing-rate-tenant-row" style="display: none;">
+                    <label>Rate Tenant:</label>
+                    <select id="billing-rate-tenant">
+                        <option value="" disabled selected>Select a tenant</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Effective From (Local):</label>
+                    <input type="datetime-local" id="billing-rate-effective-from">
+                </div>
+                <div>
+                    <label>Effective To (Local, Optional):</label>
+                    <input type="datetime-local" id="billing-rate-effective-to">
+                </div>
+                <button id="billing-admin-add-rate-btn" onclick="addBillingRate()" style="margin-top: 10px; padding: 8px 20px;">Add Rate</button>
             </div>
-            <button id="add-credits-btn" onclick="addCredits()" style="margin-top: 10px; padding: 8px 20px;">Add Credits</button>
+
+            <div id="billing-admin-rate-history-section" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="cursor: pointer; margin-top: 0;" onclick="toggleBillingAdminRateHistory()">
+                    Rate Add History <span id="billing-admin-rate-toggle-icon">▶</span>
+                </h3>
+                <div id="billing-admin-rate-history-content" style="display: none;">
+                    <table style="width:100%" id="billing-admin-rate-history-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Scope</th>
+                                <th>Usage Type</th>
+                                <th style="text-align: right;">Rate</th>
+                                <th>Effective From (Local)</th>
+                                <th>Effective To (Local)</th>
+                                <th>Created At (Local)</th>
+                                <th>Added By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="8" style="text-align: center; color: #888;">No rate history</td></tr>
+                        </tbody>
+                    </table>
+                    <div id="billing-admin-rate-pagination-controls">
+                        <button id="billing-admin-rate-prev-page-btn" onclick="billingAdminRatePrevPage()" disabled>&laquo; Prev</button>
+                        <span id="billing-admin-rate-page-info">Page 1 of 1</span>
+                        <button id="billing-admin-rate-next-page-btn" onclick="billingAdminRateNextPage()" disabled>Next &raquo;</button>
+                    </div>
+                </div>
+            </div>
         </div>
+
     </div>
 </div>
 
@@ -576,11 +714,14 @@
         localStorage.setItem('currentTab', tabName);
     }
 
-    window.onload = function () {
-        var savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
-        var fakeEvent = { currentTarget: document.querySelector(`button[onclick*="'${savedTab}'"]`) };
-        // Simulate click on the savedTab tab button
-        openTab(fakeEvent, savedTab);
+    window.onload = async function () {
+        const savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
+        const targetBtn = document.querySelector(`button[onclick*="'${savedTab}'"]`) ||
+            document.querySelector(`button[onclick*="'Models'"]`);
+        if (targetBtn) {
+            openTab({ currentTarget: targetBtn }, savedTab);
+        }
+        await initBillingAdminAccess();
     };
 
     // =====================================================
@@ -591,8 +732,21 @@
     let billingCurrentPage = 0;
     let billingTotalPages = 1;
     const billingPageSize = 20;
+    const billingAdminCreditHistoryPageSize = 20;
+    const billingAdminRateHistoryPageSize = 20;
+    let billingAdminCreditHistoryPage = 0;
+    let billingAdminCreditHistoryTotalPages = 1;
+    let billingAdminRateHistoryPage = 0;
+    let billingAdminRateHistoryTotalPages = 1;
+    let billingAdminCreditHistoryExpanded = false;
+    let billingAdminRateHistoryExpanded = false;
+    let billingAdminMessageTimer = null;
     let billingIsSubmitting = false;
     let billingTenantsPopulated = false;
+    let billingAdminTenantsPopulated = false;
+    let billingAdminAccessReady = false;
+    let billingAdminAccessPromise = null;
+    let billingAdminIsInferxAdmin = false;
     let billingUsageRange = { mode: 'hours', hours: 24 };
     let analyticsUsageRange = { mode: 'hours', hours: 24 };
 
@@ -621,6 +775,123 @@
         } catch (error) {
             console.error('Failed to populate billing tenants:', error);
         }
+    }
+
+    function showBillingAdminMessage(message, isError) {
+        const el = document.getElementById('billing-admin-message');
+        if (!el) return;
+
+        if (billingAdminMessageTimer) {
+            clearTimeout(billingAdminMessageTimer);
+            billingAdminMessageTimer = null;
+        }
+
+        el.style.display = 'block';
+        el.style.background = isError ? '#f8d7da' : '#d4edda';
+        el.style.border = isError ? '1px solid #f5c6cb' : '1px solid #c3e6cb';
+        el.style.color = isError ? '#721c24' : '#155724';
+        el.textContent = message;
+
+        if (!isError) {
+            billingAdminMessageTimer = setTimeout(() => {
+                const msgEl = document.getElementById('billing-admin-message');
+                if (msgEl) msgEl.style.display = 'none';
+                billingAdminMessageTimer = null;
+            }, 4000);
+        }
+    }
+
+    function onBillingRateScopeChange() {
+        const scope = document.getElementById('billing-rate-scope');
+        const row = document.getElementById('billing-rate-tenant-row');
+        if (!scope || !row) return;
+        row.style.display = scope.value === 'tenant' ? 'block' : 'none';
+    }
+
+    async function populateBillingAdminTenants() {
+        if (billingAdminTenantsPopulated) return;
+        const creditTenantDropdown = document.getElementById('billing-admin-credit-tenant');
+        const creditHistoryTenantDropdown = document.getElementById('billing-admin-credit-history-tenant');
+        const rateTenantDropdown = document.getElementById('billing-rate-tenant');
+        if (!creditTenantDropdown || !creditHistoryTenantDropdown || !rateTenantDropdown) return;
+
+        try {
+            const tenants = await fetchWithAuth('/demo/generate_tenants').then(r => r.json());
+            tenants.forEach(t => {
+                const creditOption = document.createElement('option');
+                creditOption.value = t.name;
+                creditOption.textContent = t.name;
+                creditTenantDropdown.appendChild(creditOption);
+
+                const historyOption = document.createElement('option');
+                historyOption.value = t.name;
+                historyOption.textContent = t.name;
+                creditHistoryTenantDropdown.appendChild(historyOption);
+
+                const rateOption = document.createElement('option');
+                rateOption.value = t.name;
+                rateOption.textContent = t.name;
+                rateTenantDropdown.appendChild(rateOption);
+            });
+
+            if (!creditTenantDropdown.value && creditTenantDropdown.options.length > 1) {
+                creditTenantDropdown.selectedIndex = 1;
+            }
+            billingAdminTenantsPopulated = true;
+        } catch (error) {
+            console.error('Failed to populate Billing Admin tenants:', error);
+        }
+    }
+
+    async function initBillingAdminAccess() {
+        if (billingAdminAccessReady) return;
+        if (billingAdminAccessPromise) return billingAdminAccessPromise;
+        billingAdminAccessPromise = _initBillingAdminAccessImpl();
+        return billingAdminAccessPromise;
+    }
+
+    async function _initBillingAdminAccessImpl() {
+
+        const tabBtn = document.getElementById('billing-admin-tab-btn');
+        const content = document.getElementById('billing-admin-content');
+        const noAccess = document.getElementById('billing-admin-no-access');
+
+        try {
+            const roles = await fetchWithAuth('/demo/generate_roles').then(r => r.json());
+            billingAdminIsInferxAdmin = IsInferxAdmin(roles);
+        } catch (error) {
+            console.error('Failed to check Billing Admin access:', error);
+            billingAdminIsInferxAdmin = false;
+        }
+
+        if (tabBtn) {
+            tabBtn.style.display = billingAdminIsInferxAdmin ? '' : 'none';
+        }
+        if (content) {
+            content.style.display = billingAdminIsInferxAdmin ? 'block' : 'none';
+        }
+        if (noAccess) {
+            noAccess.style.display = billingAdminIsInferxAdmin ? 'none' : 'block';
+        }
+
+        if (!billingAdminIsInferxAdmin && localStorage.getItem('currentTab') === 'BillingAdmin') {
+            const fallback = document.querySelector(`button[onclick*="'Billing'"]`) ||
+                document.querySelector(`button[onclick*="'Models'"]`);
+            if (fallback) {
+                openTab({ currentTarget: fallback }, fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Models');
+            }
+        }
+
+        if (billingAdminIsInferxAdmin) {
+            await populateBillingAdminTenants();
+            const effectiveFromInput = document.getElementById('billing-rate-effective-from');
+            if (effectiveFromInput && !effectiveFromInput.value) {
+                effectiveFromInput.value = toLocalDatetimeValue(new Date());
+            }
+            onBillingRateScopeChange();
+        }
+
+        billingAdminAccessReady = true;
     }
 
     function updateUsageRangeButtons() {
@@ -776,17 +1047,6 @@
             loadCreditHistory(tenant, 0)
         ]);
 
-        // Check if user is InferxAdmin (system tenant admin) to show add credits form
-        // Only system admins can add credits, not regular tenant admins
-        try {
-            const roles = await fetchWithAuth('/demo/generate_roles').then(r => r.json());
-            const isInferxAdmin = IsInferxAdmin(roles);
-            document.getElementById('add-credits-form').style.display = isInferxAdmin ? 'block' : 'none';
-        } catch (error) {
-            console.error('Failed to check admin status:', error);
-            document.getElementById('add-credits-form').style.display = 'none';
-        }
-
         // Keep analytics panel in sync when tenant changes.
         if (analyticsExpanded) {
             loadAnalytics();
@@ -848,7 +1108,9 @@
 
             // Balance (available in both endpoints)
             const balanceCents = data.balance_cents || 0;
-            document.getElementById('balance-value').textContent = formatUsd(balanceCents);
+            const balanceEl = document.getElementById('balance-value');
+            balanceEl.textContent = formatUsdSigned(balanceCents);
+            balanceEl.classList.toggle('amount-negative', balanceCents < 0);
             document.getElementById('balance-subtext').textContent = '';
 
             if (hasBillingSummary) {
@@ -897,7 +1159,9 @@
         } catch (error) {
             console.error('Failed to load billing summary:', error);
             // Show error state
-            document.getElementById('balance-value').textContent = 'Error';
+            const balanceEl = document.getElementById('balance-value');
+            balanceEl.textContent = 'Error';
+            balanceEl.classList.remove('amount-negative');
             document.getElementById('used-value').textContent = 'Error';
             document.getElementById('threshold-value').textContent = 'Error';
             document.getElementById('status-value').textContent = '● Unknown';
@@ -934,26 +1198,37 @@
                 return;
             }
 
-            // Time-based chart scaling (GPU-time in ms)
-            const maxMs = Math.max(...data.usage.map(u =>
-                (u.inference_ms || 0) + (u.standby_ms || 0)
+            // For longer time ranges, aggregate to daily bars.
+            // Keep using the hourly endpoint; backend already merges UsageHourly + recent UsageTick.
+            const aggregateToDaily = data.usage.length > 48;
+            let displayData = data.usage;
+            if (aggregateToDaily) {
+                displayData = aggregateHourlyUsageToDays(data.usage);
+            }
+
+            // Money-based chart scaling (cost in cents)
+            const maxCents = Math.max(...displayData.map(u =>
+                (u.inference_cents || 0) + (u.standby_cents || 0)
             ), 1);
 
             // Build stacked bars
-            chartEl.innerHTML = data.usage.map(u => {
+            chartEl.innerHTML = displayData.map(u => {
                 const infCents = u.inference_cents || 0;
                 const sbyCents = u.standby_cents || 0;
                 const infMs = u.inference_ms || 0;
                 const sbyMs = u.standby_ms || 0;
-                const totalMs = infMs + sbyMs;
-                const totalHeight = Math.max(2, (totalMs / maxMs) * 100);
+                const totalCents = infCents + sbyCents;
+                const totalHeight = Math.max(2, (totalCents / maxCents) * 100);
 
-                const infPct = totalMs > 0 ? (infMs / totalMs) * 100 : 0;
-                const sbyPct = totalMs > 0 ? (sbyMs / totalMs) * 100 : 0;
+                const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
+                const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
 
                 const infHrs = (infMs / 3600000).toFixed(2);
                 const sbyHrs = (sbyMs / 3600000).toFixed(2);
-                const tooltip = `Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs)`;
+                const periodLabel = aggregateToDaily
+                    ? new Date(u.hour).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                    : `${new Date(u.hour).getHours().toString().padStart(2, '0')}:00`;
+                const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
 
                 return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
                     `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
@@ -962,10 +1237,13 @@
             }).join('');
 
             // Build labels (show ~6 labels max)
-            const labelEvery = Math.max(1, Math.ceil(data.usage.length / 6));
-            labelsEl.innerHTML = data.usage.map((u, i) => {
-                const hour = new Date(u.hour).getUTCHours();
-                const label = (i % labelEvery === 0) ? hour.toString().padStart(2, '0') : '';
+            const labelEvery = Math.max(1, Math.ceil(displayData.length / 6));
+            labelsEl.innerHTML = displayData.map((u, i) => {
+                const label = (i % labelEvery === 0)
+                    ? (aggregateToDaily
+                        ? new Date(u.hour).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        : new Date(u.hour).getHours().toString().padStart(2, '0'))
+                    : '';
                 return `<div style="flex: 1; text-align: center;">${label}</div>`;
             }).join('');
 
@@ -1063,24 +1341,224 @@
         }
     }
 
+    async function toggleBillingAdminCreditHistory() {
+        billingAdminCreditHistoryExpanded = !billingAdminCreditHistoryExpanded;
+        document.getElementById('billing-admin-credit-history-content').style.display =
+            billingAdminCreditHistoryExpanded ? 'block' : 'none';
+        document.getElementById('billing-admin-credit-toggle-icon').textContent =
+            billingAdminCreditHistoryExpanded ? '▼' : '▶';
+
+        if (billingAdminCreditHistoryExpanded) {
+            await loadBillingAdminCreditHistory(billingAdminCreditHistoryPage);
+        }
+    }
+
+    async function toggleBillingAdminRateHistory() {
+        billingAdminRateHistoryExpanded = !billingAdminRateHistoryExpanded;
+        document.getElementById('billing-admin-rate-history-content').style.display =
+            billingAdminRateHistoryExpanded ? 'block' : 'none';
+        document.getElementById('billing-admin-rate-toggle-icon').textContent =
+            billingAdminRateHistoryExpanded ? '▼' : '▶';
+
+        if (billingAdminRateHistoryExpanded) {
+            await loadBillingAdminRateHistory(billingAdminRateHistoryPage);
+        }
+    }
+
+    async function loadBillingAdminCreditHistory(page) {
+        const tenant = document.getElementById('billing-admin-credit-history-tenant').value || 'all';
+        const tbody = document.querySelector('#billing-admin-credit-history-table tbody');
+        const prevBtn = document.getElementById('billing-admin-credit-prev-page-btn');
+        const nextBtn = document.getElementById('billing-admin-credit-next-page-btn');
+        const pageInfo = document.getElementById('billing-admin-credit-page-info');
+
+        billingAdminCreditHistoryPage = page;
+        const offset = page * billingAdminCreditHistoryPageSize;
+
+        try {
+            const params = new URLSearchParams();
+            params.set('limit', String(billingAdminCreditHistoryPageSize));
+            params.set('offset', String(offset));
+            if (tenant !== 'all') {
+                params.set('tenant', tenant);
+            }
+            const resp = await fetchWithAuth(`/demo/proxy1/billing/credits/history?${params.toString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            tbody.innerHTML = '';
+            if (data.records && data.records.length > 0) {
+                data.records.forEach(record => {
+                    const row = document.createElement('tr');
+                    const date = new Date(record.created_at).toLocaleString();
+                    const cents = record.amount_cents || 0;
+                    let amountClass, amountText;
+                    if (cents > 0) {
+                        amountClass = 'amount-positive';
+                        amountText = '+' + formatUsd(cents);
+                    } else if (cents < 0) {
+                        amountClass = 'amount-negative';
+                        amountText = '-' + formatUsd(Math.abs(cents));
+                    } else {
+                        amountClass = 'amount-zero';
+                        amountText = formatUsd(0);
+                    }
+
+                    row.innerHTML = `
+                        <td>${record.tenant || '-'}</td>
+                        <td>${date}</td>
+                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
+                        <td>${record.note || '-'}</td>
+                        <td>${record.payment_ref || '-'}</td>
+                        <td>${record.added_by || '-'}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888;">No credit history</td></tr>';
+            }
+
+            const hasTotal = typeof data.total === 'number';
+            const total = data.total || 0;
+            const recordCount = data.records ? data.records.length : 0;
+
+            if (hasTotal) {
+                billingAdminCreditHistoryTotalPages = Math.max(1, Math.ceil(total / billingAdminCreditHistoryPageSize));
+                pageInfo.textContent = `Page ${page + 1} of ${billingAdminCreditHistoryTotalPages}`;
+            } else {
+                billingAdminCreditHistoryTotalPages = (recordCount === billingAdminCreditHistoryPageSize) ? page + 2 : page + 1;
+                pageInfo.textContent = `Page ${page + 1}`;
+            }
+
+            prevBtn.disabled = (page <= 0);
+            nextBtn.disabled = hasTotal
+                ? (page >= billingAdminCreditHistoryTotalPages - 1)
+                : (recordCount < billingAdminCreditHistoryPageSize);
+        } catch (error) {
+            console.error('Failed to load Billing Admin credit history:', error);
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: red;">Failed to load credit history</td></tr>';
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
+        }
+    }
+
+    function billingAdminCreditPrevPage() {
+        if (billingAdminCreditHistoryPage > 0) {
+            loadBillingAdminCreditHistory(billingAdminCreditHistoryPage - 1);
+        }
+    }
+
+    function billingAdminCreditNextPage() {
+        if (billingAdminCreditHistoryPage < billingAdminCreditHistoryTotalPages - 1) {
+            loadBillingAdminCreditHistory(billingAdminCreditHistoryPage + 1);
+        }
+    }
+
+    async function loadBillingAdminRateHistory(page) {
+        const tbody = document.querySelector('#billing-admin-rate-history-table tbody');
+        const prevBtn = document.getElementById('billing-admin-rate-prev-page-btn');
+        const nextBtn = document.getElementById('billing-admin-rate-next-page-btn');
+        const pageInfo = document.getElementById('billing-admin-rate-page-info');
+
+        billingAdminRateHistoryPage = page;
+
+        const params = new URLSearchParams();
+        params.set('limit', String(billingAdminRateHistoryPageSize));
+        params.set('offset', String(page * billingAdminRateHistoryPageSize));
+        params.set('scope', 'all');
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/billing/rates?${params.toString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            tbody.innerHTML = '';
+            if (data.records && data.records.length > 0) {
+                data.records.forEach(record => {
+                    const row = document.createElement('tr');
+                    const scopeText = record.tenant ? `Tenant: ${record.tenant}` : 'Global';
+                    const rateText = `${formatUsd(record.rate_cents_per_hour)} (${record.rate_cents_per_hour}¢/GPU-hr)`;
+                    const effectiveFrom = record.effective_from ? new Date(record.effective_from).toLocaleString() : '-';
+                    const effectiveTo = record.effective_to ? new Date(record.effective_to).toLocaleString() : '-';
+                    const createdAt = record.created_at ? new Date(record.created_at).toLocaleString() : '-';
+                    const addedBy = record.added_by || '-';
+
+                    row.innerHTML = `
+                        <td>${record.id}</td>
+                        <td>${scopeText}</td>
+                        <td>${record.usage_type}</td>
+                        <td style="text-align: right;">${rateText}</td>
+                        <td>${effectiveFrom}</td>
+                        <td>${effectiveTo}</td>
+                        <td>${createdAt}</td>
+                        <td>${addedBy}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #888;">No rate history</td></tr>';
+            }
+
+            const total = typeof data.total === 'number' ? data.total : 0;
+            billingAdminRateHistoryTotalPages = Math.max(1, Math.ceil(total / billingAdminRateHistoryPageSize));
+            pageInfo.textContent = `Page ${page + 1} of ${billingAdminRateHistoryTotalPages}`;
+            prevBtn.disabled = (page <= 0);
+            nextBtn.disabled = (page >= billingAdminRateHistoryTotalPages - 1);
+        } catch (error) {
+            console.error('Failed to load billing rate history:', error);
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: red;">Failed to load rate history</td></tr>';
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
+        }
+    }
+
+    function billingAdminRatePrevPage() {
+        if (billingAdminRateHistoryPage > 0) {
+            loadBillingAdminRateHistory(billingAdminRateHistoryPage - 1);
+        }
+    }
+
+    function billingAdminRateNextPage() {
+        if (billingAdminRateHistoryPage < billingAdminRateHistoryTotalPages - 1) {
+            loadBillingAdminRateHistory(billingAdminRateHistoryPage + 1);
+        }
+    }
+
     async function addCredits() {
         if (billingIsSubmitting) return; // Prevent double-submit
 
-        const tenant = document.getElementById('billing_tenant_select').value;
-        const amountInput = parseFloat(document.getElementById('credit-amount').value);
-        const note = document.getElementById('credit-note').value;
-        const paymentRef = document.getElementById('credit-payment-ref').value;
+        const tenant = document.getElementById('billing-admin-credit-tenant').value;
+        const amountInput = parseFloat(document.getElementById('billing-admin-credit-amount').value);
+        const note = document.getElementById('billing-admin-credit-note').value;
+        const paymentRef = document.getElementById('billing-admin-credit-payment-ref').value;
 
-        if (!amountInput || isNaN(amountInput) || amountInput <= 0) {
-            alert('Please enter a valid amount in USD');
+        if (!tenant) {
+            showBillingAdminMessage('Please select a tenant.', true);
             return;
         }
 
-        // Convert dollars to cents
-        const amountCents = Math.round(amountInput * 100);
+        if (!Number.isFinite(amountInput) || amountInput === 0) {
+            showBillingAdminMessage('Please enter a non-zero amount in USD. Use negative amount to deduct credits.', true);
+            return;
+        }
 
-        // Disable button during request
-        const btn = document.getElementById('add-credits-btn');
+        const amountCents = Math.round(amountInput * 100);
+        if (amountCents === 0) {
+            showBillingAdminMessage('Amount is too small. Minimum absolute value is $0.01.', true);
+            return;
+        }
+        const creditConfirm = window.confirm(
+            `Confirm credit adjustment?\n` +
+            `Tenant: ${tenant}\n` +
+            `Amount: ${formatUsdSigned(amountCents)}\n` +
+            `Note: ${note || '-'}\n` +
+            `Payment Ref: ${paymentRef || '-'}`
+        );
+        if (!creditConfirm) {
+            return;
+        }
+
+        const btn = document.getElementById('billing-admin-add-credits-btn');
         billingIsSubmitting = true;
         btn.disabled = true;
         btn.textContent = 'Adding...';
@@ -1098,24 +1576,127 @@
             });
 
             if (resp.ok) {
-                alert('Credits added successfully!');
-                document.getElementById('credit-amount').value = '';
-                document.getElementById('credit-note').value = '';
-                document.getElementById('credit-payment-ref').value = '';
-                loadBillingData(); // Refresh all data
+                showBillingAdminMessage(`Credit adjustment applied: ${formatUsdSigned(amountCents)}.`, false);
+                document.getElementById('billing-admin-credit-amount').value = '';
+                document.getElementById('billing-admin-credit-note').value = '';
+                document.getElementById('billing-admin-credit-payment-ref').value = '';
+
+                if (billingAdminCreditHistoryExpanded) {
+                    await loadBillingAdminCreditHistory(0);
+                }
+
+                const billingTenant = document.getElementById('billing_tenant_select').value;
+                if (billingTenant === tenant) {
+                    loadBillingData();
+                }
             } else if (resp.status === 403) {
-                alert('Permission denied. Only administrators can add credits.');
+                showBillingAdminMessage('Permission denied. Only Inferx administrators can add credits.', true);
             } else {
                 const error = await resp.text();
-                alert('Failed to add credits: ' + error);
+                showBillingAdminMessage('Failed to add credits: ' + error, true);
             }
         } catch (error) {
-            alert('Error adding credits: ' + error);
+            showBillingAdminMessage('Error adding credits: ' + error, true);
         } finally {
-            // Re-enable button
             billingIsSubmitting = false;
             btn.disabled = false;
             btn.textContent = 'Add Credits';
+        }
+    }
+
+    async function addBillingRate() {
+        const btn = document.getElementById('billing-admin-add-rate-btn');
+        const usageType = document.getElementById('billing-rate-usage-type').value;
+        const rateCents = parseInt(document.getElementById('billing-rate-cents').value, 10);
+        const scope = document.getElementById('billing-rate-scope').value;
+        const rateTenant = document.getElementById('billing-rate-tenant').value;
+        const effectiveFromInput = document.getElementById('billing-rate-effective-from').value;
+        const effectiveToInput = document.getElementById('billing-rate-effective-to').value;
+
+        if (!Number.isInteger(rateCents) || rateCents < 0) {
+            showBillingAdminMessage('Rate must be a non-negative integer (cents/hour).', true);
+            return;
+        }
+
+        if (scope === 'tenant' && !rateTenant) {
+            showBillingAdminMessage('Please select a tenant for tenant override rate.', true);
+            return;
+        }
+
+        let effectiveFromIso;
+        if (effectiveFromInput) {
+            const dt = new Date(effectiveFromInput);
+            if (isNaN(dt.getTime())) {
+                showBillingAdminMessage('Invalid Effective From datetime.', true);
+                return;
+            }
+            effectiveFromIso = dt.toISOString();
+        } else {
+            effectiveFromIso = new Date().toISOString();
+        }
+
+        let effectiveToIso = null;
+        if (effectiveToInput) {
+            const dt = new Date(effectiveToInput);
+            if (isNaN(dt.getTime())) {
+                showBillingAdminMessage('Invalid Effective To datetime.', true);
+                return;
+            }
+            effectiveToIso = dt.toISOString();
+            if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
+                showBillingAdminMessage('Effective To must be after Effective From.', true);
+                return;
+            }
+        }
+
+        const rateScopeLabel = scope === 'tenant' ? `Tenant Override (${rateTenant})` : 'Global';
+        const rateConfirm = window.confirm(
+            `Confirm add billing rate?\n` +
+            `Scope: ${rateScopeLabel}\n` +
+            `Usage Type: ${usageType}\n` +
+            `Rate: ${formatUsd(rateCents)}/GPU-hour (${rateCents}¢)\n` +
+            `Effective From: ${new Date(effectiveFromIso).toLocaleString()}\n` +
+            `Effective To: ${effectiveToIso ? new Date(effectiveToIso).toLocaleString() : 'Open-ended'}`
+        );
+        if (!rateConfirm) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Adding...';
+        try {
+            const resp = await fetchWithAuth('/demo/proxy1/billing/rates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    usage_type: usageType,
+                    rate_cents_per_hour: rateCents,
+                    effective_from: effectiveFromIso,
+                    effective_to: effectiveToIso,
+                    tenant: scope === 'tenant' ? rateTenant : null
+                })
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                showBillingAdminMessage(`Billing rate added (id=${data.rate_id}).`, false);
+                document.getElementById('billing-rate-cents').value = '';
+                document.getElementById('billing-rate-effective-to').value = '';
+
+                if (billingAdminRateHistoryExpanded) {
+                    await loadBillingAdminRateHistory(0);
+                }
+            } else if (resp.status === 403) {
+                showBillingAdminMessage('Permission denied. Only Inferx administrators can add rates.', true);
+            } else {
+                const error = await resp.text();
+                showBillingAdminMessage('Failed to add rate: ' + error, true);
+            }
+        } catch (error) {
+            showBillingAdminMessage('Error adding rate: ' + error, true);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Add Rate';
         }
     }
 
@@ -1125,7 +1706,13 @@
         return '$' + dollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // Hook into tab switching to populate tenants when Billing tab opens
+    // Signed USD formatter (e.g. -1234 -> "-$12.34")
+    function formatUsdSigned(cents) {
+        const sign = cents < 0 ? '-' : '';
+        return sign + formatUsd(cents);
+    }
+
+    // Hook into tab switching to populate tenant lists when Billing tabs open
     const originalOpenTab = openTab;
     openTab = function(evt, tabName) {
         originalOpenTab(evt, tabName);
@@ -1260,12 +1847,17 @@
 
             // Top Model
             if (data.top_model) {
-                document.getElementById('analytics-top-model').textContent =
-                    truncateText(data.top_model.funcname, 15);
+                const modelName = data.top_model.funcname || '';
+                const modelEl = document.getElementById('analytics-top-model');
+                modelEl.textContent = truncateText(modelName, 15);
+                // Mirror bar-chart behavior: show full name on hover when display text is truncated.
+                modelEl.title = modelName.length > 15 ? modelName : '';
                 document.getElementById('analytics-top-model-hours').textContent =
                     `${data.top_model.gpu_hours?.toFixed(2) || '0.00'} hrs`;
             } else {
-                document.getElementById('analytics-top-model').textContent = '--';
+                const modelEl = document.getElementById('analytics-top-model');
+                modelEl.textContent = '--';
+                modelEl.title = '';
                 document.getElementById('analytics-top-model-hours').textContent = 'No data';
             }
 
@@ -1284,7 +1876,13 @@
             if (data.peak_hour) {
                 const peakDate = new Date(data.peak_hour.hour);
                 document.getElementById('analytics-peak-hour').textContent =
-                    peakDate.getUTCHours().toString().padStart(2, '0') + ':00 UTC';
+                    peakDate.toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
                 document.getElementById('analytics-peak-hour-value').textContent =
                     `${data.peak_hour.gpu_hours?.toFixed(2) || '0.00'} hrs`;
             } else {
@@ -1462,24 +2060,22 @@
 
         let displayData = data.usage;
         if (aggregateToDaily) {
-            displayData = aggregateAnalyticsToDays(data.usage);
+            displayData = aggregateHourlyUsageToDays(data.usage);
         }
 
-        const maxUsage = Math.max(...displayData.map(u => u.charge_cents || 0), 1);
+        const maxUsageMs = Math.max(...displayData.map(u => u.inference_ms || 0), 1);
 
         chartEl.innerHTML = `
             <div style="display: flex; align-items: flex-end; height: 120px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
                 ${displayData.map(u => {
-                    const cents = u.charge_cents || 0;
-                    const height = Math.max(2, (cents / maxUsage) * 100);
-                    const cost = formatUsd(cents);
-                    const infCost = formatUsd(u.inference_cents || 0);
-                    const stbCost = formatUsd(u.standby_cents || 0);
+                    const inferenceMs = u.inference_ms || 0;
+                    const height = Math.max(2, (inferenceMs / maxUsageMs) * 100);
+                    const inferenceHours = (inferenceMs / 3600000).toFixed(2);
                     const label = aggregateToDaily
-                        ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'})
-                        : new Date(u.hour).getUTCHours() + ':00 UTC';
+                        ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+                        : new Date(u.hour).getHours().toString().padStart(2, '0') + ':00';
                     return `<div class="usage-bar" style="height: ${height}%; flex: 1;"
-                                title="${label}: ${cost} (inference: ${infCost}, standby: ${stbCost})"></div>`;
+                                title="${label}: ${inferenceHours} inference GPU-hours"></div>`;
                 }).join('')}
             </div>
             <div style="display: flex; gap: 2px; font-size: 10px; color: #666;">
@@ -1489,14 +2085,14 @@
                         : (i % 6 === 0);
                     const label = showLabel
                         ? (aggregateToDaily
-                            ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'})
-                            : new Date(u.hour).getUTCHours().toString().padStart(2, '0'))
+                            ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+                            : new Date(u.hour).getHours().toString().padStart(2, '0'))
                         : '';
                     return `<div style="flex: 1; text-align: center;">${label}</div>`;
                 }).join('')}
             </div>
             <div style="text-align: right; font-size: 10px; color: #888;">
-                (${aggregateToDaily ? 'Daily' : 'Hourly'} - UTC)
+                (${aggregateToDaily ? 'Daily' : 'Hourly'} - Local)
             </div>
         `;
 
@@ -1505,17 +2101,26 @@
         document.getElementById('analytics-empty').style.display = 'none';
     }
 
-    function aggregateAnalyticsToDays(hourlyData) {
+    function aggregateHourlyUsageToDays(hourlyData) {
         const dayMap = {};
 
         hourlyData.forEach(h => {
             const date = h.hour.substring(0, 10);
             if (!dayMap[date]) {
-                dayMap[date] = { hour: date + 'T00:00:00Z', charge_cents: 0, inference_cents: 0, standby_cents: 0 };
+                dayMap[date] = {
+                    hour: date + 'T00:00:00Z',
+                    charge_cents: 0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    inference_ms: 0,
+                    standby_ms: 0
+                };
             }
             dayMap[date].charge_cents += h.charge_cents || 0;
             dayMap[date].inference_cents += h.inference_cents || 0;
             dayMap[date].standby_cents += h.standby_cents || 0;
+            dayMap[date].inference_ms += h.inference_ms || 0;
+            dayMap[date].standby_ms += h.standby_ms || 0;
         });
 
         return Object.values(dayMap).sort((a, b) => a.hour.localeCompare(b.hour));

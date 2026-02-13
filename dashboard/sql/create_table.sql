@@ -138,6 +138,8 @@ CREATE TABLE TenantQuota (
     tenant                 VARCHAR PRIMARY KEY,
     balance_cents          BIGINT DEFAULT 0,       -- Stored explicitly (total_credits - used)
     used_cents             BIGINT DEFAULT 0,       -- Cumulative usage in cents
+    inference_used_cents   BIGINT NOT NULL DEFAULT 0, -- Cumulative inference usage in cents
+    standby_used_cents     BIGINT NOT NULL DEFAULT 0, -- Cumulative standby usage in cents
     threshold_cents        BIGINT DEFAULT 0,       -- Disable when remaining < this
     quota_exceeded         BOOLEAN DEFAULT FALSE,
     currency               VARCHAR(3) DEFAULT 'USD'
@@ -185,7 +187,9 @@ CREATE TABLE BillingRate (
     rate_cents_per_hour INT NOT NULL,           -- per GPU-hour
     effective_from      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     effective_to        TIMESTAMPTZ,            -- NULL = currently active
-    tenant              VARCHAR                 -- NULL = global default, set = per-tenant override
+    tenant              VARCHAR,                -- NULL = global default, set = per-tenant override
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    added_by            VARCHAR NOT NULL
 );
 
 CREATE INDEX idx_rate_lookup ON BillingRate(usage_type, effective_from);

@@ -54,7 +54,10 @@ use hyper::{StatusCode, Uri};
 
 use tokio::sync::mpsc;
 
-use crate::audit::{ReqAudit, SqlAudit, TenantCreditHistoryRecord, REQ_AUDIT_AGENT};
+use crate::audit::{
+    BillingCreditHistoryRecord, BillingRateHistoryRecord, ReqAudit, SqlAudit,
+    TenantCreditHistoryRecord, REQ_AUDIT_AGENT,
+};
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
@@ -397,6 +400,9 @@ impl HttpGateway {
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
             .route("/tenant/:tenant/credits", post(AddTenantCredits))
+            .route("/billing/rates", post(AddBillingRate))
+            .route("/billing/rates", get(GetBillingRateHistory))
+            .route("/billing/credits/history", get(GetBillingCreditHistory))
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route("/tenant/:tenant/credits/history", get(GetTenantCreditHistory))
             .route("/tenant/:tenant/billing-summary", get(GetTenantBillingSummary))
@@ -1797,9 +1803,33 @@ struct AddCreditsRequest {
 }
 
 #[derive(Deserialize)]
+struct AddBillingRateRequest {
+    usage_type: String,
+    rate_cents_per_hour: i32,
+    effective_from: Option<String>,
+    effective_to: Option<String>,
+    tenant: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct CreditHistoryQuery {
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct BillingRateHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    scope: Option<String>,  // all | global | tenant
+    tenant: Option<String>, // used when scope=tenant
+}
+
+#[derive(Deserialize)]
+struct BillingCreditHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    tenant: Option<String>,
 }
 
 // Response for credit operations
@@ -1823,6 +1853,29 @@ struct AddCreditsResponse {
     success: bool,
     credit_id: i64,
     new_balance_cents: i64,
+}
+
+#[derive(Serialize)]
+struct AddBillingRateResponse {
+    success: bool,
+    rate_id: i64,
+    usage_type: String,
+    rate_cents_per_hour: i32,
+    effective_from: String,
+    effective_to: Option<String>,
+    tenant: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BillingRateHistoryResponse {
+    records: Vec<BillingRateHistoryRecord>,
+    total: i64,
+}
+
+#[derive(Serialize)]
+struct BillingCreditHistoryResponse {
+    records: Vec<BillingCreditHistoryRecord>,
+    total: i64,
 }
 
 #[derive(Serialize)]
@@ -1946,6 +1999,146 @@ struct UsageSummaryResponse {
     timezone: String,
 }
 
+async fn AddBillingRate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(req): Json<AddBillingRateRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Permission denied: Only InferxAdmin can add billing rates");
+        let resp = Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let usage_type = match req.usage_type.trim().to_ascii_lowercase().as_str() {
+        "standby" => "standby",
+        "inference" | "request" | "snapshot" => "inference",
+        other => {
+            let body = Body::from(format!(
+                "Unsupported usage_type: {}. Expected one of: inference, standby",
+                other
+            ));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    if req.rate_cents_per_hour < 0 {
+        let body = Body::from("rate_cents_per_hour must be >= 0");
+        let resp = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let effective_from = match req.effective_from.as_deref() {
+        Some(v) => match DateTime::parse_from_rfc3339(v) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(_) => {
+                let body = Body::from("Invalid effective_from format (use RFC3339)");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        },
+        None => Utc::now(),
+    };
+
+    let effective_to = match req.effective_to.as_deref() {
+        Some(v) => match DateTime::parse_from_rfc3339(v) {
+            Ok(dt) => Some(dt.with_timezone(&Utc)),
+            Err(_) => {
+                let body = Body::from("Invalid effective_to format (use RFC3339)");
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        },
+        None => None,
+    };
+
+    if let Some(to) = effective_to.as_ref() {
+        if *to <= effective_from {
+            let body = Body::from("Invalid range: effective_to must be after effective_from");
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+
+    let tenant = req
+        .tenant
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let added_by = Some(token.username.as_str());
+
+    let effective_to_resp = effective_to.as_ref().map(|v| v.to_rfc3339());
+
+    error!(
+        "AddBillingRate: usage_type={}, rate_cents_per_hour={}, effective_from={}, effective_to={:?}, tenant={:?}, added_by={:?}",
+        usage_type,
+        req.rate_cents_per_hour,
+        effective_from.to_rfc3339(),
+        effective_to_resp,
+        tenant,
+        added_by
+    );
+
+    match gw
+        .sqlAudit
+        .AddBillingRate(
+            usage_type,
+            req.rate_cents_per_hour,
+            effective_from,
+            effective_to,
+            tenant.as_deref(),
+            added_by,
+        )
+        .await
+    {
+        Ok(id) => {
+            let resp_body = AddBillingRateResponse {
+                success: true,
+                rate_id: id,
+                usage_type: usage_type.to_string(),
+                rate_cents_per_hour: req.rate_cents_per_hour,
+                effective_from: effective_from.to_rfc3339(),
+                effective_to: effective_to_resp,
+                tenant,
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to add billing rate: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
 async fn AddTenantCredits(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -1965,6 +2158,15 @@ async fn AddTenantCredits(
     let currency = req.currency.as_deref().unwrap_or("USD");
     if currency != "USD" {
         let body = Body::from(format!("Unsupported currency: {}. Only USD is supported.", currency));
+        let resp = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    if req.amount_cents == 0 {
+        let body = Body::from("amount_cents must be non-zero");
         let resp = Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(body)
@@ -2087,6 +2289,88 @@ async fn AddTenantCredits(
     }
 }
 
+async fn GetBillingRateHistory(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Query(params): Query<BillingRateHistoryQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Permission denied: Only InferxAdmin can read billing rate history");
+        let resp = Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let mut limit = params.limit.unwrap_or(20);
+    let mut offset = params.offset.unwrap_or(0);
+    if limit < 0 {
+        limit = 0;
+    }
+    if limit > 200 {
+        limit = 200;
+    }
+    if offset < 0 {
+        offset = 0;
+    }
+
+    let scope = match params
+        .scope
+        .as_deref()
+        .unwrap_or("all")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "all" => "all",
+        "global" => "global",
+        "tenant" => "tenant",
+        other => {
+            let body = Body::from(format!(
+                "Invalid scope '{}'. Expected one of: all, global, tenant",
+                other
+            ));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let tenant = params
+        .tenant
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    match gw
+        .sqlAudit
+        .ListBillingRateHistory(scope, tenant.as_deref(), limit, offset)
+        .await
+    {
+        Ok((records, total)) => {
+            let resp_body = BillingRateHistoryResponse { records, total };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get billing rate history: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
 async fn GetTenantCredits(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -2114,6 +2398,65 @@ async fn GetTenantCredits(
         }
         Err(e) => {
             let body = Body::from(format!("Failed to get credits: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetBillingCreditHistory(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Query(params): Query<BillingCreditHistoryQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Permission denied: Only InferxAdmin can read billing credit history");
+        let resp = Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let mut limit = params.limit.unwrap_or(20);
+    let mut offset = params.offset.unwrap_or(0);
+    if limit < 0 {
+        limit = 0;
+    }
+    if limit > 200 {
+        limit = 200;
+    }
+    if offset < 0 {
+        offset = 0;
+    }
+
+    let tenant = params
+        .tenant
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .filter(|t| t != "all" && t != "__all__");
+
+    match gw
+        .sqlAudit
+        .ListBillingCreditHistory(tenant.as_deref(), limit, offset)
+        .await
+    {
+        Ok((records, total)) => {
+            let resp_body = BillingCreditHistoryResponse { records, total };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get billing credit history: {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(body)

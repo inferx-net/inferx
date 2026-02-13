@@ -56,48 +56,48 @@ spec:
               configMap:
                 name: billing-sql-scripts
 
-# ---
+---
 # # CronJob: hourly-aggregate - runs at minute 5 of every hour
-# apiVersion: batch/v1
-# kind: CronJob
-# metadata:
-#   name: billing-hourly-aggregate
-# spec:
-#   schedule: "5 * * * *"  # At minute 5 of every hour
-#   concurrencyPolicy: Forbid
-#   successfulJobsHistoryLimit: 3
-#   failedJobsHistoryLimit: 3
-#   jobTemplate:
-#     spec:
-#       template:
-#         spec:
-#           restartPolicy: OnFailure
-#           containers:
-#             - name: hourly-aggregate
-#               image: postgres:15-alpine
-#               command:
-#                 - /bin/sh
-#                 - -c
-#                 - |
-#                   psql -f /scripts/hourly-aggregate.sql
-#               env:
-#                 - name: PGHOST
-#                   value: db
-#                 - name: PGPORT
-#                   value: "5432"
-#                 - name: PGUSER
-#                   value: audit_user
-#                 - name: PGPASSWORD
-#                   value: "123456"
-#                 - name: PGDATABASE
-#                   value: auditdb
-#               volumeMounts:
-#                 - name: sql-scripts
-#                   mountPath: /scripts
-#           volumes:
-#             - name: sql-scripts
-#               configMap:
-#                 name: billing-sql-scripts
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: billing-hourly-aggregate
+spec:
+  schedule: "5 * * * *"  # At minute 5 of every hour
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: hourly-aggregate
+              image: inferx/inferx_util:v0.1.0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  psql -f /scripts/hourly-aggregate.sql
+              env:
+                - name: PGHOST
+                  value: db
+                - name: PGPORT
+                  value: "5432"
+                - name: PGUSER
+                  value: audit_user
+                - name: PGPASSWORD
+                  value: "123456"
+                - name: PGDATABASE
+                  value: auditdb
+              volumeMounts:
+                - name: sql-scripts
+                  mountPath: /scripts
+          volumes:
+            - name: sql-scripts
+              configMap:
+                name: billing-sql-scripts
 
 # ---
 # # CronJob: tick-cleanup - runs daily at 3am

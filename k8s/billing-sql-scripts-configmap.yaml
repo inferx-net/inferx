@@ -35,22 +35,44 @@ data:
       FOR UPDATE SKIP LOCKED
     ),
 
-    -- 2) Aggregate delta charge per tenant in this batch
-    -- Rate lookup is centralized in GetBillingRateCents(...)
-    agg AS (
+    -- 2) Resolve rate once per tick in this batch
+    tick_with_rate AS (
       SELECT
         b.tenant,
-        (SUM(
-          b.gpu_count::numeric
-          * b.interval_ms::numeric
-          * GetBillingRateCents(b.usage_type, b.tick_time, b.tenant)::numeric
-        )
-          / 3600000)::bigint AS delta_cents
+        b.gpu_count,
+        b.interval_ms,
+        b.usage_type,
+        GetBillingRateCents(b.usage_type, b.tick_time, b.tenant)::numeric AS rate_cents_per_hour
       FROM batch b
-      GROUP BY b.tenant
     ),
 
-    -- 3) Snapshot old quota_exceeded for ONLY affected tenants
+    -- 3) Aggregate delta charge per tenant in this batch
+    -- Rate lookup is centralized in GetBillingRateCents(...)
+    -- Keep split alignment exact by deriving standby as residual:
+    --   delta_standby = delta_total - delta_inference
+    agg AS (
+      SELECT
+        t.tenant,
+        (SUM(
+          t.gpu_count::numeric
+          * t.interval_ms::numeric
+          * t.rate_cents_per_hour
+        )
+          / 3600000)::bigint AS delta_cents,
+        (SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count::numeric
+              * t.interval_ms::numeric
+              * t.rate_cents_per_hour
+            ELSE 0
+          END
+        )
+          / 3600000)::bigint AS delta_inference_cents
+      FROM tick_with_rate t
+      GROUP BY t.tenant
+    ),
+
+    -- 4) Snapshot old quota_exceeded for ONLY affected tenants
     old_state AS (
       SELECT
         q.tenant,
@@ -59,7 +81,7 @@ data:
       WHERE q.tenant IN (SELECT tenant FROM agg)
     ),
 
-    -- 4) Sum credits per tenant (source of truth)
+    -- 5) Sum credits per tenant (source of truth)
     credits AS (
       SELECT
         h.tenant,
@@ -68,11 +90,13 @@ data:
       GROUP BY h.tenant
     ),
 
-    -- 5) Update usage + balance + quota_exceeded for affected tenants
+    -- 6) Update usage split + balance + quota_exceeded for affected tenants
     updated AS (
       UPDATE TenantQuota q
       SET
         used_cents = q.used_cents + a.delta_cents,
+        inference_used_cents = q.inference_used_cents + a.delta_inference_cents,
+        standby_used_cents = q.standby_used_cents + (a.delta_cents - a.delta_inference_cents),
         balance_cents = COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents),
         quota_exceeded =
           (COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents)) <= q.threshold_cents
@@ -87,7 +111,7 @@ data:
         COALESCE(c.total_credits, 0) AS credits_cents
     ),
 
-    -- 6) Mark exactly the locked batch rows as processed
+    -- 7) Mark exactly the locked batch rows as processed
     mark_processed AS (
       UPDATE UsageTick t
       SET processed_at = now()
@@ -95,7 +119,7 @@ data:
       RETURNING t.id
     )
 
-    -- 7) Return only tenants where quota_exceeded changed
+    -- 8) Return only tenants where quota_exceeded changed
     SELECT
       u.tenant,
       u.credits_cents,
@@ -202,6 +226,74 @@ data:
       standby_cents = EXCLUDED.standby_cents,
       inference_ms = EXCLUDED.inference_ms,
       standby_ms = EXCLUDED.standby_ms;
+
+  hourly-aggregate-range.sql: |
+    -- Backfill UsageHourly for a custom [start_hour, end_hour) UTC range.
+    -- Example:
+    -- psql -v start_hour='2026-02-01T00:00:00Z' -v end_hour='2026-02-09T00:00:00Z' -f /scripts/hourly-aggregate-range.sql
+    -- Uses the same billing-rate lookup + upsert logic as hourly-aggregate.sql.
+    WITH
+    params AS (
+      SELECT
+        date_trunc('hour', :'start_hour'::timestamptz) AS start_hour,
+        date_trunc('hour', :'end_hour'::timestamptz) AS end_hour
+    ),
+    tick_with_rate AS (
+      SELECT
+        t.tenant,
+        t.tick_time,
+        t.interval_ms,
+        t.gpu_count,
+        t.usage_type,
+        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+      FROM UsageTick t
+      JOIN params p ON TRUE
+      WHERE t.tick_time >= p.start_hour
+        AND t.tick_time < p.end_hour
+    ),
+    upserted AS (
+      INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+      SELECT
+        t.tenant,
+        date_trunc('hour', t.tick_time) as hour,
+        (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
+          / 3600000)::bigint as charge_cents,
+        (SUM(CASE WHEN t.usage_type != 'standby'
+          THEN t.gpu_count::numeric
+            * t.interval_ms::numeric
+            * t.rate_cents_per_hour
+          ELSE 0
+        END)
+          / 3600000)::bigint as inference_cents,
+        (SUM(CASE WHEN t.usage_type = 'standby'
+          THEN t.gpu_count::numeric
+            * t.interval_ms::numeric
+            * t.rate_cents_per_hour
+          ELSE 0
+        END)
+          / 3600000)::bigint as standby_cents,
+        SUM(CASE WHEN t.usage_type != 'standby'
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as inference_ms,
+        SUM(CASE WHEN t.usage_type = 'standby'
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as standby_ms
+      FROM tick_with_rate t
+      GROUP BY t.tenant, date_trunc('hour', t.tick_time)
+      ON CONFLICT (tenant, hour)
+      DO UPDATE SET
+        charge_cents = EXCLUDED.charge_cents,
+        inference_cents = EXCLUDED.inference_cents,
+        standby_cents = EXCLUDED.standby_cents,
+        inference_ms = EXCLUDED.inference_ms,
+        standby_ms = EXCLUDED.standby_ms
+      RETURNING tenant, hour
+    )
+    SELECT
+      p.start_hour,
+      p.end_hour,
+      COUNT(u.hour)::bigint AS upserted_rows
+    FROM params p
+    LEFT JOIN upserted u ON TRUE
+    GROUP BY p.start_hour, p.end_hour;
 
   tick-cleanup.sql: |
     -- Delete tick records older than 7 days

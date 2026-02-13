@@ -506,6 +506,30 @@ pub struct TenantCreditHistoryRecord {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct BillingCreditHistoryRecord {
+    pub id: i64,
+    pub tenant: String,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub note: Option<String>,
+    pub payment_ref: Option<String>,
+    pub added_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct BillingRateHistoryRecord {
+    pub id: i64,
+    pub usage_type: String,
+    pub rate_cents_per_hour: i32,
+    pub effective_from: DateTime<Utc>,
+    pub effective_to: Option<DateTime<Utc>>,
+    pub tenant: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub added_by: Option<String>,
+}
+
 impl SqlAudit {
     pub async fn New(sqlSvcAddr: &str) -> Result<Self> {
         let url_parts = url::Url::parse(sqlSvcAddr).expect("Failed to parse URL");
@@ -832,6 +856,86 @@ impl SqlAudit {
         Ok(row.0 as i64)
     }
 
+    /// Add a billing rate row.
+    pub async fn AddBillingRate(
+        &self,
+        usage_type: &str,
+        rate_cents_per_hour: i32,
+        effective_from: DateTime<Utc>,
+        effective_to: Option<DateTime<Utc>>,
+        tenant: Option<&str>,
+        added_by: Option<&str>,
+    ) -> Result<i64> {
+        let query = r#"
+            INSERT INTO BillingRate (usage_type, rate_cents_per_hour, effective_from, effective_to, tenant, added_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        "#;
+        let row: (i32,) = sqlx::query_as(query)
+            .bind(usage_type)
+            .bind(rate_cents_per_hour)
+            .bind(effective_from)
+            .bind(effective_to)
+            .bind(tenant)
+            .bind(added_by)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.0 as i64)
+    }
+
+    /// List billing rate history with optional scope/tenant filtering and pagination.
+    pub async fn ListBillingRateHistory(
+        &self,
+        scope: &str,
+        tenant: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<BillingRateHistoryRecord>, i64)> {
+        let records: Vec<BillingRateHistoryRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                id::bigint as id,
+                usage_type,
+                rate_cents_per_hour,
+                effective_from,
+                effective_to,
+                tenant,
+                created_at,
+                added_by
+            FROM BillingRate
+            WHERE
+                ($1 = 'all')
+                OR ($1 = 'global' AND tenant IS NULL)
+                OR ($1 = 'tenant' AND tenant IS NOT NULL AND ($2 IS NULL OR tenant = $2))
+            ORDER BY created_at DESC, id DESC
+            LIMIT $3 OFFSET $4
+            "#,
+        )
+        .bind(scope)
+        .bind(tenant)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM BillingRate
+            WHERE
+                ($1 = 'all')
+                OR ($1 = 'global' AND tenant IS NULL)
+                OR ($1 = 'tenant' AND tenant IS NOT NULL AND ($2 IS NULL OR tenant = $2))
+            "#,
+        )
+        .bind(scope)
+        .bind(tenant)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((records, total.0))
+    }
+
     /// List tenant credit history with pagination
     pub async fn ListTenantCreditHistory(
         &self,
@@ -866,6 +970,50 @@ impl SqlAudit {
             SELECT COUNT(*)::bigint
             FROM TenantCreditHistory
             WHERE tenant = $1
+            "#,
+        )
+        .bind(tenant)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((records, total.0))
+    }
+
+    /// List credit history across all tenants (or a specific tenant when provided).
+    pub async fn ListBillingCreditHistory(
+        &self,
+        tenant: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<BillingCreditHistoryRecord>, i64)> {
+        let records: Vec<BillingCreditHistoryRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                id::bigint as id,
+                tenant,
+                amount_cents,
+                currency,
+                note,
+                payment_ref,
+                added_by,
+                created_at
+            FROM TenantCreditHistory
+            WHERE ($1::varchar IS NULL OR tenant = $1)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(tenant)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM TenantCreditHistory
+            WHERE ($1::varchar IS NULL OR tenant = $1)
             "#,
         )
         .bind(tenant)
@@ -969,14 +1117,16 @@ impl SqlAudit {
         &self,
         tenant: &str,
     ) -> Result<(i64, i64, i64, bool, i64, String, i64, i64, i64, i64)> {
-        let row: (i64, i64, i64, bool, String) = sqlx::query_as(
+        let row: (i64, i64, i64, bool, String, i64, i64) = sqlx::query_as(
             r#"
             SELECT
                 COALESCE((SELECT SUM(amount_cents) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
                 COALESCE(q.used_cents, 0)::bigint AS used_cents,
                 COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
                 COALESCE(q.quota_exceeded, false) AS quota_exceeded,
-                COALESCE(q.currency, 'USD') AS currency
+                COALESCE(q.currency, 'USD') AS currency,
+                COALESCE(q.inference_used_cents, 0)::bigint AS inference_used_cents,
+                COALESCE(q.standby_used_cents, 0)::bigint AS standby_used_cents
             FROM TenantQuota q
             WHERE q.tenant = $1
             "#,
@@ -984,21 +1134,22 @@ impl SqlAudit {
             .bind(tenant)
             .fetch_optional(&self.pool)
             .await?
-            .unwrap_or((0, 0, 0, false, "USD".to_string()));
+            .unwrap_or((0, 0, 0, false, "USD".to_string(), 0, 0));
 
         let total_credits_cents = row.0;
         let used_cents = row.1;
         let threshold_cents = row.2;
         let quota_exceeded = row.3;
         let currency = row.4;
+        let inference_used_cents = row.5;
+        let standby_used_cents = row.6;
         let balance_cents = total_credits_cents - used_cents;
 
-        // Query inference/standby breakdown from UsageHourly (all-time for this tenant)
-        let period: (i64, i64, i64, i64) = sqlx::query_as(
+        // Keep cost split aligned with used_cents from TenantQuota.
+        // Hours are still sourced from UsageHourly for display only.
+        let period_ms: (i64, i64) = sqlx::query_as(
             r#"
             SELECT
-                COALESCE(SUM(inference_cents), 0)::bigint,
-                COALESCE(SUM(standby_cents), 0)::bigint,
                 COALESCE(SUM(inference_ms), 0)::bigint,
                 COALESCE(SUM(standby_ms), 0)::bigint
             FROM UsageHourly
@@ -1008,10 +1159,10 @@ impl SqlAudit {
             .bind(tenant)
             .fetch_one(&self.pool)
             .await
-            .unwrap_or((0, 0, 0, 0));
+            .unwrap_or((0, 0));
 
         Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency,
-            period.0, period.1, period.2, period.3))
+            inference_used_cents, standby_used_cents, period_ms.0, period_ms.1))
     }
 
     /// Get tenant hourly usage for the last N hours (v4: returns cost + time breakdown)
@@ -1361,47 +1512,49 @@ impl SqlAudit {
                     funcname,
                     namespace,
                     date_trunc('hour', tick_time) AS hour,
-                    SUM(interval_ms::bigint * gpu_count::bigint)::bigint AS usage_ms,
+                    -- Inference GPU-time (standby is filtered out in tick_with_rate)
+                    SUM(interval_ms::bigint * gpu_count::bigint)::bigint AS inference_ms,
                     (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents
                 FROM tick_with_rate
                 GROUP BY funcname, namespace, date_trunc('hour', tick_time)
             ),
             total AS (
                 SELECT
-                    COALESCE(SUM(usage_ms), 0)::bigint AS total_ms,
+                    COALESCE(SUM(inference_ms), 0)::bigint AS total_ms,
                     COALESCE(SUM(charge_cents), 0)::bigint AS total_cents
                 FROM period_usage
             ),
             top_model AS (
-                SELECT funcname, SUM(usage_ms)::bigint AS usage_ms
+                SELECT funcname, SUM(inference_ms)::bigint AS inference_ms
                 FROM period_usage
                 GROUP BY funcname
-                ORDER BY usage_ms DESC
+                -- Rank by inference GPU usage first (higher is better).
+                ORDER BY inference_ms DESC, funcname ASC
                 LIMIT 1
             ),
             top_namespace AS (
-                SELECT namespace, SUM(usage_ms)::bigint AS usage_ms
+                SELECT namespace, SUM(inference_ms)::bigint AS inference_ms
                 FROM period_usage
                 GROUP BY namespace
-                ORDER BY usage_ms DESC
+                ORDER BY inference_ms DESC, namespace ASC
                 LIMIT 1
             ),
             peak_hour AS (
-                SELECT hour, SUM(usage_ms)::bigint AS usage_ms
+                SELECT hour, SUM(inference_ms)::bigint AS inference_ms
                 FROM period_usage
                 GROUP BY hour
-                ORDER BY usage_ms DESC
+                ORDER BY inference_ms DESC, hour ASC
                 LIMIT 1
             )
             SELECT
                 t.total_ms,
                 t.total_cents,
                 tm.funcname AS top_model_name,
-                COALESCE(tm.usage_ms, 0)::bigint AS top_model_ms,
+                COALESCE(tm.inference_ms, 0)::bigint AS top_model_ms,
                 tn.namespace AS top_namespace_name,
-                COALESCE(tn.usage_ms, 0)::bigint AS top_namespace_ms,
+                COALESCE(tn.inference_ms, 0)::bigint AS top_namespace_ms,
                 ph.hour AS peak_hour,
-                COALESCE(ph.usage_ms, 0)::bigint AS peak_hour_ms
+                COALESCE(ph.inference_ms, 0)::bigint AS peak_hour_ms
             FROM total t
             LEFT JOIN top_model tm ON true
             LEFT JOIN top_namespace tn ON true
