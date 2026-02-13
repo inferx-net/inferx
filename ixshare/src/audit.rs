@@ -1146,13 +1146,13 @@ impl SqlAudit {
         let balance_cents = total_credits_cents - used_cents;
 
         // Keep cost split aligned with used_cents from TenantQuota.
-        // Hours are still sourced from UsageHourly for display only.
+        // Hours are sourced from UsageHourlyByFunc (rolled up across all functions).
         let period_ms: (i64, i64) = sqlx::query_as(
             r#"
             SELECT
                 COALESCE(SUM(inference_ms), 0)::bigint,
                 COALESCE(SUM(standby_ms), 0)::bigint
-            FROM UsageHourly
+            FROM UsageHourlyByFunc
             WHERE tenant = $1
             "#,
         )
@@ -1176,18 +1176,90 @@ impl SqlAudit {
             r#"
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
-                inference_ms,
-                standby_ms
-            FROM UsageHourly
+                SUM(charge_cents)::bigint AS charge_cents,
+                SUM(inference_cents)::bigint AS inference_cents,
+                SUM(standby_cents)::bigint AS standby_cents,
+                SUM(inference_ms)::bigint AS inference_ms,
+                SUM(standby_ms)::bigint AS standby_ms
+            FROM UsageHourlyByFunc
             WHERE tenant = $1
               AND hour >= NOW() - ($2 || ' hours')::interval
+            GROUP BY hour
             ORDER BY hour ASC
             "#,
         )
             .bind(tenant)
+            .bind(hours)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(records)
+    }
+
+    /// Get namespace hourly usage for a given tenant + namespace
+    /// Returns: (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    pub async fn GetNamespaceHourlyUsage(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        hours: i32,
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                hour,
+                SUM(charge_cents)::bigint AS charge_cents,
+                SUM(inference_cents)::bigint AS inference_cents,
+                SUM(standby_cents)::bigint AS standby_cents,
+                SUM(inference_ms)::bigint AS inference_ms,
+                SUM(standby_ms)::bigint AS standby_ms
+            FROM UsageHourlyByFunc
+            WHERE tenant = $1
+              AND namespace = $2
+              AND hour >= NOW() - ($3 || ' hours')::interval
+            GROUP BY hour
+            ORDER BY hour ASC
+            "#,
+        )
+            .bind(tenant)
+            .bind(namespace)
+            .bind(hours)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(records)
+    }
+
+    /// Get func hourly usage for a given tenant + namespace + funcname
+    /// Returns: (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    pub async fn GetFuncHourlyUsage(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        hours: i32,
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                hour,
+                SUM(charge_cents)::bigint AS charge_cents,
+                SUM(inference_cents)::bigint AS inference_cents,
+                SUM(standby_cents)::bigint AS standby_cents,
+                SUM(inference_ms)::bigint AS inference_ms,
+                SUM(standby_ms)::bigint AS standby_ms
+            FROM UsageHourlyByFunc
+            WHERE tenant = $1
+              AND namespace = $2
+              AND funcname = $3
+              AND hour >= NOW() - ($4 || ' hours')::interval
+            GROUP BY hour
+            ORDER BY hour ASC
+            "#,
+        )
+            .bind(tenant)
+            .bind(namespace)
+            .bind(funcname)
             .bind(hours)
             .fetch_all(&self.pool)
             .await?;
@@ -1215,17 +1287,18 @@ impl SqlAudit {
             historical AS (
                 SELECT
                     h.hour,
-                    h.charge_cents,
-                    h.inference_cents,
-                    h.standby_cents,
-                    h.inference_ms,
-                    h.standby_ms
-                FROM UsageHourly h
+                    SUM(h.charge_cents)::bigint AS charge_cents,
+                    SUM(h.inference_cents)::bigint AS inference_cents,
+                    SUM(h.standby_cents)::bigint AS standby_cents,
+                    SUM(h.inference_ms)::bigint AS inference_ms,
+                    SUM(h.standby_ms)::bigint AS standby_ms
+                FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
                   AND h.hour >= p.start_hour
                   AND h.hour <= p.end_hour
                   AND h.hour < p.recent_start_hour
+                GROUP BY h.hour
             ),
             recent_ticks AS (
                 SELECT
@@ -1303,26 +1376,54 @@ impl SqlAudit {
         // Query with Top-N and "Other" aggregation, with cost from shared rate lookup function
         let rows: Vec<(String, Option<String>, Option<String>, i64, i64, Option<i64>)> = sqlx::query_as(
             r#"
-            WITH tick_with_rate AS (
+            WITH
+            params AS (
+                SELECT
+                    $1::varchar AS tenant,
+                    NOW() - ($2 || ' hours')::interval AS cutoff,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT h.funcname, h.namespace, h.inference_ms, h.inference_cents
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.tenant = p.tenant
+                  AND h.hour >= p.cutoff
+                  AND h.hour < p.recent_start
+            ),
+            recent_ticks AS (
                 SELECT
                     t.funcname,
                     t.namespace,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
+                    t.gpu_count::numeric * t.interval_ms::numeric
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric
+                        AS raw_cost
                 FROM UsageTick t
-                WHERE t.tenant = $1
+                JOIN params p ON true
+                WHERE t.tenant = p.tenant
                   AND t.usage_type != 'standby'
-                  AND t.tick_time >= NOW() - ($2 || ' hours')::interval
+                  AND t.tick_time >= GREATEST(p.cutoff, p.recent_start)
+                  AND t.tick_time < NOW()
+            ),
+            combined AS (
+                SELECT funcname, namespace, inference_ms, inference_cents
+                FROM historical
+                UNION ALL
+                SELECT funcname, namespace,
+                       SUM(gpu_ms)::bigint AS inference_ms,
+                       (SUM(raw_cost) / 3600000)::bigint AS inference_cents
+                FROM recent_ticks
+                GROUP BY funcname, namespace
             ),
             ranked AS (
                 SELECT
                     funcname,
                     namespace,
-                    SUM(interval_ms::bigint * gpu_count::bigint)::bigint AS usage_ms,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents,
-                    ROW_NUMBER() OVER (ORDER BY SUM(interval_ms::bigint * gpu_count::bigint) DESC) AS rn
-                FROM tick_with_rate
+                    SUM(inference_ms)::bigint AS usage_ms,
+                    SUM(inference_cents)::bigint AS charge_cents,
+                    ROW_NUMBER() OVER (ORDER BY SUM(inference_ms) DESC) AS rn
+                FROM combined
                 GROUP BY funcname, namespace
             ),
             top_n AS (
@@ -1400,24 +1501,52 @@ impl SqlAudit {
     ) -> Result<(Vec<(String, i64, i64)>, i64, i64, i64, i64, i64)> {
         let rows: Vec<(String, Option<String>, i64, i64, Option<i64>)> = sqlx::query_as(
             r#"
-            WITH tick_with_rate AS (
+            WITH
+            params AS (
+                SELECT
+                    $1::varchar AS tenant,
+                    NOW() - ($2 || ' hours')::interval AS cutoff,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT h.namespace, h.inference_ms, h.inference_cents
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.tenant = p.tenant
+                  AND h.hour >= p.cutoff
+                  AND h.hour < p.recent_start
+            ),
+            recent_ticks AS (
                 SELECT
                     t.namespace,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
+                    t.gpu_count::numeric * t.interval_ms::numeric
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric
+                        AS raw_cost
                 FROM UsageTick t
-                WHERE t.tenant = $1
+                JOIN params p ON true
+                WHERE t.tenant = p.tenant
                   AND t.usage_type != 'standby'
-                  AND t.tick_time >= NOW() - ($2 || ' hours')::interval
+                  AND t.tick_time >= GREATEST(p.cutoff, p.recent_start)
+                  AND t.tick_time < NOW()
+            ),
+            combined AS (
+                SELECT namespace, inference_ms, inference_cents
+                FROM historical
+                UNION ALL
+                SELECT namespace,
+                       SUM(gpu_ms)::bigint AS inference_ms,
+                       (SUM(raw_cost) / 3600000)::bigint AS inference_cents
+                FROM recent_ticks
+                GROUP BY namespace
             ),
             ranked AS (
                 SELECT
                     namespace,
-                    SUM(interval_ms::bigint * gpu_count::bigint)::bigint AS usage_ms,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents,
-                    ROW_NUMBER() OVER (ORDER BY SUM(interval_ms::bigint * gpu_count::bigint) DESC) AS rn
-                FROM tick_with_rate
+                    SUM(inference_ms)::bigint AS usage_ms,
+                    SUM(inference_cents)::bigint AS charge_cents,
+                    ROW_NUMBER() OVER (ORDER BY SUM(inference_ms) DESC) AS rn
+                FROM combined
                 GROUP BY namespace
             ),
             top_n AS (
@@ -1494,29 +1623,56 @@ impl SqlAudit {
     ) -> Result<(i64, i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64)> {
         let row: (i64, i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64) = sqlx::query_as(
             r#"
-            WITH tick_with_rate AS (
+            WITH
+            params AS (
+                SELECT
+                    $1::varchar AS tenant,
+                    NOW() - ($2 || ' hours')::interval AS cutoff,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT h.funcname, h.namespace, h.hour, h.inference_ms, h.inference_cents
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.tenant = p.tenant
+                  AND h.hour >= p.cutoff
+                  AND h.hour < p.recent_start
+            ),
+            recent_ticks AS (
                 SELECT
                     t.funcname,
                     t.namespace,
-                    t.tick_time,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    date_trunc('hour', t.tick_time) AS hour,
+                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
+                    t.gpu_count::numeric * t.interval_ms::numeric
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric
+                        AS raw_cost
                 FROM UsageTick t
-                WHERE t.tenant = $1
+                JOIN params p ON true
+                WHERE t.tenant = p.tenant
                   AND t.usage_type != 'standby'
-                  AND t.tick_time >= NOW() - ($2 || ' hours')::interval
+                  AND t.tick_time >= GREATEST(p.cutoff, p.recent_start)
+                  AND t.tick_time < NOW()
+            ),
+            combined AS (
+                SELECT funcname, namespace, hour, inference_ms, inference_cents
+                FROM historical
+                UNION ALL
+                SELECT funcname, namespace, hour,
+                       SUM(gpu_ms)::bigint AS inference_ms,
+                       (SUM(raw_cost) / 3600000)::bigint AS inference_cents
+                FROM recent_ticks
+                GROUP BY funcname, namespace, hour
             ),
             period_usage AS (
                 SELECT
                     funcname,
                     namespace,
-                    date_trunc('hour', tick_time) AS hour,
-                    -- Inference GPU-time (standby is filtered out in tick_with_rate)
-                    SUM(interval_ms::bigint * gpu_count::bigint)::bigint AS inference_ms,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents
-                FROM tick_with_rate
-                GROUP BY funcname, namespace, date_trunc('hour', tick_time)
+                    hour,
+                    SUM(inference_ms)::bigint AS inference_ms,
+                    SUM(inference_cents)::bigint AS charge_cents
+                FROM combined
+                GROUP BY funcname, namespace, hour
             ),
             total AS (
                 SELECT

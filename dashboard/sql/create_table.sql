@@ -160,23 +160,42 @@ CREATE TABLE TenantCreditHistory (
 
 CREATE INDEX idx_credit_tenant ON TenantCreditHistory(tenant, created_at);
 
--- Usage Hourly - pre-aggregated for dashboard queries
+-- Usage Hourly - tenant-level aggregation (commented out, kept for future reference)
+-- Replaced by UsageHourlyByFunc which supports per-function analytics.
 -- DROP TABLE UsageHourly;
-CREATE TABLE UsageHourly (
+-- CREATE TABLE UsageHourly (
+--     id               SERIAL PRIMARY KEY,
+--     tenant           VARCHAR NOT NULL,
+--     hour             TIMESTAMPTZ NOT NULL,
+--     charge_cents     BIGINT NOT NULL,
+--     inference_cents  BIGINT NOT NULL DEFAULT 0,
+--     standby_cents    BIGINT NOT NULL DEFAULT 0,
+--     inference_ms     BIGINT NOT NULL DEFAULT 0,
+--     standby_ms       BIGINT NOT NULL DEFAULT 0,
+--     UNIQUE(tenant, hour)
+-- );
+-- CREATE INDEX idx_hourly_tenant ON UsageHourly(tenant, hour);
+
+-- Per-function hourly aggregation — replaces UsageHourly for all queries
+-- DROP TABLE UsageHourlyByFunc;
+CREATE TABLE UsageHourlyByFunc (
     id               SERIAL PRIMARY KEY,
     tenant           VARCHAR NOT NULL,
+    namespace        VARCHAR NOT NULL,
+    funcname         VARCHAR NOT NULL,
+    fprevision       BIGINT NOT NULL,
     hour             TIMESTAMPTZ NOT NULL,
-    -- Cost tracking (cents)
     charge_cents     BIGINT NOT NULL,
     inference_cents  BIGINT NOT NULL DEFAULT 0,
     standby_cents    BIGINT NOT NULL DEFAULT 0,
-    -- Time tracking (milliseconds) for display as GPU-hours
     inference_ms     BIGINT NOT NULL DEFAULT 0,
     standby_ms       BIGINT NOT NULL DEFAULT 0,
-    UNIQUE(tenant, hour)
+    UNIQUE(tenant, namespace, funcname, fprevision, hour)
 );
 
-CREATE INDEX idx_hourly_tenant ON UsageHourly(tenant, hour);
+CREATE INDEX idx_hourly_func_tenant ON UsageHourlyByFunc(tenant, hour);
+CREATE INDEX idx_hourly_func_ns ON UsageHourlyByFunc(tenant, namespace, hour);
+CREATE INDEX idx_hourly_func_model ON UsageHourlyByFunc(tenant, namespace, funcname, hour);
 
 -- Billing Rate - configurable rates with effective dates
 -- Enables rate changes and per-tenant pricing without code changes

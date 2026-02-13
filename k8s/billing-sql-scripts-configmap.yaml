@@ -172,54 +172,54 @@ data:
 
     echo "Quota check completed."
 
+  # -- Old hourly-aggregate.sql targeting UsageHourly (kept for reference):
+  # -- INSERT INTO UsageHourly (tenant, hour, ...) SELECT ... FROM UsageTick
+  # -- GROUP BY tenant, hour ON CONFLICT (tenant, hour) DO UPDATE SET ...
+
   hourly-aggregate.sql: |
-    -- Aggregate ticks from the previous hour into UsageHourly
-    -- Run at minute 5 to ensure all ticks from the previous hour are recorded
-    -- Rate lookup is centralized in GetBillingRateCents(...)
+    -- Aggregate ticks from the last 3 hours into UsageHourlyByFunc
+    -- Uses a 3-hour window for self-healing: if a cron run is missed,
+    -- the next run will fill in the gap. ON CONFLICT makes this idempotent.
     WITH tick_with_rate AS (
       SELECT
         t.tenant,
+        t.namespace,
+        t.funcname,
+        t.fprevision,
         t.tick_time,
         t.interval_ms,
         t.gpu_count,
         t.usage_type,
         GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
       FROM UsageTick t
-      WHERE t.tick_time >= date_trunc('hour', NOW() - INTERVAL '1 hour')
+      WHERE t.tick_time >= date_trunc('hour', NOW() - INTERVAL '3 hours')
         AND t.tick_time < date_trunc('hour', NOW())
     )
-    INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    INSERT INTO UsageHourlyByFunc
+      (tenant, namespace, funcname, fprevision, hour,
+       charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
     SELECT
       t.tenant,
+      t.namespace,
+      t.funcname,
+      t.fprevision,
       date_trunc('hour', t.tick_time) as hour,
-      -- Total charge in cents (sum raw values first, divide once to minimize truncation)
       (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
-        / 3600000)::bigint as charge_cents,
-      -- Inference charge (request + snapshot)
+        / 3600000)::bigint,
       (SUM(CASE WHEN t.usage_type != 'standby'
-        THEN t.gpu_count::numeric
-          * t.interval_ms::numeric
-          * t.rate_cents_per_hour
-        ELSE 0
-      END)
-        / 3600000)::bigint as inference_cents,
-      -- Standby charge
+        THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
+        ELSE 0 END) / 3600000)::bigint,
       (SUM(CASE WHEN t.usage_type = 'standby'
-        THEN t.gpu_count::numeric
-          * t.interval_ms::numeric
-          * t.rate_cents_per_hour
-        ELSE 0
-      END)
-        / 3600000)::bigint as standby_cents,
-      -- Inference GPU-time in ms (interval * gpu_count for GPU-hours display)
+        THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
+        ELSE 0 END) / 3600000)::bigint,
       SUM(CASE WHEN t.usage_type != 'standby'
-        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as inference_ms,
-      -- Standby GPU-time in ms (interval * gpu_count for GPU-hours display)
+        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END),
       SUM(CASE WHEN t.usage_type = 'standby'
-        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as standby_ms
+        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)
     FROM tick_with_rate t
-    GROUP BY t.tenant, date_trunc('hour', t.tick_time)
-    ON CONFLICT (tenant, hour)
+    GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision,
+             date_trunc('hour', t.tick_time)
+    ON CONFLICT (tenant, namespace, funcname, fprevision, hour)
     DO UPDATE SET
       charge_cents = EXCLUDED.charge_cents,
       inference_cents = EXCLUDED.inference_cents,
@@ -227,10 +227,28 @@ data:
       inference_ms = EXCLUDED.inference_ms,
       standby_ms = EXCLUDED.standby_ms;
 
-  hourly-aggregate-range.sql: |
-    -- Backfill UsageHourly for a custom [start_hour, end_hour) UTC range.
+  # -- Old hourly-aggregate-range.sql targeting UsageHourly (commented out):
+  # hourly-aggregate-range.sql: |
+  #   -- Backfill UsageHourly for a custom [start_hour, end_hour) UTC range.
+  #   -- psql -v start_hour='...' -v end_hour='...' -f /scripts/hourly-aggregate-range.sql
+  #   WITH params AS (
+  #     SELECT date_trunc('hour', :'start_hour'::timestamptz) AS start_hour,
+  #            date_trunc('hour', :'end_hour'::timestamptz) AS end_hour
+  #   ), tick_with_rate AS (
+  #     SELECT t.tenant, t.tick_time, t.interval_ms, t.gpu_count, t.usage_type,
+  #            GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+  #     FROM UsageTick t JOIN params p ON TRUE
+  #     WHERE t.tick_time >= p.start_hour AND t.tick_time < p.end_hour
+  #   )
+  #   INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+  #   SELECT t.tenant, date_trunc('hour', t.tick_time), ...
+  #   GROUP BY t.tenant, date_trunc('hour', t.tick_time)
+  #   ON CONFLICT (tenant, hour) DO UPDATE SET ...
+
+  hourly-aggregate-by-func-range.sql: |
+    -- Backfill UsageHourlyByFunc for a custom [start_hour, end_hour) UTC range.
     -- Example:
-    -- psql -v start_hour='2026-02-01T00:00:00Z' -v end_hour='2026-02-09T00:00:00Z' -f /scripts/hourly-aggregate-range.sql
+    -- psql -v start_hour='2026-02-01T00:00:00Z' -v end_hour='2026-02-09T00:00:00Z' -f /scripts/hourly-aggregate-by-func-range.sql
     -- Uses the same billing-rate lookup + upsert logic as hourly-aggregate.sql.
     WITH
     params AS (
@@ -241,6 +259,9 @@ data:
     tick_with_rate AS (
       SELECT
         t.tenant,
+        t.namespace,
+        t.funcname,
+        t.fprevision,
         t.tick_time,
         t.interval_ms,
         t.gpu_count,
@@ -252,33 +273,31 @@ data:
         AND t.tick_time < p.end_hour
     ),
     upserted AS (
-      INSERT INTO UsageHourly (tenant, hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+      INSERT INTO UsageHourlyByFunc
+        (tenant, namespace, funcname, fprevision, hour,
+         charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
       SELECT
         t.tenant,
+        t.namespace,
+        t.funcname,
+        t.fprevision,
         date_trunc('hour', t.tick_time) as hour,
         (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
-          / 3600000)::bigint as charge_cents,
+          / 3600000)::bigint,
         (SUM(CASE WHEN t.usage_type != 'standby'
-          THEN t.gpu_count::numeric
-            * t.interval_ms::numeric
-            * t.rate_cents_per_hour
-          ELSE 0
-        END)
-          / 3600000)::bigint as inference_cents,
+          THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
+          ELSE 0 END) / 3600000)::bigint,
         (SUM(CASE WHEN t.usage_type = 'standby'
-          THEN t.gpu_count::numeric
-            * t.interval_ms::numeric
-            * t.rate_cents_per_hour
-          ELSE 0
-        END)
-          / 3600000)::bigint as standby_cents,
+          THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
+          ELSE 0 END) / 3600000)::bigint,
         SUM(CASE WHEN t.usage_type != 'standby'
-          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as inference_ms,
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END),
         SUM(CASE WHEN t.usage_type = 'standby'
-          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END) as standby_ms
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)
       FROM tick_with_rate t
-      GROUP BY t.tenant, date_trunc('hour', t.tick_time)
-      ON CONFLICT (tenant, hour)
+      GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision,
+               date_trunc('hour', t.tick_time)
+      ON CONFLICT (tenant, namespace, funcname, fprevision, hour)
       DO UPDATE SET
         charge_cents = EXCLUDED.charge_cents,
         inference_cents = EXCLUDED.inference_cents,

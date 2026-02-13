@@ -79,6 +79,7 @@ spec:
                 - /bin/sh
                 - -c
                 - |
+                  set -e
                   psql -f /scripts/hourly-aggregate.sql
               env:
                 - name: PGHOST
