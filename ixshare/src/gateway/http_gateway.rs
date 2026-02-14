@@ -2781,43 +2781,46 @@ async fn GetTenantUsageByModel(
     }
 
     let hours = params.hours.unwrap_or(24).min(720).max(1);
-    let limit = params.limit.unwrap_or(10).min(50).max(1);
+    let _deprecated_limit = params.limit;
 
-    match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours, limit).await {
-        Ok((top_items, other, total)) => {
-            let usage: Vec<ModelUsageItem> = top_items
+    match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours).await {
+        Ok((items, total)) => {
+            let usage: Vec<ModelUsageItem> = items
                 .into_iter()
-                .map(|(funcname, namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)| ModelUsageItem {
-                    funcname,
-                    namespace,
-                    inference_ms,
-                    standby_ms,
-                    usage_ms,
-                    inference_gpu_hours: inference_ms as f64 / 3600000.0,
-                    standby_gpu_hours: standby_ms as f64 / 3600000.0,
-                    gpu_hours: usage_ms as f64 / 3600000.0,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents,
+                .map(|(funcname, namespace, inference_ms, standby_ms, inference_cents, standby_cents, charge_cents)| {
+                    let usage_ms = inference_ms + standby_ms;
+                    ModelUsageItem {
+                        funcname,
+                        namespace,
+                        inference_ms,
+                        standby_ms,
+                        usage_ms,
+                        inference_gpu_hours: inference_ms as f64 / 3600000.0,
+                        standby_gpu_hours: standby_ms as f64 / 3600000.0,
+                        gpu_hours: usage_ms as f64 / 3600000.0,
+                        inference_cents,
+                        standby_cents,
+                        charge_cents,
+                    }
                 })
                 .collect();
 
-            let (other_count, other_inference_ms, other_standby_ms, other_usage_ms, other_inference_cents, other_standby_cents, other_cents) = other;
-            let (total_inference_ms, total_standby_ms, total_ms, total_inference_cents, total_standby_cents, total_cents) = total;
+            let (total_inference_ms, total_standby_ms, total_inference_cents, total_standby_cents, total_cents) = total;
+            let total_ms = total_inference_ms + total_standby_ms;
 
             let resp_body = UsageByModelResponse {
                 usage,
                 other: OtherBucket {
-                    count: other_count,
-                    inference_ms: other_inference_ms,
-                    standby_ms: other_standby_ms,
-                    usage_ms: other_usage_ms,
-                    inference_gpu_hours: other_inference_ms as f64 / 3600000.0,
-                    standby_gpu_hours: other_standby_ms as f64 / 3600000.0,
-                    gpu_hours: other_usage_ms as f64 / 3600000.0,
-                    inference_cents: other_inference_cents,
-                    standby_cents: other_standby_cents,
-                    charge_cents: other_cents,
+                    count: 0,
+                    inference_ms: 0,
+                    standby_ms: 0,
+                    usage_ms: 0,
+                    inference_gpu_hours: 0.0,
+                    standby_gpu_hours: 0.0,
+                    gpu_hours: 0.0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    charge_cents: 0,
                 },
                 inference_ms: total_inference_ms,
                 standby_ms: total_standby_ms,
@@ -2999,42 +3002,45 @@ async fn GetTenantUsageByNamespace(
     }
 
     let hours = params.hours.unwrap_or(24).min(720).max(1);
-    let limit = params.limit.unwrap_or(10).min(50).max(1);
+    let _deprecated_limit = params.limit;
 
-    match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours, limit).await {
-        Ok((top_items, other, total)) => {
-            let usage: Vec<NamespaceUsageItem> = top_items
+    match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours).await {
+        Ok((items, total)) => {
+            let usage: Vec<NamespaceUsageItem> = items
                 .into_iter()
-                .map(|(namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)| NamespaceUsageItem {
-                    namespace,
-                    inference_ms,
-                    standby_ms,
-                    usage_ms,
-                    inference_gpu_hours: inference_ms as f64 / 3600000.0,
-                    standby_gpu_hours: standby_ms as f64 / 3600000.0,
-                    gpu_hours: usage_ms as f64 / 3600000.0,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents,
+                .map(|(namespace, inference_ms, standby_ms, inference_cents, standby_cents, charge_cents)| {
+                    let usage_ms = inference_ms + standby_ms;
+                    NamespaceUsageItem {
+                        namespace,
+                        inference_ms,
+                        standby_ms,
+                        usage_ms,
+                        inference_gpu_hours: inference_ms as f64 / 3600000.0,
+                        standby_gpu_hours: standby_ms as f64 / 3600000.0,
+                        gpu_hours: usage_ms as f64 / 3600000.0,
+                        inference_cents,
+                        standby_cents,
+                        charge_cents,
+                    }
                 })
                 .collect();
 
-            let (other_count, other_inference_ms, other_standby_ms, other_usage_ms, other_inference_cents, other_standby_cents, other_cents) = other;
-            let (total_inference_ms, total_standby_ms, total_ms, total_inference_cents, total_standby_cents, total_cents) = total;
+            let (total_inference_ms, total_standby_ms, total_inference_cents, total_standby_cents, total_cents) = total;
+            let total_ms = total_inference_ms + total_standby_ms;
 
             let resp_body = UsageByNamespaceResponse {
                 usage,
                 other: OtherBucket {
-                    count: other_count,
-                    inference_ms: other_inference_ms,
-                    standby_ms: other_standby_ms,
-                    usage_ms: other_usage_ms,
-                    inference_gpu_hours: other_inference_ms as f64 / 3600000.0,
-                    standby_gpu_hours: other_standby_ms as f64 / 3600000.0,
-                    gpu_hours: other_usage_ms as f64 / 3600000.0,
-                    inference_cents: other_inference_cents,
-                    standby_cents: other_standby_cents,
-                    charge_cents: other_cents,
+                    count: 0,
+                    inference_ms: 0,
+                    standby_ms: 0,
+                    usage_ms: 0,
+                    inference_gpu_hours: 0.0,
+                    standby_gpu_hours: 0.0,
+                    gpu_hours: 0.0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    charge_cents: 0,
                 },
                 inference_ms: total_inference_ms,
                 standby_ms: total_standby_ms,

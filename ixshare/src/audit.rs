@@ -1578,24 +1578,21 @@ impl SqlAudit {
         Ok(records)
     }
 
-    /// Get tenant usage by model with Top-N aggregation.
+    /// Get tenant usage by model as a full list sorted by total cost (charge_cents), descending.
     /// Returns:
     /// (
-    ///   top_items[(funcname, namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)],
-    ///   other(count, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents),
-    ///   total(inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents),
+    ///   items[(funcname, namespace, inference_ms, standby_ms, inference_cents, standby_cents, charge_cents)],
+    ///   total(inference_ms, standby_ms, inference_cents, standby_cents, charge_cents),
     /// )
     pub async fn GetTenantUsageByModel(
         &self,
         tenant: &str,
         hours: i32,
-        limit: i32,
     ) -> Result<(
-        Vec<(String, String, i64, i64, i64, i64, i64, i64)>,
-        (i64, i64, i64, i64, i64, i64, i64),
-        (i64, i64, i64, i64, i64, i64),
+        Vec<(String, String, i64, i64, i64, i64, i64)>,
+        (i64, i64, i64, i64, i64),
     )> {
-        let rows: Vec<(String, Option<String>, Option<String>, i64, i64, i64, i64, i64, i64, Option<i64>)> = sqlx::query_as(
+        let items: Vec<(String, String, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1610,7 +1607,6 @@ impl SqlAudit {
                     h.namespace,
                     h.inference_ms,
                     h.standby_ms,
-                    (h.inference_ms + h.standby_ms)::bigint AS usage_ms,
                     h.inference_cents,
                     h.standby_cents,
                     h.charge_cents
@@ -1639,7 +1635,6 @@ impl SqlAudit {
                     namespace,
                     inference_ms,
                     standby_ms,
-                    usage_ms,
                     inference_cents,
                     standby_cents,
                     charge_cents
@@ -1650,7 +1645,6 @@ impl SqlAudit {
                     namespace,
                     SUM(CASE WHEN usage_type != 'standby' THEN gpu_ms ELSE 0 END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby' THEN gpu_ms ELSE 0 END)::bigint AS standby_ms,
-                    SUM(gpu_ms)::bigint AS usage_ms,
                     (SUM(CASE WHEN usage_type != 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
@@ -1663,142 +1657,66 @@ impl SqlAudit {
                 FROM recent_ticks
                 GROUP BY funcname, namespace
             ),
-            ranked AS (
+            grouped AS (
                 SELECT
                     funcname,
                     namespace,
                     SUM(inference_ms)::bigint AS inference_ms,
                     SUM(standby_ms)::bigint AS standby_ms,
-                    SUM(usage_ms)::bigint AS usage_ms,
                     SUM(inference_cents)::bigint AS inference_cents,
                     SUM(standby_cents)::bigint AS standby_cents,
-                    SUM(charge_cents)::bigint AS charge_cents,
-                    ROW_NUMBER() OVER (ORDER BY SUM(usage_ms) DESC) AS rn
+                    SUM(charge_cents)::bigint AS charge_cents
                 FROM combined
                 GROUP BY funcname, namespace
-            ),
-            top_n AS (
-                SELECT
-                    funcname,
-                    namespace,
-                    inference_ms,
-                    standby_ms,
-                    usage_ms,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents
-                FROM ranked
-                WHERE rn <= $3
-            ),
-            other AS (
-                SELECT
-                    COUNT(*)::bigint AS count,
-                    COALESCE(SUM(inference_ms), 0)::bigint AS inference_ms,
-                    COALESCE(SUM(standby_ms), 0)::bigint AS standby_ms,
-                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms,
-                    COALESCE(SUM(inference_cents), 0)::bigint AS inference_cents,
-                    COALESCE(SUM(standby_cents), 0)::bigint AS standby_cents,
-                    COALESCE(SUM(charge_cents), 0)::bigint AS charge_cents
-                FROM ranked WHERE rn > $3
-            ),
-            total AS (
-                SELECT
-                    COALESCE(SUM(inference_ms), 0)::bigint AS inference_ms,
-                    COALESCE(SUM(standby_ms), 0)::bigint AS standby_ms,
-                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms,
-                    COALESCE(SUM(inference_cents), 0)::bigint AS inference_cents,
-                    COALESCE(SUM(standby_cents), 0)::bigint AS standby_cents,
-                    COALESCE(SUM(charge_cents), 0)::bigint AS charge_cents
-                FROM ranked
             )
             SELECT
-                'top' AS category,
                 funcname,
                 namespace,
                 inference_ms,
                 standby_ms,
-                usage_ms,
                 inference_cents,
                 standby_cents,
-                charge_cents,
-                NULL::bigint AS other_count
-            FROM top_n
-            UNION ALL
-            SELECT
-                'other' AS category,
-                NULL,
-                NULL,
-                inference_ms,
-                standby_ms,
-                usage_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents,
-                count
-            FROM other
-            UNION ALL
-            SELECT
-                'total' AS category,
-                NULL,
-                NULL,
-                inference_ms,
-                standby_ms,
-                usage_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents,
-                NULL
-            FROM total
+                charge_cents
+            FROM grouped
+            ORDER BY
+                charge_cents DESC,
+                funcname ASC,
+                namespace ASC
             "#,
         )
         .bind(tenant)
         .bind(hours)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut top_items: Vec<(String, String, i64, i64, i64, i64, i64, i64)> = Vec::new();
-        let mut other: (i64, i64, i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0, 0, 0);
-        let mut total: (i64, i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0, 0);
+        let mut total: (i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0);
 
-        for row in rows {
-            match row.0.as_str() {
-                "top" => {
-                    if let (Some(funcname), Some(namespace)) = (row.1, row.2) {
-                        top_items.push((funcname, namespace, row.3, row.4, row.5, row.6, row.7, row.8));
-                    }
-                }
-                "other" => {
-                    other = (row.9.unwrap_or(0), row.3, row.4, row.5, row.6, row.7, row.8);
-                }
-                "total" => {
-                    total = (row.3, row.4, row.5, row.6, row.7, row.8);
-                }
-                _ => {}
-            }
+        for row in &items {
+            total.0 += row.2;
+            total.1 += row.3;
+            total.2 += row.4;
+            total.3 += row.5;
+            total.4 += row.6;
         }
 
-        Ok((top_items, other, total))
+        Ok((items, total))
     }
 
-    /// Get tenant usage by namespace with Top-N aggregation.
+    /// Get tenant usage by namespace as a full list sorted by total cost (charge_cents), descending.
     /// Returns:
     /// (
-    ///   top_items[(namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)],
-    ///   other(count, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents),
-    ///   total(inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents),
+    ///   items[(namespace, inference_ms, standby_ms, inference_cents, standby_cents, charge_cents)],
+    ///   total(inference_ms, standby_ms, inference_cents, standby_cents, charge_cents),
     /// )
     pub async fn GetTenantUsageByNamespace(
         &self,
         tenant: &str,
         hours: i32,
-        limit: i32,
     ) -> Result<(
-        Vec<(String, i64, i64, i64, i64, i64, i64)>,
-        (i64, i64, i64, i64, i64, i64, i64),
-        (i64, i64, i64, i64, i64, i64),
+        Vec<(String, i64, i64, i64, i64, i64)>,
+        (i64, i64, i64, i64, i64),
     )> {
-        let rows: Vec<(String, Option<String>, i64, i64, i64, i64, i64, i64, Option<i64>)> = sqlx::query_as(
+        let items: Vec<(String, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1812,7 +1730,6 @@ impl SqlAudit {
                     h.namespace,
                     h.inference_ms,
                     h.standby_ms,
-                    (h.inference_ms + h.standby_ms)::bigint AS usage_ms,
                     h.inference_cents,
                     h.standby_cents,
                     h.charge_cents
@@ -1839,7 +1756,6 @@ impl SqlAudit {
                     namespace,
                     inference_ms,
                     standby_ms,
-                    usage_ms,
                     inference_cents,
                     standby_cents,
                     charge_cents
@@ -1849,7 +1765,6 @@ impl SqlAudit {
                     namespace,
                     SUM(CASE WHEN usage_type != 'standby' THEN gpu_ms ELSE 0 END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby' THEN gpu_ms ELSE 0 END)::bigint AS standby_ms,
-                    SUM(gpu_ms)::bigint AS usage_ms,
                     (SUM(CASE WHEN usage_type != 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
@@ -1862,117 +1777,46 @@ impl SqlAudit {
                 FROM recent_ticks
                 GROUP BY namespace
             ),
-            ranked AS (
+            grouped AS (
                 SELECT
                     namespace,
                     SUM(inference_ms)::bigint AS inference_ms,
                     SUM(standby_ms)::bigint AS standby_ms,
-                    SUM(usage_ms)::bigint AS usage_ms,
                     SUM(inference_cents)::bigint AS inference_cents,
                     SUM(standby_cents)::bigint AS standby_cents,
-                    SUM(charge_cents)::bigint AS charge_cents,
-                    ROW_NUMBER() OVER (ORDER BY SUM(usage_ms) DESC) AS rn
+                    SUM(charge_cents)::bigint AS charge_cents
                 FROM combined
                 GROUP BY namespace
-            ),
-            top_n AS (
-                SELECT
-                    namespace,
-                    inference_ms,
-                    standby_ms,
-                    usage_ms,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents
-                FROM ranked
-                WHERE rn <= $3
-            ),
-            other AS (
-                SELECT
-                    COUNT(*)::bigint AS count,
-                    COALESCE(SUM(inference_ms), 0)::bigint AS inference_ms,
-                    COALESCE(SUM(standby_ms), 0)::bigint AS standby_ms,
-                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms,
-                    COALESCE(SUM(inference_cents), 0)::bigint AS inference_cents,
-                    COALESCE(SUM(standby_cents), 0)::bigint AS standby_cents,
-                    COALESCE(SUM(charge_cents), 0)::bigint AS charge_cents
-                FROM ranked WHERE rn > $3
-            ),
-            total AS (
-                SELECT
-                    COALESCE(SUM(inference_ms), 0)::bigint AS inference_ms,
-                    COALESCE(SUM(standby_ms), 0)::bigint AS standby_ms,
-                    COALESCE(SUM(usage_ms), 0)::bigint AS usage_ms,
-                    COALESCE(SUM(inference_cents), 0)::bigint AS inference_cents,
-                    COALESCE(SUM(standby_cents), 0)::bigint AS standby_cents,
-                    COALESCE(SUM(charge_cents), 0)::bigint AS charge_cents
-                FROM ranked
             )
             SELECT
-                'top' AS category,
                 namespace,
                 inference_ms,
                 standby_ms,
-                usage_ms,
                 inference_cents,
                 standby_cents,
-                charge_cents,
-                NULL::bigint AS other_count
-            FROM top_n
-            UNION ALL
-            SELECT
-                'other' AS category,
-                NULL,
-                inference_ms,
-                standby_ms,
-                usage_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents,
-                count
-            FROM other
-            UNION ALL
-            SELECT
-                'total' AS category,
-                NULL,
-                inference_ms,
-                standby_ms,
-                usage_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents,
-                NULL
-            FROM total
+                charge_cents
+            FROM grouped
+            ORDER BY
+                charge_cents DESC,
+                namespace ASC
             "#,
         )
         .bind(tenant)
         .bind(hours)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut top_items: Vec<(String, i64, i64, i64, i64, i64, i64)> = Vec::new();
-        let mut other: (i64, i64, i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0, 0, 0);
-        let mut total: (i64, i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0, 0);
+        let mut total: (i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0);
 
-        for row in rows {
-            match row.0.as_str() {
-                "top" => {
-                    if let Some(namespace) = row.1 {
-                        top_items.push((namespace, row.2, row.3, row.4, row.5, row.6, row.7));
-                    }
-                }
-                "other" => {
-                    other = (row.8.unwrap_or(0), row.2, row.3, row.4, row.5, row.6, row.7);
-                }
-                "total" => {
-                    total = (row.2, row.3, row.4, row.5, row.6, row.7);
-                }
-                _ => {}
-            }
+        for row in &items {
+            total.0 += row.1;
+            total.1 += row.2;
+            total.2 += row.3;
+            total.3 += row.4;
+            total.4 += row.5;
         }
 
-        Ok((top_items, other, total))
+        Ok((items, total))
     }
 
     /// Get tenant analytics summary for summary cards

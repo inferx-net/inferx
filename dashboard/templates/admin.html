@@ -177,7 +177,19 @@
         border: 1px solid #4CAF50;
     }
 
+    #usage-granularity-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
     #analytics-hourly-view-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    #analytics-group-detail-granularity-controls button.active-range {
         background-color: #4CAF50;
         color: #fff;
         border: 1px solid #4CAF50;
@@ -418,6 +430,12 @@
                         <button type="button" onclick="setUsageViewMode('chart')" id="usage-view-chart">Chart</button>
                         <button type="button" onclick="setUsageViewMode('table')" id="usage-view-table">Table</button>
                     </div>
+                    <div id="usage-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 12px; color: #666;">Granularity:</span>
+                        <button type="button" onclick="setUsageGranularity('hourly')" id="usage-granularity-hourly">Hourly</button>
+                        <button type="button" onclick="setUsageGranularity('daily')" id="usage-granularity-daily">Daily</button>
+                        <button type="button" onclick="setUsageGranularity('weekly')" id="usage-granularity-weekly">Weekly</button>
+                    </div>
                 </div>
             </div>
             <div id="usage-chart-view">
@@ -440,16 +458,30 @@
                     Usage Table View (<span id="usage-table-granularity">Hourly</span>, Local)
                 </h4>
                 <div style="overflow-x: auto;">
-                    <table id="usage-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
-                        <thead>
-                            <tr>
-                                <th style="text-align: left; padding: 6px;">Period</th>
-                                <th style="text-align: right; padding: 6px;">Inf (USD)</th>
-                                <th style="text-align: right; padding: 6px;">Sby (USD)</th>
-                                <th style="text-align: right; padding: 6px;">Total (USD)</th>
-                                <th style="text-align: right; padding: 6px;">Inf (GPU-hrs)</th>
-                                <th style="text-align: right; padding: 6px;">Sby (GPU-hrs)</th>
-                                <th style="text-align: right; padding: 6px;">Total (GPU-hrs)</th>
+                        <table id="usage-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <thead>
+                                <tr>
+                                <th style="text-align: left; padding: 6px; cursor: pointer;" onclick="sortUsageTable('period')">
+                                    Period <span id="usage-sort-period-icon">▼</span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
+                                    Inf (USD) <span id="usage-sort-inf-cost-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
+                                    Sby (USD) <span id="usage-sort-sby-cost-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('total_cost')">
+                                    Total (USD) <span id="usage-sort-total-cost-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
+                                    Inf (GPU-hrs) <span id="usage-sort-inf-hours-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
+                                    Sby (GPU-hrs) <span id="usage-sort-sby-hours-icon"></span>
+                                </th>
+                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('total_hours')">
+                                    Total (GPU-hrs) <span id="usage-sort-total-hours-icon"></span>
+                                </th>
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -590,8 +622,14 @@
                 </div>
 
                 <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #ddd; padding: 10px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                        <h4 id="analytics-group-detail-title" style="margin: 0;">Hourly Breakdown</h4>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <h4 id="analytics-group-detail-title" style="margin: 0;">Breakdown</h4>
+                        <div id="analytics-group-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 12px; color: #666;">Granularity:</span>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('hourly')" id="analytics-detail-granularity-hourly">Hourly</button>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('daily')" id="analytics-detail-granularity-daily">Daily</button>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('weekly')" id="analytics-detail-granularity-weekly">Weekly</button>
+                        </div>
                         <span id="analytics-group-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
                     </div>
                     <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
@@ -600,7 +638,7 @@
                             <thead>
                                 <tr style="border-bottom: 2px solid #333;">
                                     <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
-                                        Period (Local) <span id="detail-sort-period-icon">▼</span>
+                                        Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
                                         Inf (hrs) <span id="detail-sort-inf-hours-icon"></span>
@@ -654,11 +692,21 @@
             <table style="width:100%" id="credit-history-table">
                 <thead>
                     <tr>
-                        <th>Date/Time (Local)</th>
-                        <th style="text-align: right;">Amount (USD)</th>
-                        <th>Note</th>
-                        <th>Payment Ref</th>
-                        <th>Added By</th>
+                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('date')">
+                            Date/Time (Local) <span id="credit-sort-date-icon">▼</span>
+                        </th>
+                        <th style="text-align: right; cursor: pointer;" onclick="sortCreditHistoryTable('amount')">
+                            Amount (USD) <span id="credit-sort-amount-icon"></span>
+                        </th>
+                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('note')">
+                            Note <span id="credit-sort-note-icon"></span>
+                        </th>
+                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('payment_ref')">
+                            Payment Ref <span id="credit-sort-payment-ref-icon"></span>
+                        </th>
+                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('added_by')">
+                            Added By <span id="credit-sort-added-by-icon"></span>
+                        </th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -872,7 +920,16 @@
     let billingAdminIsInferxAdmin = false;
     let billingUsageRange = { mode: 'hours', hours: 24 };
     let billingUsageViewMode = 'chart';
+    let billingUsageGranularity = 'hourly';
     let billingUsageTableReady = false;
+    let billingUsageRawRows = [];
+    let billingUsageTableRows = [];
+    let billingUsageTableGranularity = 'hourly';
+    let billingUsageSortColumn = 'period';
+    let billingUsageSortDirection = 'desc';
+    let billingCreditHistoryRows = [];
+    let billingCreditSortColumn = 'date';
+    let billingCreditSortDirection = 'desc';
     let analyticsUsageRange = { mode: 'hours', hours: 24 };
 
     // Called when Billing tab is opened
@@ -1071,6 +1128,43 @@
         applyUsageViewVisibility();
     }
 
+    function getBillingUsageGranularityLabel(granularity) {
+        switch (granularity) {
+            case 'daily':
+                return 'Daily';
+            case 'weekly':
+                return 'Weekly';
+            case 'hourly':
+            default:
+                return 'Hourly';
+        }
+    }
+
+    function updateUsageGranularityButtons() {
+        const hourlyBtn = document.getElementById('usage-granularity-hourly');
+        const dailyBtn = document.getElementById('usage-granularity-daily');
+        const weeklyBtn = document.getElementById('usage-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.toggle('active-range', billingUsageGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', billingUsageGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', billingUsageGranularity === 'weekly');
+    }
+
+    function setUsageGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        billingUsageGranularity = granularity;
+        updateUsageGranularityButtons();
+
+        if (billingUsageRawRows.length > 0) {
+            renderBillingUsageFromRawRows();
+            return;
+        }
+
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) loadUsageChart(tenant);
+    }
+
     function updateAnalyticsRangeButtons() {
         const btn24 = document.getElementById('analytics-range-24h');
         const btn7d = document.getElementById('analytics-range-7d');
@@ -1189,6 +1283,7 @@
 
         updateUsageRangeButtons();
         updateUsageViewButtons();
+        updateUsageGranularityButtons();
         applyUsageViewVisibility();
         updateAnalyticsRangeButtons();
 
@@ -1320,6 +1415,90 @@
         }
     }
 
+    function formatBillingUsagePeriodLabel(row, granularity, mode) {
+        const currentMode = mode || 'table';
+        const start = new Date(row.hour);
+        if (granularity === 'weekly') {
+            const end = row.week_end ? new Date(row.week_end) : new Date(start.getTime());
+            if (!row.week_end) end.setDate(end.getDate() + 6);
+            if (currentMode === 'axis') {
+                return start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+            const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${startLabel} - ${endLabel}`;
+        }
+
+        if (granularity === 'daily') {
+            return currentMode === 'table'
+                ? start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                : start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        if (currentMode === 'axis') {
+            return start.getHours().toString().padStart(2, '0');
+        }
+        if (currentMode === 'tooltip') {
+            return `${start.getHours().toString().padStart(2, '0')}:00`;
+        }
+        return start.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+    }
+
+    function renderBillingUsageFromRawRows() {
+        const chartEl = document.getElementById('usage-chart');
+        const labelsEl = document.getElementById('usage-chart-labels');
+        if (!chartEl || !labelsEl) return;
+        if (!Array.isArray(billingUsageRawRows) || billingUsageRawRows.length === 0) return;
+
+        const granularity = billingUsageGranularity;
+        const displayData = granularity === 'hourly'
+            ? [...billingUsageRawRows]
+            : aggregateHourlyUsageByGranularity(billingUsageRawRows, granularity);
+
+        const maxCents = Math.max(...displayData.map(u =>
+            (u.inference_cents || 0) + (u.standby_cents || 0)
+        ), 1);
+
+        chartEl.innerHTML = displayData.map(u => {
+            const infCents = u.inference_cents || 0;
+            const sbyCents = u.standby_cents || 0;
+            const infMs = u.inference_ms || 0;
+            const sbyMs = u.standby_ms || 0;
+            const totalCents = infCents + sbyCents;
+            const totalHeight = Math.max(2, (totalCents / maxCents) * 100);
+
+            const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
+            const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
+            const infHrs = (infMs / 3600000).toFixed(2);
+            const sbyHrs = (sbyMs / 3600000).toFixed(2);
+            const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
+            const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
+
+            return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
+                `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
+                `<div class="usage-bar-standby" style="height: ${sbyPct}%"></div>` +
+                `</div>`;
+        }).join('');
+
+        const labelEvery = Math.max(1, Math.ceil(displayData.length / 6));
+        labelsEl.innerHTML = displayData.map((u, i) => {
+            const label = (i % labelEvery === 0)
+                ? formatBillingUsagePeriodLabel(u, granularity, 'axis')
+                : '';
+            return `<div style="flex: 1; text-align: center;">${label}</div>`;
+        }).join('');
+
+        renderUsageTable(displayData, granularity);
+        billingUsageTableReady = true;
+        applyUsageViewVisibility();
+    }
+
     async function loadUsageChart(tenant) {
         const chartEl = document.getElementById('usage-chart');
         const labelsEl = document.getElementById('usage-chart-labels');
@@ -1334,8 +1513,9 @@
             }
             const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
 
-            // Phase 1: endpoint doesn't exist yet, show placeholder
             if (resp.status === 404) {
+                billingUsageRawRows = [];
+                billingUsageTableRows = [];
                 chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart available in Phase 3</div>';
                 labelsEl.innerHTML = '';
                 billingUsageTableReady = false;
@@ -1347,6 +1527,8 @@
             const data = await resp.json();
 
             if (!data.usage || data.usage.length === 0) {
+                billingUsageRawRows = [];
+                billingUsageTableRows = [];
                 chartEl.innerHTML = '<div style="color: #888; padding: 20px;">No usage data</div>';
                 labelsEl.innerHTML = '';
                 billingUsageTableReady = false;
@@ -1354,61 +1536,12 @@
                 return;
             }
 
-            // For longer time ranges, aggregate to daily bars.
-            // Keep using the hourly endpoint; backend already merges UsageHourly + recent UsageTick.
-            const aggregateToDaily = data.usage.length > 48;
-            let displayData = data.usage;
-            if (aggregateToDaily) {
-                displayData = aggregateHourlyUsageToDays(data.usage);
-            }
-
-            // Money-based chart scaling (cost in cents)
-            const maxCents = Math.max(...displayData.map(u =>
-                (u.inference_cents || 0) + (u.standby_cents || 0)
-            ), 1);
-
-            // Build stacked bars
-            chartEl.innerHTML = displayData.map(u => {
-                const infCents = u.inference_cents || 0;
-                const sbyCents = u.standby_cents || 0;
-                const infMs = u.inference_ms || 0;
-                const sbyMs = u.standby_ms || 0;
-                const totalCents = infCents + sbyCents;
-                const totalHeight = Math.max(2, (totalCents / maxCents) * 100);
-
-                const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
-                const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
-
-                const infHrs = (infMs / 3600000).toFixed(2);
-                const sbyHrs = (sbyMs / 3600000).toFixed(2);
-                const periodLabel = aggregateToDaily
-                    ? new Date(u.hour).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                    : `${new Date(u.hour).getHours().toString().padStart(2, '0')}:00`;
-                const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
-
-                return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
-                    `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
-                    `<div class="usage-bar-standby" style="height: ${sbyPct}%"></div>` +
-                    `</div>`;
-            }).join('');
-
-            // Build labels (show ~6 labels max)
-            const labelEvery = Math.max(1, Math.ceil(displayData.length / 6));
-            labelsEl.innerHTML = displayData.map((u, i) => {
-                const label = (i % labelEvery === 0)
-                    ? (aggregateToDaily
-                        ? new Date(u.hour).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                        : new Date(u.hour).getHours().toString().padStart(2, '0'))
-                    : '';
-                return `<div style="flex: 1; text-align: center;">${label}</div>`;
-            }).join('');
-
-            renderUsageTable(displayData, aggregateToDaily);
-            billingUsageTableReady = true;
-            applyUsageViewVisibility();
-
+            billingUsageRawRows = Array.isArray(data.usage) ? data.usage : [];
+            renderBillingUsageFromRawRows();
         } catch (error) {
             console.error('Failed to load usage chart:', error);
+            billingUsageRawRows = [];
+            billingUsageTableRows = [];
             chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart unavailable</div>';
             labelsEl.innerHTML = '';
             billingUsageTableReady = false;
@@ -1416,14 +1549,52 @@
         }
     }
 
-    function renderUsageTable(displayData, aggregateToDaily) {
+    function renderUsageTable(displayData, granularity) {
         const usageTableGranularityEl = document.getElementById('usage-table-granularity');
         const usageTableBodyEl = document.querySelector('#usage-table tbody');
         if (!usageTableGranularityEl || !usageTableBodyEl) return;
 
-        usageTableGranularityEl.textContent = aggregateToDaily ? 'Daily' : 'Hourly';
+        billingUsageTableRows = Array.isArray(displayData) ? displayData : [];
+        billingUsageTableGranularity = granularity || 'hourly';
+        usageTableGranularityEl.textContent = getBillingUsageGranularityLabel(billingUsageTableGranularity);
 
-        const sortedRows = [...displayData].sort((a, b) => b.hour.localeCompare(a.hour));
+        const sortedRows = [...billingUsageTableRows].sort((a, b) => {
+            let aVal;
+            let bVal;
+            switch (billingUsageSortColumn) {
+                case 'inf_cost':
+                    aVal = a.inference_cents || 0;
+                    bVal = b.inference_cents || 0;
+                    break;
+                case 'sby_cost':
+                    aVal = a.standby_cents || 0;
+                    bVal = b.standby_cents || 0;
+                    break;
+                case 'total_cost':
+                    aVal = (a.inference_cents || 0) + (a.standby_cents || 0);
+                    bVal = (b.inference_cents || 0) + (b.standby_cents || 0);
+                    break;
+                case 'inf_hours':
+                    aVal = a.inference_ms || 0;
+                    bVal = b.inference_ms || 0;
+                    break;
+                case 'sby_hours':
+                    aVal = a.standby_ms || 0;
+                    bVal = b.standby_ms || 0;
+                    break;
+                case 'total_hours':
+                    aVal = (a.inference_ms || 0) + (a.standby_ms || 0);
+                    bVal = (b.inference_ms || 0) + (b.standby_ms || 0);
+                    break;
+                case 'period':
+                default:
+                    aVal = Date.parse(a.hour) || 0;
+                    bVal = Date.parse(b.hour) || 0;
+                    break;
+            }
+            return billingUsageSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
         let totalInfCents = 0;
         let totalSbyCents = 0;
         let totalInfHours = 0;
@@ -1436,15 +1607,11 @@
             const sbyHours = (u.standby_ms || 0) / 3600000;
             const totalCents = infCents + sbyCents;
             const totalHours = infHours + sbyHours;
-            const periodLabel = aggregateToDaily
-                ? new Date(u.hour).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-                : new Date(u.hour).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: false
-                });
+            const periodLabel = formatBillingUsagePeriodLabel(
+                u,
+                billingUsageTableGranularity,
+                'table'
+            );
 
             totalInfCents += infCents;
             totalSbyCents += sbyCents;
@@ -1470,6 +1637,126 @@
         document.getElementById('usage-table-total-inf-hours').textContent = totalInfHours.toFixed(2);
         document.getElementById('usage-table-total-sby-hours').textContent = totalSbyHours.toFixed(2);
         document.getElementById('usage-table-total-hours').textContent = (totalInfHours + totalSbyHours).toFixed(2);
+
+        const setUsageSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = billingUsageSortColumn === column
+                ? (billingUsageSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setUsageSortIcon('usage-sort-period-icon', 'period');
+        setUsageSortIcon('usage-sort-inf-cost-icon', 'inf_cost');
+        setUsageSortIcon('usage-sort-sby-cost-icon', 'sby_cost');
+        setUsageSortIcon('usage-sort-total-cost-icon', 'total_cost');
+        setUsageSortIcon('usage-sort-inf-hours-icon', 'inf_hours');
+        setUsageSortIcon('usage-sort-sby-hours-icon', 'sby_hours');
+        setUsageSortIcon('usage-sort-total-hours-icon', 'total_hours');
+    }
+
+    function sortUsageTable(column) {
+        if (billingUsageSortColumn === column) {
+            billingUsageSortDirection = billingUsageSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingUsageSortColumn = column;
+            billingUsageSortDirection = 'desc';
+        }
+        renderUsageTable(billingUsageTableRows, billingUsageTableGranularity);
+    }
+
+    function renderCreditHistoryTable(records) {
+        const tbody = document.querySelector('#credit-history-table tbody');
+        if (!tbody) return;
+
+        billingCreditHistoryRows = Array.isArray(records) ? records : [];
+        if (billingCreditHistoryRows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">No credit history</td></tr>';
+        } else {
+            const sortedRows = [...billingCreditHistoryRows].sort((a, b) => {
+                let aVal;
+                let bVal;
+                switch (billingCreditSortColumn) {
+                    case 'amount':
+                        aVal = a.amount_cents || 0;
+                        bVal = b.amount_cents || 0;
+                        break;
+                    case 'note':
+                        aVal = (a.note || '').toLowerCase();
+                        bVal = (b.note || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'payment_ref':
+                        aVal = (a.payment_ref || '').toLowerCase();
+                        bVal = (b.payment_ref || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'added_by':
+                        aVal = (a.added_by || '').toLowerCase();
+                        bVal = (b.added_by || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'date':
+                    default:
+                        aVal = Date.parse(a.created_at) || 0;
+                        bVal = Date.parse(b.created_at) || 0;
+                        break;
+                }
+                return billingCreditSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+            });
+
+            tbody.innerHTML = sortedRows.map(record => {
+                const date = new Date(record.created_at).toLocaleString();
+                const cents = record.amount_cents || 0;
+                let amountClass;
+                let amountText;
+                if (cents > 0) {
+                    amountClass = 'amount-positive';
+                    amountText = '+' + formatUsd(cents);
+                } else if (cents < 0) {
+                    amountClass = 'amount-negative';
+                    amountText = '-' + formatUsd(Math.abs(cents));
+                } else {
+                    amountClass = 'amount-zero';
+                    amountText = formatUsd(0);
+                }
+
+                return `
+                    <tr>
+                        <td>${date}</td>
+                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
+                        <td>${record.note || '-'}</td>
+                        <td>${record.payment_ref || '-'}</td>
+                        <td>${record.added_by || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        const setCreditSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = billingCreditSortColumn === column
+                ? (billingCreditSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setCreditSortIcon('credit-sort-date-icon', 'date');
+        setCreditSortIcon('credit-sort-amount-icon', 'amount');
+        setCreditSortIcon('credit-sort-note-icon', 'note');
+        setCreditSortIcon('credit-sort-payment-ref-icon', 'payment_ref');
+        setCreditSortIcon('credit-sort-added-by-icon', 'added_by');
+    }
+
+    function sortCreditHistoryTable(column) {
+        if (billingCreditSortColumn === column) {
+            billingCreditSortDirection = billingCreditSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingCreditSortColumn = column;
+            billingCreditSortDirection = column === 'date' ? 'desc' : 'asc';
+        }
+        renderCreditHistoryTable(billingCreditHistoryRows);
     }
 
     async function loadCreditHistory(tenant, page) {
@@ -1481,40 +1768,8 @@
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
-            const tbody = document.querySelector('#credit-history-table tbody');
-            tbody.innerHTML = '';
-
-            if (data.records && data.records.length > 0) {
-                data.records.forEach(record => {
-                    const row = document.createElement('tr');
-                    const date = new Date(record.created_at).toLocaleString();
-                    const cents = record.amount_cents || 0;
-
-                    // Format amount with proper sign and color
-                    let amountClass, amountText;
-                    if (cents > 0) {
-                        amountClass = 'amount-positive';
-                        amountText = '+' + formatUsd(cents);
-                    } else if (cents < 0) {
-                        amountClass = 'amount-negative';
-                        amountText = '-' + formatUsd(Math.abs(cents));
-                    } else {
-                        amountClass = 'amount-zero';
-                        amountText = formatUsd(0);
-                    }
-
-                    row.innerHTML = `
-                        <td>${date}</td>
-                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
-                        <td>${record.note || '-'}</td>
-                        <td>${record.payment_ref || '-'}</td>
-                        <td>${record.added_by || '-'}</td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            } else {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">No credit history</td></tr>';
-            }
+            billingCreditHistoryRows = Array.isArray(data.records) ? data.records : [];
+            renderCreditHistoryTable(billingCreditHistoryRows);
 
             // Update pagination
             // Phase 1 fallback: if `total` not in response, use records.length to determine hasNext
@@ -1540,6 +1795,7 @@
 
         } catch (error) {
             console.error('Failed to load credit history:', error);
+            billingCreditHistoryRows = [];
             const tbody = document.querySelector('#credit-history-table tbody');
             tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: red;">Failed to load credit history</td></tr>';
         }
@@ -1951,7 +2207,9 @@
     let analyticsHourlyTableReady = false;
     let analyticsSelectedGroupKey = null;
     let analyticsGroupDetailRequestId = 0;
+    let analyticsGroupDetailRawRows = [];
     let analyticsGroupDetailRows = [];
+    let analyticsDetailGranularity = 'hourly';
     let analyticsDetailSortColumn = 'period';
     let analyticsDetailSortDirection = 'desc';
 
@@ -2058,6 +2316,121 @@
         return `namespace:${item.namespace || ''}`;
     }
 
+    function getAnalyticsDetailGranularityLabel(granularity) {
+        switch (granularity) {
+            case 'daily':
+                return 'Daily';
+            case 'weekly':
+                return 'Weekly';
+            case 'hourly':
+            default:
+                return 'Hourly';
+        }
+    }
+
+    function updateAnalyticsDetailGranularityButtons() {
+        const hourlyBtn = document.getElementById('analytics-detail-granularity-hourly');
+        const dailyBtn = document.getElementById('analytics-detail-granularity-daily');
+        const weeklyBtn = document.getElementById('analytics-detail-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'weekly');
+    }
+
+    function getLocalWeekStart(date) {
+        const d = new Date(date.getTime());
+        d.setHours(0, 0, 0, 0);
+        const day = d.getDay();
+        const daysSinceMonday = (day + 6) % 7;
+        d.setDate(d.getDate() - daysSinceMonday);
+        return d;
+    }
+
+    function aggregateAnalyticsDetailRows(usageRows, granularity) {
+        const rows = Array.isArray(usageRows) ? usageRows : [];
+        if (granularity === 'hourly') return rows;
+
+        const bucketMap = new Map();
+        rows.forEach(u => {
+            const rawDate = new Date(u.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                const bucketEnd = new Date(bucketStart.getTime());
+                if (granularity === 'weekly') {
+                    bucketEnd.setDate(bucketEnd.getDate() + 6);
+                }
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: granularity === 'weekly' ? bucketEnd.toISOString() : null,
+                    inference_ms: 0,
+                    standby_ms: 0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    charge_cents: 0,
+                });
+            }
+
+            const bucket = bucketMap.get(key);
+            bucket.inference_ms += u.inference_ms || 0;
+            bucket.standby_ms += u.standby_ms || 0;
+            bucket.inference_cents += u.inference_cents || 0;
+            bucket.standby_cents += u.standby_cents || 0;
+            bucket.charge_cents += u.charge_cents || 0;
+        });
+
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function formatAnalyticsDetailPeriodLabel(row) {
+        if (analyticsDetailGranularity === 'weekly') {
+            const start = new Date(row.hour);
+            const end = row.week_end ? new Date(row.week_end) : new Date(start.getTime());
+            if (!row.week_end) end.setDate(end.getDate() + 6);
+            const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${startLabel} - ${endLabel}`;
+        }
+        if (analyticsDetailGranularity === 'daily') {
+            return new Date(row.hour).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+        return new Date(row.hour).toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+    }
+
+    function setAnalyticsDetailGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        analyticsDetailGranularity = granularity;
+        updateAnalyticsDetailGranularityButtons();
+        if (analyticsGroupDetailRawRows.length > 0) {
+            analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
+                analyticsGroupDetailRawRows,
+                analyticsDetailGranularity
+            );
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+        }
+    }
+
     function hideAnalyticsGroupDetail(clearSelection = false) {
         const areaEl = document.getElementById('analytics-group-detail-area');
         const loadingEl = document.getElementById('analytics-group-detail-loading');
@@ -2073,6 +2446,7 @@
         if (tableEl) tableEl.style.display = 'table';
         if (tbody) tbody.innerHTML = '';
         if (clearSelection) analyticsSelectedGroupKey = null;
+        analyticsGroupDetailRawRows = [];
         analyticsGroupDetailRows = [];
         analyticsGroupDetailRequestId += 1;
     }
@@ -2086,6 +2460,7 @@
         if (!areaEl || !loadingEl || !messageEl || !tableEl || !tbody) return;
 
         areaEl.style.display = 'block';
+        updateAnalyticsDetailGranularityButtons();
         loadingEl.style.display = 'none';
         messageEl.style.display = 'block';
         messageEl.textContent = message;
@@ -2112,23 +2487,27 @@
         let endpoint = '';
         if (viewMode === 'tenant') {
             endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
-            titleEl.textContent = `Hourly Breakdown: ${tenant}`;
+            titleEl.textContent = `Breakdown: ${tenant}`;
         } else if (viewMode === 'model') {
             params.set('namespace', item.namespace || '');
             params.set('funcname', item.funcname || '');
             endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
-            titleEl.textContent = `Hourly Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
+            titleEl.textContent = `Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
         } else {
             params.set('namespace', item.namespace || '');
             endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-namespace?${params.toString()}`;
-            titleEl.textContent = `Hourly Breakdown: ${item.namespace || '--'}`;
+            titleEl.textContent = `Breakdown: ${item.namespace || '--'}`;
         }
 
         const reqId = ++analyticsGroupDetailRequestId;
+        analyticsGroupDetailRawRows = [];
+        analyticsGroupDetailRows = [];
         areaEl.style.display = 'block';
+        updateAnalyticsDetailGranularityButtons();
         loadingEl.style.display = 'inline';
         messageEl.style.display = 'none';
         messageEl.textContent = '';
+        tbody.innerHTML = '';
 
         try {
             const resp = await fetchWithAuth(endpoint);
@@ -2137,7 +2516,7 @@
             if (resp.status === 404) {
                 tableEl.style.display = 'none';
                 messageEl.style.display = 'block';
-                messageEl.textContent = 'Hourly detail endpoint is not available yet.';
+                messageEl.textContent = 'Detail endpoint is not available yet.';
                 return;
             }
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -2147,11 +2526,16 @@
             if (usageRows.length === 0) {
                 tableEl.style.display = 'none';
                 messageEl.style.display = 'block';
-                messageEl.textContent = 'No hourly detail data for the selected group.';
+                messageEl.textContent = 'No detail data for the selected group.';
                 return;
             }
 
-            analyticsGroupDetailRows = usageRows;
+            analyticsGroupDetailRawRows = usageRows;
+            analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
+                analyticsGroupDetailRawRows,
+                analyticsDetailGranularity
+            );
+            updateAnalyticsDetailGranularityButtons();
             renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
 
             tableEl.style.display = 'table';
@@ -2160,7 +2544,7 @@
             if (reqId !== analyticsGroupDetailRequestId) return;
             tableEl.style.display = 'none';
             messageEl.style.display = 'block';
-            messageEl.textContent = `Failed to load hourly detail: ${error}`;
+            messageEl.textContent = `Failed to load detail: ${error}`;
         } finally {
             if (reqId === analyticsGroupDetailRequestId) {
                 loadingEl.style.display = 'none';
@@ -2170,7 +2554,9 @@
 
     function renderAnalyticsGroupDetailTable(usageRows) {
         const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        const granularityEl = document.getElementById('analytics-group-detail-period-granularity');
         if (!tbody) return;
+        if (granularityEl) granularityEl.textContent = getAnalyticsDetailGranularityLabel(analyticsDetailGranularity);
 
         const rows = Array.isArray(usageRows) ? usageRows : [];
         const sortedRows = [...rows].sort((a, b) => {
@@ -2226,13 +2612,7 @@
             const infHours = infMs / 3600000;
             const sbyHours = sbyMs / 3600000;
             const totalCents = infCents + sbyCents;
-            const periodLabel = new Date(u.hour).toLocaleString(undefined, {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
+            const periodLabel = formatAnalyticsDetailPeriodLabel(u);
 
             return `
                 <tr style="border-bottom: 1px solid #eee;">
@@ -2354,10 +2734,10 @@
                 endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
                 break;
             case 'model':
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}&limit=10`;
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}`;
                 break;
             case 'namespace':
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}&limit=10`;
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}`;
                 break;
             default:
                 endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
@@ -2770,34 +3150,59 @@
         totalEl.textContent = (totalMs / 3600000).toFixed(2);
     }
 
-    function aggregateHourlyUsageToDays(hourlyData) {
-        const dayMap = {};
+    function aggregateHourlyUsageByGranularity(hourlyData, granularity) {
+        const rows = Array.isArray(hourlyData) ? hourlyData : [];
+        if (granularity === 'hourly') {
+            return [...rows].sort((a, b) => (a.hour || '').localeCompare(b.hour || ''));
+        }
 
-        hourlyData.forEach(h => {
-            const date = h.hour.substring(0, 10);
-            if (!dayMap[date]) {
-                dayMap[date] = {
-                    hour: date + 'T00:00:00Z',
+        const bucketMap = new Map();
+        rows.forEach(h => {
+            const rawDate = new Date(h.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            let bucketEnd = null;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+                bucketEnd = new Date(bucketStart.getTime());
+                bucketEnd.setDate(bucketEnd.getDate() + 6);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: bucketEnd ? bucketEnd.toISOString() : null,
                     charge_cents: 0,
                     inference_cents: 0,
                     standby_cents: 0,
                     usage_ms: 0,
                     inference_ms: 0,
                     standby_ms: 0
-                };
+                });
             }
+
             const usageMs = (typeof h.usage_ms === 'number')
                 ? h.usage_ms
                 : ((h.inference_ms || 0) + (h.standby_ms || 0));
-            dayMap[date].charge_cents += h.charge_cents || 0;
-            dayMap[date].inference_cents += h.inference_cents || 0;
-            dayMap[date].standby_cents += h.standby_cents || 0;
-            dayMap[date].usage_ms += usageMs;
-            dayMap[date].inference_ms += h.inference_ms || 0;
-            dayMap[date].standby_ms += h.standby_ms || 0;
+            const bucket = bucketMap.get(key);
+            bucket.charge_cents += h.charge_cents || 0;
+            bucket.inference_cents += h.inference_cents || 0;
+            bucket.standby_cents += h.standby_cents || 0;
+            bucket.usage_ms += usageMs;
+            bucket.inference_ms += h.inference_ms || 0;
+            bucket.standby_ms += h.standby_ms || 0;
         });
 
-        return Object.values(dayMap).sort((a, b) => a.hour.localeCompare(b.hour));
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function aggregateHourlyUsageToDays(hourlyData) {
+        return aggregateHourlyUsageByGranularity(hourlyData, 'daily');
     }
 
     function truncateText(text, maxLength) {
