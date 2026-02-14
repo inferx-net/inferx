@@ -407,6 +407,11 @@ impl HttpGateway {
             .route("/tenant/:tenant/credits/history", get(GetTenantCreditHistory))
             .route("/tenant/:tenant/billing-summary", get(GetTenantBillingSummary))
             .route("/tenant/:tenant/usage/hourly", get(GetTenantHourlyUsage))
+            .route("/tenant/:tenant/usage/hourly-by-model", get(GetTenantHourlyUsageByModel))
+            .route(
+                "/tenant/:tenant/usage/hourly-by-namespace",
+                get(GetTenantHourlyUsageByNamespace),
+            )
             .route("/tenant/:tenant/usage/by-model", get(GetTenantUsageByModel))
             .route("/tenant/:tenant/usage/by-namespace", get(GetTenantUsageByNamespace))
             .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
@@ -1926,28 +1931,145 @@ struct UsageByGroupQuery {
     limit: Option<i32>,
 }
 
+#[derive(Deserialize)]
+struct HourlyUsageByNamespaceQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+    namespace: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HourlyUsageByModelQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+    namespace: Option<String>,
+    funcname: Option<String>,
+}
+
+fn BadRequest(msg: impl Into<String>) -> Response {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Body::from(msg.into()))
+        .unwrap()
+}
+
+fn ParseHourlyRange(
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>, i32), Response> {
+    if start.is_some() || end.is_some() {
+        let start_str = match start {
+            Some(s) => s,
+            None => return Err(BadRequest("Missing start parameter")),
+        };
+        let end_str = match end {
+            Some(s) => s,
+            None => return Err(BadRequest("Missing end parameter")),
+        };
+
+        let start = match DateTime::parse_from_rfc3339(&start_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => return Err(BadRequest("Invalid start format (use RFC3339)")),
+        };
+        let end = match DateTime::parse_from_rfc3339(&end_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => return Err(BadRequest("Invalid end format (use RFC3339)")),
+        };
+
+        if end <= start {
+            return Err(BadRequest("Invalid range: end must be after start"));
+        }
+
+        let max_range = chrono::Duration::days(90);
+        if end - start > max_range {
+            return Err(BadRequest("Range too large (max 90 days)"));
+        }
+
+        let start_hour_naive = start.date_naive().and_hms_opt(start.hour(), 0, 0).unwrap();
+        let end_hour_naive = end.date_naive().and_hms_opt(end.hour(), 0, 0).unwrap();
+        let start_hour = DateTime::<Utc>::from_naive_utc_and_offset(start_hour_naive, Utc);
+        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+        let total_hours = ((end_hour - start_hour).num_hours() + 1).max(1) as i32;
+        return Ok((start_hour, end_hour, total_hours));
+    }
+
+    let hours = hours.unwrap_or(24).min(720).max(1); // 1 to 720 hours (30 days max)
+    let now = Utc::now();
+    let end_hour_naive = now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap();
+    let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+    let start_hour = end_hour - chrono::Duration::hours((hours - 1) as i64);
+    Ok((start_hour, end_hour, hours))
+}
+
+fn BuildHourlyUsage(usage_records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>, start_hour: DateTime<Utc>, total_hours: i32) -> Vec<HourlyUsageRecord> {
+    let mut usage_map: std::collections::HashMap<String, (i64, i64, i64, i64, i64)> = std::collections::HashMap::new();
+    for (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) in usage_records {
+        let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+        usage_map.insert(hour_key, (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms));
+    }
+
+    let mut usage: Vec<HourlyUsageRecord> = Vec::with_capacity(total_hours as usize);
+    for i in 0..total_hours {
+        let hour = start_hour + chrono::Duration::hours(i as i64);
+        let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
+        let (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) =
+            usage_map.get(&hour_key).copied().unwrap_or((0, 0, 0, 0, 0));
+        usage.push(HourlyUsageRecord {
+            hour: hour_key,
+            charge_cents,
+            inference_cents,
+            standby_cents,
+            inference_ms,
+            standby_ms,
+        });
+    }
+
+    usage
+}
+
 #[derive(Serialize)]
 struct ModelUsageItem {
     funcname: String,
     namespace: String,
+    inference_ms: i64,
+    standby_ms: i64,
     usage_ms: i64,
+    inference_gpu_hours: f64,
+    standby_gpu_hours: f64,
     gpu_hours: f64,
+    inference_cents: i64,
+    standby_cents: i64,
     charge_cents: i64,
 }
 
 #[derive(Serialize)]
 struct NamespaceUsageItem {
     namespace: String,
+    inference_ms: i64,
+    standby_ms: i64,
     usage_ms: i64,
+    inference_gpu_hours: f64,
+    standby_gpu_hours: f64,
     gpu_hours: f64,
+    inference_cents: i64,
+    standby_cents: i64,
     charge_cents: i64,
 }
 
 #[derive(Serialize)]
 struct OtherBucket {
     count: i64,
+    inference_ms: i64,
+    standby_ms: i64,
     usage_ms: i64,
+    inference_gpu_hours: f64,
+    standby_gpu_hours: f64,
     gpu_hours: f64,
+    inference_cents: i64,
+    standby_cents: i64,
     charge_cents: i64,
 }
 
@@ -1955,8 +2077,14 @@ struct OtherBucket {
 struct UsageByModelResponse {
     usage: Vec<ModelUsageItem>,
     other: OtherBucket,
+    inference_ms: i64,
+    standby_ms: i64,
     total_ms: i64,
+    inference_gpu_hours: f64,
+    standby_gpu_hours: f64,
     total_gpu_hours: f64,
+    inference_cents: i64,
+    standby_cents: i64,
     total_cents: i64,
     timezone: String,
 }
@@ -1965,8 +2093,14 @@ struct UsageByModelResponse {
 struct UsageByNamespaceResponse {
     usage: Vec<NamespaceUsageItem>,
     other: OtherBucket,
+    inference_ms: i64,
+    standby_ms: i64,
     total_ms: i64,
+    inference_gpu_hours: f64,
+    standby_gpu_hours: f64,
     total_gpu_hours: f64,
+    inference_cents: i64,
+    standby_cents: i64,
     total_cents: i64,
     timezone: String,
 }
@@ -2595,87 +2729,11 @@ async fn GetTenantHourlyUsage(
         return Ok(resp);
     }
 
-    let (start_hour, end_hour, total_hours) = if params.start.is_some() || params.end.is_some() {
-        let start_str = match params.start {
-            Some(s) => s,
-            None => {
-                let body = Body::from("Missing start parameter");
-                let resp = Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(body)
-                    .unwrap();
-                return Ok(resp);
-            }
+    let (start_hour, end_hour, total_hours) =
+        match ParseHourlyRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
         };
-        let end_str = match params.end {
-            Some(s) => s,
-            None => {
-                let body = Body::from("Missing end parameter");
-                let resp = Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(body)
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
-
-        let start = match DateTime::parse_from_rfc3339(&start_str) {
-            Ok(v) => v.with_timezone(&Utc),
-            Err(_) => {
-                let body = Body::from("Invalid start format (use RFC3339)");
-                let resp = Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(body)
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
-        let end = match DateTime::parse_from_rfc3339(&end_str) {
-            Ok(v) => v.with_timezone(&Utc),
-            Err(_) => {
-                let body = Body::from("Invalid end format (use RFC3339)");
-                let resp = Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(body)
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
-
-        if end <= start {
-            let body = Body::from("Invalid range: end must be after start");
-            let resp = Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(body)
-                .unwrap();
-            return Ok(resp);
-        }
-
-        let max_range = chrono::Duration::days(90);
-        if end - start > max_range {
-            let body = Body::from("Range too large (max 90 days)");
-            let resp = Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(body)
-                .unwrap();
-            return Ok(resp);
-        }
-
-        let start_hour_naive = start.date_naive().and_hms_opt(start.hour(), 0, 0).unwrap();
-        let end_hour_naive = end.date_naive().and_hms_opt(end.hour(), 0, 0).unwrap();
-        let start_hour = DateTime::<Utc>::from_naive_utc_and_offset(start_hour_naive, Utc);
-        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
-
-        let total_hours = ((end_hour - start_hour).num_hours() + 1).max(1) as i32;
-        (start_hour, end_hour, total_hours)
-    } else {
-        let hours = params.hours.unwrap_or(24).min(720).max(1); // 1 to 720 hours (30 days max)
-        let now = Utc::now();
-        let end_hour_naive = now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap();
-        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
-        let start_hour = end_hour - chrono::Duration::hours((hours - 1) as i64);
-        (start_hour, end_hour, hours)
-    };
 
     match gw
         .sqlAudit
@@ -2683,30 +2741,7 @@ async fn GetTenantHourlyUsage(
         .await
     {
         Ok(records) => {
-            // Build a map of existing records for quick lookup
-            let mut usage_map: std::collections::HashMap<String, (i64, i64, i64, i64, i64)> = std::collections::HashMap::new();
-            for (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) in records {
-                let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-                usage_map.insert(hour_key, (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms));
-            }
-
-            // Generate all hours in the range, zero-fill missing ones
-            let mut usage: Vec<HourlyUsageRecord> = Vec::with_capacity(total_hours as usize);
-            for i in 0..total_hours {
-                let hour = start_hour + chrono::Duration::hours(i as i64);
-                let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-                let (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) =
-                    usage_map.get(&hour_key).copied().unwrap_or((0, 0, 0, 0, 0));
-                usage.push(HourlyUsageRecord {
-                    hour: hour_key,
-                    charge_cents,
-                    inference_cents,
-                    standby_cents,
-                    inference_ms,
-                    standby_ms,
-                });
-            }
-
+            let usage = BuildHourlyUsage(records, start_hour, total_hours);
             let resp_body = HourlyUsageResponse {
                 usage,
                 timezone: "UTC".to_string(),
@@ -2749,28 +2784,49 @@ async fn GetTenantUsageByModel(
     let limit = params.limit.unwrap_or(10).min(50).max(1);
 
     match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours, limit).await {
-        Ok((top_items, other_count, other_usage_ms, other_cents, total_ms, total_cents)) => {
+        Ok((top_items, other, total)) => {
             let usage: Vec<ModelUsageItem> = top_items
                 .into_iter()
-                .map(|(funcname, namespace, usage_ms, charge_cents)| ModelUsageItem {
+                .map(|(funcname, namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)| ModelUsageItem {
                     funcname,
                     namespace,
+                    inference_ms,
+                    standby_ms,
                     usage_ms,
+                    inference_gpu_hours: inference_ms as f64 / 3600000.0,
+                    standby_gpu_hours: standby_ms as f64 / 3600000.0,
                     gpu_hours: usage_ms as f64 / 3600000.0,
+                    inference_cents,
+                    standby_cents,
                     charge_cents,
                 })
                 .collect();
+
+            let (other_count, other_inference_ms, other_standby_ms, other_usage_ms, other_inference_cents, other_standby_cents, other_cents) = other;
+            let (total_inference_ms, total_standby_ms, total_ms, total_inference_cents, total_standby_cents, total_cents) = total;
 
             let resp_body = UsageByModelResponse {
                 usage,
                 other: OtherBucket {
                     count: other_count,
+                    inference_ms: other_inference_ms,
+                    standby_ms: other_standby_ms,
                     usage_ms: other_usage_ms,
+                    inference_gpu_hours: other_inference_ms as f64 / 3600000.0,
+                    standby_gpu_hours: other_standby_ms as f64 / 3600000.0,
                     gpu_hours: other_usage_ms as f64 / 3600000.0,
+                    inference_cents: other_inference_cents,
+                    standby_cents: other_standby_cents,
                     charge_cents: other_cents,
                 },
+                inference_ms: total_inference_ms,
+                standby_ms: total_standby_ms,
                 total_ms,
+                inference_gpu_hours: total_inference_ms as f64 / 3600000.0,
+                standby_gpu_hours: total_standby_ms as f64 / 3600000.0,
                 total_gpu_hours: total_ms as f64 / 3600000.0,
+                inference_cents: total_inference_cents,
+                standby_cents: total_standby_cents,
                 total_cents,
                 timezone: "UTC".to_string(),
             };
@@ -2784,6 +2840,140 @@ async fn GetTenantUsageByModel(
         }
         Err(e) => {
             let body = Body::from(format!("Failed to get usage by model: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantHourlyUsageByModel(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<HourlyUsageByModelQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let namespace = match params
+        .namespace
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) => v,
+        None => return Ok(BadRequest("Missing namespace parameter")),
+    };
+    let funcname = match params
+        .funcname
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) => v,
+        None => return Ok(BadRequest("Missing funcname parameter")),
+    };
+
+    let (start_hour, end_hour, total_hours) =
+        match ParseHourlyRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    match gw
+        .sqlAudit
+        .GetFuncHourlyUsageRange(&tenant, &namespace, &funcname, start_hour, end_hour)
+        .await
+    {
+        Ok(records) => {
+            let usage = BuildHourlyUsage(records, start_hour, total_hours);
+            let resp_body = HourlyUsageResponse {
+                usage,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get hourly usage by model: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetTenantHourlyUsageByNamespace(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<HourlyUsageByNamespaceQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        let body = Body::from("No permission to access this tenant");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let namespace = match params
+        .namespace
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) => v,
+        None => return Ok(BadRequest("Missing namespace parameter")),
+    };
+
+    let (start_hour, end_hour, total_hours) =
+        match ParseHourlyRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    match gw
+        .sqlAudit
+        .GetNamespaceHourlyUsageRange(&tenant, &namespace, start_hour, end_hour)
+        .await
+    {
+        Ok(records) => {
+            let usage = BuildHourlyUsage(records, start_hour, total_hours);
+            let resp_body = HourlyUsageResponse {
+                usage,
+                timezone: "UTC".to_string(),
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!(
+                "Failed to get hourly usage by namespace: {:?}",
+                e
+            ));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(body)
@@ -2812,27 +3002,48 @@ async fn GetTenantUsageByNamespace(
     let limit = params.limit.unwrap_or(10).min(50).max(1);
 
     match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours, limit).await {
-        Ok((top_items, other_count, other_usage_ms, other_cents, total_ms, total_cents)) => {
+        Ok((top_items, other, total)) => {
             let usage: Vec<NamespaceUsageItem> = top_items
                 .into_iter()
-                .map(|(namespace, usage_ms, charge_cents)| NamespaceUsageItem {
+                .map(|(namespace, inference_ms, standby_ms, usage_ms, inference_cents, standby_cents, charge_cents)| NamespaceUsageItem {
                     namespace,
+                    inference_ms,
+                    standby_ms,
                     usage_ms,
+                    inference_gpu_hours: inference_ms as f64 / 3600000.0,
+                    standby_gpu_hours: standby_ms as f64 / 3600000.0,
                     gpu_hours: usage_ms as f64 / 3600000.0,
+                    inference_cents,
+                    standby_cents,
                     charge_cents,
                 })
                 .collect();
+
+            let (other_count, other_inference_ms, other_standby_ms, other_usage_ms, other_inference_cents, other_standby_cents, other_cents) = other;
+            let (total_inference_ms, total_standby_ms, total_ms, total_inference_cents, total_standby_cents, total_cents) = total;
 
             let resp_body = UsageByNamespaceResponse {
                 usage,
                 other: OtherBucket {
                     count: other_count,
+                    inference_ms: other_inference_ms,
+                    standby_ms: other_standby_ms,
                     usage_ms: other_usage_ms,
+                    inference_gpu_hours: other_inference_ms as f64 / 3600000.0,
+                    standby_gpu_hours: other_standby_ms as f64 / 3600000.0,
                     gpu_hours: other_usage_ms as f64 / 3600000.0,
+                    inference_cents: other_inference_cents,
+                    standby_cents: other_standby_cents,
                     charge_cents: other_cents,
                 },
+                inference_ms: total_inference_ms,
+                standby_ms: total_standby_ms,
                 total_ms,
+                inference_gpu_hours: total_inference_ms as f64 / 3600000.0,
+                standby_gpu_hours: total_standby_ms as f64 / 3600000.0,
                 total_gpu_hours: total_ms as f64 / 3600000.0,
+                inference_cents: total_inference_cents,
+                standby_cents: total_standby_cents,
                 total_cents,
                 timezone: "UTC".to_string(),
             };

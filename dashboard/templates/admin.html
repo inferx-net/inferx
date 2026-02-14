@@ -483,29 +483,7 @@
                     <input type="datetime-local" id="usage-end" style="font-size: 12px;">
                     <button type="button" onclick="applyCustomUsageRange()">Apply</button>
                 </div>
-                <!-- Summary Cards -->
-                <div id="analytics-summary-cards" style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
-                    <div class="summary-card" style="min-width: 120px;">
-                        <h4>Total Used</h4>
-                        <div id="analytics-total-value">--</div>
-                        <div class="subtext">GPU-hours</div>
-                    </div>
-                    <div class="summary-card" style="min-width: 120px;">
-                        <h4>Top Model</h4>
-                        <div id="analytics-top-model">--</div>
-                        <div id="analytics-top-model-hours" class="subtext">--</div>
-                    </div>
-                    <div class="summary-card" style="min-width: 120px;">
-                        <h4>Top Namespace</h4>
-                        <div id="analytics-top-namespace">--</div>
-                        <div id="analytics-top-namespace-hours" class="subtext">--</div>
-                    </div>
-                    <div class="summary-card" style="min-width: 120px;">
-                        <h4>Peak Hour</h4>
-                        <div id="analytics-peak-hour">--</div>
-                        <div id="analytics-peak-hour-value" class="subtext">--</div>
-                    </div>
-                </div>
+                <!-- Summary cards hidden by request -->
 
                 <!-- Time Range Selector -->
                 <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -530,7 +508,7 @@
                 <!-- View Mode Selector -->
                 <div style="margin-bottom: 15px;">
                     <label>View By:</label>
-                    <input type="radio" name="analytics-view" value="hourly" checked onchange="loadAnalyticsView()"> Hourly
+                    <input type="radio" name="analytics-view" value="tenant" checked onchange="loadAnalyticsView()"> Tenant
                     <input type="radio" name="analytics-view" value="model" onchange="loadAnalyticsView()"> Model
                     <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
                 </div>
@@ -568,27 +546,92 @@
                 </div>
 
                 <div id="analytics-table-area" style="display: none;">
-                    <table id="analytics-table" style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr style="border-bottom: 2px solid #333;">
-                                <th id="analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('name')">
-                                    Group <span id="sort-name-icon"></span>
-                                </th>
-                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('hours')">
-                                    GPU-Hours <span id="sort-hours-icon">▼</span>
-                                </th>
-                                <th style="text-align: right; padding: 8px; width: 200px;">% of Total</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                        <tfoot>
-                            <tr style="font-weight: bold; border-top: 2px solid #333;">
-                                <td style="padding: 8px;">Total</td>
-                                <td id="analytics-table-total" style="text-align: right; padding: 8px;">--</td>
-                                <td style="text-align: right; padding: 8px;">100%</td>
-                            </tr>
-                        </tfoot>
-                    </table>
+                    <div style="overflow-x: auto;">
+                        <table id="analytics-table" style="width: 100%; border-collapse: collapse; min-width: 920px;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid #333;">
+                                    <th id="analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('name')">
+                                        Group <span id="sort-name-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
+                                        Inf (hrs) <span id="sort-inf-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
+                                        Sby (hrs) <span id="sort-sby-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
+                                        Inf (USD) <span id="sort-inf-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
+                                        Sby (USD) <span id="sort-sby-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('total_cost')">
+                                        Total (USD) <span id="sort-total-cost-icon">▼</span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; width: 200px; cursor: pointer;" onclick="sortAnalyticsTable('percent')">
+                                        % of Total <span id="sort-percent-icon"></span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                            <tfoot>
+                                <tr style="font-weight: bold; border-top: 2px solid #333;">
+                                    <td style="padding: 8px;">Total</td>
+                                    <td id="analytics-table-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-sby-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td style="text-align: right; padding: 8px;">100%</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #ddd; padding: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <h4 id="analytics-group-detail-title" style="margin: 0;">Hourly Breakdown</h4>
+                        <span id="analytics-group-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                    </div>
+                    <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
+                    <div style="overflow-x: auto;">
+                        <table id="analytics-group-detail-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid #333;">
+                                    <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
+                                        Period (Local) <span id="detail-sort-period-icon">▼</span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
+                                        Inf (hrs) <span id="detail-sort-inf-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
+                                        Sby (hrs) <span id="detail-sort-sby-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
+                                        Inf (USD) <span id="detail-sort-inf-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
+                                        Sby (USD) <span id="detail-sort-sby-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
+                                        Total (USD) <span id="detail-sort-total-cost-icon"></span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                            <tfoot>
+                                <tr style="font-weight: bold; border-top: 2px solid #333;">
+                                    <td style="padding: 8px;">Total</td>
+                                    <td id="analytics-group-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-sby-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-cost" style="text-align: right; padding: 8px;">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- Empty State -->
@@ -1902,10 +1945,15 @@
 
     let analyticsExpanded = false;
     let analyticsData = null;
-    let analyticsSortColumn = 'hours';
+    let analyticsSortColumn = 'total_cost';
     let analyticsSortDirection = 'desc';
     let analyticsHourlyViewMode = 'chart';
     let analyticsHourlyTableReady = false;
+    let analyticsSelectedGroupKey = null;
+    let analyticsGroupDetailRequestId = 0;
+    let analyticsGroupDetailRows = [];
+    let analyticsDetailSortColumn = 'period';
+    let analyticsDetailSortDirection = 'desc';
 
     function toggleUsageAnalytics() {
         analyticsExpanded = !analyticsExpanded;
@@ -1961,9 +2009,10 @@
     }
 
     function getAnalyticsUsageMs(entry) {
-        if (typeof entry?.inference_ms === 'number') return entry.inference_ms;
         if (typeof entry?.usage_ms === 'number') return entry.usage_ms;
-        return 0;
+        const infMs = typeof entry?.inference_ms === 'number' ? entry.inference_ms : 0;
+        const sbyMs = typeof entry?.standby_ms === 'number' ? entry.standby_ms : 0;
+        return infMs + sbyMs;
     }
 
     function updateAnalyticsHourlyViewControls() {
@@ -1998,11 +2047,245 @@
         }
     }
 
+    function getAnalyticsGroupKey(viewMode, item) {
+        if (!item) return null;
+        if (viewMode === 'model') {
+            return `model:${item.namespace || ''}:${item.funcname || ''}`;
+        }
+        if (viewMode === 'tenant') {
+            return `tenant:${item.tenant || ''}`;
+        }
+        return `namespace:${item.namespace || ''}`;
+    }
+
+    function hideAnalyticsGroupDetail(clearSelection = false) {
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (areaEl) areaEl.style.display = 'none';
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (messageEl) {
+            messageEl.style.display = 'none';
+            messageEl.textContent = '';
+        }
+        if (tableEl) tableEl.style.display = 'table';
+        if (tbody) tbody.innerHTML = '';
+        if (clearSelection) analyticsSelectedGroupKey = null;
+        analyticsGroupDetailRows = [];
+        analyticsGroupDetailRequestId += 1;
+    }
+
+    function showAnalyticsGroupDetailPrompt(message) {
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (!areaEl || !loadingEl || !messageEl || !tableEl || !tbody) return;
+
+        areaEl.style.display = 'block';
+        loadingEl.style.display = 'none';
+        messageEl.style.display = 'block';
+        messageEl.textContent = message;
+        tableEl.style.display = 'none';
+        tbody.innerHTML = '';
+    }
+
+    async function loadAnalyticsGroupDetail(viewMode, item) {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant || !item) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const titleEl = document.getElementById('analytics-group-detail-title');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (!areaEl || !loadingEl || !messageEl || !tableEl || !titleEl || !tbody) return;
+
+        const params = new URLSearchParams(timeParams);
+        let endpoint = '';
+        if (viewMode === 'tenant') {
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
+            titleEl.textContent = `Hourly Breakdown: ${tenant}`;
+        } else if (viewMode === 'model') {
+            params.set('namespace', item.namespace || '');
+            params.set('funcname', item.funcname || '');
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
+            titleEl.textContent = `Hourly Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
+        } else {
+            params.set('namespace', item.namespace || '');
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-namespace?${params.toString()}`;
+            titleEl.textContent = `Hourly Breakdown: ${item.namespace || '--'}`;
+        }
+
+        const reqId = ++analyticsGroupDetailRequestId;
+        areaEl.style.display = 'block';
+        loadingEl.style.display = 'inline';
+        messageEl.style.display = 'none';
+        messageEl.textContent = '';
+
+        try {
+            const resp = await fetchWithAuth(endpoint);
+            if (reqId !== analyticsGroupDetailRequestId) return;
+
+            if (resp.status === 404) {
+                tableEl.style.display = 'none';
+                messageEl.style.display = 'block';
+                messageEl.textContent = 'Hourly detail endpoint is not available yet.';
+                return;
+            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+            const data = await resp.json();
+            const usageRows = Array.isArray(data.usage) ? data.usage : [];
+            if (usageRows.length === 0) {
+                tableEl.style.display = 'none';
+                messageEl.style.display = 'block';
+                messageEl.textContent = 'No hourly detail data for the selected group.';
+                return;
+            }
+
+            analyticsGroupDetailRows = usageRows;
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+
+            tableEl.style.display = 'table';
+            messageEl.style.display = 'none';
+        } catch (error) {
+            if (reqId !== analyticsGroupDetailRequestId) return;
+            tableEl.style.display = 'none';
+            messageEl.style.display = 'block';
+            messageEl.textContent = `Failed to load hourly detail: ${error}`;
+        } finally {
+            if (reqId === analyticsGroupDetailRequestId) {
+                loadingEl.style.display = 'none';
+            }
+        }
+    }
+
+    function renderAnalyticsGroupDetailTable(usageRows) {
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (!tbody) return;
+
+        const rows = Array.isArray(usageRows) ? usageRows : [];
+        const sortedRows = [...rows].sort((a, b) => {
+            let aVal;
+            let bVal;
+            switch (analyticsDetailSortColumn) {
+                case 'inf_hours':
+                    aVal = a.inference_ms || 0;
+                    bVal = b.inference_ms || 0;
+                    break;
+                case 'sby_hours':
+                    aVal = a.standby_ms || 0;
+                    bVal = b.standby_ms || 0;
+                    break;
+                case 'inf_cost':
+                    aVal = a.inference_cents || 0;
+                    bVal = b.inference_cents || 0;
+                    break;
+                case 'sby_cost':
+                    aVal = a.standby_cents || 0;
+                    bVal = b.standby_cents || 0;
+                    break;
+                case 'total_cost':
+                    aVal = (a.inference_cents || 0) + (a.standby_cents || 0);
+                    bVal = (b.inference_cents || 0) + (b.standby_cents || 0);
+                    break;
+                case 'period':
+                default:
+                    aVal = Date.parse(a.hour) || 0;
+                    bVal = Date.parse(b.hour) || 0;
+                    break;
+            }
+            return analyticsDetailSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
+        let totalInfMs = 0;
+        let totalSbyMs = 0;
+        let totalInfCents = 0;
+        let totalSbyCents = 0;
+
+        rows.forEach(u => {
+            totalInfMs += u.inference_ms || 0;
+            totalSbyMs += u.standby_ms || 0;
+            totalInfCents += u.inference_cents || 0;
+            totalSbyCents += u.standby_cents || 0;
+        });
+
+        tbody.innerHTML = sortedRows.map(u => {
+            const infMs = u.inference_ms || 0;
+            const sbyMs = u.standby_ms || 0;
+            const infCents = u.inference_cents || 0;
+            const sbyCents = u.standby_cents || 0;
+            const infHours = infMs / 3600000;
+            const sbyHours = sbyMs / 3600000;
+            const totalCents = infCents + sbyCents;
+            const periodLabel = new Date(u.hour).toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+
+            return `
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 8px; text-align: left;">${periodLabel}</td>
+                    <td style="padding: 8px; text-align: right;">${infHours.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(infCents)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(sbyCents)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(totalCents)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        document.getElementById('analytics-group-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
+        document.getElementById('analytics-group-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-group-total-inf-cost').textContent = formatUsd(totalInfCents);
+        document.getElementById('analytics-group-total-sby-cost').textContent = formatUsd(totalSbyCents);
+        document.getElementById('analytics-group-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
+
+        const setDetailSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = analyticsDetailSortColumn === column
+                ? (analyticsDetailSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setDetailSortIcon('detail-sort-period-icon', 'period');
+        setDetailSortIcon('detail-sort-inf-hours-icon', 'inf_hours');
+        setDetailSortIcon('detail-sort-sby-hours-icon', 'sby_hours');
+        setDetailSortIcon('detail-sort-inf-cost-icon', 'inf_cost');
+        setDetailSortIcon('detail-sort-sby-cost-icon', 'sby_cost');
+        setDetailSortIcon('detail-sort-total-cost-icon', 'total_cost');
+    }
+
+    function sortAnalyticsGroupDetailTable(column) {
+        if (analyticsDetailSortColumn === column) {
+            analyticsDetailSortDirection = analyticsDetailSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            analyticsDetailSortColumn = column;
+            analyticsDetailSortDirection = 'desc';
+        }
+
+        if (analyticsGroupDetailRows.length > 0) {
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+        }
+    }
+
     function showAnalyticsLoading(show) {
         document.getElementById('analytics-loading').style.display = show ? 'inline' : 'none';
     }
 
     function showAnalyticsError(message) {
+        hideAnalyticsGroupDetail(true);
         document.getElementById('analytics-chart-area').style.display = 'none';
         document.getElementById('analytics-hourly-table-area').style.display = 'none';
         document.getElementById('analytics-table-area').style.display = 'none';
@@ -2017,6 +2300,7 @@
     }
 
     function showAnalyticsEmpty() {
+        hideAnalyticsGroupDetail(true);
         document.getElementById('analytics-chart-area').style.display = 'none';
         document.getElementById('analytics-hourly-table-area').style.display = 'none';
         document.getElementById('analytics-table-area').style.display = 'none';
@@ -2039,9 +2323,6 @@
         document.getElementById('analytics-empty').style.display = 'none';
 
         try {
-            // Load summary cards
-            await loadAnalyticsSummary(tenant, timeParams);
-
             // Load current view
             await loadAnalyticsView();
         } catch (error) {
@@ -2049,74 +2330,6 @@
             showAnalyticsError(error.message);
         } finally {
             showAnalyticsLoading(false);
-        }
-    }
-
-    async function loadAnalyticsSummary(tenant, timeParams) {
-        try {
-            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/summary?${timeParams}`);
-
-            if (resp.status === 404) {
-                document.getElementById('analytics-summary-cards').style.display = 'none';
-                return;
-            }
-
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-
-            document.getElementById('analytics-summary-cards').style.display = 'flex';
-
-            // Total
-            document.getElementById('analytics-total-value').textContent =
-                data.total_gpu_hours?.toFixed(2) || '0.00';
-
-            // Top Model
-            if (data.top_model) {
-                const modelName = data.top_model.funcname || '';
-                const modelEl = document.getElementById('analytics-top-model');
-                modelEl.textContent = truncateText(modelName, 15);
-                // Mirror bar-chart behavior: show full name on hover when display text is truncated.
-                modelEl.title = modelName.length > 15 ? modelName : '';
-                document.getElementById('analytics-top-model-hours').textContent =
-                    `${data.top_model.gpu_hours?.toFixed(2) || '0.00'} hrs`;
-            } else {
-                const modelEl = document.getElementById('analytics-top-model');
-                modelEl.textContent = '--';
-                modelEl.title = '';
-                document.getElementById('analytics-top-model-hours').textContent = 'No data';
-            }
-
-            // Top Namespace
-            if (data.top_namespace) {
-                document.getElementById('analytics-top-namespace').textContent =
-                    truncateText(data.top_namespace.namespace, 15);
-                document.getElementById('analytics-top-namespace-hours').textContent =
-                    `${data.top_namespace.gpu_hours?.toFixed(2) || '0.00'} hrs`;
-            } else {
-                document.getElementById('analytics-top-namespace').textContent = '--';
-                document.getElementById('analytics-top-namespace-hours').textContent = 'No data';
-            }
-
-            // Peak Hour
-            if (data.peak_hour) {
-                const peakDate = new Date(data.peak_hour.hour);
-                document.getElementById('analytics-peak-hour').textContent =
-                    peakDate.toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false
-                    });
-                document.getElementById('analytics-peak-hour-value').textContent =
-                    `${data.peak_hour.gpu_hours?.toFixed(2) || '0.00'} hrs`;
-            } else {
-                document.getElementById('analytics-peak-hour').textContent = '--';
-                document.getElementById('analytics-peak-hour-value').textContent = 'No data';
-            }
-        } catch (error) {
-            console.warn('Failed to load summary:', error);
-            document.getElementById('analytics-summary-cards').style.display = 'none';
         }
     }
 
@@ -2130,21 +2343,22 @@
         const viewMode = getAnalyticsViewMode();
         updateAnalyticsHourlyViewButtons();
         updateAnalyticsHourlyViewControls();
-        if (viewMode !== 'hourly') {
-            analyticsHourlyTableReady = false;
-            document.getElementById('analytics-hourly-table-area').style.display = 'none';
-            document.getElementById('analytics-chart-area').style.display = 'none';
-        }
+        hideAnalyticsGroupDetail(true);
+        analyticsHourlyTableReady = false;
+        document.getElementById('analytics-hourly-table-area').style.display = 'none';
+        document.getElementById('analytics-chart-area').style.display = 'none';
         let endpoint;
 
         switch (viewMode) {
+            case 'tenant':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                break;
             case 'model':
                 endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}&limit=10`;
                 break;
             case 'namespace':
                 endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}&limit=10`;
                 break;
-            case 'hourly':
             default:
                 endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
                 break;
@@ -2163,8 +2377,8 @@
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
-            if (viewMode === 'hourly') {
-                renderAnalyticsHourlyChart(data);
+            if (viewMode === 'tenant') {
+                renderTenantGroupedTable(data, tenant);
             } else {
                 analyticsData = data;
                 renderGroupedTable(data, viewMode);
@@ -2175,6 +2389,56 @@
         } finally {
             showAnalyticsLoading(false);
         }
+    }
+
+    function renderTenantGroupedTable(hourlyData, tenantName) {
+        const usageRows = Array.isArray(hourlyData?.usage) ? hourlyData.usage : [];
+        if (usageRows.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        let totalInfMs = 0;
+        let totalSbyMs = 0;
+        let totalInfCents = 0;
+        let totalSbyCents = 0;
+
+        usageRows.forEach(u => {
+            totalInfMs += u.inference_ms || 0;
+            totalSbyMs += u.standby_ms || 0;
+            totalInfCents += u.inference_cents || 0;
+            totalSbyCents += u.standby_cents || 0;
+        });
+
+        const grouped = {
+            usage: [{
+                tenant: tenantName,
+                inference_ms: totalInfMs,
+                standby_ms: totalSbyMs,
+                usage_ms: totalInfMs + totalSbyMs,
+                inference_cents: totalInfCents,
+                standby_cents: totalSbyCents,
+                charge_cents: totalInfCents + totalSbyCents
+            }],
+            other: {
+                count: 0,
+                inference_ms: 0,
+                standby_ms: 0,
+                usage_ms: 0,
+                inference_cents: 0,
+                standby_cents: 0,
+                charge_cents: 0
+            },
+            inference_ms: totalInfMs,
+            standby_ms: totalSbyMs,
+            total_ms: totalInfMs + totalSbyMs,
+            inference_cents: totalInfCents,
+            standby_cents: totalSbyCents,
+            total_cents: totalInfCents + totalSbyCents
+        };
+
+        analyticsData = grouped;
+        renderGroupedTable(grouped, 'tenant');
     }
 
     function renderGroupedTable(data, viewMode) {
@@ -2194,77 +2458,205 @@
 
         // Update header based on view mode
         const headerEl = document.getElementById('analytics-group-header');
-        headerEl.innerHTML = (viewMode === 'model' ? 'Model' : 'Namespace') +
+        const groupHeader = viewMode === 'model'
+            ? 'Model'
+            : (viewMode === 'namespace' ? 'Namespace' : 'Tenant');
+        headerEl.innerHTML = groupHeader +
             ' <span id="sort-name-icon">' + (analyticsSortColumn === 'name' ? (analyticsSortDirection === 'asc' ? '▲' : '▼') : '') + '</span>';
 
-        const totalMs = data.total_ms || data.usage.reduce((sum, u) => sum + u.usage_ms, 0);
-        const totalHours = totalMs / 3600000;
+        const totalInfMs = (typeof data.inference_ms === 'number')
+            ? data.inference_ms
+            : (
+                data.usage.reduce((sum, u) => sum + (u.inference_ms || 0), 0) +
+                (data.other?.inference_ms || 0)
+            );
+        const totalSbyMs = (typeof data.standby_ms === 'number')
+            ? data.standby_ms
+            : (
+                data.usage.reduce((sum, u) => sum + (u.standby_ms || 0), 0) +
+                (data.other?.standby_ms || 0)
+            );
+        const totalInfCents = (typeof data.inference_cents === 'number')
+            ? data.inference_cents
+            : (
+                data.usage.reduce((sum, u) => sum + (u.inference_cents || 0), 0) +
+                (data.other?.inference_cents || 0)
+            );
+        const totalSbyCents = (typeof data.standby_cents === 'number')
+            ? data.standby_cents
+            : (
+                data.usage.reduce((sum, u) => sum + (u.standby_cents || 0), 0) +
+                (data.other?.standby_cents || 0)
+            );
+        const totalCents = (typeof data.total_cents === 'number') ? data.total_cents : (totalInfCents + totalSbyCents);
 
         // Sort data
         let sortedData = [...data.usage];
         sortedData.sort((a, b) => {
-            let aVal, bVal;
+            let aVal;
+            let bVal;
+            const aInfMs = a.inference_ms || 0;
+            const aSbyMs = a.standby_ms || 0;
+            const aInfCents = a.inference_cents || 0;
+            const aSbyCents = a.standby_cents || 0;
+            const aTotalCents = (typeof a.charge_cents === 'number') ? a.charge_cents : (aInfCents + aSbyCents);
+            const bInfMs = b.inference_ms || 0;
+            const bSbyMs = b.standby_ms || 0;
+            const bInfCents = b.inference_cents || 0;
+            const bSbyCents = b.standby_cents || 0;
+            const bTotalCents = (typeof b.charge_cents === 'number') ? b.charge_cents : (bInfCents + bSbyCents);
+
             if (analyticsSortColumn === 'name') {
-                aVal = viewMode === 'model' ? a.funcname : a.namespace;
-                bVal = viewMode === 'model' ? b.funcname : b.namespace;
+                aVal = viewMode === 'model'
+                    ? a.funcname
+                    : (viewMode === 'namespace' ? a.namespace : a.tenant);
+                bVal = viewMode === 'model'
+                    ? b.funcname
+                    : (viewMode === 'namespace' ? b.namespace : b.tenant);
                 return analyticsSortDirection === 'asc'
                     ? aVal.localeCompare(bVal)
                     : bVal.localeCompare(aVal);
-            } else {
-                aVal = a.usage_ms;
-                bVal = b.usage_ms;
-                return analyticsSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             }
+
+            switch (analyticsSortColumn) {
+                case 'inf_hours':
+                    aVal = aInfMs;
+                    bVal = bInfMs;
+                    break;
+                case 'sby_hours':
+                    aVal = aSbyMs;
+                    bVal = bSbyMs;
+                    break;
+                case 'inf_cost':
+                    aVal = aInfCents;
+                    bVal = bInfCents;
+                    break;
+                case 'sby_cost':
+                    aVal = aSbyCents;
+                    bVal = bSbyCents;
+                    break;
+                case 'percent':
+                    aVal = totalCents > 0 ? (aTotalCents / totalCents) : 0;
+                    bVal = totalCents > 0 ? (bTotalCents / totalCents) : 0;
+                    break;
+                case 'total_cost':
+                default:
+                    aVal = aTotalCents;
+                    bVal = bTotalCents;
+                    break;
+            }
+            return analyticsSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
         });
 
+        let selectedItem = null;
         sortedData.forEach(item => {
             const row = document.createElement('tr');
             row.style.borderBottom = '1px solid #eee';
-            const groupName = viewMode === 'model' ? item.funcname : item.namespace;
-            const gpuHours = (item.usage_ms / 3600000).toFixed(2);
-            const percent = totalMs > 0 ? ((item.usage_ms / totalMs) * 100).toFixed(1) : 0;
+            row.style.cursor = 'pointer';
+            const groupLabel = viewMode === 'model'
+                ? `${item.funcname} (${item.namespace})`
+                : (viewMode === 'namespace' ? item.namespace : item.tenant);
+            const infMs = item.inference_ms || 0;
+            const sbyMs = item.standby_ms || 0;
+            const infCents = item.inference_cents || 0;
+            const sbyCents = item.standby_cents || 0;
+            const chargeCents = (typeof item.charge_cents === 'number') ? item.charge_cents : (infCents + sbyCents);
+            const infHours = (infMs / 3600000).toFixed(2);
+            const sbyHours = (sbyMs / 3600000).toFixed(2);
+            const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : 0;
 
             const barWidth = Math.min(percent, 100);
             const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+            const rowKey = getAnalyticsGroupKey(viewMode, item);
+            if (rowKey === analyticsSelectedGroupKey) {
+                row.style.background = '#f0f7ff';
+                selectedItem = item;
+            }
+            row.onclick = () => {
+                analyticsSelectedGroupKey = rowKey;
+                renderGroupedTable(data, viewMode);
+            };
 
             row.innerHTML = `
-                <td style="padding: 8px;" title="${groupName}">${truncateText(groupName, 40)}</td>
-                <td style="text-align: right; padding: 8px;">${gpuHours}</td>
+                <td style="padding: 8px;" title="${groupLabel}">${truncateText(groupLabel, 40)}</td>
+                <td style="text-align: right; padding: 8px;">${infHours}</td>
+                <td style="text-align: right; padding: 8px;">${sbyHours}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(sbyCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(chargeCents)}</td>
                 <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
             `;
             tbody.appendChild(row);
         });
 
         // Add "Other" row if present
-        if (data.other && data.other.count > 0) {
+        if ((viewMode === 'model' || viewMode === 'namespace') && data.other && data.other.count > 0) {
             const row = document.createElement('tr');
             row.style.color = '#888';
             row.style.fontStyle = 'italic';
             row.style.borderBottom = '1px solid #eee';
-            const gpuHours = (data.other.usage_ms / 3600000).toFixed(2);
-            const percent = totalMs > 0 ? ((data.other.usage_ms / totalMs) * 100).toFixed(1) : 0;
+            const otherInfMs = data.other.inference_ms || 0;
+            const otherSbyMs = data.other.standby_ms || 0;
+            const otherInfCents = data.other.inference_cents || 0;
+            const otherSbyCents = data.other.standby_cents || 0;
+            const otherCents = (typeof data.other.charge_cents === 'number')
+                ? data.other.charge_cents
+                : (otherInfCents + otherSbyCents);
+            const percent = totalCents > 0 ? ((otherCents / totalCents) * 100).toFixed(1) : 0;
             const barWidth = Math.min(percent, 100);
             const bar = `<div style="background: #ccc; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
 
             row.innerHTML = `
                 <td style="padding: 8px;">Other (${data.other.count} ${viewMode === 'model' ? 'models' : 'namespaces'})</td>
-                <td style="text-align: right; padding: 8px;">${gpuHours}</td>
+                <td style="text-align: right; padding: 8px;">${(otherInfMs / 3600000).toFixed(2)}</td>
+                <td style="text-align: right; padding: 8px;">${(otherSbyMs / 3600000).toFixed(2)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherInfCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherSbyCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherCents)}</td>
                 <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
             `;
             tbody.appendChild(row);
         }
 
         // Update totals
-        document.getElementById('analytics-table-total').textContent = totalHours.toFixed(2);
+        document.getElementById('analytics-table-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
+        document.getElementById('analytics-table-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-table-total-inf-cost').textContent = formatUsd(totalInfCents);
+        document.getElementById('analytics-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
+        document.getElementById('analytics-table-total-cost').textContent = formatUsd(totalCents);
 
         // Update sort icons
-        document.getElementById('sort-hours-icon').textContent =
-            analyticsSortColumn === 'hours' ? (analyticsSortDirection === 'asc' ? '▲' : '▼') : '';
+        const setSummarySortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = analyticsSortColumn === column
+                ? (analyticsSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setSummarySortIcon('sort-name-icon', 'name');
+        setSummarySortIcon('sort-inf-hours-icon', 'inf_hours');
+        setSummarySortIcon('sort-sby-hours-icon', 'sby_hours');
+        setSummarySortIcon('sort-inf-cost-icon', 'inf_cost');
+        setSummarySortIcon('sort-sby-cost-icon', 'sby_cost');
+        setSummarySortIcon('sort-total-cost-icon', 'total_cost');
+        setSummarySortIcon('sort-percent-icon', 'percent');
 
         // Show table, hide chart and empty state
         document.getElementById('analytics-table-area').style.display = 'block';
         document.getElementById('analytics-chart-area').style.display = 'none';
         document.getElementById('analytics-empty').style.display = 'none';
+
+        if (selectedItem) {
+            loadAnalyticsGroupDetail(viewMode, selectedItem);
+        } else {
+            showAnalyticsGroupDetailPrompt(
+                viewMode === 'model'
+                    ? 'Select a model row above to view hourly drill-down.'
+                    : (viewMode === 'namespace'
+                        ? 'Select a namespace row above to view hourly drill-down.'
+                        : 'Select the tenant row above to view hourly drill-down.')
+            );
+        }
     }
 
     function sortAnalyticsTable(column) {
@@ -2283,6 +2675,7 @@
 
     function renderAnalyticsHourlyChart(data) {
         document.getElementById('analytics-error').style.display = 'none';
+        hideAnalyticsGroupDetail(true);
         const chartEl = document.getElementById('analytics-chart-area');
 
         if (!data.usage || data.usage.length === 0) {
