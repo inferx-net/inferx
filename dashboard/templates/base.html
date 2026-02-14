@@ -3,13 +3,52 @@
 
 <head>
     <meta charset="UTF-8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <title> InferX AI Function </title>
     <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
         nav a {
             color: #d64161;
             font-size: 3em;
             margin-left: 50px;
             text-decoration: none;
+        }
+
+        .content table.ix-table {
+            border-collapse: collapse;
+            background: #fff;
+        }
+
+        .content table.ix-table th,
+        .content table.ix-table td {
+            border: 1px solid #dbe3ec;
+            padding: 10px 12px;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        .content table.ix-table th {
+            background: #f8fafc;
+            color: #334155;
+            font-weight: 600;
+        }
+
+        .content table.ix-table tbody tr:nth-child(even) {
+            background: #fcfdff;
+        }
+
+        .content table.ix-table tbody tr:hover {
+            background: #f5faff;
+        }
+
+        .content table.ix-table.ix-table-compact th,
+        .content table.ix-table.ix-table-compact td {
+            padding: 4px 6px;
         }
 
         .audit {

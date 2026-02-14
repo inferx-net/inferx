@@ -37,6 +37,34 @@
         display: block;
     }
 
+    /* Non-Billing admin tables */
+    .admin-data-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+    }
+
+    .admin-data-table th,
+    .admin-data-table td {
+        border: 1px solid #dbe3ec;
+        padding: 8px 10px;
+        vertical-align: middle;
+    }
+
+    .admin-data-table th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+    }
+
+    .admin-data-table tbody tr:nth-child(even) {
+        background: #fcfdff;
+    }
+
+    .admin-data-table tbody tr:hover {
+        background: #f5faff;
+    }
+
     /* Billing tab styles */
     .summary-card {
         border: 1px solid #ccc;
@@ -194,6 +222,106 @@
         color: #fff;
         border: 1px solid #4CAF50;
     }
+
+    /* Billing tables aligned with Usage Analytics style */
+    .billing-analytics-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        border: 1px solid #ddd;
+        background: #fff;
+    }
+
+    .billing-analytics-table th,
+    .billing-analytics-table td {
+        border: none;
+        padding: 8px;
+        vertical-align: middle;
+    }
+
+    .billing-analytics-table thead tr {
+        border-bottom: 2px solid #333;
+    }
+
+    .billing-analytics-table tbody tr {
+        border-bottom: 1px solid #eee;
+    }
+
+    .billing-analytics-table tbody tr:hover {
+        background: #f7fbff;
+    }
+
+    .billing-analytics-table tfoot tr {
+        font-weight: bold;
+        border-top: 2px solid #333;
+        background: #fafafa;
+    }
+
+    /* Credit history modern table style */
+    #credit-history-container {
+        margin-top: 4px;
+    }
+
+    #credit-history-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #dbe3ec;
+        background: #ffffff;
+    }
+
+    #credit-history-table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+    }
+
+    #credit-history-table th,
+    #credit-history-table td {
+        border: 1px solid #dbe3ec;
+        padding: 10px 12px;
+        text-align: center;
+    }
+
+    #credit-history-table thead th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    #credit-history-table tbody tr:nth-child(even) {
+        background: #fcfdff;
+    }
+
+    #credit-history-table tbody tr:hover {
+        background: #f5faff;
+    }
+
+    #credit-history-container #billing-pagination-controls {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+    }
+
+    #credit-history-container #billing-pagination-controls button {
+        margin: 0;
+        padding: 6px 14px;
+        border: 1px solid #d1d9e6;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #334155;
+    }
+
+    #credit-history-container #billing-pagination-controls button:not(:disabled):hover {
+        background: #f8fbff;
+        border-color: #b7c6dc;
+    }
+
+    #credit-history-container #billing-page-info {
+        color: #475569;
+        font-weight: 600;
+    }
 </style>
 
 <div class="tab">
@@ -207,7 +335,7 @@
 </div>
 
 <div id="Apikeys" class="tabcontent">
-    <table style="width:100%" id="items-table">
+    <table class="admin-data-table" style="width:100%" id="items-table">
         <thead>
             <tr>
                 <th style="width: 150px;">Select</th>
@@ -234,7 +362,7 @@
 </div>
 
 <div id="Models" class="tabcontent">
-    <table style="width:100%" id="models-table">
+    <table class="admin-data-table" style="width:100%" id="models-table">
         <thead>
             <tr>
                 <th rowspan="2" style="width: 100px;">Select</th>
@@ -276,7 +404,7 @@
 
 <div id="Roles" class="tabcontent">
     <h3>Tenant Roles</h3>
-    <table style="width:100%" id="tenant-roles-table">
+    <table class="admin-data-table" style="width:100%" id="tenant-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -294,7 +422,7 @@
     <br>
 
     <h3>Namespace Roles</h3>
-    <table style="width:100%" id="namespace-roles-table">
+    <table class="admin-data-table" style="width:100%" id="namespace-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -312,7 +440,7 @@
 </div>
 
 <div id="Namespaces" class="tabcontent">
-    <table style="width:100%" id="namespaces-table">
+    <table class="admin-data-table" style="width:100%" id="namespaces-table">
         <thead>
             <tr>
                 <th rowspan="2" style="width: 150px;">Select</th>
@@ -353,7 +481,7 @@
 </div>
 
 <div id="Tenants" class="tabcontent">
-    <table style="width:100%" id="tenants-table">
+    <table class="admin-data-table" style="width:100%" id="tenants-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -458,42 +586,42 @@
                     Usage Table View (<span id="usage-table-granularity">Hourly</span>, Local)
                 </h4>
                 <div style="overflow-x: auto;">
-                        <table id="usage-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                        <table id="usage-table" class="billing-analytics-table">
                             <thead>
                                 <tr>
-                                <th style="text-align: left; padding: 6px; cursor: pointer;" onclick="sortUsageTable('period')">
+                                <th style="text-align: left; cursor: pointer;" onclick="sortUsageTable('period')">
                                     Period <span id="usage-sort-period-icon">▼</span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
                                     Inf (USD) <span id="usage-sort-inf-cost-icon"></span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
                                     Sby (USD) <span id="usage-sort-sby-cost-icon"></span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('total_cost')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_cost')">
                                     Total (USD) <span id="usage-sort-total-cost-icon"></span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
                                     Inf (GPU-hrs) <span id="usage-sort-inf-hours-icon"></span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
                                     Sby (GPU-hrs) <span id="usage-sort-sby-hours-icon"></span>
                                 </th>
-                                <th style="text-align: right; padding: 6px; cursor: pointer;" onclick="sortUsageTable('total_hours')">
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_hours')">
                                     Total (GPU-hrs) <span id="usage-sort-total-hours-icon"></span>
                                 </th>
                             </tr>
                         </thead>
                         <tbody></tbody>
                         <tfoot>
-                            <tr style="font-weight: bold;">
-                                <td style="text-align: left; padding: 6px;">Total</td>
-                                <td id="usage-table-total-inf-cost" style="text-align: right; padding: 6px;">--</td>
-                                <td id="usage-table-total-sby-cost" style="text-align: right; padding: 6px;">--</td>
-                                <td id="usage-table-total-cost" style="text-align: right; padding: 6px;">--</td>
-                                <td id="usage-table-total-inf-hours" style="text-align: right; padding: 6px;">--</td>
-                                <td id="usage-table-total-sby-hours" style="text-align: right; padding: 6px;">--</td>
-                                <td id="usage-table-total-hours" style="text-align: right; padding: 6px;">--</td>
+                            <tr>
+                                <td style="text-align: left;">Total</td>
+                                <td id="usage-table-total-inf-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-sby-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-inf-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-sby-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-hours" style="text-align: right;">--</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -689,28 +817,30 @@
         <!-- Credit History -->
         <div id="credit-history-container">
             <h3>Credit History</h3>
-            <table style="width:100%" id="credit-history-table">
-                <thead>
-                    <tr>
-                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('date')">
-                            Date/Time (Local) <span id="credit-sort-date-icon">▼</span>
-                        </th>
-                        <th style="text-align: right; cursor: pointer;" onclick="sortCreditHistoryTable('amount')">
-                            Amount (USD) <span id="credit-sort-amount-icon"></span>
-                        </th>
-                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('note')">
-                            Note <span id="credit-sort-note-icon"></span>
-                        </th>
-                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('payment_ref')">
-                            Payment Ref <span id="credit-sort-payment-ref-icon"></span>
-                        </th>
-                        <th style="cursor: pointer;" onclick="sortCreditHistoryTable('added_by')">
-                            Added By <span id="credit-sort-added-by-icon"></span>
-                        </th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
+            <div id="credit-history-table-wrap">
+                <table id="credit-history-table">
+                    <thead>
+                        <tr>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('date')">
+                                Date/Time (Local) <span id="credit-sort-date-icon">▼</span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('amount')">
+                                Amount (USD) <span id="credit-sort-amount-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('note')">
+                                Note <span id="credit-sort-note-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('payment_ref')">
+                                Payment Ref <span id="credit-sort-payment-ref-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('added_by')">
+                                Added By <span id="credit-sort-added-by-icon"></span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
             <div id="billing-pagination-controls">
                 <button id="prev-page-btn" onclick="billingPrevPage()" disabled>&laquo; Prev</button>
                 <span id="billing-page-info">Page 1 of 1</span>
@@ -1620,13 +1750,13 @@
 
             return `
                 <tr>
-                    <td style="text-align: left; padding: 6px;">${periodLabel}</td>
-                    <td style="text-align: right; padding: 6px;">${formatUsd(infCents)}</td>
-                    <td style="text-align: right; padding: 6px;">${formatUsd(sbyCents)}</td>
-                    <td style="text-align: right; padding: 6px;">${formatUsd(totalCents)}</td>
-                    <td style="text-align: right; padding: 6px;">${infHours.toFixed(2)}</td>
-                    <td style="text-align: right; padding: 6px;">${sbyHours.toFixed(2)}</td>
-                    <td style="text-align: right; padding: 6px;">${totalHours.toFixed(2)}</td>
+                    <td style="text-align: left;">${periodLabel}</td>
+                    <td style="text-align: right;">${formatUsd(infCents)}</td>
+                    <td style="text-align: right;">${formatUsd(sbyCents)}</td>
+                    <td style="text-align: right;">${formatUsd(totalCents)}</td>
+                    <td style="text-align: right;">${infHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${totalHours.toFixed(2)}</td>
                 </tr>
             `;
         }).join('');
@@ -1726,7 +1856,7 @@
                 return `
                     <tr>
                         <td>${date}</td>
-                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
+                        <td class="${amountClass}">${amountText}</td>
                         <td>${record.note || '-'}</td>
                         <td>${record.payment_ref || '-'}</td>
                         <td>${record.added_by || '-'}</td>
