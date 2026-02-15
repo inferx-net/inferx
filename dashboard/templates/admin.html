@@ -42,7 +42,7 @@
         width: 100%;
         border-collapse: collapse;
         background: #fff;
-        font-size: 12px;
+        font-size: 14px;
     }
 
     .admin-data-table th,
@@ -229,33 +229,35 @@
     .billing-analytics-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 12px;
-        border: 1px solid #ddd;
+        font-size: 14px;
+        border: 1px solid #dbe3ec;
         background: #fff;
     }
 
     .billing-analytics-table th,
     .billing-analytics-table td {
-        border: none;
+        border: 1px solid #dbe3ec;
         padding: 8px;
         vertical-align: middle;
     }
 
-    .billing-analytics-table thead tr {
-        border-bottom: 2px solid #333;
+    .billing-analytics-table thead th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+        white-space: nowrap;
     }
 
-    .billing-analytics-table tbody tr {
-        border-bottom: 1px solid #eee;
+    .billing-analytics-table tbody tr:nth-child(even) {
+        background: #fcfdff;
     }
 
     .billing-analytics-table tbody tr:hover {
-        background: #f7fbff;
+        background: #f5faff;
     }
 
-    .billing-analytics-table tfoot tr {
+    .billing-analytics-table tfoot td {
         font-weight: bold;
-        border-top: 2px solid #333;
         background: #fafafa;
     }
 
@@ -274,6 +276,7 @@
         width: 100%;
         min-width: 760px;
         border-collapse: collapse;
+        font-size: 14px;
     }
 
     #credit-history-table th,
@@ -602,23 +605,20 @@
                                 <th style="text-align: left; cursor: pointer;" onclick="sortUsageTable('period')">
                                     Period <span id="usage-sort-period-icon">▼</span>
                                 </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
+                                    Inference (hrs) <span id="usage-sort-inf-hours-icon"></span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
+                                    Standby (hrs) <span id="usage-sort-sby-hours-icon"></span>
+                                </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
-                                    Inf (USD) <span id="usage-sort-inf-cost-icon"></span>
+                                    Inference (USD) <span id="usage-sort-inf-cost-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
-                                    Sby (USD) <span id="usage-sort-sby-cost-icon"></span>
+                                    Standby (USD) <span id="usage-sort-sby-cost-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_cost')">
                                     Total (USD) <span id="usage-sort-total-cost-icon"></span>
-                                </th>
-                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
-                                    Inf (GPU-hrs) <span id="usage-sort-inf-hours-icon"></span>
-                                </th>
-                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
-                                    Sby (GPU-hrs) <span id="usage-sort-sby-hours-icon"></span>
-                                </th>
-                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_hours')">
-                                    Total (GPU-hrs) <span id="usage-sort-total-hours-icon"></span>
                                 </th>
                             </tr>
                         </thead>
@@ -626,12 +626,11 @@
                         <tfoot>
                             <tr>
                                 <td style="text-align: left;">Total</td>
+                                <td id="usage-table-total-inf-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-sby-hours" style="text-align: right;">--</td>
                                 <td id="usage-table-total-inf-cost" style="text-align: right;">--</td>
                                 <td id="usage-table-total-sby-cost" style="text-align: right;">--</td>
                                 <td id="usage-table-total-cost" style="text-align: right;">--</td>
-                                <td id="usage-table-total-inf-hours" style="text-align: right;">--</td>
-                                <td id="usage-table-total-sby-hours" style="text-align: right;">--</td>
-                                <td id="usage-table-total-hours" style="text-align: right;">--</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -698,16 +697,16 @@
                     <h4 style="margin: 0 0 8px 0;">
                         Hourly Table View (<span id="analytics-hourly-table-granularity">Hourly</span>, Local)
                     </h4>
-                    <table id="analytics-hourly-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                    <table id="analytics-hourly-table" class="billing-analytics-table">
                         <thead>
-                            <tr style="border-bottom: 2px solid #333;">
+                            <tr>
                                 <th style="text-align: left; padding: 8px;">Period</th>
                                 <th style="text-align: right; padding: 8px;">GPU-Hours</th>
                             </tr>
                         </thead>
                         <tbody></tbody>
                         <tfoot>
-                            <tr style="font-weight: bold; border-top: 2px solid #333;">
+                            <tr>
                                 <td style="padding: 8px;">Total</td>
                                 <td id="analytics-hourly-table-total" style="text-align: right; padding: 8px;">--</td>
                             </tr>
@@ -717,23 +716,23 @@
 
                 <div id="analytics-table-area" style="display: none;">
                     <div style="overflow-x: auto;">
-                        <table id="analytics-table" style="width: 100%; border-collapse: collapse; min-width: 920px;">
+                        <table id="analytics-table" class="billing-analytics-table" style="min-width: 920px;">
                             <thead>
-                                <tr style="border-bottom: 2px solid #333;">
+                                <tr>
                                     <th id="analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('name')">
                                         Group <span id="sort-name-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                        Inf (hrs) <span id="sort-inf-hours-icon"></span>
+                                        Inference (hrs) <span id="sort-inf-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
-                                        Sby (hrs) <span id="sort-sby-hours-icon"></span>
+                                        Standby (hrs) <span id="sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
-                                        Inf (USD) <span id="sort-inf-cost-icon"></span>
+                                        Inference (USD) <span id="sort-inf-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
-                                        Sby (USD) <span id="sort-sby-cost-icon"></span>
+                                        Standby (USD) <span id="sort-sby-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('total_cost')">
                                         Total (USD) <span id="sort-total-cost-icon">▼</span>
@@ -745,7 +744,7 @@
                             </thead>
                             <tbody></tbody>
                             <tfoot>
-                                <tr style="font-weight: bold; border-top: 2px solid #333;">
+                                <tr>
                                     <td style="padding: 8px;">Total</td>
                                     <td id="analytics-table-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
                                     <td id="analytics-table-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
@@ -772,23 +771,23 @@
                     </div>
                     <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
                     <div style="overflow-x: auto;">
-                        <table id="analytics-group-detail-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                        <table id="analytics-group-detail-table" class="billing-analytics-table">
                             <thead>
-                                <tr style="border-bottom: 2px solid #333;">
+                                <tr>
                                     <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
                                         Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
-                                        Inf (hrs) <span id="detail-sort-inf-hours-icon"></span>
+                                        Inference (hrs) <span id="detail-sort-inf-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
-                                        Sby (hrs) <span id="detail-sort-sby-hours-icon"></span>
+                                        Standby (hrs) <span id="detail-sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
-                                        Inf (USD) <span id="detail-sort-inf-cost-icon"></span>
+                                        Inference (USD) <span id="detail-sort-inf-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
-                                        Sby (USD) <span id="detail-sort-sby-cost-icon"></span>
+                                        Standby (USD) <span id="detail-sort-sby-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
                                         Total (USD) <span id="detail-sort-total-cost-icon"></span>
@@ -797,7 +796,7 @@
                             </thead>
                             <tbody></tbody>
                             <tfoot>
-                                <tr style="font-weight: bold; border-top: 2px solid #333;">
+                                <tr>
                                     <td style="padding: 8px;">Total</td>
                                     <td id="analytics-group-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
                                     <td id="analytics-group-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
@@ -1830,10 +1829,6 @@
                     aVal = a.standby_ms || 0;
                     bVal = b.standby_ms || 0;
                     break;
-                case 'total_hours':
-                    aVal = (a.inference_ms || 0) + (a.standby_ms || 0);
-                    bVal = (b.inference_ms || 0) + (b.standby_ms || 0);
-                    break;
                 case 'period':
                 default:
                     aVal = Date.parse(a.hour) || 0;
@@ -1854,7 +1849,6 @@
             const infHours = (u.inference_ms || 0) / 3600000;
             const sbyHours = (u.standby_ms || 0) / 3600000;
             const totalCents = infCents + sbyCents;
-            const totalHours = infHours + sbyHours;
             const periodLabel = formatBillingUsagePeriodLabel(
                 u,
                 billingUsageTableGranularity,
@@ -1869,22 +1863,20 @@
             return `
                 <tr>
                     <td style="text-align: left;">${periodLabel}</td>
+                    <td style="text-align: right;">${infHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${sbyHours.toFixed(2)}</td>
                     <td style="text-align: right;">${formatUsd(infCents)}</td>
                     <td style="text-align: right;">${formatUsd(sbyCents)}</td>
                     <td style="text-align: right;">${formatUsd(totalCents)}</td>
-                    <td style="text-align: right;">${infHours.toFixed(2)}</td>
-                    <td style="text-align: right;">${sbyHours.toFixed(2)}</td>
-                    <td style="text-align: right;">${totalHours.toFixed(2)}</td>
                 </tr>
             `;
         }).join('');
 
+        document.getElementById('usage-table-total-inf-hours').textContent = totalInfHours.toFixed(2);
+        document.getElementById('usage-table-total-sby-hours').textContent = totalSbyHours.toFixed(2);
         document.getElementById('usage-table-total-inf-cost').textContent = formatUsd(totalInfCents);
         document.getElementById('usage-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
         document.getElementById('usage-table-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
-        document.getElementById('usage-table-total-inf-hours').textContent = totalInfHours.toFixed(2);
-        document.getElementById('usage-table-total-sby-hours').textContent = totalSbyHours.toFixed(2);
-        document.getElementById('usage-table-total-hours').textContent = (totalInfHours + totalSbyHours).toFixed(2);
 
         const setUsageSortIcon = (id, column) => {
             const el = document.getElementById(id);
@@ -1894,12 +1886,11 @@
                 : '';
         };
         setUsageSortIcon('usage-sort-period-icon', 'period');
+        setUsageSortIcon('usage-sort-inf-hours-icon', 'inf_hours');
+        setUsageSortIcon('usage-sort-sby-hours-icon', 'sby_hours');
         setUsageSortIcon('usage-sort-inf-cost-icon', 'inf_cost');
         setUsageSortIcon('usage-sort-sby-cost-icon', 'sby_cost');
         setUsageSortIcon('usage-sort-total-cost-icon', 'total_cost');
-        setUsageSortIcon('usage-sort-inf-hours-icon', 'inf_hours');
-        setUsageSortIcon('usage-sort-sby-hours-icon', 'sby_hours');
-        setUsageSortIcon('usage-sort-total-hours-icon', 'total_hours');
     }
 
     function sortUsageTable(column) {
