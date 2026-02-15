@@ -400,6 +400,10 @@ impl HttpGateway {
             )
             .route("/snapshots/:tenant/:namespace/", get(GetSnapshots))
             .route("/tenant/:tenant/credits", post(AddTenantCredits))
+            .route(
+                "/tenant/:tenant/quota-exceeded",
+                post(SetTenantQuotaExceeded),
+            )
             .route("/billing/rates", post(AddBillingRate))
             .route("/billing/rates", get(GetBillingRateHistory))
             .route("/billing/credits/history", get(GetBillingCreditHistory))
@@ -1836,6 +1840,11 @@ struct AddBillingRateRequest {
 }
 
 #[derive(Deserialize)]
+struct SetTenantQuotaExceededRequest {
+    quota_exceeded: bool,
+}
+
+#[derive(Deserialize)]
 struct CreditHistoryQuery {
     limit: Option<i64>,
     offset: Option<i64>,
@@ -2152,6 +2161,146 @@ struct UsageSummaryResponse {
     top_namespace: Option<TopNamespaceInfo>,
     peak_hour: Option<PeakHourInfo>,
     timezone: String,
+}
+
+#[derive(Serialize)]
+struct SetTenantQuotaExceededResponse {
+    success: bool,
+    tenant: String,
+    quota_exceeded: bool,
+    revision: i64,
+}
+
+const TENANT_QUOTA_UPDATE_MAX_RETRIES: usize = 5;
+
+async fn SetTenantQuotaExceeded(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Json(req): Json<SetTenantQuotaExceededRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Permission denied: Only InferxAdmin can update tenant quota_exceeded");
+        let resp = Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    for attempt in 0..TENANT_QUOTA_UPDATE_MAX_RETRIES {
+        let tenant_obj = match gw
+            .client
+            .Get(Tenant::KEY, SYSTEM_TENANT, SYSTEM_NAMESPACE, &tenant, 0)
+            .await
+        {
+            Ok(Some(obj)) => obj,
+            Ok(None) => {
+                let body = Body::from(format!("Tenant {} not found", tenant));
+                let resp = Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let body = Body::from(format!("Failed to read tenant object: {:?}", e));
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let mut tenant_obj: Tenant = match Tenant::FromDataObject(tenant_obj) {
+            Ok(obj) => obj,
+            Err(e) => {
+                let body = Body::from(format!("Failed to parse tenant object: {:?}", e));
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        if tenant_obj.object.status.quota_exceeded == req.quota_exceeded {
+            let resp_body = SetTenantQuotaExceededResponse {
+                success: true,
+                tenant: tenant.clone(),
+                quota_exceeded: req.quota_exceeded,
+                revision: tenant_obj.revision,
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+
+        let expect_rev = tenant_obj.revision;
+        if expect_rev <= 0 {
+            let body = Body::from(format!(
+                "invalid tenant revision {} for {}",
+                expect_rev, tenant
+            ));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+
+        tenant_obj.object.status.quota_exceeded = req.quota_exceeded;
+        match gw.client.Update(&tenant_obj.DataObject(), expect_rev).await {
+            Ok(version) => {
+                let resp_body = SetTenantQuotaExceededResponse {
+                    success: true,
+                    tenant: tenant.clone(),
+                    quota_exceeded: req.quota_exceeded,
+                    revision: version,
+                };
+                let data = serde_json::to_string(&resp_body).unwrap();
+                let body = Body::from(data);
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(Error::UpdateRevNotMatchErr(e)) => {
+                if attempt + 1 == TENANT_QUOTA_UPDATE_MAX_RETRIES {
+                    let body = Body::from(format!(
+                        "tenant {} update conflicted after {} retries (expected_rev={}, actual_rev={})",
+                        tenant, TENANT_QUOTA_UPDATE_MAX_RETRIES, e.expectRv, e.actualRv
+                    ));
+                    let resp = Response::builder()
+                        .status(StatusCode::CONFLICT)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            }
+            Err(e) => {
+                let body = Body::from(format!("Failed to update tenant quota_exceeded: {:?}", e));
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    let body = Body::from("tenant update retried but was not applied");
+    let resp = Response::builder()
+        .status(StatusCode::CONFLICT)
+        .body(body)
+        .unwrap();
+    Ok(resp)
 }
 
 async fn AddBillingRate(

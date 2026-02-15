@@ -149,23 +149,20 @@ data:
 
       echo "Tenant: $tenant, Credits: $credits cents, Used: $used cents, Balance: $balance cents, QuotaExceeded: $quota_exceeded"
 
-      # Update tenant status in etcd via gateway API
-      curl -s -X POST "${GATEWAY_URL}/object/" \
+      case "${quota_exceeded}" in
+        true|false) ;;
+        *)
+          echo "Invalid quota_exceeded value '${quota_exceeded}' for ${tenant}, skipping update"
+          echo ""
+          continue
+          ;;
+      esac
+
+      # Server-side CAS update to avoid stale writes clobbering concurrent tenant changes.
+      curl -sS -f -X POST "${GATEWAY_URL}/tenant/${tenant}/quota-exceeded" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${API_KEY}" \
-        -d "{
-          \"objType\": \"tenant\",
-          \"tenant\": \"system\",
-          \"namespace\": \"system\",
-          \"name\": \"${tenant}\",
-          \"object\": {
-            \"spec\": {},
-            \"status\": {
-              \"disable\": false,
-              \"quota_exceeded\": ${quota_exceeded}
-            }
-          }
-        }" || echo "Failed to update tenant $tenant"
+        -d "{\"quota_exceeded\": ${quota_exceeded}}" || echo "Failed to update tenant ${tenant}"
 
       echo ""
     done
