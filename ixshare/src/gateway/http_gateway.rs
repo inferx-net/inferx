@@ -388,12 +388,21 @@ async fn PostPrompt(
 
     let samplecall = &func.object.spec.sampleCall;
     let mut map = samplecall.body.clone();
-    map.insert("prompt".to_owned(), req.prompt.clone());
 
-    if samplecall.apiType == ApiType::Image2Text {
-        let image = req.image.clone();
-        map.insert("image".to_owned(), image);
+    if let Some(obj) = map.as_object_mut() {
+        obj.insert("prompt".to_owned(), Value::String(req.prompt.clone()));
+
+        if samplecall.apiType == ApiType::Image2Text {
+            let image = req.image.clone();
+            obj.insert("image".to_owned(), Value::String(image));
+        }
+    } else {
+        map = serde_json::json!({
+            "prompt": req.prompt.clone()
+        });
     }
+
+    // 4. OpenAI logic remains the same
     let isOpenAi = match samplecall.apiType {
         ApiType::Text2Text => true,
         _ => false,
@@ -930,7 +939,7 @@ async fn FuncCall(
 
     let json_req: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-    // error!("FuncCall get req {:#?}", json_req);
+    error!("FuncCall get req {:#?}", json_req);
     let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
 
     let mut retry = 0;

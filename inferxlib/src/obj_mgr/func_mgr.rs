@@ -16,6 +16,7 @@ use std::cmp::max;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::data_obj::*;
 use crate::resource;
@@ -100,7 +101,7 @@ pub struct SampleCall {
     pub prompts: Vec<String>,
     #[serde(default)]
     pub imageUrl: String,
-    pub body: BTreeMap<String, String>,
+    pub body: serde_json::Value,
 
     #[serde(default = "DefaultLoadingTimeout")]
     pub loadingTimeout: u64, // loading timeout, minutes
@@ -108,19 +109,18 @@ pub struct SampleCall {
 
 impl Default for SampleCall {
     fn default() -> Self {
-        let mut map: BTreeMap<String, String> = BTreeMap::new();
-        map.insert("name".to_owned(), "Unknown".to_owned());
-        map.insert("max_tokens".to_owned(), "1000".to_owned());
-        map.insert("temperature".to_owned(), "0".to_owned());
-        map.insert("stream".to_owned(), "true".to_owned());
-
         return Self {
             apiType: ApiType::Text2Text,
             path: "/v1/completions".to_owned(),
             imageUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
             prompts: Vec::new(),
-            body: map,
+            body: json!({
+                "name": "Unknown",
+                "max_tokens": 1000,
+                "temperature": 0,
+                "stream": true
+            }),
             loadingTimeout: 90,
         };
     }
@@ -158,12 +158,12 @@ pub fn DefaultLoadingTimeout() -> u64 {
 pub enum ApiType {
     #[serde(rename = "text2text")]
     Text2Text,
-    #[serde(rename = "standard")]
-    Standard,
     #[serde(rename = "image2text")]
     Image2Text,
     #[serde(rename = "text2img")]
     Text2Image,
+    #[serde(rename = "text2audio")]
+    Text2Audio,
 }
 
 impl Default for ApiType {
@@ -303,33 +303,38 @@ impl Function {
     }
 
     pub fn SampleRestCall(&self) -> String {
-        let mut map = HashMap::new();
-
         let sample = &self.object.spec.sampleCall;
         let remainpath = sample.path.clone();
 
-        map.insert("prompt".to_owned(), sample.prompt.clone());
-        for (k, v) in &sample.body {
-            map.insert(k.clone(), v.clone());
-        }
+        // 1. Create a base JSON object with the prompt
+        // 2. Merge the 'body' Value into it
+        let mut full_body = json!({
+            "prompt": sample.prompt
+        });
 
-        let mut jstr = String::new();
-        let mut count = map.len();
-        for (k, v) in map {
-            count -= 1;
-            if count == 0 {
-                jstr += &format!("  \"{}\": \"{}\" \n", k, v);
-            } else {
-                jstr += &format!("  \"{}\": \"{}\", \n", k, v);
+        // If 'body' is an object, merge its keys into our full_body
+        if let Some(body_obj) = sample.body.as_object() {
+            if let Some(full_obj) = full_body.as_object_mut() {
+                for (k, v) in body_obj {
+                    full_obj.insert(k.clone(), v.clone());
+                }
             }
         }
+
+        // 3. Serialize to a pretty-printed or compact string
+        let jstr = serde_json::to_string_pretty(&full_body).unwrap_or_default();
 
         let tenant = self.tenant.clone();
         let namespace = self.namespace.clone();
         let funcname = self.name.clone();
 
-        let script = format!("curl http://localhost:4000/funccall/{tenant}/{namespace}/{funcname}/{remainpath} -H \"Content-Type: application/json\" -d '{{\n{jstr}}}'");
-        return script;
+        // 4. Return the formatted curl command
+        // Note: We use the serialized JSON string directly in the -d flag
+        format!(
+            "curl http://localhost:4000/funccall/{tenant}/{namespace}/{funcname}/{remainpath} \
+            -H \"Content-Type: application/json\" \
+            -d '{jstr}'"
+        )
     }
 }
 

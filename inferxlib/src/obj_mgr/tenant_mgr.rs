@@ -55,7 +55,7 @@ pub struct ResourceLimit {
 }
 
 fn default_funccnt() -> u64 {
-    2
+    10
 }
 
 fn default_allow_mem_standby() -> bool {
