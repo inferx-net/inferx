@@ -1587,7 +1587,8 @@ impl SqlAudit {
     pub async fn GetTenantUsageByModel(
         &self,
         tenant: &str,
-        hours: i32,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
     ) -> Result<(
         Vec<(String, String, i64, i64, i64, i64, i64)>,
         (i64, i64, i64, i64, i64),
@@ -1598,7 +1599,8 @@ impl SqlAudit {
             params AS (
                 SELECT
                     $1::varchar AS tenant,
-                    NOW() - ($2 || ' hours')::interval AS cutoff,
+                    $2::timestamptz AS start_hour,
+                    $3::timestamptz AS end_hour,
                     date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
             ),
             historical AS (
@@ -1613,7 +1615,8 @@ impl SqlAudit {
                 FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
-                  AND h.hour >= p.cutoff
+                  AND h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
                   AND h.hour < p.recent_start
             ),
             recent_ticks AS (
@@ -1626,8 +1629,8 @@ impl SqlAudit {
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
-                  AND t.tick_time >= GREATEST(p.cutoff, p.recent_start)
-                  AND t.tick_time < NOW()
+                  AND t.tick_time >= GREATEST(p.start_hour, p.recent_start)
+                  AND t.tick_time < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
             ),
             combined AS (
                 SELECT
@@ -1685,7 +1688,8 @@ impl SqlAudit {
             "#,
         )
         .bind(tenant)
-        .bind(hours)
+        .bind(start)
+        .bind(end)
         .fetch_all(&self.pool)
         .await?;
 
@@ -1711,7 +1715,8 @@ impl SqlAudit {
     pub async fn GetTenantUsageByNamespace(
         &self,
         tenant: &str,
-        hours: i32,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
     ) -> Result<(
         Vec<(String, i64, i64, i64, i64, i64)>,
         (i64, i64, i64, i64, i64),
@@ -1722,7 +1727,8 @@ impl SqlAudit {
             params AS (
                 SELECT
                     $1::varchar AS tenant,
-                    NOW() - ($2 || ' hours')::interval AS cutoff,
+                    $2::timestamptz AS start_hour,
+                    $3::timestamptz AS end_hour,
                     date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
             ),
             historical AS (
@@ -1736,7 +1742,8 @@ impl SqlAudit {
                 FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
-                  AND h.hour >= p.cutoff
+                  AND h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
                   AND h.hour < p.recent_start
             ),
             recent_ticks AS (
@@ -1748,8 +1755,8 @@ impl SqlAudit {
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
-                  AND t.tick_time >= GREATEST(p.cutoff, p.recent_start)
-                  AND t.tick_time < NOW()
+                  AND t.tick_time >= GREATEST(p.start_hour, p.recent_start)
+                  AND t.tick_time < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
             ),
             combined AS (
                 SELECT
@@ -1802,7 +1809,8 @@ impl SqlAudit {
             "#,
         )
         .bind(tenant)
-        .bind(hours)
+        .bind(start)
+        .bind(end)
         .fetch_all(&self.pool)
         .await?;
 

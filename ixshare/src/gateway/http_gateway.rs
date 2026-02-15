@@ -1686,9 +1686,28 @@ async fn DeleteObj(
 }
 
 async fn GetObj(
+    Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     Path((objType, tenant, namespace, name)): Path<(String, String, String, String)>,
 ) -> SResult<Response, StatusCode> {
+    let has_permission = match objType.as_str() {
+        // Tenant objects are stored as /object/tenant/system/system/<tenant-name>/.
+        Tenant::KEY => token.IsInferxAdmin() || token.IsTenantAdmin(&name),
+        // Namespace objects are stored as /object/namespace/<tenant>/system/<namespace-name>/.
+        Namespace::KEY => token.IsNamespaceUser(&tenant, &name),
+        // Most other objects are scoped by <tenant>/<namespace>.
+        _ => token.IsNamespaceUser(&tenant, &namespace),
+    };
+
+    if !has_permission {
+        let body = Body::from("service failure: No permission");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     match gw.client.Get(&objType, &tenant, &namespace, &name, 0).await {
         Ok(obj) => match obj {
             None => {
@@ -1928,6 +1947,8 @@ struct HourlyUsageQuery {
 #[derive(Deserialize)]
 struct UsageByGroupQuery {
     hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
     limit: Option<i32>,
 }
 
@@ -2780,10 +2801,18 @@ async fn GetTenantUsageByModel(
         return Ok(resp);
     }
 
-    let hours = params.hours.unwrap_or(24).min(720).max(1);
+    let (start_hour, end_hour, _total_hours) =
+        match ParseHourlyRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
     let _deprecated_limit = params.limit;
 
-    match gw.sqlAudit.GetTenantUsageByModel(&tenant, hours).await {
+    match gw
+        .sqlAudit
+        .GetTenantUsageByModel(&tenant, start_hour, end_hour)
+        .await
+    {
         Ok((items, total)) => {
             let usage: Vec<ModelUsageItem> = items
                 .into_iter()
@@ -3001,10 +3030,18 @@ async fn GetTenantUsageByNamespace(
         return Ok(resp);
     }
 
-    let hours = params.hours.unwrap_or(24).min(720).max(1);
+    let (start_hour, end_hour, _total_hours) =
+        match ParseHourlyRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
     let _deprecated_limit = params.limit;
 
-    match gw.sqlAudit.GetTenantUsageByNamespace(&tenant, hours).await {
+    match gw
+        .sqlAudit
+        .GetTenantUsageByNamespace(&tenant, start_hour, end_hour)
+        .await
+    {
         Ok((items, total)) => {
             let usage: Vec<NamespaceUsageItem> = items
                 .into_iter()

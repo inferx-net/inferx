@@ -10,6 +10,10 @@
     td {
         border: 1px solid black;
     }
+
+    .content table.ix-table.pod-log-table td {
+        text-align: left;
+    }
 </style>
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
@@ -47,7 +51,7 @@
 </table>
 {% endif %}
 <h2 style="text-align: center;">Log</h2>
-<table class="ix-table" style="width:100%">
+<table class="ix-table pod-log-table" style="width:100%">
     <tr>
         {% autoescape false %}
         <td>{{ log }}</td>

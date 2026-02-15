@@ -42,6 +42,7 @@
         width: 100%;
         border-collapse: collapse;
         background: #fff;
+        font-size: 12px;
     }
 
     .admin-data-table th,
@@ -49,6 +50,7 @@
         border: 1px solid #dbe3ec;
         padding: 8px 10px;
         vertical-align: middle;
+        text-align: center;
     }
 
     .admin-data-table th {
@@ -552,6 +554,7 @@
                         <button type="button" onclick="setUsageRangeHours(24)" id="usage-range-24h">Last 24h</button>
                         <button type="button" onclick="setUsageRangeHours(24 * 7)" id="usage-range-7d">Last 7d</button>
                         <button type="button" onclick="setUsageRangeHours(24 * 30)" id="usage-range-30d">Last 30d</button>
+                        <button type="button" onclick="showBillingCustomRange()" id="usage-range-custom">Custom</button>
                     </div>
                     <div id="usage-view-controls" style="display: flex; align-items: center; gap: 6px;">
                         <span style="font-size: 12px; color: #666;">View:</span>
@@ -565,6 +568,13 @@
                         <button type="button" onclick="setUsageGranularity('weekly')" id="usage-granularity-weekly">Weekly</button>
                     </div>
                 </div>
+            </div>
+            <div id="billing-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px;">
+                <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+                <input type="datetime-local" id="billing-usage-start" style="font-size: 12px;">
+                <span style="font-size: 12px;">to</span>
+                <input type="datetime-local" id="billing-usage-end" style="font-size: 12px;">
+                <button type="button" onclick="applyBillingCustomRange()">Apply</button>
             </div>
             <div id="usage-chart-view">
                 <div id="usage-chart" style="display: flex; align-items: flex-end; height: 100px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
@@ -893,12 +903,12 @@
                             <option value="all" selected>All Tenants</option>
                         </select>
                     </div>
-                    <table style="width:100%" id="billing-admin-credit-history-table">
+                    <table class="admin-data-table" style="width:100%" id="billing-admin-credit-history-table">
                         <thead>
                             <tr>
                                 <th>Tenant</th>
                                 <th>Date/Time (Local)</th>
-                                <th style="text-align: right;">Amount (USD)</th>
+                                <th>Amount (USD)</th>
                                 <th>Note</th>
                                 <th>Payment Ref</th>
                                 <th>Added By</th>
@@ -959,13 +969,13 @@
                     Rate Add History <span id="billing-admin-rate-toggle-icon">▶</span>
                 </h3>
                 <div id="billing-admin-rate-history-content" style="display: none;">
-                    <table style="width:100%" id="billing-admin-rate-history-table">
+                    <table class="admin-data-table" style="width:100%" id="billing-admin-rate-history-table">
                         <thead>
                             <tr>
                                 <th>ID</th>
                                 <th>Scope</th>
                                 <th>Usage Type</th>
-                                <th style="text-align: right;">Rate</th>
+                                <th>Rate</th>
                                 <th>Effective From (Local)</th>
                                 <th>Effective To (Local)</th>
                                 <th>Created At (Local)</th>
@@ -1210,23 +1220,104 @@
         const btn24 = document.getElementById('usage-range-24h');
         const btn7d = document.getElementById('usage-range-7d');
         const btn30d = document.getElementById('usage-range-30d');
-        if (!btn24 || !btn7d || !btn30d) return;
+        const btnCustom = document.getElementById('usage-range-custom');
+        if (!btn24 || !btn7d || !btn30d || !btnCustom) return;
 
         btn24.classList.remove('active-range');
         btn7d.classList.remove('active-range');
         btn30d.classList.remove('active-range');
+        btnCustom.classList.remove('active-range');
 
         if (billingUsageRange.mode === 'hours') {
             if (billingUsageRange.hours === 24) btn24.classList.add('active-range');
             if (billingUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
             if (billingUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        } else if (billingUsageRange.mode === 'custom') {
+            btnCustom.classList.add('active-range');
         }
     }
 
     function setUsageRangeHours(hours) {
         billingUsageRange = { mode: 'hours', hours: hours };
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
         updateUsageRangeButtons();
         updateAnalyticsRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) {
+            loadUsageChart(tenant);
+        }
+    }
+
+    function syncBillingCustomRangeFromInputs(showAlerts = false) {
+        const startInput = document.getElementById('billing-usage-start');
+        const endInput = document.getElementById('billing-usage-end');
+        if (!startInput || !endInput) return false;
+
+        if (!startInput.value || !endInput.value) {
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            if (showAlerts) alert('Invalid date range');
+            return false;
+        }
+
+        if (end <= start) {
+            if (showAlerts) alert('End time must be after start time');
+            return false;
+        }
+
+        const maxRangeMs = 90 * 24 * 60 * 60 * 1000;
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            if (showAlerts) alert('Custom range is limited to 90 days');
+            return false;
+        }
+
+        billingUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+        return true;
+    }
+
+    function setDefaultBillingCustomRangeInputs() {
+        const startInput = document.getElementById('billing-usage-start');
+        const endInput = document.getElementById('billing-usage-end');
+        if (!startInput || !endInput) return;
+
+        if (!startInput.value || !endInput.value) {
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+            startInput.value = toLocalDatetimeValue(start);
+            endInput.value = toLocalDatetimeValue(end);
+        }
+    }
+
+    function showBillingCustomRange() {
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        setDefaultBillingCustomRangeInputs();
+        syncBillingCustomRangeFromInputs(false);
+        updateUsageRangeButtons();
+    }
+
+    function applyBillingCustomRange() {
+        if (!syncBillingCustomRangeFromInputs(true)) return;
+
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateUsageRangeButtons();
         const tenant = document.getElementById('billing_tenant_select').value;
         if (tenant) {
             loadUsageChart(tenant);
@@ -1328,33 +1419,33 @@
         }
     }
 
-    function applyCustomUsageRange() {
+    function syncAnalyticsCustomRangeFromInputs(showAlerts = false) {
         const startInput = document.getElementById('usage-start');
         const endInput = document.getElementById('usage-end');
-        if (!startInput || !endInput) return;
+        if (!startInput || !endInput) return false;
 
         if (!startInput.value || !endInput.value) {
-            alert('Please select both start and end time (Local)');
-            return;
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
         }
 
         const start = new Date(startInput.value);
         const end = new Date(endInput.value);
 
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-            alert('Invalid date range');
-            return;
+            if (showAlerts) alert('Invalid date range');
+            return false;
         }
 
         if (end <= start) {
-            alert('End time must be after start time');
-            return;
+            if (showAlerts) alert('End time must be after start time');
+            return false;
         }
 
         const maxRangeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
         if (end.getTime() - start.getTime() > maxRangeMs) {
-            alert('Custom range is limited to 90 days');
-            return;
+            if (showAlerts) alert('Custom range is limited to 90 days');
+            return false;
         }
 
         analyticsUsageRange = {
@@ -1362,6 +1453,11 @@
             start: start.toISOString(),
             end: end.toISOString()
         };
+        return true;
+    }
+
+    function applyCustomUsageRange() {
+        if (!syncAnalyticsCustomRangeFromInputs(true)) return;
 
         const rangeSelect = document.getElementById('analytics-time-range');
         if (rangeSelect) {
@@ -1383,12 +1479,15 @@
         const endInput = document.getElementById('usage-end');
         if (!startInput || !endInput) return;
 
-        if (startInput.value && endInput.value) return;
+        if (!startInput.value || !endInput.value) {
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+            startInput.value = toLocalDatetimeValue(start);
+            endInput.value = toLocalDatetimeValue(end);
+        }
 
-        const end = new Date();
-        const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
-        startInput.value = toLocalDatetimeValue(start);
-        endInput.value = toLocalDatetimeValue(end);
+        // Keep custom-range state in sync even before explicit "Apply".
+        syncAnalyticsCustomRangeFromInputs(false);
     }
 
     function toLocalDatetimeValue(date) {
@@ -1412,6 +1511,13 @@
         document.getElementById('billing-content').style.display = 'block';
 
         updateUsageRangeButtons();
+        const billingCustomRangeEl = document.getElementById('billing-custom-range');
+        if (billingCustomRangeEl) {
+            billingCustomRangeEl.style.display = billingUsageRange.mode === 'custom' ? 'flex' : 'none';
+        }
+        if (billingUsageRange.mode === 'custom') {
+            setDefaultBillingCustomRangeInputs();
+        }
         updateUsageViewButtons();
         updateUsageGranularityButtons();
         applyUsageViewVisibility();
@@ -1636,8 +1742,20 @@
         try {
             const params = new URLSearchParams();
             if (billingUsageRange.mode === 'custom') {
-                params.set('start', billingUsageRange.start);
-                params.set('end', billingUsageRange.end);
+                if (
+                    !billingUsageRange.start ||
+                    !billingUsageRange.end
+                ) {
+                    if (!syncBillingCustomRangeFromInputs(false)) {
+                        params.set('hours', '24');
+                    } else {
+                        params.set('start', billingUsageRange.start);
+                        params.set('end', billingUsageRange.end);
+                    }
+                } else {
+                    params.set('start', billingUsageRange.start);
+                    params.set('end', billingUsageRange.end);
+                }
             } else {
                 params.set('hours', String(billingUsageRange.hours || 24));
             }
@@ -2011,7 +2129,7 @@
                     row.innerHTML = `
                         <td>${record.tenant || '-'}</td>
                         <td>${date}</td>
-                        <td style="text-align: right;" class="${amountClass}">${amountText}</td>
+                        <td class="${amountClass}">${amountText}</td>
                         <td>${record.note || '-'}</td>
                         <td>${record.payment_ref || '-'}</td>
                         <td>${record.added_by || '-'}</td>
@@ -2091,7 +2209,7 @@
                         <td>${record.id}</td>
                         <td>${scopeText}</td>
                         <td>${record.usage_type}</td>
-                        <td style="text-align: right;">${rateText}</td>
+                        <td>${rateText}</td>
                         <td>${effectiveFrom}</td>
                         <td>${effectiveTo}</td>
                         <td>${createdAt}</td>
@@ -2385,8 +2503,14 @@
     function getAnalyticsTimeParams() {
         const range = document.getElementById('analytics-time-range').value;
         if (range === 'custom') {
-            if (!analyticsUsageRange || analyticsUsageRange.mode !== 'custom') return null;
-            if (!analyticsUsageRange.start || !analyticsUsageRange.end) return null;
+            if (
+                !analyticsUsageRange ||
+                analyticsUsageRange.mode !== 'custom' ||
+                !analyticsUsageRange.start ||
+                !analyticsUsageRange.end
+            ) {
+                if (!syncAnalyticsCustomRangeFromInputs(false)) return null;
+            }
             return `start=${encodeURIComponent(analyticsUsageRange.start)}&end=${encodeURIComponent(analyticsUsageRange.end)}`;
         }
         return `hours=${range}`;

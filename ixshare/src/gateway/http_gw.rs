@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use inferxlib::{
     data_obj::DataObject,
@@ -835,7 +835,7 @@ impl HttpGateway {
             let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
-                    break;
+                    continue;
                 }
                 let mut list = self
                     .client
@@ -903,7 +903,28 @@ impl HttpGateway {
             return namespaces;
         }
 
-        return token.UserNamespaces();
+        // Start with explicit namespace roles.
+        let mut namespaces: BTreeSet<(String, String)> =
+            token.UserNamespaces().into_iter().collect();
+
+        // Expand tenant-user/admin permissions to all namespaces under those tenants.
+        for tenant in token.UserTenants() {
+            match self.objRepo.namespaceMgr.GetObjects(&tenant, "") {
+                Ok(list) => {
+                    for ns in list {
+                        namespaces.insert((ns.Tenant(), ns.Name()));
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "UserNamespaces: failed to list namespaces for tenant {}: {:?}",
+                        tenant, e
+                    );
+                }
+            }
+        }
+
+        return namespaces.into_iter().collect();
     }
 
     pub fn ListFuncBrief(
@@ -929,7 +950,7 @@ impl HttpGateway {
             let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
-                    break;
+                    continue;
                 }
                 let mut list = self.objRepo.ListFunc(&tenant, &namespace)?;
                 objs.append(&mut list);
@@ -985,7 +1006,7 @@ impl HttpGateway {
             let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
-                    break;
+                    continue;
                 }
                 let mut list = self.objRepo.GetSnapshots(&tenant, &namespace)?;
                 objs.append(&mut list);
@@ -1041,7 +1062,7 @@ impl HttpGateway {
             let namespaces = self.UserNamespaces(token);
             for (currentTenant, namespace) in namespaces {
                 if &currentTenant != tenant {
-                    break;
+                    continue;
                 }
                 let mut list = self.objRepo.GetFuncPods(&tenant, &namespace, funcname)?;
                 objs.append(&mut list);

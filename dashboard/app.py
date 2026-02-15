@@ -473,7 +473,7 @@ def GetFailLog(tenant: str, namespace: str, funcname: str, revision: int, id: st
     url = "{}/faillog/{}/{}/{}/{}/{}".format(
         apihostaddr, tenant, namespace, funcname, revision, id
     )
-    resp = requests.get(url)
+    resp = requests.get(url, headers=headers)
     
     fail = json.loads(resp.content)
     fail["log"] = fail["log"].replace("\n", "<br>")

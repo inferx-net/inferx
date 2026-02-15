@@ -253,7 +253,8 @@ impl AccessToken {
         return self
             .roles
             .contains(&format!("{prefix}{tenant}/{namespace}"))
-            || self.IsNamespaceAdmin(tenant, namespace);
+            || self.IsNamespaceAdmin(tenant, namespace)
+            || self.IsTenantUser(tenant);
     }
 
     pub fn IsTenantAdmin(&self, tenant: &str) -> bool {
