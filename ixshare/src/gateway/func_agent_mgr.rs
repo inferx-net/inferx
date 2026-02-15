@@ -668,7 +668,7 @@ impl FuncAgent {
                 "GpuTracking: auditing request usage for {}/{}/{}, gpu_count={}, duration_ms={}",
                 gpu_usage.tenant, gpu_usage.namespace, gpu_usage.funcname, gpu_usage.gpu_count, gpu_usage.duration_ms
             );
-            crate::audit::GPU_USAGE_AGENT.Audit(gpu_usage);
+            // crate::audit::GPU_USAGE_AGENT.Audit(gpu_usage);
         } else {
             info!(
                 "GpuTracking: no GPU usage record for {}/{}/{} (gpu_count=0 or lease_start not set)",

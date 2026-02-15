@@ -24,6 +24,7 @@ use axum_keycloak_auth::{
 
 use keycloak::KeycloakAdmin;
 use keycloak::KeycloakAdminToken;
+use sha2::{Digest, Sha256};
 use std::ops::Bound::Included;
 use std::ops::Bound::Unbounded;
 
@@ -144,11 +145,53 @@ pub struct RoleBinding {
     pub namespace: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct ApikeyCreateRequest {
+    #[serde(default)]
+    pub username: String,
+    pub keyname: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub restrict_tenant: Option<String>,
+    #[serde(default)]
+    pub restrict_namespace: Option<String>,
+    #[serde(default)]
+    pub restrict_functions: Option<Vec<String>>,
+    #[serde(default)]
+    pub expires_in_days: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ApikeyCreateResponse {
+    pub apikey: String,
+    pub apikey_prefix: String,
+    pub keyname: String,
+    pub scope: String,
+    pub restrict_tenant: Option<String>,
+    pub restrict_namespace: Option<String>,
+    pub restrict_functions: Option<Vec<String>>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct ApikeyDeleteRequest {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub keyname: String,
+}
+
 #[derive(Debug)]
 pub struct AccessToken {
     pub username: String,
     pub roles: BTreeSet<String>,
     pub apiKeys: Vec<String>,
+    pub scope: String,
+    pub sourceIsApikey: bool,
+    pub restrictTenant: Option<String>,
+    pub restrictNamespace: Option<String>,
+    pub restrictFunctions: Option<BTreeSet<String>>,
     pub updatetime: SystemTime,
 }
 
@@ -171,6 +214,11 @@ impl AccessToken {
             username: username.to_owned(),
             roles: set,
             apiKeys: apikeys,
+            scope: "full".to_owned(),
+            sourceIsApikey: false,
+            restrictTenant: None,
+            restrictNamespace: None,
+            restrictFunctions: None,
             updatetime: SystemTime::now(),
         };
     }
@@ -180,11 +228,127 @@ impl AccessToken {
             username: Self::INERX_ADMIN.to_owned(),
             roles: BTreeSet::new(),
             apiKeys: Vec::new(),
+            scope: "full".to_owned(),
+            sourceIsApikey: false,
+            restrictTenant: None,
+            restrictNamespace: None,
+            restrictFunctions: None,
             updatetime: SystemTime::now(),
         };
     }
 
+    fn ScopeLevel(scope: &str) -> i32 {
+        match scope {
+            "full" => 3,
+            "read" => 2,
+            "inference" => 1,
+            _ => 3, // Backward-compatible default for existing tokens
+        }
+    }
+
+    pub fn CheckScope(&self, required: &str) -> bool {
+        return Self::ScopeLevel(&self.scope) >= Self::ScopeLevel(required);
+    }
+
+    fn AllowTenant(&self, tenant: &str) -> bool {
+        match &self.restrictTenant {
+            Some(t) => t == tenant,
+            None => true,
+        }
+    }
+
+    fn AllowNamespace(&self, tenant: &str, namespace: &str) -> bool {
+        if !self.AllowTenant(tenant) {
+            return false;
+        }
+
+        match &self.restrictNamespace {
+            Some(ns) => ns == namespace,
+            None => true,
+        }
+    }
+
+    pub fn AllowFunction(&self, funcname: &str) -> bool {
+        match &self.restrictFunctions {
+            Some(funcs) => funcs.contains(funcname),
+            None => true,
+        }
+    }
+
+    fn HasTenantAdminRole(&self, tenant: &str) -> bool {
+        let prefix = Self::TENANT_ADMIN;
+        return self.roles.contains(&format!("{prefix}{tenant}"));
+    }
+
+    fn HasTenantUserRole(&self, tenant: &str) -> bool {
+        let prefix = Self::TENANT_USER;
+        return self.roles.contains(&format!("{prefix}{tenant}"));
+    }
+
+    fn HasNamespaceAdminRole(&self, tenant: &str, namespace: &str) -> bool {
+        let prefix = Self::NAMSPACE_ADMIN;
+        return self
+            .roles
+            .contains(&format!("{prefix}{tenant}/{namespace}"));
+    }
+
+    fn HasNamespaceUserRole(&self, tenant: &str, namespace: &str) -> bool {
+        let prefix = Self::NAMSPACE_USER;
+        return self
+            .roles
+            .contains(&format!("{prefix}{tenant}/{namespace}"));
+    }
+
+    fn HasTenantUserPermission(&self, tenant: &str) -> bool {
+        if self.IsInferxAdmin() {
+            return true;
+        }
+
+        if tenant == "public" {
+            return true;
+        }
+
+        return self.HasTenantUserRole(tenant) || self.HasTenantAdminRole(tenant);
+    }
+
+    fn HasNamespaceAdminPermission(&self, tenant: &str, namespace: &str) -> bool {
+        if self.IsInferxAdmin() {
+            return true;
+        }
+
+        return self.HasTenantAdminRole(tenant) || self.HasNamespaceAdminRole(tenant, namespace);
+    }
+
+    fn HasNamespaceUserPermission(&self, tenant: &str, namespace: &str) -> bool {
+        if self.IsInferxAdmin() {
+            return true;
+        }
+
+        if tenant == "public" {
+            return true;
+        }
+
+        if self.HasTenantUserPermission(tenant) {
+            return true;
+        }
+
+        return self.HasNamespaceUserRole(tenant, namespace)
+            || self.HasNamespaceAdminPermission(tenant, namespace);
+    }
+
     pub fn IsInferxAdmin(&self) -> bool {
+        if self.sourceIsApikey {
+            if !self.CheckScope("full") {
+                return false;
+            }
+            if self.restrictTenant.is_some()
+                || self.restrictNamespace.is_some()
+                || self.restrictFunctions.is_some()
+            {
+                return false;
+            }
+        }
+
         let prefix = Self::TENANT_ADMIN;
         let systemtenant = Self::SYSTEM_TENANT;
         let isSystemAdmin = self.roles.contains(&format!("{prefix}{systemtenant}"));
@@ -230,55 +394,67 @@ impl AccessToken {
     }
 
     pub fn IsTenantUser(&self, tenant: &str) -> bool {
-        if self.IsInferxAdmin() {
-            return true;
+        if !self.CheckScope("read") {
+            return false;
         }
 
-        if tenant == "public" {
-            return true;
+        if !self.AllowTenant(tenant) {
+            return false;
         }
-        let prefix = Self::TENANT_USER;
-        return self.roles.contains(&format!("{prefix}{tenant}")) || self.IsTenantAdmin(tenant);
+
+        return self.HasTenantUserPermission(tenant);
     }
 
     pub fn IsNamespaceUser(&self, tenant: &str, namespace: &str) -> bool {
-        if self.IsInferxAdmin() {
-            return true;
+        if !self.CheckScope("read") {
+            return false;
         }
 
-        if tenant == "public" {
-            return true;
+        if !self.AllowNamespace(tenant, namespace) {
+            return false;
         }
-        let prefix = Self::NAMSPACE_USER;
-        return self
-            .roles
-            .contains(&format!("{prefix}{tenant}/{namespace}"))
-            || self.IsNamespaceAdmin(tenant, namespace);
+
+        return self.HasNamespaceUserPermission(tenant, namespace);
+    }
+
+    pub fn IsNamespaceInferenceUser(&self, tenant: &str, namespace: &str) -> bool {
+        if !self.CheckScope("inference") {
+            return false;
+        }
+
+        if !self.AllowNamespace(tenant, namespace) {
+            return false;
+        }
+
+        return self.HasNamespaceUserPermission(tenant, namespace);
     }
 
     pub fn IsTenantAdmin(&self, tenant: &str) -> bool {
+        if !self.CheckScope("full") {
+            return false;
+        }
+
+        if !self.AllowTenant(tenant) {
+            return false;
+        }
+
         if self.IsInferxAdmin() {
             return true;
         }
 
-        let prefix = Self::TENANT_ADMIN;
-        return self.roles.contains(&format!("{prefix}{tenant}"));
+        return self.HasTenantAdminRole(tenant);
     }
 
     pub fn IsNamespaceAdmin(&self, tenant: &str, namespace: &str) -> bool {
-        if self.IsInferxAdmin() {
-            return true;
+        if !self.CheckScope("full") {
+            return false;
         }
 
-        let prefix = Self::TENANT_ADMIN;
-        if self.roles.contains(&format!("{prefix}{tenant}")) {
-            return true;
+        if !self.AllowNamespace(tenant, namespace) {
+            return false;
         }
 
-        let prefix = Self::NAMSPACE_ADMIN;
-        return self
-            .roles
-            .contains(&format!("{prefix}{tenant}/{namespace}"));
+        return self.HasNamespaceAdminPermission(tenant, namespace);
     }
 
     pub fn AdminTenants(&self) -> Vec<String> {
@@ -288,7 +464,9 @@ impl AccessToken {
             match elem.strip_prefix(prefix) {
                 None => break,
                 Some(tenant) => {
-                    items.push(tenant.to_owned());
+                    if self.AllowTenant(tenant) {
+                        items.push(tenant.to_owned());
+                    }
                 }
             }
         }
@@ -305,7 +483,9 @@ impl AccessToken {
                 Some(s) => {
                     let splits: Vec<&str> = s.split("/").collect();
                     assert!(splits.len() == 2);
-                    items.push((splits[0].to_owned(), splits[1].to_owned()));
+                    if self.AllowNamespace(splits[0], splits[1]) {
+                        items.push((splits[0].to_owned(), splits[1].to_owned()));
+                    }
                 }
             }
         }
@@ -320,7 +500,9 @@ impl AccessToken {
             match elem.strip_prefix(prefix) {
                 None => break,
                 Some(tenant) => {
-                    items.insert(tenant.to_owned());
+                    if self.AllowTenant(tenant) {
+                        items.insert(tenant.to_owned());
+                    }
                 }
             }
         }
@@ -335,7 +517,9 @@ impl AccessToken {
         }
 
         // anyone has public tenant user permission
-        v.push("public".to_owned());
+        if self.AllowTenant("public") {
+            v.push("public".to_owned());
+        }
 
         return v;
     }
@@ -349,7 +533,9 @@ impl AccessToken {
                 Some(s) => {
                     let splits: Vec<&str> = s.split("/").collect();
                     assert!(splits.len() == 2);
-                    items.insert((splits[0].to_owned(), splits[1].to_owned()));
+                    if self.AllowNamespace(splits[0], splits[1]) {
+                        items.insert((splits[0].to_owned(), splits[1].to_owned()));
+                    }
                 }
             }
         }
@@ -462,6 +648,11 @@ impl TokenCache {
                 username: "anonymous".to_owned(),
                 roles: BTreeSet::new(),
                 apiKeys: Vec::new(),
+                scope: "read".to_owned(),
+                sourceIsApikey: false,
+                restrictTenant: None,
+                restrictNamespace: None,
+                restrictFunctions: None,
                 updatetime: SystemTime::now(),
             }),
         });
@@ -482,13 +673,6 @@ impl TokenCache {
                     .remove(&oldToken.UserKey());
             }
         }
-
-        for k in &newtoken.apiKeys {
-            self.apikeyStore
-                .lock()
-                .unwrap()
-                .insert(k.clone(), newtoken.clone());
-        }
         self.usernameStore
             .lock()
             .unwrap()
@@ -504,13 +688,140 @@ impl TokenCache {
         self.usernameStore.lock().unwrap().remove(&token.UserKey());
     }
 
+    fn HashApikey(raw: &str) -> String {
+        return hex::encode(Sha256::digest(raw.as_bytes()));
+    }
+
+    fn NewRawApikey() -> String {
+        let random_bytes: [u8; 32] = rand::random();
+        return format!("ix_{}", hex::encode(random_bytes));
+    }
+
+    fn PrefixFromRaw(raw: &str) -> String {
+        let mut cleaned = String::new();
+        for c in raw.chars() {
+            if c.is_ascii_hexdigit() {
+                cleaned.push(c.to_ascii_lowercase());
+            }
+        }
+
+        while cleaned.len() < 12 {
+            cleaned.push('0');
+        }
+
+        return format!("ix_{}", &cleaned[..12]);
+    }
+
+    fn NormalizeScope(scope: &str) -> String {
+        return scope.to_owned();
+    }
+
+    fn ValidateScope(scope: &str) -> Result<()> {
+        match scope {
+            "full" | "inference" | "read" => Ok(()),
+            _ => Err(Error::CommonError(format!("invalid apikey scope {}", scope))),
+        }
+    }
+
+    fn RoleAllowedByRestriction(
+        role: &str,
+        restrict_tenant: &Option<String>,
+        restrict_namespace: &Option<String>,
+    ) -> bool {
+        if restrict_tenant.is_none() && restrict_namespace.is_none() {
+            return true;
+        }
+
+        let parts: Vec<&str> = role.trim_matches('/').split('/').collect();
+
+        match parts.as_slice() {
+            // /tenant/{admin|user}/{tenant}
+            ["tenant", _, tenant] => {
+                if let Some(rt) = restrict_tenant {
+                    if tenant != rt {
+                        return false;
+                    }
+                }
+                // Namespace-restricted keys cannot retain tenant-level roles.
+                if restrict_namespace.is_some() {
+                    return false;
+                }
+                true
+            }
+            // /namespace/{admin|user}/{tenant}/{namespace}
+            ["namespace", _, tenant, namespace] => {
+                if let Some(rt) = restrict_tenant {
+                    if tenant != rt {
+                        return false;
+                    }
+                }
+                if let Some(rn) = restrict_namespace {
+                    if namespace != rn {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn ApplyApikeyRestrictions(
+        &self,
+        base: &Arc<AccessToken>,
+        apikey: &Apikey,
+    ) -> Result<AccessToken> {
+        let normalized_scope = Self::NormalizeScope(&apikey.scope);
+        Self::ValidateScope(&normalized_scope)?;
+        if apikey.restrict_namespace.is_some() && apikey.restrict_tenant.is_none() {
+            return Err(Error::CommonError(format!(
+                "invalid key restriction: restrict_namespace requires restrict_tenant"
+            )));
+        }
+        if apikey.restrict_functions.is_some() && apikey.restrict_namespace.is_none() {
+            return Err(Error::CommonError(format!(
+                "invalid key restriction: restrict_functions requires restrict_namespace"
+            )));
+        }
+
+        let mut filtered_roles = BTreeSet::new();
+        for r in &base.roles {
+            if Self::RoleAllowedByRestriction(r, &apikey.restrict_tenant, &apikey.restrict_namespace)
+            {
+                filtered_roles.insert(r.clone());
+            }
+        }
+
+        let restrictFunctions = apikey.restrict_functions.as_ref().map(|funcs| {
+            let mut set = BTreeSet::new();
+            for f in funcs {
+                set.insert(f.clone());
+            }
+            set
+        });
+
+        Ok(AccessToken {
+            username: base.username.clone(),
+            roles: filtered_roles,
+            apiKeys: base.apiKeys.clone(),
+            scope: normalized_scope,
+            sourceIsApikey: true,
+            restrictTenant: apikey.restrict_tenant.clone(),
+            restrictNamespace: apikey.restrict_namespace.clone(),
+            restrictFunctions,
+            updatetime: SystemTime::now(),
+        })
+    }
+
     pub async fn GetTokenByApikey(&self, apikey: &str) -> Result<Arc<AccessToken>> {
         if GATEWAY_CONFIG.inferxAdminApikey.len() > 0 && apikey == &GATEWAY_CONFIG.inferxAdminApikey
         {
             return Ok(Arc::new(AccessToken::InferxAdminToken()));
         }
 
-        let oldToken = match self.apikeyStore.lock().unwrap().get(apikey) {
+        let apikey_hash = Self::HashApikey(apikey);
+
+        let oldToken = match self.apikeyStore.lock().unwrap().get(&apikey_hash) {
             Some(g) => {
                 if g.Timeout() {
                     Some(g.clone())
@@ -521,19 +832,30 @@ impl TokenCache {
             None => None,
         };
 
-        let user = self.sqlstore.GetApikey(apikey).await?;
-        let apikeys = self.sqlstore.GetApikeys(&user.username).await?;
-        let mut keys = Vec::new();
-        for u in apikeys {
-            keys.push(u.apikey.clone());
+        // Drop stale hashed entry and rebuild.
+        if oldToken.is_some() {
+            self.apikeyStore.lock().unwrap().remove(&apikey_hash);
         }
 
-        let groups = self.sqlstore.GetRoles(&user.username).await?;
-        let newToken = Arc::new(AccessToken::New(&user.username, groups, keys));
+        let key = self.sqlstore.GetApikeyByHash(&apikey_hash).await?;
 
-        self.Replace(oldToken, &newToken);
+        if key.revoked_at.is_some() {
+            return Err(Error::NoPermission);
+        }
 
-        return Ok(newToken);
+        if let Some(expires_at) = key.expires_at {
+            if chrono::Utc::now().naive_utc() > expires_at {
+                return Err(Error::NoPermission);
+            }
+        }
+
+        let base_token = self.GetTokenByUsername(&key.username).await?;
+        let restricted = Arc::new(self.ApplyApikeyRestrictions(&base_token, &key)?);
+        self.apikeyStore
+            .lock()
+            .unwrap()
+            .insert(apikey_hash, restricted.clone());
+        return Ok(restricted);
     }
 
     pub async fn GetTokenByUsername(&self, username: &str) -> Result<Arc<AccessToken>> {
@@ -551,7 +873,7 @@ impl TokenCache {
         let apikeys = self.sqlstore.GetApikeys(username).await?;
         let mut keys = Vec::new();
         for u in apikeys {
-            keys.push(u.apikey.clone());
+            keys.push(u.apikey_hash.clone());
         }
 
         let groups = self.sqlstore.GetRoles(username).await?;
@@ -564,50 +886,133 @@ impl TokenCache {
     pub async fn CreateApikey(
         &self,
         token: &Arc<AccessToken>,
-        username: &str,
-        keyname: &str,
-    ) -> Result<String> {
-        let username = if username.len() == 0 {
+        req: &ApikeyCreateRequest,
+    ) -> Result<ApikeyCreateResponse> {
+        let username = if req.username.len() == 0 {
             token.username.clone()
-        } else if username == &token.username {
+        } else if req.username == token.username {
             token.username.clone()
         } else {
             if !token.IsInferxAdmin() {
                 return Err(Error::NoPermission);
             }
-            token.username.clone()
+            req.username.clone()
         };
 
-        let apikey = uuid::Uuid::new_v4().to_string();
+        let scope = Self::NormalizeScope(req.scope.as_deref().unwrap_or("inference"));
+        Self::ValidateScope(&scope)?;
+        if req.keyname.trim().is_empty() {
+            return Err(Error::CommonError(format!("apikey keyname cannot be empty")));
+        }
+
+        if req.restrict_namespace.is_some() && req.restrict_tenant.is_none() {
+            return Err(Error::CommonError(format!(
+                "restrict_namespace requires restrict_tenant"
+            )));
+        }
+
+        if req.restrict_functions.is_some() && req.restrict_namespace.is_none() {
+            return Err(Error::CommonError(format!(
+                "restrict_functions requires restrict_namespace"
+            )));
+        }
+
+        if let Some(t) = &req.restrict_tenant {
+            if !token.IsInferxAdmin() && !token.IsTenantUser(t) {
+                return Err(Error::NoPermission);
+            }
+        }
+
+        if let (Some(t), Some(ns)) = (&req.restrict_tenant, &req.restrict_namespace) {
+            if !token.IsInferxAdmin() && !token.IsNamespaceUser(t, ns) {
+                return Err(Error::NoPermission);
+            }
+        }
+
+        let expires_at = req
+            .expires_in_days
+            .map(|d| chrono::Utc::now().naive_utc() + chrono::Duration::days(d as i64));
+
+        let raw_apikey = Self::NewRawApikey();
+        let apikey_hash = Self::HashApikey(&raw_apikey);
+        let apikey_prefix = Self::PrefixFromRaw(&raw_apikey);
+
         self.sqlstore
-            .CreateApikey(&apikey, &username, keyname)
+            .CreateApikey(&Apikey {
+                key_id: 0,
+                // TODO: Stop persisting raw API keys after the debug window; keep hash-only storage.
+                apikey: Some(raw_apikey.clone()),
+                apikey_hash: apikey_hash.clone(),
+                apikey_prefix: apikey_prefix.clone(),
+                username: username.clone(),
+                keyname: req.keyname.clone(),
+                scope: scope.clone(),
+                restrict_tenant: req.restrict_tenant.clone(),
+                restrict_namespace: req.restrict_namespace.clone(),
+                restrict_functions: req.restrict_functions.clone(),
+                createtime: None,
+                expires_at,
+                revoked_at: None,
+                revoked_by: None,
+                revoke_reason: None,
+            })
             .await?;
-        return Ok(apikey);
+
+        // Ensure new key list is visible immediately.
+        self.usernameStore.lock().unwrap().remove(&username);
+
+        return Ok(ApikeyCreateResponse {
+            apikey: raw_apikey,
+            apikey_prefix,
+            keyname: req.keyname.clone(),
+            scope,
+            restrict_tenant: req.restrict_tenant.clone(),
+            restrict_namespace: req.restrict_namespace.clone(),
+            restrict_functions: req.restrict_functions.clone(),
+            expires_at: expires_at.map(|v| v.to_string()),
+        });
     }
 
     pub async fn DeleteApiKey(
         &self,
         token: &Arc<AccessToken>,
-        keyname: &str,
-        username: &str,
+        req: &ApikeyDeleteRequest,
     ) -> Result<bool> {
-        let username = if username.len() == 0 {
+        let username = if req.username.len() == 0 {
             token.username.clone()
-        } else if username == &token.username {
+        } else if req.username == token.username {
             token.username.clone()
         } else {
             if !token.IsInferxAdmin() {
                 return Err(Error::NoPermission);
             }
-            token.username.clone()
+            req.username.clone()
         };
 
-        let res = self.sqlstore.DeleteApikey(keyname, &username).await;
-        return Ok(res);
+        let deleted_hashes = self.sqlstore.DeleteApikey(&req.keyname, &username).await?;
+        if deleted_hashes.is_empty() {
+            return Ok(false);
+        }
+
+        {
+            let mut store = self.apikeyStore.lock().unwrap();
+            for hash in &deleted_hashes {
+                store.remove(hash);
+            }
+        }
+        self.usernameStore.lock().unwrap().remove(&username);
+        return Ok(true);
     }
 
     pub async fn GetApikeys(&self, username: &str) -> Result<Vec<Apikey>> {
-        let keys = self.sqlstore.GetApikeys(username).await?;
+        let mut keys = self.sqlstore.GetApikeys(username).await?;
+        for key in &mut keys {
+            // TODO: Stop returning raw API keys from list API after debugging window.
+            // Keep prefix fallback for legacy rows that never had raw key persisted.
+            if key.apikey.is_none() {
+                key.apikey = Some(key.apikey_prefix.clone());
+            }
+        }
         return Ok(keys);
     }
 

@@ -585,10 +585,12 @@
             `;
             tenants_tbody.appendChild(row);
 
-            const option = document.createElement("option");
-            option.value = key.name;
-            option.textContent = key.name;
-            tenant_dropdown.appendChild(option);
+            if (isAdmin) {
+                const option = document.createElement("option");
+                option.value = key.name;
+                option.textContent = key.name;
+                tenant_dropdown.appendChild(option);
+            }
         };
     }
 

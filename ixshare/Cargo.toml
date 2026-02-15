@@ -46,6 +46,8 @@ libloading = "0.8.6"
 crossbeam-channel = "0.5"
 indexmap = "2.2"
 lru = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 axum = "0.7.4"
 hyper = { version = "1.7", features = ["full"] }

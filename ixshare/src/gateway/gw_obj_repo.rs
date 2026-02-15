@@ -769,7 +769,7 @@ impl GwObjRepo {
                                         is_coldstart: false,
                                         gateway_id: Some(GatewayId()),
                                     };
-                                    crate::audit::GPU_USAGE_AGENT.Audit(gpu_usage);
+                                    // crate::audit::GPU_USAGE_AGENT.Audit(gpu_usage);
                                 }
                             }
                             // self.FuncAgentMgr().FuncPodEventHandler(event.clone())?;
