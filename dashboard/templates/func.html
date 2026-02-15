@@ -99,6 +99,12 @@
     <div id="tpsDiv"></div>
 </h2>
 
+{% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "text2audio" %}
+<audio id="myAudio" controls hidden></audio>
+{% endif %}
+
+
+
 <img id="myImage" style="display:none;" alt="API Image" />
 <br>
 <textarea id="output" rows="20" cols="120"></textarea>
@@ -435,8 +441,10 @@
     }
 
     async function streamOutput() {
-        if (apiType == "text2img" || apiType == "standard") {
+        if (apiType == "text2img") {
             await streamOutputImage();
+        } if (apiType == "text2audio") {
+            await streamOutputAudio();
         } else {
             await streamOutputText();
         }
@@ -598,8 +606,7 @@
         const button = document.getElementById('button');
         const outputDiv = document.getElementById('output');
         const prompt = document.getElementById('prompt').value;
-        const image = document.getElementById('image').value;
-
+        // const image = document.getElementById('image').value;
 
         const startTime = performance.now();
         const llvm = true;
@@ -616,10 +623,7 @@
             const port = window.location.port;
             const schema = window.location.protocol;
 
-            url = schema + "//" + hostname + ":" + port + "/generate";
-            if (apiType == "text2img") {
-                url = schema + "//" + hostname + ":" + port + "/text2img";
-            }
+            url = schema + "//" + hostname + ":" + port + "/demo/text2img";
 
             const body = {
                 method: 'POST',
@@ -630,7 +634,7 @@
                 },
                 body: JSON.stringify({
                     "prompt": prompt,
-                    "image": image,
+                    // "image": image,
                     "tenant": tenant,
                     "namespace": namespace,
                     "funcname": name
@@ -658,13 +662,125 @@
             }
 
             if (apiType == "text2img") {
-                response.blob().then(blob => {
-                    const imgUrl = URL.createObjectURL(blob);
-                    // Set the src attribute of the image element to display the image
-                    document.getElementById('myImage').src = imgUrl;
-                    document.getElementById('myImage').style = "block;"; // "width:800px;height:400px;";
+                response.json().then(data => {
+                    // This is the JS equivalent of: jq -r '.choices[0].message.content[0].image_url.url'
+                    try {
+                        const base64Data = data.choices[0].message.content[0].image_url.url;
 
+                        outputDiv.hidden = true;
+                        button.disabled = false;
+
+                        // Set the src directly to the base64 string
+                        // It already contains "data:image/png;base64,..." so browser handles it perfectly
+                        const imgElement = document.getElementById('myImage');
+                        imgElement.src = base64Data;
+                        imgElement.style.display = "block";
+                    } catch (e) {
+                        console.error("Failed to parse image data from response", e);
+                    }
                 });
+            } else {
+                // Read the response as a stream of data
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                while (true) {
+                    const { done, value } = await reader.read();
+
+                    if (done) {
+                        break;
+                    }
+
+                    // Massage and parse the chunk of data
+                    const chunk = decoder.decode(value);
+                    outputDiv.innerHTML += chunk; //.replace(new RegExp('\r?\n', 'g'), '<br />');
+                    // outputDiv.style = "";
+                }
+            }
+
+        } catch (error) {
+            outputDiv.innerHTML += error + '<br>';
+            outputDiv.innerHTML += error.cause + '<br>';
+            console.error('Error fetching HTML:', error);
+            button.disabled = false;
+        }
+
+        button.disabled = false;
+    }
+
+    async function streamOutputAudio() {
+        const button = document.getElementById('button');
+        const outputDiv = document.getElementById('output');
+        const prompt = document.getElementById('prompt').value;
+
+        const startTime = performance.now();
+        const llvm = true;
+        outputDiv.innerHTML = ""
+        try {
+            const processImage = document.getElementById('processing');
+            const buttonTxt = document.getElementById('go');
+            button.disabled = true;
+
+            processImage.style = "width:15px;height:15px;";
+            buttonTxt.style = "display:none;";
+
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            const schema = window.location.protocol;
+
+            url = schema + "//" + hostname + ":" + port + "/demo/text2audio";
+
+            const body = {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-Inferx-Timeout': '12'
+                },
+                body: JSON.stringify({
+                    "prompt": prompt,
+                    "tenant": tenant,
+                    "namespace": namespace,
+                    "funcname": name
+                })
+            };
+
+            const response = await fetch(url, body);
+            processImage.style = "display:none;"
+            buttonTxt.style = "";
+
+            const restore = response.headers.get("tcpconn_latency_header");
+            const ttft = response.headers.get("ttft_latency_header");
+            const contentType = response.headers.get("content-type");
+
+            const startDiv = document.getElementById('startDiv');
+            const ttftDiv = document.getElementById('ttftDiv');
+            startDiv.innerHTML = "Start Latency: " + restore + ' ms ' + '<br>';
+            ttftDiv.innerHTML = "Time To First Token: " + ttft + ' ms ' + '<br>';
+
+            if (response.ok == false) {
+                outputDiv.innerHTML = response.content;
+                button.disabled = false;
+                return
+            }
+
+            if (apiType == "text2audio") {
+                try {
+                    const audioBlob = await response.blob();
+
+                    // 2. Create a local URL for that Blob
+                    const audioUrl = URL.createObjectURL(audioBlob);
+
+                    // 3. Set the audio element source and play
+                    const audioElement = document.getElementById('myAudio');
+                    audioElement.src = audioUrl;
+                    audioElement.style.display = "block";
+                    audioElement.play();
+                    outputDiv.hidden = true;
+                    button.disabled = false;
+                } catch (e) {
+                    console.error("Failed to parse image data from response", e);
+                }
             } else {
                 // Read the response as a stream of data
                 const reader = response.body.getReader();

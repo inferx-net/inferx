@@ -36,7 +36,55 @@ service IxProxyService {
   rpc RemovePodSandbox(RemovePodSandboxReq) returns (RemovePodSandboxResp) {}
 }
 
+service BlobService {
+  rpc ReadFile(stream ReadFileReq) returns (stream ReadFileResp);
+}
+
 ///////////////////////////////////////////////////////////////////////
+
+message ReadFileReq {
+  oneof payload {
+    BlobReadFileReq req = 1; // Send this first
+    BlobBlockReturn ret = 2;  // Send these subsequent
+  }
+}
+
+message ReadFileResp {
+  oneof payload {
+    BlobReadFileResp resp = 1; // Send this first
+    BlobBlockLease lease = 2;  // Send these subsequent    
+  }
+}
+
+message BlobReadFileReq {
+  string filename = 5;
+  int64  offset = 6;
+  int64  len = 7;
+}
+
+message BlobReadFileResp {
+  bytes rkey = 1;
+  bytes svc_addr = 2;
+  uint64 buf_addr = 3;
+  uint64 block_size = 4;
+  string error = 5;
+}
+
+message BlobBlockLease {
+  uint64 block_idx = 2;
+  uint64 block_addr = 3;
+  uint64 data_size = 4;
+  int64  offset = 5;
+  bool   end = 6;
+  string error = 7;
+}
+
+message BlobBlockReturn {
+  uint64 block_idx = 2;
+  uint64 block_addr = 3;
+  bool   end = 6;
+  string error = 7;
+}
 
 message CreatePodSandboxReq {
   string tenant = 1;
