@@ -52,66 +52,6 @@ pub struct RemoveSnapshotResp {
     #[prost(string, tag = "1")]
     pub error: ::prost::alloc::string::String,
 }
-/// Load multiple snapshots into GPU memory
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct LoadSnapshotsReq {
-    /// List of funckeys to load
-    #[prost(string, repeated, tag = "1")]
-    pub funckeys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct LoadSnapshotResult {
-    #[prost(string, tag = "1")]
-    pub funckey: ::prost::alloc::string::String,
-    /// Empty string = success
-    #[prost(string, tag = "2")]
-    pub error: ::prost::alloc::string::String,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct LoadSnapshotsResp {
-    #[prost(message, repeated, tag = "1")]
-    pub results: ::prost::alloc::vec::Vec<LoadSnapshotResult>,
-    #[prost(int32, tag = "2")]
-    pub succeeded: i32,
-    #[prost(int32, tag = "3")]
-    pub failed: i32,
-}
-/// Unload snapshots from GPU memory (keep data on disk)
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UnloadSnapshotsReq {
-    /// List of funckeys to unload from GPU
-    #[prost(string, repeated, tag = "1")]
-    pub funckeys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UnloadSnapshotResult {
-    #[prost(string, tag = "1")]
-    pub funckey: ::prost::alloc::string::String,
-    /// Empty string = success
-    #[prost(string, tag = "2")]
-    pub error: ::prost::alloc::string::String,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UnloadSnapshotsResp {
-    #[prost(message, repeated, tag = "1")]
-    pub results: ::prost::alloc::vec::Vec<UnloadSnapshotResult>,
-    #[prost(int32, tag = "2")]
-    pub succeeded: i32,
-    #[prost(int32, tag = "3")]
-    pub failed: i32,
-}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1089,48 +1029,6 @@ pub mod node_agent_service_client {
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
-        /// Load multiple snapshots into GPU memory (batch)
-        /// Called by Scheduler after NodeAgentConnected or at runtime
-        pub async fn load_snapshots(
-            &mut self,
-            request: impl tonic::IntoRequest<super::LoadSnapshotsReq>,
-        ) -> Result<tonic::Response<super::LoadSnapshotsResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/LoadSnapshots",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
-        /// Unload snapshots from GPU memory (keep data on disk)
-        /// Called when tenant quota_exceeded becomes true
-        pub async fn unload_snapshots(
-            &mut self,
-            request: impl tonic::IntoRequest<super::UnloadSnapshotsReq>,
-        ) -> Result<tonic::Response<super::UnloadSnapshotsResp>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/na.NodeAgentService/UnloadSnapshots",
-            );
-            self.inner.unary(request.into_request(), path, codec).await
-        }
     }
 }
 /// Generated client implementations.
@@ -1551,18 +1449,6 @@ pub mod node_agent_service_server {
             &self,
             request: tonic::Request<super::RemoveSnapshotReq>,
         ) -> Result<tonic::Response<super::RemoveSnapshotResp>, tonic::Status>;
-        /// Load multiple snapshots into GPU memory (batch)
-        /// Called by Scheduler after NodeAgentConnected or at runtime
-        async fn load_snapshots(
-            &self,
-            request: tonic::Request<super::LoadSnapshotsReq>,
-        ) -> Result<tonic::Response<super::LoadSnapshotsResp>, tonic::Status>;
-        /// Unload snapshots from GPU memory (keep data on disk)
-        /// Called when tenant quota_exceeded becomes true
-        async fn unload_snapshots(
-            &self,
-            request: tonic::Request<super::UnloadSnapshotsReq>,
-        ) -> Result<tonic::Response<super::UnloadSnapshotsResp>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct NodeAgentServiceServer<T: NodeAgentService> {
@@ -1810,86 +1696,6 @@ pub mod node_agent_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = RemoveSnapshotSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/na.NodeAgentService/LoadSnapshots" => {
-                    #[allow(non_camel_case_types)]
-                    struct LoadSnapshotsSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::LoadSnapshotsReq>
-                    for LoadSnapshotsSvc<T> {
-                        type Response = super::LoadSnapshotsResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::LoadSnapshotsReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move {
-                                (*inner).load_snapshots(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = LoadSnapshotsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/na.NodeAgentService/UnloadSnapshots" => {
-                    #[allow(non_camel_case_types)]
-                    struct UnloadSnapshotsSvc<T: NodeAgentService>(pub Arc<T>);
-                    impl<
-                        T: NodeAgentService,
-                    > tonic::server::UnaryService<super::UnloadSnapshotsReq>
-                    for UnloadSnapshotsSvc<T> {
-                        type Response = super::UnloadSnapshotsResp;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::UnloadSnapshotsReq>,
-                        ) -> Self::Future {
-                            let inner = self.0.clone();
-                            let fut = async move {
-                                (*inner).unload_snapshots(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = UnloadSnapshotsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -29,12 +29,6 @@ service NodeAgentService {
   rpc ResumePod(ResumePodReq) returns (ResumePodResp) {}
   rpc ReadPodLog(ReadPodLogReq) returns (ReadPodLogResp) {}
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
-  // Load multiple snapshots into GPU memory (batch)
-  // Called by Scheduler after NodeAgentConnected or at runtime
-  rpc LoadSnapshots(LoadSnapshotsReq) returns (LoadSnapshotsResp) {}
-  // Unload snapshots from GPU memory (keep data on disk)
-  // Called when tenant quota_exceeded becomes true
-  rpc UnloadSnapshots(UnloadSnapshotsReq) returns (UnloadSnapshotsResp) {}
 }
 
 service IxProxyService {
@@ -72,38 +66,6 @@ message RemoveSnapshotReq {
 
 message RemoveSnapshotResp {
   string error = 1;
-}
-
-// Load multiple snapshots into GPU memory
-message LoadSnapshotsReq {
-  repeated string funckeys = 1;  // List of funckeys to load
-}
-
-message LoadSnapshotResult {
-  string funckey = 1;
-  string error = 2;  // Empty string = success
-}
-
-message LoadSnapshotsResp {
-  repeated LoadSnapshotResult results = 1;
-  int32 succeeded = 2;
-  int32 failed = 3;
-}
-
-// Unload snapshots from GPU memory (keep data on disk)
-message UnloadSnapshotsReq {
-  repeated string funckeys = 1;  // List of funckeys to unload from GPU
-}
-
-message UnloadSnapshotResult {
-  string funckey = 1;
-  string error = 2;  // Empty string = success
-}
-
-message UnloadSnapshotsResp {
-  repeated UnloadSnapshotResult results = 1;
-  int32 succeeded = 2;
-  int32 failed = 3;
 }
 
 message WorkerId {
