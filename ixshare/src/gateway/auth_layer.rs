@@ -24,7 +24,6 @@ use axum_keycloak_auth::{
 
 use keycloak::KeycloakAdmin;
 use keycloak::KeycloakAdminToken;
-use sha2::{Digest, Sha256};
 use std::ops::Bound::Included;
 use std::ops::Bound::Unbounded;
 
@@ -157,20 +156,16 @@ pub struct ApikeyCreateRequest {
     #[serde(default)]
     pub restrict_namespace: Option<String>,
     #[serde(default)]
-    pub restrict_functions: Option<Vec<String>>,
-    #[serde(default)]
     pub expires_in_days: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ApikeyCreateResponse {
     pub apikey: String,
-    pub apikey_prefix: String,
     pub keyname: String,
     pub scope: String,
     pub restrict_tenant: Option<String>,
     pub restrict_namespace: Option<String>,
-    pub restrict_functions: Option<Vec<String>>,
     pub expires_at: Option<String>,
 }
 
@@ -191,7 +186,6 @@ pub struct AccessToken {
     pub sourceIsApikey: bool,
     pub restrictTenant: Option<String>,
     pub restrictNamespace: Option<String>,
-    pub restrictFunctions: Option<BTreeSet<String>>,
     pub updatetime: SystemTime,
 }
 
@@ -218,7 +212,6 @@ impl AccessToken {
             sourceIsApikey: false,
             restrictTenant: None,
             restrictNamespace: None,
-            restrictFunctions: None,
             updatetime: SystemTime::now(),
         };
     }
@@ -232,7 +225,6 @@ impl AccessToken {
             sourceIsApikey: false,
             restrictTenant: None,
             restrictNamespace: None,
-            restrictFunctions: None,
             updatetime: SystemTime::now(),
         };
     }
@@ -264,13 +256,6 @@ impl AccessToken {
 
         match &self.restrictNamespace {
             Some(ns) => ns == namespace,
-            None => true,
-        }
-    }
-
-    pub fn AllowFunction(&self, funcname: &str) -> bool {
-        match &self.restrictFunctions {
-            Some(funcs) => funcs.contains(funcname),
             None => true,
         }
     }
@@ -341,10 +326,7 @@ impl AccessToken {
             if !self.CheckScope("full") {
                 return false;
             }
-            if self.restrictTenant.is_some()
-                || self.restrictNamespace.is_some()
-                || self.restrictFunctions.is_some()
-            {
+            if self.restrictTenant.is_some() || self.restrictNamespace.is_some() {
                 return false;
             }
         }
@@ -652,7 +634,6 @@ impl TokenCache {
                 sourceIsApikey: false,
                 restrictTenant: None,
                 restrictNamespace: None,
-                restrictFunctions: None,
                 updatetime: SystemTime::now(),
             }),
         });
@@ -688,28 +669,9 @@ impl TokenCache {
         self.usernameStore.lock().unwrap().remove(&token.UserKey());
     }
 
-    fn HashApikey(raw: &str) -> String {
-        return hex::encode(Sha256::digest(raw.as_bytes()));
-    }
-
     fn NewRawApikey() -> String {
         let random_bytes: [u8; 32] = rand::random();
         return format!("ix_{}", hex::encode(random_bytes));
-    }
-
-    fn PrefixFromRaw(raw: &str) -> String {
-        let mut cleaned = String::new();
-        for c in raw.chars() {
-            if c.is_ascii_hexdigit() {
-                cleaned.push(c.to_ascii_lowercase());
-            }
-        }
-
-        while cleaned.len() < 12 {
-            cleaned.push('0');
-        }
-
-        return format!("ix_{}", &cleaned[..12]);
     }
 
     fn NormalizeScope(scope: &str) -> String {
@@ -778,11 +740,6 @@ impl TokenCache {
                 "invalid key restriction: restrict_namespace requires restrict_tenant"
             )));
         }
-        if apikey.restrict_functions.is_some() && apikey.restrict_namespace.is_none() {
-            return Err(Error::CommonError(format!(
-                "invalid key restriction: restrict_functions requires restrict_namespace"
-            )));
-        }
 
         let mut filtered_roles = BTreeSet::new();
         for r in &base.roles {
@@ -792,14 +749,6 @@ impl TokenCache {
             }
         }
 
-        let restrictFunctions = apikey.restrict_functions.as_ref().map(|funcs| {
-            let mut set = BTreeSet::new();
-            for f in funcs {
-                set.insert(f.clone());
-            }
-            set
-        });
-
         Ok(AccessToken {
             username: base.username.clone(),
             roles: filtered_roles,
@@ -808,7 +757,6 @@ impl TokenCache {
             sourceIsApikey: true,
             restrictTenant: apikey.restrict_tenant.clone(),
             restrictNamespace: apikey.restrict_namespace.clone(),
-            restrictFunctions,
             updatetime: SystemTime::now(),
         })
     }
@@ -819,9 +767,9 @@ impl TokenCache {
             return Ok(Arc::new(AccessToken::InferxAdminToken()));
         }
 
-        let apikey_hash = Self::HashApikey(apikey);
+        let cache_key = apikey.to_owned();
 
-        let oldToken = match self.apikeyStore.lock().unwrap().get(&apikey_hash) {
+        let oldToken = match self.apikeyStore.lock().unwrap().get(&cache_key) {
             Some(g) => {
                 if g.Timeout() {
                     Some(g.clone())
@@ -832,12 +780,12 @@ impl TokenCache {
             None => None,
         };
 
-        // Drop stale hashed entry and rebuild.
+        // Drop stale entry and rebuild.
         if oldToken.is_some() {
-            self.apikeyStore.lock().unwrap().remove(&apikey_hash);
+            self.apikeyStore.lock().unwrap().remove(&cache_key);
         }
 
-        let key = self.sqlstore.GetApikeyByHash(&apikey_hash).await?;
+        let key = self.sqlstore.GetApikey(&cache_key).await?;
 
         if key.revoked_at.is_some() {
             return Err(Error::NoPermission);
@@ -854,7 +802,7 @@ impl TokenCache {
         self.apikeyStore
             .lock()
             .unwrap()
-            .insert(apikey_hash, restricted.clone());
+            .insert(cache_key, restricted.clone());
         return Ok(restricted);
     }
 
@@ -873,7 +821,7 @@ impl TokenCache {
         let apikeys = self.sqlstore.GetApikeys(username).await?;
         let mut keys = Vec::new();
         for u in apikeys {
-            keys.push(u.apikey_hash.clone());
+            keys.push(u.apikey.clone());
         }
 
         let groups = self.sqlstore.GetRoles(username).await?;
@@ -911,12 +859,6 @@ impl TokenCache {
             )));
         }
 
-        if req.restrict_functions.is_some() && req.restrict_namespace.is_none() {
-            return Err(Error::CommonError(format!(
-                "restrict_functions requires restrict_namespace"
-            )));
-        }
-
         if let Some(t) = &req.restrict_tenant {
             if !token.IsInferxAdmin() && !token.IsTenantUser(t) {
                 return Err(Error::NoPermission);
@@ -934,22 +876,16 @@ impl TokenCache {
             .map(|d| chrono::Utc::now().naive_utc() + chrono::Duration::days(d as i64));
 
         let raw_apikey = Self::NewRawApikey();
-        let apikey_hash = Self::HashApikey(&raw_apikey);
-        let apikey_prefix = Self::PrefixFromRaw(&raw_apikey);
 
         self.sqlstore
             .CreateApikey(&Apikey {
                 key_id: 0,
-                // TODO: Stop persisting raw API keys after the debug window; keep hash-only storage.
-                apikey: Some(raw_apikey.clone()),
-                apikey_hash: apikey_hash.clone(),
-                apikey_prefix: apikey_prefix.clone(),
+                apikey: raw_apikey.clone(),
                 username: username.clone(),
                 keyname: req.keyname.clone(),
                 scope: scope.clone(),
                 restrict_tenant: req.restrict_tenant.clone(),
                 restrict_namespace: req.restrict_namespace.clone(),
-                restrict_functions: req.restrict_functions.clone(),
                 createtime: None,
                 expires_at,
                 revoked_at: None,
@@ -963,12 +899,10 @@ impl TokenCache {
 
         return Ok(ApikeyCreateResponse {
             apikey: raw_apikey,
-            apikey_prefix,
             keyname: req.keyname.clone(),
             scope,
             restrict_tenant: req.restrict_tenant.clone(),
             restrict_namespace: req.restrict_namespace.clone(),
-            restrict_functions: req.restrict_functions.clone(),
             expires_at: expires_at.map(|v| v.to_string()),
         });
     }
@@ -989,15 +923,15 @@ impl TokenCache {
             req.username.clone()
         };
 
-        let deleted_hashes = self.sqlstore.DeleteApikey(&req.keyname, &username).await?;
-        if deleted_hashes.is_empty() {
+        let deleted_keys = self.sqlstore.DeleteApikey(&req.keyname, &username).await?;
+        if deleted_keys.is_empty() {
             return Ok(false);
         }
 
         {
             let mut store = self.apikeyStore.lock().unwrap();
-            for hash in &deleted_hashes {
-                store.remove(hash);
+            for key in &deleted_keys {
+                store.remove(key);
             }
         }
         self.usernameStore.lock().unwrap().remove(&username);
@@ -1005,15 +939,7 @@ impl TokenCache {
     }
 
     pub async fn GetApikeys(&self, username: &str) -> Result<Vec<Apikey>> {
-        let mut keys = self.sqlstore.GetApikeys(username).await?;
-        for key in &mut keys {
-            // TODO: Stop returning raw API keys from list API after debugging window.
-            // Keep prefix fallback for legacy rows that never had raw key persisted.
-            if key.apikey.is_none() {
-                key.apikey = Some(key.apikey_prefix.clone());
-            }
-        }
-        return Ok(keys);
+        return self.sqlstore.GetApikeys(username).await;
     }
 
     pub async fn GrantTenantAdminPermission(

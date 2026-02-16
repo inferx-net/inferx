@@ -11,17 +11,12 @@ use crate::common::*;
 pub struct Apikey {
     #[serde(default)]
     pub key_id: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub apikey: Option<String>,
-    #[serde(skip_serializing)]
-    pub apikey_hash: String,
-    pub apikey_prefix: String,
+    pub apikey: String,
     pub username: String,
     pub keyname: String,
     pub scope: String,
     pub restrict_tenant: Option<String>,
     pub restrict_namespace: Option<String>,
-    pub restrict_functions: Option<Vec<String>>,
     pub createtime: Option<chrono::NaiveDateTime>,
     pub expires_at: Option<chrono::NaiveDateTime>,
     pub revoked_at: Option<chrono::NaiveDateTime>,
@@ -72,33 +67,27 @@ impl SqlSecret {
     pub async fn CreateApikey(&self, key: &Apikey) -> Result<()> {
         let query = "insert into Apikey (
                 apikey,
-                apikey_hash,
-                apikey_prefix,
                 username,
                 keyname,
                 scope,
                 restrict_tenant,
                 restrict_namespace,
-                restrict_functions,
                 createtime,
                 expires_at,
                 revoked_at,
                 revoked_by,
                 revoke_reason
             ) values (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13
+                $1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10
             )";
 
         let _result = sqlx::query(query)
             .bind(&key.apikey)
-            .bind(&key.apikey_hash)
-            .bind(&key.apikey_prefix)
             .bind(&key.username)
             .bind(&key.keyname)
             .bind(&key.scope)
             .bind(&key.restrict_tenant)
             .bind(&key.restrict_namespace)
-            .bind(&key.restrict_functions)
             .bind(&key.expires_at)
             .bind(&key.revoked_at)
             .bind(&key.revoked_by)
@@ -109,26 +98,23 @@ impl SqlSecret {
         return Ok(());
     }
 
-    pub async fn GetApikeyByHash(&self, apikey_hash: &str) -> Result<Apikey> {
+    pub async fn GetApikey(&self, apikey: &str) -> Result<Apikey> {
         let query = "select
                 key_id,
                 apikey,
-                apikey_hash,
-                apikey_prefix,
                 username,
                 keyname,
                 scope,
                 restrict_tenant,
                 restrict_namespace,
-                restrict_functions,
                 createtime,
                 expires_at,
                 revoked_at,
                 revoked_by,
                 revoke_reason
-            from Apikey where apikey_hash = $1";
+            from Apikey where apikey = $1";
         let key = sqlx::query_as::<_, Apikey>(query)
-            .bind(apikey_hash)
+            .bind(apikey)
             .fetch_one(&self.pool)
             .await?;
         return Ok(key);
@@ -138,14 +124,11 @@ impl SqlSecret {
         let query = "select
                 key_id,
                 apikey,
-                apikey_hash,
-                apikey_prefix,
                 username,
                 keyname,
                 scope,
                 restrict_tenant,
                 restrict_namespace,
-                restrict_functions,
                 createtime,
                 expires_at,
                 revoked_at,
@@ -160,13 +143,13 @@ impl SqlSecret {
     }
 
     pub async fn DeleteApikey(&self, keyname: &str, username: &str) -> Result<Vec<String>> {
-        let query = "delete from Apikey where keyname = $1 and username = $2 returning apikey_hash";
-        let hashes = sqlx::query_scalar::<_, String>(query)
+        let query = "delete from Apikey where keyname = $1 and username = $2 returning apikey";
+        let keys = sqlx::query_scalar::<_, String>(query)
             .bind(keyname)
             .bind(username)
             .fetch_all(&self.pool)
             .await?;
-        return Ok(hashes);
+        return Ok(keys);
     }
 
     pub async fn AddRole(&self, username: &str, role: &str) -> Result<()> {

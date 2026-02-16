@@ -670,19 +670,9 @@ async fn DirectFuncCall(
     }
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
-    let funcname = parts[4].to_owned();
 
     if !token.CheckScope("inference") {
         let body = Body::from(format!("service failure: insufficient scope"));
-        let resp = Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(body)
-            .unwrap();
-        return Ok(resp);
-    }
-
-    if !token.AllowFunction(&funcname) {
-        let body = Body::from(format!("service failure: function not allowed"));
         let resp = Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(body)
@@ -872,15 +862,6 @@ async fn FuncCall(
 
     if !token.CheckScope("inference") {
         let body = Body::from(format!("service failure: insufficient scope"));
-        let resp = Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(body)
-            .unwrap();
-        return Ok(resp);
-    }
-
-    if !token.AllowFunction(&funcname) {
-        let body = Body::from(format!("service failure: function not allowed"));
         let resp = Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(body)

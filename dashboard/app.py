@@ -159,6 +159,37 @@ def require_login(func):
         return func(*args, **kwargs)
     return wrapper
 
+
+def is_inferx_admin_user():
+    if session.get('username', '') == 'inferx_admin':
+        return True
+
+    try:
+        roles = listroles()
+    except Exception:
+        return False
+
+    if not isinstance(roles, list):
+        return False
+
+    for role in roles:
+        obj_type = str(role.get('objType', '')).lower()
+        role_name = str(role.get('role', '')).lower()
+        tenant = role.get('tenant', '')
+        if obj_type == 'tenant' and role_name == 'admin' and tenant == 'system':
+            return True
+
+    return False
+
+
+def require_admin(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if not is_inferx_admin_user():
+            return Response("No permission", status=403)
+        return func(*args, **kwargs)
+    return wrapper
+
 @prefix_bp.route('/login')
 def login():
     nonce = generate_token(20)
@@ -226,6 +257,7 @@ def getapikeys():
 
 @prefix_bp.route('/admin')
 @require_login
+@require_admin
 def apikeys():
     return render_template(
         "admin.html"
