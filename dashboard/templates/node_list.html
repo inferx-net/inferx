@@ -8,8 +8,12 @@
     td {
         border: 1px solid black;
     }
+
+    .content table.ix-table {
+        font-size: 14px;
+    }
 </style>
-<table style="width:100%; text-align: center; border-collapse: collapse;">
+<table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
         <th>Nodename</th>
         <th>IP Address</th>
@@ -37,7 +41,7 @@
             <div>slotSize: {{ gpus.slotSize }}</div>
             <div>totalSlotCnt: {{ gpus.totalSlotCnt }}</div>
 
-            <table style="width: 100%; margin-top: 5px; border-collapse: collapse; border: none;">
+            <table class="ix-table" style="width: 100%; margin-top: 5px; border-collapse: collapse; border: none;">
                 <tr>
                     <th style="border-bottom: 1px solid black; border-left: none; border-right: 1px solid black;">GPU ID</th>
                     <th style="border-bottom: 1px solid black; border-right: 1px solid black;">contextCnt</th>

@@ -36,6 +36,309 @@
     .tabcontent.active {
         display: block;
     }
+
+    /* Non-Billing admin tables */
+    .admin-data-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        font-size: 14px;
+    }
+
+    .admin-data-table th,
+    .admin-data-table td {
+        border: 1px solid #aebfd1;
+        padding: 8px 10px;
+        vertical-align: middle;
+        text-align: center;
+    }
+
+    .admin-data-table th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+    }
+
+    .admin-data-table tbody tr:nth-child(odd) {
+        background: #ffffff;
+    }
+
+    .admin-data-table tbody tr:nth-child(even) {
+        background: #edf3fb;
+    }
+
+    .admin-data-table tbody tr:hover {
+        background: #e2ecf9;
+    }
+
+    /* Billing tab styles */
+    .summary-card {
+        border: 1px solid #ccc;
+        padding: 15px 25px;
+        text-align: center;
+        min-width: 140px;
+        background: #fafafa;
+    }
+
+    .summary-card h4 {
+        margin: 0 0 10px 0;
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+    }
+
+    .summary-card > div:first-of-type {
+        font-size: 20px;
+        font-weight: bold;
+    }
+
+    .summary-card .subtext {
+        font-size: 12px;
+        color: #888;
+        margin-top: 5px;
+    }
+
+    .status-active {
+        color: green;
+    }
+
+    .status-exceeded {
+        color: red;
+    }
+
+    /* Stacked usage bar */
+    .usage-bar-stack {
+        display: flex;
+        flex-direction: column-reverse;
+        min-width: 8px;
+        flex: 1;
+        transition: height 0.3s ease;
+    }
+
+    .usage-bar-inference {
+        background-color: #4CAF50;
+    }
+
+    .usage-bar-inference:hover {
+        background-color: #45a049;
+    }
+
+    .usage-bar-standby {
+        background-color: #2196F3;
+    }
+
+    .usage-bar-standby:hover {
+        background-color: #1976D2;
+    }
+
+    /* Single bar for analytics */
+    .usage-bar {
+        background-color: #4CAF50;
+        min-width: 8px;
+        flex: 1;
+        transition: height 0.3s ease;
+    }
+
+    .usage-bar:hover {
+        background-color: #45a049;
+    }
+
+    #billing-pagination-controls,
+    #billing-admin-credit-pagination-controls,
+    #billing-admin-rate-pagination-controls {
+        margin-top: 10px;
+        text-align: center;
+    }
+
+    #billing-pagination-controls button,
+    #billing-admin-credit-pagination-controls button,
+    #billing-admin-rate-pagination-controls button {
+        margin: 0 10px;
+        padding: 5px 15px;
+    }
+
+    #billing-pagination-controls button:disabled,
+    #billing-admin-credit-pagination-controls button:disabled,
+    #billing-admin-rate-pagination-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    #billing-admin-credits-form div,
+    #billing-admin-rate-form div,
+    #billing-admin-credit-history-section div,
+    #billing-admin-rate-history-section div {
+        margin: 10px 0;
+    }
+
+    #billing-admin-credits-form label,
+    #billing-admin-rate-form label,
+    #billing-admin-credit-history-section label,
+    #billing-admin-rate-history-section label {
+        display: inline-block;
+        width: 190px;
+    }
+
+    #billing-admin-credits-form input,
+    #billing-admin-rate-form input,
+    #billing-admin-credits-form select,
+    #billing-admin-rate-form select,
+    #billing-admin-credit-history-section select,
+    #billing-admin-rate-history-section select {
+        width: 300px;
+        padding: 5px;
+    }
+
+    #billing-admin-add-credits-btn:disabled,
+    #billing-admin-add-rate-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .amount-positive { color: green; }
+    .amount-negative { color: red; }
+    .amount-zero { color: #888; }
+
+    #usage-range-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    #usage-view-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    #usage-granularity-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    #analytics-hourly-view-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    #analytics-group-detail-granularity-controls button.active-range {
+        background-color: #4CAF50;
+        color: #fff;
+        border: 1px solid #4CAF50;
+    }
+
+    /* Billing tables aligned with Usage Analytics style */
+    .billing-analytics-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        border: 1px solid #aebfd1;
+        background: #fff;
+    }
+
+    .billing-analytics-table th,
+    .billing-analytics-table td {
+        border: 1px solid #aebfd1;
+        padding: 8px;
+        vertical-align: middle;
+    }
+
+    .billing-analytics-table thead th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .billing-analytics-table tbody tr:nth-child(odd) {
+        background: #ffffff;
+    }
+
+    .billing-analytics-table tbody tr:nth-child(even) {
+        background: #edf3fb;
+    }
+
+    .billing-analytics-table tbody tr:hover {
+        background: #e2ecf9;
+    }
+
+    .billing-analytics-table tfoot td {
+        font-weight: bold;
+        background: #fafafa;
+    }
+
+    /* Credit history modern table style */
+    #credit-history-container {
+        margin-top: 4px;
+    }
+
+    #credit-history-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #aebfd1;
+        background: #ffffff;
+    }
+
+    #credit-history-table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    #credit-history-table th,
+    #credit-history-table td {
+        border: 1px solid #aebfd1;
+        padding: 10px 12px;
+        text-align: center;
+    }
+
+    #credit-history-table thead th {
+        background: #f8fafc;
+        color: #334155;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    #credit-history-table tbody tr:nth-child(odd) {
+        background: #ffffff;
+    }
+
+    #credit-history-table tbody tr:nth-child(even) {
+        background: #edf3fb;
+    }
+
+    #credit-history-table tbody tr:hover {
+        background: #e2ecf9;
+    }
+
+    #credit-history-container #billing-pagination-controls {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+    }
+
+    #credit-history-container #billing-pagination-controls button {
+        margin: 0;
+        padding: 6px 14px;
+        border: 1px solid #d1d9e6;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #334155;
+    }
+
+    #credit-history-container #billing-pagination-controls button:not(:disabled):hover {
+        background: #f8fbff;
+        border-color: #b7c6dc;
+    }
+
+    #credit-history-container #billing-page-info {
+        color: #475569;
+        font-weight: 600;
+    }
 </style>
 
 <div class="tab">
@@ -44,10 +347,12 @@
     <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
     <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
     <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
+    <button class="tablinks" onclick="openTab(event, 'Billing')" style="font-size: 25px;">Billing</button>
+    <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="font-size: 25px; display: none;">Billing Admin</button>
 </div>
 
 <div id="Apikeys" class="tabcontent">
-    <table style="width:100%" id="items-table">
+    <table class="admin-data-table" style="width:100%" id="items-table">
         <thead>
             <tr>
                 <th style="width: 150px;">Select</th>
@@ -74,7 +379,7 @@
 </div>
 
 <div id="Models" class="tabcontent">
-    <table style="width:100%" id="models-table">
+    <table class="admin-data-table" style="width:100%" id="models-table">
         <thead>
             <tr>
                 <th rowspan="2" style="width: 100px;">Select</th>
@@ -116,7 +421,7 @@
 
 <div id="Roles" class="tabcontent">
     <h3>Tenant Roles</h3>
-    <table style="width:100%" id="tenant-roles-table">
+    <table class="admin-data-table" style="width:100%" id="tenant-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -134,7 +439,7 @@
     <br>
 
     <h3>Namespace Roles</h3>
-    <table style="width:100%" id="namespace-roles-table">
+    <table class="admin-data-table" style="width:100%" id="namespace-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -152,7 +457,7 @@
 </div>
 
 <div id="Namespaces" class="tabcontent">
-    <table style="width:100%" id="namespaces-table">
+    <table class="admin-data-table" style="width:100%" id="namespaces-table">
         <thead>
             <tr>
                 <th rowspan="2" style="width: 150px;">Select</th>
@@ -193,7 +498,7 @@
 </div>
 
 <div id="Tenants" class="tabcontent">
-    <table style="width:100%" id="tenants-table">
+    <table class="admin-data-table" style="width:100%" id="tenants-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
@@ -213,7 +518,507 @@
     </table>
 </div>
 
+<div id="Billing" class="tabcontent">
+    <!-- Tenant Selector -->
+    <div style="margin-bottom: 20px;">
+        <label for="billing_tenant_select" style="font-size: 16px; font-weight: bold;">Tenant: </label>
+        <select id="billing_tenant_select" onchange="loadBillingData()" style="padding: 5px; font-size: 14px;">
+            <option value="" disabled selected>Select a tenant</option>
+        </select>
+    </div>
+
+    <!-- No tenant selected message -->
+    <div id="billing-no-tenant" style="color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Select a tenant to view billing information
+    </div>
+
+    <!-- Billing content (hidden until tenant selected) -->
+    <div id="billing-content" style="display: none;">
+        <!-- Credit Summary Cards -->
+        <div id="billing-summary" style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
+            <div class="summary-card">
+                <h4>Current Balance</h4>
+                <div id="balance-value">--</div>
+                <div id="balance-subtext" class="subtext">--</div>
+            </div>
+            <div class="summary-card">
+                <h4>Total Used</h4>
+                <div id="used-value">--</div>
+                <div id="used-breakdown" class="subtext">
+                    <span id="used-inference">--</span> |
+                    <span id="used-standby">--</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <h4>Quota Limit</h4>
+                <div id="threshold-value">--</div>
+                <div class="subtext">threshold</div>
+            </div>
+            <div class="summary-card">
+                <h4>Status</h4>
+                <div id="status-value">--</div>
+            </div>
+        </div>
+
+        <!-- Usage Chart -->
+        <div id="usage-chart-container" style="margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                <h3 style="margin: 0;">Usage</h3>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <div id="usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" onclick="setUsageRangeHours(24)" id="usage-range-24h">Last 24h</button>
+                        <button type="button" onclick="setUsageRangeHours(24 * 7)" id="usage-range-7d">Last 7d</button>
+                        <button type="button" onclick="setUsageRangeHours(24 * 30)" id="usage-range-30d">Last 30d</button>
+                        <button type="button" onclick="showBillingCustomRange()" id="usage-range-custom">Custom</button>
+                    </div>
+                    <div id="usage-view-controls" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 12px; color: #666;">View:</span>
+                        <button type="button" onclick="setUsageViewMode('chart')" id="usage-view-chart">Chart</button>
+                        <button type="button" onclick="setUsageViewMode('table')" id="usage-view-table">Table</button>
+                    </div>
+                    <div id="usage-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 12px; color: #666;">Granularity:</span>
+                        <button type="button" onclick="setUsageGranularity('hourly')" id="usage-granularity-hourly">Hourly</button>
+                        <button type="button" onclick="setUsageGranularity('daily')" id="usage-granularity-daily">Daily</button>
+                        <button type="button" onclick="setUsageGranularity('weekly')" id="usage-granularity-weekly">Weekly</button>
+                    </div>
+                </div>
+            </div>
+            <div id="billing-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px;">
+                <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+                <input type="datetime-local" id="billing-usage-start" style="font-size: 12px;">
+                <span style="font-size: 12px;">to</span>
+                <input type="datetime-local" id="billing-usage-end" style="font-size: 12px;">
+                <button type="button" onclick="applyBillingCustomRange()">Apply</button>
+            </div>
+            <div id="usage-chart-view">
+                <div id="usage-chart" style="display: flex; align-items: flex-end; height: 100px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+                    <!-- Bars generated by JS -->
+                </div>
+                <div id="usage-chart-labels" style="display: flex; gap: 2px; font-size: 10px; color: #666;">
+                    <!-- Labels generated by JS -->
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 4px;">
+                    <div>
+                        <span style="display: inline-block; width: 10px; height: 10px; background: #4CAF50;"></span> Inference
+                        <span style="display: inline-block; width: 10px; height: 10px; background: #2196F3; margin-left: 10px;"></span> Standby
+                    </div>
+                    <div>(Local)</div>
+                </div>
+            </div>
+            <div id="usage-table-container" style="display: none; margin-top: 12px;">
+                <h4 style="margin: 0 0 8px 0;">
+                    Usage Table View (<span id="usage-table-granularity">Hourly</span>, Local)
+                </h4>
+                <div style="overflow-x: auto;">
+                        <table id="usage-table" class="billing-analytics-table">
+                            <thead>
+                                <tr>
+                                <th style="text-align: left; cursor: pointer;" onclick="sortUsageTable('period')">
+                                    Period <span id="usage-sort-period-icon">▼</span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
+                                    Inference (hrs) <span id="usage-sort-inf-hours-icon"></span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
+                                    Standby (hrs) <span id="usage-sort-sby-hours-icon"></span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
+                                    Inference (USD) <span id="usage-sort-inf-cost-icon"></span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
+                                    Standby (USD) <span id="usage-sort-sby-cost-icon"></span>
+                                </th>
+                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_cost')">
+                                    Total (USD) <span id="usage-sort-total-cost-icon"></span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td style="text-align: left;">Total</td>
+                                <td id="usage-table-total-inf-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-sby-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-inf-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-sby-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-cost" style="text-align: right;">--</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Usage Analytics Section -->
+        <div id="usage-analytics-container" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 15px;">
+            <h3 style="cursor: pointer; margin: 0;" onclick="toggleUsageAnalytics()">
+                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▶</span>
+            </h3>
+
+            <div id="usage-analytics-content" style="display: none; margin-top: 15px;">
+                <div id="analytics-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
+                    <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+                    <input type="datetime-local" id="usage-start" style="font-size: 12px;">
+                    <span style="font-size: 12px;">to</span>
+                    <input type="datetime-local" id="usage-end" style="font-size: 12px;">
+                    <button type="button" onclick="applyCustomUsageRange()">Apply</button>
+                </div>
+                <!-- Summary cards hidden by request -->
+
+                <!-- Time Range Selector -->
+                <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <label>Time Range:</label>
+                    <select id="analytics-time-range" onchange="onAnalyticsTimeRangeChange()">
+                        <option value="24">Last 24 Hours</option>
+                        <option value="168">Last 7 Days</option>
+                        <option value="720">Last 30 Days</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                    <div id="analytics-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" onclick="setAnalyticsRangeHours(24)" id="analytics-range-24h">24h</button>
+                        <button type="button" onclick="setAnalyticsRangeHours(24 * 7)" id="analytics-range-7d">7d</button>
+                        <button type="button" onclick="setAnalyticsRangeHours(24 * 30)" id="analytics-range-30d">30d</button>
+                    </div>
+
+                    <span id="analytics-loading" style="display: none; margin-left: 10px; color: #888;">
+                        Loading...
+                    </span>
+                </div>
+
+                <!-- View Mode Selector -->
+                <div style="margin-bottom: 15px;">
+                    <label>View By:</label>
+                    <input type="radio" name="analytics-view" value="tenant" checked onchange="loadAnalyticsView()"> Tenant
+                    <input type="radio" name="analytics-view" value="model" onchange="loadAnalyticsView()"> Model
+                    <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
+                </div>
+
+                <div id="analytics-hourly-view-controls" style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                    <span style="font-size: 12px; color: #666;">Hourly View:</span>
+                    <button type="button" onclick="setAnalyticsHourlyViewMode('chart')" id="analytics-hourly-view-chart">Chart</button>
+                    <button type="button" onclick="setAnalyticsHourlyViewMode('table')" id="analytics-hourly-view-table">Table</button>
+                </div>
+
+                <!-- Results Area -->
+                <div id="analytics-chart-area" style="display: none;">
+                    <!-- Chart rendered here -->
+                </div>
+
+                <div id="analytics-hourly-table-area" style="display: none;">
+                    <h4 style="margin: 0 0 8px 0;">
+                        Hourly Table View (<span id="analytics-hourly-table-granularity">Hourly</span>, Local)
+                    </h4>
+                    <table id="analytics-hourly-table" class="billing-analytics-table">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left; padding: 8px;">Period</th>
+                                <th style="text-align: right; padding: 8px;">GPU-Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td style="padding: 8px;">Total</td>
+                                <td id="analytics-hourly-table-total" style="text-align: right; padding: 8px;">--</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <div id="analytics-table-area" style="display: none;">
+                    <div style="overflow-x: auto;">
+                        <table id="analytics-table" class="billing-analytics-table" style="min-width: 920px;">
+                            <thead>
+                                <tr>
+                                    <th id="analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('name')">
+                                        Group <span id="sort-name-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
+                                        Inference (hrs) <span id="sort-inf-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
+                                        Standby (hrs) <span id="sort-sby-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
+                                        Inference (USD) <span id="sort-inf-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
+                                        Standby (USD) <span id="sort-sby-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('total_cost')">
+                                        Total (USD) <span id="sort-total-cost-icon">▼</span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; width: 200px; cursor: pointer;" onclick="sortAnalyticsTable('percent')">
+                                        % of Total <span id="sort-percent-icon"></span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                            <tfoot>
+                                <tr>
+                                    <td style="padding: 8px;">Total</td>
+                                    <td id="analytics-table-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-sby-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-table-total-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td style="text-align: right; padding: 8px;">100%</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #ddd; padding: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                        <h4 id="analytics-group-detail-title" style="margin: 0;">Breakdown</h4>
+                        <div id="analytics-group-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 12px; color: #666;">Granularity:</span>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('hourly')" id="analytics-detail-granularity-hourly">Hourly</button>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('daily')" id="analytics-detail-granularity-daily">Daily</button>
+                            <button type="button" onclick="setAnalyticsDetailGranularity('weekly')" id="analytics-detail-granularity-weekly">Weekly</button>
+                        </div>
+                        <span id="analytics-group-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                    </div>
+                    <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
+                    <div style="overflow-x: auto;">
+                        <table id="analytics-group-detail-table" class="billing-analytics-table">
+                            <thead>
+                                <tr>
+                                    <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
+                                        Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
+                                        Inference (hrs) <span id="detail-sort-inf-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
+                                        Standby (hrs) <span id="detail-sort-sby-hours-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
+                                        Inference (USD) <span id="detail-sort-inf-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
+                                        Standby (USD) <span id="detail-sort-sby-cost-icon"></span>
+                                    </th>
+                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
+                                        Total (USD) <span id="detail-sort-total-cost-icon"></span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                            <tfoot>
+                                <tr>
+                                    <td style="padding: 8px;">Total</td>
+                                    <td id="analytics-group-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-sby-hours" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-sby-cost" style="text-align: right; padding: 8px;">--</td>
+                                    <td id="analytics-group-total-cost" style="text-align: right; padding: 8px;">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Empty State -->
+                <div id="analytics-empty" style="display: none; text-align: center; padding: 40px; color: #888;">
+                    <p>No usage data for the selected period.</p>
+                </div>
+
+                <!-- Error State -->
+                <div id="analytics-error" style="display: none; text-align: center; padding: 20px; color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;">
+                    <p><strong>Failed to load analytics</strong></p>
+                    <p id="analytics-error-message" style="font-size: 12px;"></p>
+                    <button onclick="loadAnalytics()">Retry</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Credit History -->
+        <div id="credit-history-container">
+            <h3>Credit History</h3>
+            <div id="credit-history-table-wrap">
+                <table id="credit-history-table">
+                    <thead>
+                        <tr>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('date')">
+                                Date/Time (Local) <span id="credit-sort-date-icon">▼</span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('amount')">
+                                Amount (USD) <span id="credit-sort-amount-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('note')">
+                                Note <span id="credit-sort-note-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('payment_ref')">
+                                Payment Ref <span id="credit-sort-payment-ref-icon"></span>
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortCreditHistoryTable('added_by')">
+                                Added By <span id="credit-sort-added-by-icon"></span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="billing-pagination-controls">
+                <button id="prev-page-btn" onclick="billingPrevPage()" disabled>&laquo; Prev</button>
+                <span id="billing-page-info">Page 1 of 1</span>
+                <button id="next-page-btn" onclick="billingNextPage()" disabled>Next &raquo;</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="BillingAdmin" class="tabcontent">
+    <div id="billing-admin-no-access" style="display: none; color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Billing Admin is only available to Inferx administrators.
+    </div>
+
+    <div id="billing-admin-content" style="display: none;">
+        <div id="billing-admin-message" style="display: none; margin-bottom: 15px; padding: 10px; border-radius: 4px; position: sticky; top: 10px; z-index: 10;"></div>
+        <div style="display: grid; gap: 20px;">
+            <div id="billing-admin-credits-form" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="margin-top: 0;">Add Credits</h3>
+                <p style="font-size: 12px; color: #666;">Admin-only action. Amount is in USD.</p>
+                <div>
+                    <label>Tenant:</label>
+                    <select id="billing-admin-credit-tenant">
+                        <option value="" disabled selected>Select a tenant</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Amount (USD):</label>
+                    <input type="number" id="billing-admin-credit-amount" step="0.01" placeholder="e.g., 50.00 or -50.00">
+                </div>
+                <div>
+                    <label>Note:</label>
+                    <input type="text" id="billing-admin-credit-note" placeholder="Optional note">
+                </div>
+                <div>
+                    <label>Payment Ref:</label>
+                    <input type="text" id="billing-admin-credit-payment-ref" placeholder="Invoice number">
+                </div>
+                <button id="billing-admin-add-credits-btn" onclick="addCredits()" style="margin-top: 10px; padding: 8px 20px;">Add Credits</button>
+            </div>
+
+            <div id="billing-admin-credit-history-section" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="cursor: pointer; margin-top: 0;" onclick="toggleBillingAdminCreditHistory()">
+                    Credit History <span id="billing-admin-credit-toggle-icon">▶</span>
+                </h3>
+                <div id="billing-admin-credit-history-content" style="display: none;">
+                    <div>
+                        <label>Tenant:</label>
+                        <select id="billing-admin-credit-history-tenant" onchange="loadBillingAdminCreditHistory(0)">
+                            <option value="all" selected>All Tenants</option>
+                        </select>
+                    </div>
+                    <table class="admin-data-table" style="width:100%" id="billing-admin-credit-history-table">
+                        <thead>
+                            <tr>
+                                <th>Tenant</th>
+                                <th>Date/Time (Local)</th>
+                                <th>Amount (USD)</th>
+                                <th>Note</th>
+                                <th>Payment Ref</th>
+                                <th>Added By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="6" style="text-align: center; color: #888;">No credit history</td></tr>
+                        </tbody>
+                    </table>
+                    <div id="billing-admin-credit-pagination-controls">
+                        <button id="billing-admin-credit-prev-page-btn" onclick="billingAdminCreditPrevPage()" disabled>&laquo; Prev</button>
+                        <span id="billing-admin-credit-page-info">Page 1 of 1</span>
+                        <button id="billing-admin-credit-next-page-btn" onclick="billingAdminCreditNextPage()" disabled>Next &raquo;</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="billing-admin-rate-form" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="margin-top: 0;">Add Billing Rate</h3>
+                <p style="font-size: 12px; color: #666;">Admin-only action. Rate unit is cents per hour.</p>
+                <div>
+                    <label>Usage Type:</label>
+                    <select id="billing-rate-usage-type">
+                        <option value="inference" selected>Inference</option>
+                        <option value="standby">Standby</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Rate (cents/hour):</label>
+                    <input type="number" id="billing-rate-cents" min="0" step="1" placeholder="e.g., 800">
+                </div>
+                <div>
+                    <label>Scope:</label>
+                    <select id="billing-rate-scope" onchange="onBillingRateScopeChange()">
+                        <option value="global" selected>Global</option>
+                        <option value="tenant">Tenant Override</option>
+                    </select>
+                </div>
+                <div id="billing-rate-tenant-row" style="display: none;">
+                    <label>Rate Tenant:</label>
+                    <select id="billing-rate-tenant">
+                        <option value="" disabled selected>Select a tenant</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Effective From (Local):</label>
+                    <input type="datetime-local" id="billing-rate-effective-from">
+                </div>
+                <div>
+                    <label>Effective To (Local, Optional):</label>
+                    <input type="datetime-local" id="billing-rate-effective-to">
+                </div>
+                <button id="billing-admin-add-rate-btn" onclick="addBillingRate()" style="margin-top: 10px; padding: 8px 20px;">Add Rate</button>
+            </div>
+
+            <div id="billing-admin-rate-history-section" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <h3 style="cursor: pointer; margin-top: 0;" onclick="toggleBillingAdminRateHistory()">
+                    Rate Add History <span id="billing-admin-rate-toggle-icon">▶</span>
+                </h3>
+                <div id="billing-admin-rate-history-content" style="display: none;">
+                    <table class="admin-data-table" style="width:100%" id="billing-admin-rate-history-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Scope</th>
+                                <th>Usage Type</th>
+                                <th>Rate</th>
+                                <th>Effective From (Local)</th>
+                                <th>Effective To (Local)</th>
+                                <th>Created At (Local)</th>
+                                <th>Added By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="8" style="text-align: center; color: #888;">No rate history</td></tr>
+                        </tbody>
+                    </table>
+                    <div id="billing-admin-rate-pagination-controls">
+                        <button id="billing-admin-rate-prev-page-btn" onclick="billingAdminRatePrevPage()" disabled>&laquo; Prev</button>
+                        <span id="billing-admin-rate-page-info">Page 1 of 1</span>
+                        <button id="billing-admin-rate-next-page-btn" onclick="billingAdminRateNextPage()" disabled>Next &raquo;</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
 <script>
+    async function fetchWithAuth(url, options) {
+        const resp = await fetch(url, options);
+        if (resp.status === 401 || resp.status === 403 || resp.redirected) {
+            window.location.href = '/demo/login';
+            throw new Error('Session expired');
+        }
+        return resp;
+    }
+
     function openTab(evt, tabName) {
         const tabcontent = document.getElementsByClassName("tabcontent");
         for (let i = 0; i < tabcontent.length; i++) {
@@ -231,12 +1036,2436 @@
         localStorage.setItem('currentTab', tabName);
     }
 
-    window.onload = function () {
-        var savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
-        var fakeEvent = { currentTarget: document.querySelector(`button[onclick*="'${savedTab}'"]`) };
-        // Simulate click on the savedTab tab button
-        openTab(fakeEvent, savedTab);
+    window.onload = async function () {
+        const savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
+        const targetBtn = document.querySelector(`button[onclick*="'${savedTab}'"]`) ||
+            document.querySelector(`button[onclick*="'Models'"]`);
+        if (targetBtn) {
+            openTab({ currentTarget: targetBtn }, savedTab);
+        }
+        await initBillingAdminAccess();
     };
+
+    // =====================================================
+    // Billing Tab Functions
+    // =====================================================
+
+    // Billing state
+    let billingCurrentPage = 0;
+    let billingTotalPages = 1;
+    const billingPageSize = 20;
+    const billingAdminCreditHistoryPageSize = 20;
+    const billingAdminRateHistoryPageSize = 20;
+    let billingAdminCreditHistoryPage = 0;
+    let billingAdminCreditHistoryTotalPages = 1;
+    let billingAdminRateHistoryPage = 0;
+    let billingAdminRateHistoryTotalPages = 1;
+    let billingAdminCreditHistoryExpanded = false;
+    let billingAdminRateHistoryExpanded = false;
+    let billingAdminMessageTimer = null;
+    let billingIsSubmitting = false;
+    let billingTenantsPopulated = false;
+    let billingAdminTenantsPopulated = false;
+    let billingAdminAccessReady = false;
+    let billingAdminAccessPromise = null;
+    let billingAdminIsInferxAdmin = false;
+    let billingUsageRange = { mode: 'hours', hours: 24 };
+    let billingUsageViewMode = 'chart';
+    let billingUsageGranularity = 'hourly';
+    let billingUsageTableReady = false;
+    let billingUsageRawRows = [];
+    let billingUsageTableRows = [];
+    let billingUsageTableGranularity = 'hourly';
+    let billingUsageSortColumn = 'period';
+    let billingUsageSortDirection = 'desc';
+    let billingCreditHistoryRows = [];
+    let billingCreditSortColumn = 'date';
+    let billingCreditSortDirection = 'desc';
+    let analyticsUsageRange = { mode: 'hours', hours: 24 };
+
+    // Called when Billing tab is opened
+    async function populateBillingTenants() {
+        if (billingTenantsPopulated) return;
+
+        const dropdown = document.getElementById('billing_tenant_select');
+
+        try {
+            const [roles, tenants] = await Promise.all([
+                fetchWithAuth('/demo/generate_roles').then(r => r.json()),
+                fetchWithAuth('/demo/generate_tenants').then(r => r.json())
+            ]);
+
+            tenants.forEach(t => {
+                if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
+                    const option = document.createElement('option');
+                    option.value = t.name;
+                    option.textContent = t.name;
+                    dropdown.appendChild(option);
+                }
+            });
+
+            billingTenantsPopulated = true;
+        } catch (error) {
+            console.error('Failed to populate billing tenants:', error);
+        }
+    }
+
+    function showBillingAdminMessage(message, isError) {
+        const el = document.getElementById('billing-admin-message');
+        if (!el) return;
+
+        if (billingAdminMessageTimer) {
+            clearTimeout(billingAdminMessageTimer);
+            billingAdminMessageTimer = null;
+        }
+
+        el.style.display = 'block';
+        el.style.background = isError ? '#f8d7da' : '#d4edda';
+        el.style.border = isError ? '1px solid #f5c6cb' : '1px solid #c3e6cb';
+        el.style.color = isError ? '#721c24' : '#155724';
+        el.textContent = message;
+
+        if (!isError) {
+            billingAdminMessageTimer = setTimeout(() => {
+                const msgEl = document.getElementById('billing-admin-message');
+                if (msgEl) msgEl.style.display = 'none';
+                billingAdminMessageTimer = null;
+            }, 4000);
+        }
+    }
+
+    function onBillingRateScopeChange() {
+        const scope = document.getElementById('billing-rate-scope');
+        const row = document.getElementById('billing-rate-tenant-row');
+        if (!scope || !row) return;
+        row.style.display = scope.value === 'tenant' ? 'block' : 'none';
+    }
+
+    async function populateBillingAdminTenants() {
+        if (billingAdminTenantsPopulated) return;
+        const creditTenantDropdown = document.getElementById('billing-admin-credit-tenant');
+        const creditHistoryTenantDropdown = document.getElementById('billing-admin-credit-history-tenant');
+        const rateTenantDropdown = document.getElementById('billing-rate-tenant');
+        if (!creditTenantDropdown || !creditHistoryTenantDropdown || !rateTenantDropdown) return;
+
+        try {
+            const tenants = await fetchWithAuth('/demo/generate_tenants').then(r => r.json());
+            tenants.forEach(t => {
+                const creditOption = document.createElement('option');
+                creditOption.value = t.name;
+                creditOption.textContent = t.name;
+                creditTenantDropdown.appendChild(creditOption);
+
+                const historyOption = document.createElement('option');
+                historyOption.value = t.name;
+                historyOption.textContent = t.name;
+                creditHistoryTenantDropdown.appendChild(historyOption);
+
+                const rateOption = document.createElement('option');
+                rateOption.value = t.name;
+                rateOption.textContent = t.name;
+                rateTenantDropdown.appendChild(rateOption);
+            });
+
+            if (!creditTenantDropdown.value && creditTenantDropdown.options.length > 1) {
+                creditTenantDropdown.selectedIndex = 1;
+            }
+            billingAdminTenantsPopulated = true;
+        } catch (error) {
+            console.error('Failed to populate Billing Admin tenants:', error);
+        }
+    }
+
+    async function initBillingAdminAccess() {
+        if (billingAdminAccessReady) return;
+        if (billingAdminAccessPromise) return billingAdminAccessPromise;
+        billingAdminAccessPromise = _initBillingAdminAccessImpl();
+        return billingAdminAccessPromise;
+    }
+
+    async function _initBillingAdminAccessImpl() {
+
+        const tabBtn = document.getElementById('billing-admin-tab-btn');
+        const content = document.getElementById('billing-admin-content');
+        const noAccess = document.getElementById('billing-admin-no-access');
+
+        try {
+            const roles = await fetchWithAuth('/demo/generate_roles').then(r => r.json());
+            billingAdminIsInferxAdmin = IsInferxAdmin(roles);
+        } catch (error) {
+            console.error('Failed to check Billing Admin access:', error);
+            billingAdminIsInferxAdmin = false;
+        }
+
+        if (tabBtn) {
+            tabBtn.style.display = billingAdminIsInferxAdmin ? '' : 'none';
+        }
+        if (content) {
+            content.style.display = billingAdminIsInferxAdmin ? 'block' : 'none';
+        }
+        if (noAccess) {
+            noAccess.style.display = billingAdminIsInferxAdmin ? 'none' : 'block';
+        }
+
+        if (!billingAdminIsInferxAdmin && localStorage.getItem('currentTab') === 'BillingAdmin') {
+            const fallback = document.querySelector(`button[onclick*="'Billing'"]`) ||
+                document.querySelector(`button[onclick*="'Models'"]`);
+            if (fallback) {
+                openTab({ currentTarget: fallback }, fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Models');
+            }
+        }
+
+        if (billingAdminIsInferxAdmin) {
+            await populateBillingAdminTenants();
+            const effectiveFromInput = document.getElementById('billing-rate-effective-from');
+            if (effectiveFromInput && !effectiveFromInput.value) {
+                effectiveFromInput.value = toLocalDatetimeValue(new Date());
+            }
+            onBillingRateScopeChange();
+        }
+
+        billingAdminAccessReady = true;
+    }
+
+    function updateUsageRangeButtons() {
+        const btn24 = document.getElementById('usage-range-24h');
+        const btn7d = document.getElementById('usage-range-7d');
+        const btn30d = document.getElementById('usage-range-30d');
+        const btnCustom = document.getElementById('usage-range-custom');
+        if (!btn24 || !btn7d || !btn30d || !btnCustom) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+        btnCustom.classList.remove('active-range');
+
+        if (billingUsageRange.mode === 'hours') {
+            if (billingUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (billingUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (billingUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        } else if (billingUsageRange.mode === 'custom') {
+            btnCustom.classList.add('active-range');
+        }
+    }
+
+    function setUsageRangeHours(hours) {
+        billingUsageRange = { mode: 'hours', hours: hours };
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
+        updateUsageRangeButtons();
+        updateAnalyticsRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) {
+            loadUsageChart(tenant);
+        }
+    }
+
+    function syncBillingCustomRangeFromInputs(showAlerts = false) {
+        const startInput = document.getElementById('billing-usage-start');
+        const endInput = document.getElementById('billing-usage-end');
+        if (!startInput || !endInput) return false;
+
+        if (!startInput.value || !endInput.value) {
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            if (showAlerts) alert('Invalid date range');
+            return false;
+        }
+
+        if (end <= start) {
+            if (showAlerts) alert('End time must be after start time');
+            return false;
+        }
+
+        const maxRangeMs = 90 * 24 * 60 * 60 * 1000;
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            if (showAlerts) alert('Custom range is limited to 90 days');
+            return false;
+        }
+
+        billingUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+        return true;
+    }
+
+    function setDefaultBillingCustomRangeInputs() {
+        const startInput = document.getElementById('billing-usage-start');
+        const endInput = document.getElementById('billing-usage-end');
+        if (!startInput || !endInput) return;
+
+        if (!startInput.value || !endInput.value) {
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+            startInput.value = toLocalDatetimeValue(start);
+            endInput.value = toLocalDatetimeValue(end);
+        }
+    }
+
+    function showBillingCustomRange() {
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        setDefaultBillingCustomRangeInputs();
+        syncBillingCustomRangeFromInputs(false);
+        updateUsageRangeButtons();
+    }
+
+    function applyBillingCustomRange() {
+        if (!syncBillingCustomRangeFromInputs(true)) return;
+
+        const customEl = document.getElementById('billing-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateUsageRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) {
+            loadUsageChart(tenant);
+        }
+    }
+
+    function updateUsageViewButtons() {
+        const chartBtn = document.getElementById('usage-view-chart');
+        const tableBtn = document.getElementById('usage-view-table');
+        if (!chartBtn || !tableBtn) return;
+
+        chartBtn.classList.toggle('active-range', billingUsageViewMode === 'chart');
+        tableBtn.classList.toggle('active-range', billingUsageViewMode === 'table');
+    }
+
+    function applyUsageViewVisibility() {
+        const chartViewEl = document.getElementById('usage-chart-view');
+        const tableViewEl = document.getElementById('usage-table-container');
+        if (!chartViewEl || !tableViewEl) return;
+
+        const showTable = billingUsageViewMode === 'table' && billingUsageTableReady;
+        chartViewEl.style.display = showTable ? 'none' : 'block';
+        tableViewEl.style.display = showTable ? 'block' : 'none';
+    }
+
+    function setUsageViewMode(mode) {
+        billingUsageViewMode = mode === 'table' ? 'table' : 'chart';
+        updateUsageViewButtons();
+        applyUsageViewVisibility();
+    }
+
+    function getBillingUsageGranularityLabel(granularity) {
+        switch (granularity) {
+            case 'daily':
+                return 'Daily';
+            case 'weekly':
+                return 'Weekly';
+            case 'hourly':
+            default:
+                return 'Hourly';
+        }
+    }
+
+    function updateUsageGranularityButtons() {
+        const hourlyBtn = document.getElementById('usage-granularity-hourly');
+        const dailyBtn = document.getElementById('usage-granularity-daily');
+        const weeklyBtn = document.getElementById('usage-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.toggle('active-range', billingUsageGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', billingUsageGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', billingUsageGranularity === 'weekly');
+    }
+
+    function setUsageGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        billingUsageGranularity = granularity;
+        updateUsageGranularityButtons();
+
+        if (billingUsageRawRows.length > 0) {
+            renderBillingUsageFromRawRows();
+            return;
+        }
+
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant) loadUsageChart(tenant);
+    }
+
+    function updateAnalyticsRangeButtons() {
+        const btn24 = document.getElementById('analytics-range-24h');
+        const btn7d = document.getElementById('analytics-range-7d');
+        const btn30d = document.getElementById('analytics-range-30d');
+        if (!btn24 || !btn7d || !btn30d) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+
+        if (analyticsUsageRange && analyticsUsageRange.mode === 'hours') {
+            if (analyticsUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (analyticsUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (analyticsUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        }
+    }
+
+    function setAnalyticsRangeHours(hours) {
+        analyticsUsageRange = { mode: 'hours', hours: hours };
+        const rangeSelect = document.getElementById('analytics-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = String(hours);
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
+        updateAnalyticsRangeButtons();
+        if (analyticsExpanded) {
+            loadAnalytics();
+        }
+    }
+
+    function syncAnalyticsCustomRangeFromInputs(showAlerts = false) {
+        const startInput = document.getElementById('usage-start');
+        const endInput = document.getElementById('usage-end');
+        if (!startInput || !endInput) return false;
+
+        if (!startInput.value || !endInput.value) {
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            if (showAlerts) alert('Invalid date range');
+            return false;
+        }
+
+        if (end <= start) {
+            if (showAlerts) alert('End time must be after start time');
+            return false;
+        }
+
+        const maxRangeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            if (showAlerts) alert('Custom range is limited to 90 days');
+            return false;
+        }
+
+        analyticsUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+        return true;
+    }
+
+    function applyCustomUsageRange() {
+        if (!syncAnalyticsCustomRangeFromInputs(true)) return;
+
+        const rangeSelect = document.getElementById('analytics-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = 'custom';
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateAnalyticsRangeButtons();
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (tenant && analyticsExpanded) {
+            loadAnalytics();
+        }
+    }
+
+    function setDefaultCustomRangeInputs() {
+        const startInput = document.getElementById('usage-start');
+        const endInput = document.getElementById('usage-end');
+        if (!startInput || !endInput) return;
+
+        if (!startInput.value || !endInput.value) {
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+            startInput.value = toLocalDatetimeValue(start);
+            endInput.value = toLocalDatetimeValue(end);
+        }
+
+        // Keep custom-range state in sync even before explicit "Apply".
+        syncAnalyticsCustomRangeFromInputs(false);
+    }
+
+    function toLocalDatetimeValue(date) {
+        const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000;
+        const local = new Date(date.getTime() - tzOffsetMs);
+        return local.toISOString().slice(0, 16);
+    }
+
+    // Called when tenant selection changes
+    async function loadBillingData() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+
+        // Handle no selection
+        if (!tenant) {
+            document.getElementById('billing-no-tenant').style.display = 'block';
+            document.getElementById('billing-content').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('billing-no-tenant').style.display = 'none';
+        document.getElementById('billing-content').style.display = 'block';
+
+        updateUsageRangeButtons();
+        const billingCustomRangeEl = document.getElementById('billing-custom-range');
+        if (billingCustomRangeEl) {
+            billingCustomRangeEl.style.display = billingUsageRange.mode === 'custom' ? 'flex' : 'none';
+        }
+        if (billingUsageRange.mode === 'custom') {
+            setDefaultBillingCustomRangeInputs();
+        }
+        updateUsageViewButtons();
+        updateUsageGranularityButtons();
+        applyUsageViewVisibility();
+        updateAnalyticsRangeButtons();
+
+        // Load all data in parallel
+        await Promise.all([
+            loadBillingSummary(tenant),
+            loadUsageChart(tenant),
+            loadCreditHistory(tenant, 0)
+        ]);
+
+        // Keep analytics panel in sync when tenant changes.
+        if (analyticsExpanded) {
+            loadAnalytics();
+        }
+    }
+
+    // Check if user is InferxAdmin (system tenant admin)
+    function IsInferxAdmin(roles) {
+        if (!roles || !Array.isArray(roles)) return false;
+
+        return roles.some(rb => {
+            const rbObjType = String(rb.objType).toLowerCase().trim();
+            const rbRole = String(rb.role).toLowerCase().trim();
+            const rbTenant = String(rb.tenant).toLowerCase().trim();
+
+            return rbObjType === "tenant" &&
+                   rbTenant === "system" &&
+                   rbRole === "admin";
+        });
+    }
+
+    async function loadBillingSummary(tenant) {
+        try {
+            // Try billing-summary endpoint first (Phase 3), fall back to credits + tenant status (Phase 1)
+            let data;
+            let hasBillingSummary = false;
+            let tenantStatus = null;
+
+            try {
+                const summaryResp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/billing-summary`);
+                if (summaryResp.ok) {
+                    data = await summaryResp.json();
+                    hasBillingSummary = true;
+                }
+            } catch (e) {
+                // billing-summary not available, fall back to credits
+            }
+
+            if (!hasBillingSummary) {
+                // Phase 1 fallback: use existing /credits endpoint + tenant object for status
+                const [creditsResp, tenantResp] = await Promise.all([
+                    fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`),
+                    fetchWithAuth(`/demo/proxy1/object/tenant/system/system/${tenant}/`)
+                ]);
+
+                if (!creditsResp.ok) throw new Error(`Credits HTTP ${creditsResp.status}`);
+                data = await creditsResp.json();
+
+                // Try to get quota_exceeded from tenant object
+                if (tenantResp.ok) {
+                    try {
+                        const tenantObj = await tenantResp.json();
+                        tenantStatus = tenantObj.object?.status || tenantObj.status || null;
+                    } catch (e) {
+                        console.warn('Failed to parse tenant object:', e);
+                    }
+                }
+            }
+
+            // Balance (available in both endpoints)
+            const balanceCents = data.balance_cents || 0;
+            const balanceEl = document.getElementById('balance-value');
+            balanceEl.textContent = formatUsdSigned(balanceCents);
+            balanceEl.classList.toggle('amount-negative', balanceCents < 0);
+            document.getElementById('balance-subtext').textContent = '';
+
+            if (hasBillingSummary) {
+                // Full data from billing-summary
+                const usedCents = data.used_cents || 0;
+                document.getElementById('used-value').textContent = formatUsd(usedCents);
+
+                const infCents = data.period?.inference_cents || 0;
+                const sbyCents = data.period?.standby_cents || 0;
+                document.getElementById('used-breakdown').innerHTML =
+                    `<span>Inf: ${formatUsd(infCents)}</span> | <span>Sby: ${formatUsd(sbyCents)}</span>`;
+
+                const thresholdCents = data.threshold_cents || 0;
+                document.getElementById('threshold-value').textContent = formatUsd(thresholdCents);
+
+                // Status - use quota_exceeded from server
+                const statusEl = document.getElementById('status-value');
+                if (data.quota_exceeded) {
+                    statusEl.textContent = '● Quota Exceeded';
+                    statusEl.className = 'status-exceeded';
+                } else {
+                    statusEl.textContent = '● Active';
+                    statusEl.className = 'status-active';
+                }
+            } else {
+                // Fallback: use existing /credits endpoint + tenant object for status
+                document.getElementById('used-value').textContent = '--';
+                document.getElementById('used-breakdown').textContent = '';
+                document.getElementById('threshold-value').textContent = '--';
+
+                // Get status from tenant object
+                const statusEl = document.getElementById('status-value');
+                if (tenantStatus) {
+                    if (tenantStatus.quota_exceeded === true) {
+                        statusEl.textContent = '● Quota Exceeded';
+                        statusEl.className = 'status-exceeded';
+                    } else {
+                        statusEl.textContent = '● Active';
+                        statusEl.className = 'status-active';
+                    }
+                } else {
+                    statusEl.textContent = '● Unknown';
+                    statusEl.className = '';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load billing summary:', error);
+            // Show error state
+            const balanceEl = document.getElementById('balance-value');
+            balanceEl.textContent = 'Error';
+            balanceEl.classList.remove('amount-negative');
+            document.getElementById('used-value').textContent = 'Error';
+            document.getElementById('threshold-value').textContent = 'Error';
+            document.getElementById('status-value').textContent = '● Unknown';
+        }
+    }
+
+    function formatBillingUsagePeriodLabel(row, granularity, mode) {
+        const currentMode = mode || 'table';
+        const start = new Date(row.hour);
+        if (granularity === 'weekly') {
+            const end = row.week_end ? new Date(row.week_end) : new Date(start.getTime());
+            if (!row.week_end) end.setDate(end.getDate() + 6);
+            if (currentMode === 'axis') {
+                return start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }
+            const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${startLabel} - ${endLabel}`;
+        }
+
+        if (granularity === 'daily') {
+            return currentMode === 'table'
+                ? start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                : start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        if (currentMode === 'axis') {
+            return start.getHours().toString().padStart(2, '0');
+        }
+        if (currentMode === 'tooltip') {
+            return `${start.getHours().toString().padStart(2, '0')}:00`;
+        }
+        return start.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+    }
+
+    function renderBillingUsageFromRawRows() {
+        const chartEl = document.getElementById('usage-chart');
+        const labelsEl = document.getElementById('usage-chart-labels');
+        if (!chartEl || !labelsEl) return;
+        if (!Array.isArray(billingUsageRawRows) || billingUsageRawRows.length === 0) return;
+
+        const granularity = billingUsageGranularity;
+        const displayData = granularity === 'hourly'
+            ? [...billingUsageRawRows]
+            : aggregateHourlyUsageByGranularity(billingUsageRawRows, granularity);
+
+        const maxCents = Math.max(...displayData.map(u =>
+            (u.inference_cents || 0) + (u.standby_cents || 0)
+        ), 1);
+
+        chartEl.innerHTML = displayData.map(u => {
+            const infCents = u.inference_cents || 0;
+            const sbyCents = u.standby_cents || 0;
+            const infMs = u.inference_ms || 0;
+            const sbyMs = u.standby_ms || 0;
+            const totalCents = infCents + sbyCents;
+            const totalHeight = Math.max(2, (totalCents / maxCents) * 100);
+
+            const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
+            const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
+            const infHrs = (infMs / 3600000).toFixed(2);
+            const sbyHrs = (sbyMs / 3600000).toFixed(2);
+            const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
+            const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
+
+            return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
+                `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
+                `<div class="usage-bar-standby" style="height: ${sbyPct}%"></div>` +
+                `</div>`;
+        }).join('');
+
+        const labelEvery = Math.max(1, Math.ceil(displayData.length / 6));
+        labelsEl.innerHTML = displayData.map((u, i) => {
+            const label = (i % labelEvery === 0)
+                ? formatBillingUsagePeriodLabel(u, granularity, 'axis')
+                : '';
+            return `<div style="flex: 1; text-align: center;">${label}</div>`;
+        }).join('');
+
+        renderUsageTable(displayData, granularity);
+        billingUsageTableReady = true;
+        applyUsageViewVisibility();
+    }
+
+    async function loadUsageChart(tenant) {
+        const chartEl = document.getElementById('usage-chart');
+        const labelsEl = document.getElementById('usage-chart-labels');
+
+        try {
+            const params = new URLSearchParams();
+            if (billingUsageRange.mode === 'custom') {
+                if (
+                    !billingUsageRange.start ||
+                    !billingUsageRange.end
+                ) {
+                    if (!syncBillingCustomRangeFromInputs(false)) {
+                        params.set('hours', '24');
+                    } else {
+                        params.set('start', billingUsageRange.start);
+                        params.set('end', billingUsageRange.end);
+                    }
+                } else {
+                    params.set('start', billingUsageRange.start);
+                    params.set('end', billingUsageRange.end);
+                }
+            } else {
+                params.set('hours', String(billingUsageRange.hours || 24));
+            }
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
+
+            if (resp.status === 404) {
+                billingUsageRawRows = [];
+                billingUsageTableRows = [];
+                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart available in Phase 3</div>';
+                labelsEl.innerHTML = '';
+                billingUsageTableReady = false;
+                applyUsageViewVisibility();
+                return;
+            }
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (!data.usage || data.usage.length === 0) {
+                billingUsageRawRows = [];
+                billingUsageTableRows = [];
+                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">No usage data</div>';
+                labelsEl.innerHTML = '';
+                billingUsageTableReady = false;
+                applyUsageViewVisibility();
+                return;
+            }
+
+            billingUsageRawRows = Array.isArray(data.usage) ? data.usage : [];
+            renderBillingUsageFromRawRows();
+        } catch (error) {
+            console.error('Failed to load usage chart:', error);
+            billingUsageRawRows = [];
+            billingUsageTableRows = [];
+            chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart unavailable</div>';
+            labelsEl.innerHTML = '';
+            billingUsageTableReady = false;
+            applyUsageViewVisibility();
+        }
+    }
+
+    function renderUsageTable(displayData, granularity) {
+        const usageTableGranularityEl = document.getElementById('usage-table-granularity');
+        const usageTableBodyEl = document.querySelector('#usage-table tbody');
+        if (!usageTableGranularityEl || !usageTableBodyEl) return;
+
+        billingUsageTableRows = Array.isArray(displayData) ? displayData : [];
+        billingUsageTableGranularity = granularity || 'hourly';
+        usageTableGranularityEl.textContent = getBillingUsageGranularityLabel(billingUsageTableGranularity);
+
+        const sortedRows = [...billingUsageTableRows].sort((a, b) => {
+            let aVal;
+            let bVal;
+            switch (billingUsageSortColumn) {
+                case 'inf_cost':
+                    aVal = a.inference_cents || 0;
+                    bVal = b.inference_cents || 0;
+                    break;
+                case 'sby_cost':
+                    aVal = a.standby_cents || 0;
+                    bVal = b.standby_cents || 0;
+                    break;
+                case 'total_cost':
+                    aVal = (a.inference_cents || 0) + (a.standby_cents || 0);
+                    bVal = (b.inference_cents || 0) + (b.standby_cents || 0);
+                    break;
+                case 'inf_hours':
+                    aVal = a.inference_ms || 0;
+                    bVal = b.inference_ms || 0;
+                    break;
+                case 'sby_hours':
+                    aVal = a.standby_ms || 0;
+                    bVal = b.standby_ms || 0;
+                    break;
+                case 'period':
+                default:
+                    aVal = Date.parse(a.hour) || 0;
+                    bVal = Date.parse(b.hour) || 0;
+                    break;
+            }
+            return billingUsageSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
+        let totalInfCents = 0;
+        let totalSbyCents = 0;
+        let totalInfHours = 0;
+        let totalSbyHours = 0;
+
+        usageTableBodyEl.innerHTML = sortedRows.map(u => {
+            const infCents = u.inference_cents || 0;
+            const sbyCents = u.standby_cents || 0;
+            const infHours = (u.inference_ms || 0) / 3600000;
+            const sbyHours = (u.standby_ms || 0) / 3600000;
+            const totalCents = infCents + sbyCents;
+            const periodLabel = formatBillingUsagePeriodLabel(
+                u,
+                billingUsageTableGranularity,
+                'table'
+            );
+
+            totalInfCents += infCents;
+            totalSbyCents += sbyCents;
+            totalInfHours += infHours;
+            totalSbyHours += sbyHours;
+
+            return `
+                <tr>
+                    <td style="text-align: left;">${periodLabel}</td>
+                    <td style="text-align: right;">${infHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${formatUsd(infCents)}</td>
+                    <td style="text-align: right;">${formatUsd(sbyCents)}</td>
+                    <td style="text-align: right;">${formatUsd(totalCents)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        document.getElementById('usage-table-total-inf-hours').textContent = totalInfHours.toFixed(2);
+        document.getElementById('usage-table-total-sby-hours').textContent = totalSbyHours.toFixed(2);
+        document.getElementById('usage-table-total-inf-cost').textContent = formatUsd(totalInfCents);
+        document.getElementById('usage-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
+        document.getElementById('usage-table-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
+
+        const setUsageSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = billingUsageSortColumn === column
+                ? (billingUsageSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setUsageSortIcon('usage-sort-period-icon', 'period');
+        setUsageSortIcon('usage-sort-inf-hours-icon', 'inf_hours');
+        setUsageSortIcon('usage-sort-sby-hours-icon', 'sby_hours');
+        setUsageSortIcon('usage-sort-inf-cost-icon', 'inf_cost');
+        setUsageSortIcon('usage-sort-sby-cost-icon', 'sby_cost');
+        setUsageSortIcon('usage-sort-total-cost-icon', 'total_cost');
+    }
+
+    function sortUsageTable(column) {
+        if (billingUsageSortColumn === column) {
+            billingUsageSortDirection = billingUsageSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingUsageSortColumn = column;
+            billingUsageSortDirection = 'desc';
+        }
+        renderUsageTable(billingUsageTableRows, billingUsageTableGranularity);
+    }
+
+    function renderCreditHistoryTable(records) {
+        const tbody = document.querySelector('#credit-history-table tbody');
+        if (!tbody) return;
+
+        billingCreditHistoryRows = Array.isArray(records) ? records : [];
+        if (billingCreditHistoryRows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">No credit history</td></tr>';
+        } else {
+            const sortedRows = [...billingCreditHistoryRows].sort((a, b) => {
+                let aVal;
+                let bVal;
+                switch (billingCreditSortColumn) {
+                    case 'amount':
+                        aVal = a.amount_cents || 0;
+                        bVal = b.amount_cents || 0;
+                        break;
+                    case 'note':
+                        aVal = (a.note || '').toLowerCase();
+                        bVal = (b.note || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'payment_ref':
+                        aVal = (a.payment_ref || '').toLowerCase();
+                        bVal = (b.payment_ref || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'added_by':
+                        aVal = (a.added_by || '').toLowerCase();
+                        bVal = (b.added_by || '').toLowerCase();
+                        return billingCreditSortDirection === 'asc'
+                            ? aVal.localeCompare(bVal)
+                            : bVal.localeCompare(aVal);
+                    case 'date':
+                    default:
+                        aVal = Date.parse(a.created_at) || 0;
+                        bVal = Date.parse(b.created_at) || 0;
+                        break;
+                }
+                return billingCreditSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+            });
+
+            tbody.innerHTML = sortedRows.map(record => {
+                const date = new Date(record.created_at).toLocaleString();
+                const cents = record.amount_cents || 0;
+                let amountClass;
+                let amountText;
+                if (cents > 0) {
+                    amountClass = 'amount-positive';
+                    amountText = '+' + formatUsd(cents);
+                } else if (cents < 0) {
+                    amountClass = 'amount-negative';
+                    amountText = '-' + formatUsd(Math.abs(cents));
+                } else {
+                    amountClass = 'amount-zero';
+                    amountText = formatUsd(0);
+                }
+
+                return `
+                    <tr>
+                        <td>${date}</td>
+                        <td class="${amountClass}">${amountText}</td>
+                        <td>${record.note || '-'}</td>
+                        <td>${record.payment_ref || '-'}</td>
+                        <td>${record.added_by || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        const setCreditSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = billingCreditSortColumn === column
+                ? (billingCreditSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setCreditSortIcon('credit-sort-date-icon', 'date');
+        setCreditSortIcon('credit-sort-amount-icon', 'amount');
+        setCreditSortIcon('credit-sort-note-icon', 'note');
+        setCreditSortIcon('credit-sort-payment-ref-icon', 'payment_ref');
+        setCreditSortIcon('credit-sort-added-by-icon', 'added_by');
+    }
+
+    function sortCreditHistoryTable(column) {
+        if (billingCreditSortColumn === column) {
+            billingCreditSortDirection = billingCreditSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingCreditSortColumn = column;
+            billingCreditSortDirection = column === 'date' ? 'desc' : 'asc';
+        }
+        renderCreditHistoryTable(billingCreditHistoryRows);
+    }
+
+    async function loadCreditHistory(tenant, page) {
+        billingCurrentPage = page;
+        const offset = page * billingPageSize;
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits/history?limit=${billingPageSize}&offset=${offset}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            billingCreditHistoryRows = Array.isArray(data.records) ? data.records : [];
+            renderCreditHistoryTable(billingCreditHistoryRows);
+
+            // Update pagination
+            // Phase 1 fallback: if `total` not in response, use records.length to determine hasNext
+            const hasTotal = typeof data.total === 'number';
+            const total = data.total || 0;
+            const recordCount = data.records ? data.records.length : 0;
+
+            if (hasTotal) {
+                // Phase 3: Use total for accurate pagination
+                billingTotalPages = Math.max(1, Math.ceil(total / billingPageSize));
+                document.getElementById('billing-page-info').textContent = `Page ${page + 1} of ${billingTotalPages}`;
+            } else {
+                // Phase 1 fallback: Show page number only, estimate hasNext from record count
+                billingTotalPages = (recordCount === billingPageSize) ? page + 2 : page + 1;
+                document.getElementById('billing-page-info').textContent = `Page ${page + 1}`;
+            }
+
+            // Enable/disable pagination buttons
+            document.getElementById('prev-page-btn').disabled = (page <= 0);
+            document.getElementById('next-page-btn').disabled = hasTotal
+                ? (page >= billingTotalPages - 1)
+                : (recordCount < billingPageSize); // Phase 1: disable if fewer records than page size
+
+        } catch (error) {
+            console.error('Failed to load credit history:', error);
+            billingCreditHistoryRows = [];
+            const tbody = document.querySelector('#credit-history-table tbody');
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: red;">Failed to load credit history</td></tr>';
+        }
+    }
+
+    function billingPrevPage() {
+        if (billingCurrentPage > 0) {
+            const tenant = document.getElementById('billing_tenant_select').value;
+            loadCreditHistory(tenant, billingCurrentPage - 1);
+        }
+    }
+
+    function billingNextPage() {
+        if (billingCurrentPage < billingTotalPages - 1) {
+            const tenant = document.getElementById('billing_tenant_select').value;
+            loadCreditHistory(tenant, billingCurrentPage + 1);
+        }
+    }
+
+    async function toggleBillingAdminCreditHistory() {
+        billingAdminCreditHistoryExpanded = !billingAdminCreditHistoryExpanded;
+        document.getElementById('billing-admin-credit-history-content').style.display =
+            billingAdminCreditHistoryExpanded ? 'block' : 'none';
+        document.getElementById('billing-admin-credit-toggle-icon').textContent =
+            billingAdminCreditHistoryExpanded ? '▼' : '▶';
+
+        if (billingAdminCreditHistoryExpanded) {
+            await loadBillingAdminCreditHistory(billingAdminCreditHistoryPage);
+        }
+    }
+
+    async function toggleBillingAdminRateHistory() {
+        billingAdminRateHistoryExpanded = !billingAdminRateHistoryExpanded;
+        document.getElementById('billing-admin-rate-history-content').style.display =
+            billingAdminRateHistoryExpanded ? 'block' : 'none';
+        document.getElementById('billing-admin-rate-toggle-icon').textContent =
+            billingAdminRateHistoryExpanded ? '▼' : '▶';
+
+        if (billingAdminRateHistoryExpanded) {
+            await loadBillingAdminRateHistory(billingAdminRateHistoryPage);
+        }
+    }
+
+    async function loadBillingAdminCreditHistory(page) {
+        const tenant = document.getElementById('billing-admin-credit-history-tenant').value || 'all';
+        const tbody = document.querySelector('#billing-admin-credit-history-table tbody');
+        const prevBtn = document.getElementById('billing-admin-credit-prev-page-btn');
+        const nextBtn = document.getElementById('billing-admin-credit-next-page-btn');
+        const pageInfo = document.getElementById('billing-admin-credit-page-info');
+
+        billingAdminCreditHistoryPage = page;
+        const offset = page * billingAdminCreditHistoryPageSize;
+
+        try {
+            const params = new URLSearchParams();
+            params.set('limit', String(billingAdminCreditHistoryPageSize));
+            params.set('offset', String(offset));
+            if (tenant !== 'all') {
+                params.set('tenant', tenant);
+            }
+            const resp = await fetchWithAuth(`/demo/proxy1/billing/credits/history?${params.toString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            tbody.innerHTML = '';
+            if (data.records && data.records.length > 0) {
+                data.records.forEach(record => {
+                    const row = document.createElement('tr');
+                    const date = new Date(record.created_at).toLocaleString();
+                    const cents = record.amount_cents || 0;
+                    let amountClass, amountText;
+                    if (cents > 0) {
+                        amountClass = 'amount-positive';
+                        amountText = '+' + formatUsd(cents);
+                    } else if (cents < 0) {
+                        amountClass = 'amount-negative';
+                        amountText = '-' + formatUsd(Math.abs(cents));
+                    } else {
+                        amountClass = 'amount-zero';
+                        amountText = formatUsd(0);
+                    }
+
+                    row.innerHTML = `
+                        <td>${record.tenant || '-'}</td>
+                        <td>${date}</td>
+                        <td class="${amountClass}">${amountText}</td>
+                        <td>${record.note || '-'}</td>
+                        <td>${record.payment_ref || '-'}</td>
+                        <td>${record.added_by || '-'}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888;">No credit history</td></tr>';
+            }
+
+            const hasTotal = typeof data.total === 'number';
+            const total = data.total || 0;
+            const recordCount = data.records ? data.records.length : 0;
+
+            if (hasTotal) {
+                billingAdminCreditHistoryTotalPages = Math.max(1, Math.ceil(total / billingAdminCreditHistoryPageSize));
+                pageInfo.textContent = `Page ${page + 1} of ${billingAdminCreditHistoryTotalPages}`;
+            } else {
+                billingAdminCreditHistoryTotalPages = (recordCount === billingAdminCreditHistoryPageSize) ? page + 2 : page + 1;
+                pageInfo.textContent = `Page ${page + 1}`;
+            }
+
+            prevBtn.disabled = (page <= 0);
+            nextBtn.disabled = hasTotal
+                ? (page >= billingAdminCreditHistoryTotalPages - 1)
+                : (recordCount < billingAdminCreditHistoryPageSize);
+        } catch (error) {
+            console.error('Failed to load Billing Admin credit history:', error);
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: red;">Failed to load credit history</td></tr>';
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
+        }
+    }
+
+    function billingAdminCreditPrevPage() {
+        if (billingAdminCreditHistoryPage > 0) {
+            loadBillingAdminCreditHistory(billingAdminCreditHistoryPage - 1);
+        }
+    }
+
+    function billingAdminCreditNextPage() {
+        if (billingAdminCreditHistoryPage < billingAdminCreditHistoryTotalPages - 1) {
+            loadBillingAdminCreditHistory(billingAdminCreditHistoryPage + 1);
+        }
+    }
+
+    async function loadBillingAdminRateHistory(page) {
+        const tbody = document.querySelector('#billing-admin-rate-history-table tbody');
+        const prevBtn = document.getElementById('billing-admin-rate-prev-page-btn');
+        const nextBtn = document.getElementById('billing-admin-rate-next-page-btn');
+        const pageInfo = document.getElementById('billing-admin-rate-page-info');
+
+        billingAdminRateHistoryPage = page;
+
+        const params = new URLSearchParams();
+        params.set('limit', String(billingAdminRateHistoryPageSize));
+        params.set('offset', String(page * billingAdminRateHistoryPageSize));
+        params.set('scope', 'all');
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/billing/rates?${params.toString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            tbody.innerHTML = '';
+            if (data.records && data.records.length > 0) {
+                data.records.forEach(record => {
+                    const row = document.createElement('tr');
+                    const scopeText = record.tenant ? `Tenant: ${record.tenant}` : 'Global';
+                    const rateText = `${formatUsd(record.rate_cents_per_hour)} (${record.rate_cents_per_hour}¢/GPU-hr)`;
+                    const effectiveFrom = record.effective_from ? new Date(record.effective_from).toLocaleString() : '-';
+                    const effectiveTo = record.effective_to ? new Date(record.effective_to).toLocaleString() : '-';
+                    const createdAt = record.created_at ? new Date(record.created_at).toLocaleString() : '-';
+                    const addedBy = record.added_by || '-';
+
+                    row.innerHTML = `
+                        <td>${record.id}</td>
+                        <td>${scopeText}</td>
+                        <td>${record.usage_type}</td>
+                        <td>${rateText}</td>
+                        <td>${effectiveFrom}</td>
+                        <td>${effectiveTo}</td>
+                        <td>${createdAt}</td>
+                        <td>${addedBy}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #888;">No rate history</td></tr>';
+            }
+
+            const total = typeof data.total === 'number' ? data.total : 0;
+            billingAdminRateHistoryTotalPages = Math.max(1, Math.ceil(total / billingAdminRateHistoryPageSize));
+            pageInfo.textContent = `Page ${page + 1} of ${billingAdminRateHistoryTotalPages}`;
+            prevBtn.disabled = (page <= 0);
+            nextBtn.disabled = (page >= billingAdminRateHistoryTotalPages - 1);
+        } catch (error) {
+            console.error('Failed to load billing rate history:', error);
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: red;">Failed to load rate history</td></tr>';
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
+        }
+    }
+
+    function billingAdminRatePrevPage() {
+        if (billingAdminRateHistoryPage > 0) {
+            loadBillingAdminRateHistory(billingAdminRateHistoryPage - 1);
+        }
+    }
+
+    function billingAdminRateNextPage() {
+        if (billingAdminRateHistoryPage < billingAdminRateHistoryTotalPages - 1) {
+            loadBillingAdminRateHistory(billingAdminRateHistoryPage + 1);
+        }
+    }
+
+    async function addCredits() {
+        if (billingIsSubmitting) return; // Prevent double-submit
+
+        const tenant = document.getElementById('billing-admin-credit-tenant').value;
+        const amountInput = parseFloat(document.getElementById('billing-admin-credit-amount').value);
+        const note = document.getElementById('billing-admin-credit-note').value;
+        const paymentRef = document.getElementById('billing-admin-credit-payment-ref').value;
+
+        if (!tenant) {
+            showBillingAdminMessage('Please select a tenant.', true);
+            return;
+        }
+
+        if (!Number.isFinite(amountInput) || amountInput === 0) {
+            showBillingAdminMessage('Please enter a non-zero amount in USD. Use negative amount to deduct credits.', true);
+            return;
+        }
+
+        const amountCents = Math.round(amountInput * 100);
+        if (amountCents === 0) {
+            showBillingAdminMessage('Amount is too small. Minimum absolute value is $0.01.', true);
+            return;
+        }
+        const creditConfirm = window.confirm(
+            `Confirm credit adjustment?\n` +
+            `Tenant: ${tenant}\n` +
+            `Amount: ${formatUsdSigned(amountCents)}\n` +
+            `Note: ${note || '-'}\n` +
+            `Payment Ref: ${paymentRef || '-'}`
+        );
+        if (!creditConfirm) {
+            return;
+        }
+
+        const btn = document.getElementById('billing-admin-add-credits-btn');
+        billingIsSubmitting = true;
+        btn.disabled = true;
+        btn.textContent = 'Adding...';
+
+        try {
+            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    amount_cents: amountCents,
+                    currency: 'USD',
+                    note: note || null,
+                    payment_ref: paymentRef || null
+                })
+            });
+
+            if (resp.ok) {
+                showBillingAdminMessage(`Credit adjustment applied: ${formatUsdSigned(amountCents)}.`, false);
+                document.getElementById('billing-admin-credit-amount').value = '';
+                document.getElementById('billing-admin-credit-note').value = '';
+                document.getElementById('billing-admin-credit-payment-ref').value = '';
+
+                if (billingAdminCreditHistoryExpanded) {
+                    await loadBillingAdminCreditHistory(0);
+                }
+
+                const billingTenant = document.getElementById('billing_tenant_select').value;
+                if (billingTenant === tenant) {
+                    loadBillingData();
+                }
+            } else if (resp.status === 403) {
+                showBillingAdminMessage('Permission denied. Only Inferx administrators can add credits.', true);
+            } else {
+                const error = await resp.text();
+                showBillingAdminMessage('Failed to add credits: ' + error, true);
+            }
+        } catch (error) {
+            showBillingAdminMessage('Error adding credits: ' + error, true);
+        } finally {
+            billingIsSubmitting = false;
+            btn.disabled = false;
+            btn.textContent = 'Add Credits';
+        }
+    }
+
+    async function addBillingRate() {
+        const btn = document.getElementById('billing-admin-add-rate-btn');
+        const usageType = document.getElementById('billing-rate-usage-type').value;
+        const rateCents = parseInt(document.getElementById('billing-rate-cents').value, 10);
+        const scope = document.getElementById('billing-rate-scope').value;
+        const rateTenant = document.getElementById('billing-rate-tenant').value;
+        const effectiveFromInput = document.getElementById('billing-rate-effective-from').value;
+        const effectiveToInput = document.getElementById('billing-rate-effective-to').value;
+
+        if (!Number.isInteger(rateCents) || rateCents < 0) {
+            showBillingAdminMessage('Rate must be a non-negative integer (cents/hour).', true);
+            return;
+        }
+
+        if (scope === 'tenant' && !rateTenant) {
+            showBillingAdminMessage('Please select a tenant for tenant override rate.', true);
+            return;
+        }
+
+        let effectiveFromIso;
+        if (effectiveFromInput) {
+            const dt = new Date(effectiveFromInput);
+            if (isNaN(dt.getTime())) {
+                showBillingAdminMessage('Invalid Effective From datetime.', true);
+                return;
+            }
+            effectiveFromIso = dt.toISOString();
+        } else {
+            effectiveFromIso = new Date().toISOString();
+        }
+
+        let effectiveToIso = null;
+        if (effectiveToInput) {
+            const dt = new Date(effectiveToInput);
+            if (isNaN(dt.getTime())) {
+                showBillingAdminMessage('Invalid Effective To datetime.', true);
+                return;
+            }
+            effectiveToIso = dt.toISOString();
+            if (new Date(effectiveToIso) <= new Date(effectiveFromIso)) {
+                showBillingAdminMessage('Effective To must be after Effective From.', true);
+                return;
+            }
+        }
+
+        const rateScopeLabel = scope === 'tenant' ? `Tenant Override (${rateTenant})` : 'Global';
+        const rateConfirm = window.confirm(
+            `Confirm add billing rate?\n` +
+            `Scope: ${rateScopeLabel}\n` +
+            `Usage Type: ${usageType}\n` +
+            `Rate: ${formatUsd(rateCents)}/GPU-hour (${rateCents}¢)\n` +
+            `Effective From: ${new Date(effectiveFromIso).toLocaleString()}\n` +
+            `Effective To: ${effectiveToIso ? new Date(effectiveToIso).toLocaleString() : 'Open-ended'}`
+        );
+        if (!rateConfirm) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Adding...';
+        try {
+            const resp = await fetchWithAuth('/demo/proxy1/billing/rates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    usage_type: usageType,
+                    rate_cents_per_hour: rateCents,
+                    effective_from: effectiveFromIso,
+                    effective_to: effectiveToIso,
+                    tenant: scope === 'tenant' ? rateTenant : null
+                })
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                showBillingAdminMessage(`Billing rate added (id=${data.rate_id}).`, false);
+                document.getElementById('billing-rate-cents').value = '';
+                document.getElementById('billing-rate-effective-to').value = '';
+
+                if (billingAdminRateHistoryExpanded) {
+                    await loadBillingAdminRateHistory(0);
+                }
+            } else if (resp.status === 403) {
+                showBillingAdminMessage('Permission denied. Only Inferx administrators can add rates.', true);
+            } else {
+                const error = await resp.text();
+                showBillingAdminMessage('Failed to add rate: ' + error, true);
+            }
+        } catch (error) {
+            showBillingAdminMessage('Error adding rate: ' + error, true);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Add Rate';
+        }
+    }
+
+    // Helper: format cents as USD string (e.g. 1234 → "$12.34")
+    function formatUsd(cents) {
+        const dollars = Math.abs(cents) / 100;
+        return '$' + dollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    // Signed USD formatter (e.g. -1234 -> "-$12.34")
+    function formatUsdSigned(cents) {
+        const sign = cents < 0 ? '-' : '';
+        return sign + formatUsd(cents);
+    }
+
+    // Hook into tab switching to populate tenant lists when Billing tabs open
+    const originalOpenTab = openTab;
+    openTab = function(evt, tabName) {
+        originalOpenTab(evt, tabName);
+        if (tabName === 'Billing') {
+            populateBillingTenants();
+        }
+    };
+
+    // =====================================================
+    // Usage Analytics Functions
+    // =====================================================
+
+    let analyticsExpanded = false;
+    let analyticsData = null;
+    let analyticsSortColumn = 'total_cost';
+    let analyticsSortDirection = 'desc';
+    let analyticsHourlyViewMode = 'chart';
+    let analyticsHourlyTableReady = false;
+    let analyticsSelectedGroupKey = null;
+    let analyticsGroupDetailRequestId = 0;
+    let analyticsGroupDetailRawRows = [];
+    let analyticsGroupDetailRows = [];
+    let analyticsDetailGranularity = 'hourly';
+    let analyticsDetailSortColumn = 'period';
+    let analyticsDetailSortDirection = 'desc';
+
+    function toggleUsageAnalytics() {
+        analyticsExpanded = !analyticsExpanded;
+        document.getElementById('usage-analytics-content').style.display =
+            analyticsExpanded ? 'block' : 'none';
+        document.getElementById('analytics-toggle-icon').textContent =
+            analyticsExpanded ? '▼' : '▶';
+
+        if (analyticsExpanded) {
+            const customEl = document.getElementById('analytics-custom-range');
+            if (customEl) {
+                const range = document.getElementById('analytics-time-range').value;
+                customEl.style.display = range === 'custom' ? 'flex' : 'none';
+            }
+            updateAnalyticsHourlyViewButtons();
+            updateAnalyticsHourlyViewControls();
+            updateAnalyticsRangeButtons();
+            loadAnalytics();
+        }
+    }
+
+    function onAnalyticsTimeRangeChange() {
+        const range = document.getElementById('analytics-time-range').value;
+        if (range !== 'custom') {
+            const hours = parseInt(range, 10);
+            if (!Number.isNaN(hours)) {
+                setAnalyticsRangeHours(hours);
+                return;
+            }
+        }
+        const customEl = document.getElementById('analytics-custom-range');
+        if (customEl) {
+            customEl.style.display = range === 'custom' ? 'flex' : 'none';
+        }
+        if (range === 'custom') {
+            setDefaultCustomRangeInputs();
+        }
+        loadAnalytics();
+    }
+
+    function getAnalyticsTimeParams() {
+        const range = document.getElementById('analytics-time-range').value;
+        if (range === 'custom') {
+            if (
+                !analyticsUsageRange ||
+                analyticsUsageRange.mode !== 'custom' ||
+                !analyticsUsageRange.start ||
+                !analyticsUsageRange.end
+            ) {
+                if (!syncAnalyticsCustomRangeFromInputs(false)) return null;
+            }
+            return `start=${encodeURIComponent(analyticsUsageRange.start)}&end=${encodeURIComponent(analyticsUsageRange.end)}`;
+        }
+        return `hours=${range}`;
+    }
+
+    function getAnalyticsViewMode() {
+        return document.querySelector('input[name="analytics-view"]:checked').value;
+    }
+
+    function getAnalyticsUsageMs(entry) {
+        if (typeof entry?.usage_ms === 'number') return entry.usage_ms;
+        const infMs = typeof entry?.inference_ms === 'number' ? entry.inference_ms : 0;
+        const sbyMs = typeof entry?.standby_ms === 'number' ? entry.standby_ms : 0;
+        return infMs + sbyMs;
+    }
+
+    function updateAnalyticsHourlyViewControls() {
+        const controlsEl = document.getElementById('analytics-hourly-view-controls');
+        if (!controlsEl) return;
+        controlsEl.style.display = getAnalyticsViewMode() === 'hourly' ? 'flex' : 'none';
+    }
+
+    function updateAnalyticsHourlyViewButtons() {
+        const chartBtn = document.getElementById('analytics-hourly-view-chart');
+        const tableBtn = document.getElementById('analytics-hourly-view-table');
+        if (!chartBtn || !tableBtn) return;
+        chartBtn.classList.toggle('active-range', analyticsHourlyViewMode === 'chart');
+        tableBtn.classList.toggle('active-range', analyticsHourlyViewMode === 'table');
+    }
+
+    function applyAnalyticsHourlyViewVisibility() {
+        const chartEl = document.getElementById('analytics-chart-area');
+        const hourlyTableEl = document.getElementById('analytics-hourly-table-area');
+        if (!chartEl || !hourlyTableEl) return;
+
+        const showTable = analyticsHourlyViewMode === 'table' && analyticsHourlyTableReady;
+        chartEl.style.display = showTable ? 'none' : 'block';
+        hourlyTableEl.style.display = showTable ? 'block' : 'none';
+    }
+
+    function setAnalyticsHourlyViewMode(mode) {
+        analyticsHourlyViewMode = mode === 'table' ? 'table' : 'chart';
+        updateAnalyticsHourlyViewButtons();
+        if (getAnalyticsViewMode() === 'hourly') {
+            applyAnalyticsHourlyViewVisibility();
+        }
+    }
+
+    function getAnalyticsGroupKey(viewMode, item) {
+        if (!item) return null;
+        if (viewMode === 'model') {
+            return `model:${item.namespace || ''}:${item.funcname || ''}`;
+        }
+        if (viewMode === 'tenant') {
+            return `tenant:${item.tenant || ''}`;
+        }
+        return `namespace:${item.namespace || ''}`;
+    }
+
+    function getAnalyticsDetailGranularityLabel(granularity) {
+        switch (granularity) {
+            case 'daily':
+                return 'Daily';
+            case 'weekly':
+                return 'Weekly';
+            case 'hourly':
+            default:
+                return 'Hourly';
+        }
+    }
+
+    function updateAnalyticsDetailGranularityButtons() {
+        const hourlyBtn = document.getElementById('analytics-detail-granularity-hourly');
+        const dailyBtn = document.getElementById('analytics-detail-granularity-daily');
+        const weeklyBtn = document.getElementById('analytics-detail-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', analyticsDetailGranularity === 'weekly');
+    }
+
+    function getLocalWeekStart(date) {
+        const d = new Date(date.getTime());
+        d.setHours(0, 0, 0, 0);
+        const day = d.getDay();
+        const daysSinceMonday = (day + 6) % 7;
+        d.setDate(d.getDate() - daysSinceMonday);
+        return d;
+    }
+
+    function aggregateAnalyticsDetailRows(usageRows, granularity) {
+        const rows = Array.isArray(usageRows) ? usageRows : [];
+        if (granularity === 'hourly') return rows;
+
+        const bucketMap = new Map();
+        rows.forEach(u => {
+            const rawDate = new Date(u.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                const bucketEnd = new Date(bucketStart.getTime());
+                if (granularity === 'weekly') {
+                    bucketEnd.setDate(bucketEnd.getDate() + 6);
+                }
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: granularity === 'weekly' ? bucketEnd.toISOString() : null,
+                    inference_ms: 0,
+                    standby_ms: 0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    charge_cents: 0,
+                });
+            }
+
+            const bucket = bucketMap.get(key);
+            bucket.inference_ms += u.inference_ms || 0;
+            bucket.standby_ms += u.standby_ms || 0;
+            bucket.inference_cents += u.inference_cents || 0;
+            bucket.standby_cents += u.standby_cents || 0;
+            bucket.charge_cents += u.charge_cents || 0;
+        });
+
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function formatAnalyticsDetailPeriodLabel(row) {
+        if (analyticsDetailGranularity === 'weekly') {
+            const start = new Date(row.hour);
+            const end = row.week_end ? new Date(row.week_end) : new Date(start.getTime());
+            if (!row.week_end) end.setDate(end.getDate() + 6);
+            const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${startLabel} - ${endLabel}`;
+        }
+        if (analyticsDetailGranularity === 'daily') {
+            return new Date(row.hour).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+        return new Date(row.hour).toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+    }
+
+    function setAnalyticsDetailGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        analyticsDetailGranularity = granularity;
+        updateAnalyticsDetailGranularityButtons();
+        if (analyticsGroupDetailRawRows.length > 0) {
+            analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
+                analyticsGroupDetailRawRows,
+                analyticsDetailGranularity
+            );
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+        }
+    }
+
+    function hideAnalyticsGroupDetail(clearSelection = false) {
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (areaEl) areaEl.style.display = 'none';
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (messageEl) {
+            messageEl.style.display = 'none';
+            messageEl.textContent = '';
+        }
+        if (tableEl) tableEl.style.display = 'table';
+        if (tbody) tbody.innerHTML = '';
+        if (clearSelection) analyticsSelectedGroupKey = null;
+        analyticsGroupDetailRawRows = [];
+        analyticsGroupDetailRows = [];
+        analyticsGroupDetailRequestId += 1;
+    }
+
+    function showAnalyticsGroupDetailPrompt(message) {
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (!areaEl || !loadingEl || !messageEl || !tableEl || !tbody) return;
+
+        areaEl.style.display = 'block';
+        updateAnalyticsDetailGranularityButtons();
+        loadingEl.style.display = 'none';
+        messageEl.style.display = 'block';
+        messageEl.textContent = message;
+        tableEl.style.display = 'none';
+        tbody.innerHTML = '';
+    }
+
+    async function loadAnalyticsGroupDetail(viewMode, item) {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant || !item) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        const areaEl = document.getElementById('analytics-group-detail-area');
+        const loadingEl = document.getElementById('analytics-group-detail-loading');
+        const messageEl = document.getElementById('analytics-group-detail-message');
+        const tableEl = document.getElementById('analytics-group-detail-table');
+        const titleEl = document.getElementById('analytics-group-detail-title');
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        if (!areaEl || !loadingEl || !messageEl || !tableEl || !titleEl || !tbody) return;
+
+        const params = new URLSearchParams(timeParams);
+        let endpoint = '';
+        if (viewMode === 'tenant') {
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
+            titleEl.textContent = `Breakdown: ${tenant}`;
+        } else if (viewMode === 'model') {
+            params.set('namespace', item.namespace || '');
+            params.set('funcname', item.funcname || '');
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
+            titleEl.textContent = `Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
+        } else {
+            params.set('namespace', item.namespace || '');
+            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-namespace?${params.toString()}`;
+            titleEl.textContent = `Breakdown: ${item.namespace || '--'}`;
+        }
+
+        const reqId = ++analyticsGroupDetailRequestId;
+        analyticsGroupDetailRawRows = [];
+        analyticsGroupDetailRows = [];
+        areaEl.style.display = 'block';
+        updateAnalyticsDetailGranularityButtons();
+        loadingEl.style.display = 'inline';
+        messageEl.style.display = 'none';
+        messageEl.textContent = '';
+        tbody.innerHTML = '';
+
+        try {
+            const resp = await fetchWithAuth(endpoint);
+            if (reqId !== analyticsGroupDetailRequestId) return;
+
+            if (resp.status === 404) {
+                tableEl.style.display = 'none';
+                messageEl.style.display = 'block';
+                messageEl.textContent = 'Detail endpoint is not available yet.';
+                return;
+            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+            const data = await resp.json();
+            const usageRows = Array.isArray(data.usage) ? data.usage : [];
+            if (usageRows.length === 0) {
+                tableEl.style.display = 'none';
+                messageEl.style.display = 'block';
+                messageEl.textContent = 'No detail data for the selected group.';
+                return;
+            }
+
+            analyticsGroupDetailRawRows = usageRows;
+            analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
+                analyticsGroupDetailRawRows,
+                analyticsDetailGranularity
+            );
+            updateAnalyticsDetailGranularityButtons();
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+
+            tableEl.style.display = 'table';
+            messageEl.style.display = 'none';
+        } catch (error) {
+            if (reqId !== analyticsGroupDetailRequestId) return;
+            tableEl.style.display = 'none';
+            messageEl.style.display = 'block';
+            messageEl.textContent = `Failed to load detail: ${error}`;
+        } finally {
+            if (reqId === analyticsGroupDetailRequestId) {
+                loadingEl.style.display = 'none';
+            }
+        }
+    }
+
+    function renderAnalyticsGroupDetailTable(usageRows) {
+        const tbody = document.querySelector('#analytics-group-detail-table tbody');
+        const granularityEl = document.getElementById('analytics-group-detail-period-granularity');
+        if (!tbody) return;
+        if (granularityEl) granularityEl.textContent = getAnalyticsDetailGranularityLabel(analyticsDetailGranularity);
+
+        const rows = Array.isArray(usageRows) ? usageRows : [];
+        const sortedRows = [...rows].sort((a, b) => {
+            let aVal;
+            let bVal;
+            switch (analyticsDetailSortColumn) {
+                case 'inf_hours':
+                    aVal = a.inference_ms || 0;
+                    bVal = b.inference_ms || 0;
+                    break;
+                case 'sby_hours':
+                    aVal = a.standby_ms || 0;
+                    bVal = b.standby_ms || 0;
+                    break;
+                case 'inf_cost':
+                    aVal = a.inference_cents || 0;
+                    bVal = b.inference_cents || 0;
+                    break;
+                case 'sby_cost':
+                    aVal = a.standby_cents || 0;
+                    bVal = b.standby_cents || 0;
+                    break;
+                case 'total_cost':
+                    aVal = (a.inference_cents || 0) + (a.standby_cents || 0);
+                    bVal = (b.inference_cents || 0) + (b.standby_cents || 0);
+                    break;
+                case 'period':
+                default:
+                    aVal = Date.parse(a.hour) || 0;
+                    bVal = Date.parse(b.hour) || 0;
+                    break;
+            }
+            return analyticsDetailSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
+        let totalInfMs = 0;
+        let totalSbyMs = 0;
+        let totalInfCents = 0;
+        let totalSbyCents = 0;
+
+        rows.forEach(u => {
+            totalInfMs += u.inference_ms || 0;
+            totalSbyMs += u.standby_ms || 0;
+            totalInfCents += u.inference_cents || 0;
+            totalSbyCents += u.standby_cents || 0;
+        });
+
+        tbody.innerHTML = sortedRows.map(u => {
+            const infMs = u.inference_ms || 0;
+            const sbyMs = u.standby_ms || 0;
+            const infCents = u.inference_cents || 0;
+            const sbyCents = u.standby_cents || 0;
+            const infHours = infMs / 3600000;
+            const sbyHours = sbyMs / 3600000;
+            const totalCents = infCents + sbyCents;
+            const periodLabel = formatAnalyticsDetailPeriodLabel(u);
+
+            return `
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 8px; text-align: left;">${periodLabel}</td>
+                    <td style="padding: 8px; text-align: right;">${infHours.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(infCents)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(sbyCents)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(totalCents)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        document.getElementById('analytics-group-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
+        document.getElementById('analytics-group-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-group-total-inf-cost').textContent = formatUsd(totalInfCents);
+        document.getElementById('analytics-group-total-sby-cost').textContent = formatUsd(totalSbyCents);
+        document.getElementById('analytics-group-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
+
+        const setDetailSortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = analyticsDetailSortColumn === column
+                ? (analyticsDetailSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setDetailSortIcon('detail-sort-period-icon', 'period');
+        setDetailSortIcon('detail-sort-inf-hours-icon', 'inf_hours');
+        setDetailSortIcon('detail-sort-sby-hours-icon', 'sby_hours');
+        setDetailSortIcon('detail-sort-inf-cost-icon', 'inf_cost');
+        setDetailSortIcon('detail-sort-sby-cost-icon', 'sby_cost');
+        setDetailSortIcon('detail-sort-total-cost-icon', 'total_cost');
+    }
+
+    function sortAnalyticsGroupDetailTable(column) {
+        if (analyticsDetailSortColumn === column) {
+            analyticsDetailSortDirection = analyticsDetailSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            analyticsDetailSortColumn = column;
+            analyticsDetailSortDirection = 'desc';
+        }
+
+        if (analyticsGroupDetailRows.length > 0) {
+            renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
+        }
+    }
+
+    function showAnalyticsLoading(show) {
+        document.getElementById('analytics-loading').style.display = show ? 'inline' : 'none';
+    }
+
+    function showAnalyticsError(message) {
+        hideAnalyticsGroupDetail(true);
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-hourly-table-area').style.display = 'none';
+        document.getElementById('analytics-table-area').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+        const controlsEl = document.getElementById('analytics-hourly-view-controls');
+        if (controlsEl) controlsEl.style.display = 'none';
+        analyticsHourlyTableReady = false;
+
+        const el = document.getElementById('analytics-error');
+        document.getElementById('analytics-error-message').textContent = message || 'Unknown error';
+        el.style.display = 'block';
+    }
+
+    function showAnalyticsEmpty() {
+        hideAnalyticsGroupDetail(true);
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-hourly-table-area').style.display = 'none';
+        document.getElementById('analytics-table-area').style.display = 'none';
+        document.getElementById('analytics-error').style.display = 'none';
+        const controlsEl = document.getElementById('analytics-hourly-view-controls');
+        if (controlsEl) controlsEl.style.display = 'none';
+        analyticsHourlyTableReady = false;
+        document.getElementById('analytics-empty').style.display = 'block';
+    }
+
+    async function loadAnalytics() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        showAnalyticsLoading(true);
+        document.getElementById('analytics-error').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+
+        try {
+            // Load current view
+            await loadAnalyticsView();
+        } catch (error) {
+            console.error('Failed to load analytics:', error);
+            showAnalyticsError(error.message);
+        } finally {
+            showAnalyticsLoading(false);
+        }
+    }
+
+    async function loadAnalyticsView() {
+        const tenant = document.getElementById('billing_tenant_select').value;
+        if (!tenant) return;
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        const viewMode = getAnalyticsViewMode();
+        updateAnalyticsHourlyViewButtons();
+        updateAnalyticsHourlyViewControls();
+        hideAnalyticsGroupDetail(true);
+        analyticsHourlyTableReady = false;
+        document.getElementById('analytics-hourly-table-area').style.display = 'none';
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        let endpoint;
+
+        switch (viewMode) {
+            case 'tenant':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                break;
+            case 'model':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}`;
+                break;
+            case 'namespace':
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}`;
+                break;
+            default:
+                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                break;
+        }
+
+        showAnalyticsLoading(true);
+
+        try {
+            const resp = await fetchWithAuth(endpoint);
+
+            if (resp.status === 404) {
+                showAnalyticsError('This endpoint is not yet implemented');
+                return;
+            }
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (viewMode === 'tenant') {
+                renderTenantGroupedTable(data, tenant);
+            } else {
+                analyticsData = data;
+                renderGroupedTable(data, viewMode);
+            }
+        } catch (error) {
+            console.error('Failed to load analytics view:', error);
+            showAnalyticsError(error.message);
+        } finally {
+            showAnalyticsLoading(false);
+        }
+    }
+
+    function renderTenantGroupedTable(hourlyData, tenantName) {
+        const usageRows = Array.isArray(hourlyData?.usage) ? hourlyData.usage : [];
+        if (usageRows.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        let totalInfMs = 0;
+        let totalSbyMs = 0;
+        let totalInfCents = 0;
+        let totalSbyCents = 0;
+
+        usageRows.forEach(u => {
+            totalInfMs += u.inference_ms || 0;
+            totalSbyMs += u.standby_ms || 0;
+            totalInfCents += u.inference_cents || 0;
+            totalSbyCents += u.standby_cents || 0;
+        });
+
+        const grouped = {
+            usage: [{
+                tenant: tenantName,
+                inference_ms: totalInfMs,
+                standby_ms: totalSbyMs,
+                usage_ms: totalInfMs + totalSbyMs,
+                inference_cents: totalInfCents,
+                standby_cents: totalSbyCents,
+                charge_cents: totalInfCents + totalSbyCents
+            }],
+            other: {
+                count: 0,
+                inference_ms: 0,
+                standby_ms: 0,
+                usage_ms: 0,
+                inference_cents: 0,
+                standby_cents: 0,
+                charge_cents: 0
+            },
+            inference_ms: totalInfMs,
+            standby_ms: totalSbyMs,
+            total_ms: totalInfMs + totalSbyMs,
+            inference_cents: totalInfCents,
+            standby_cents: totalSbyCents,
+            total_cents: totalInfCents + totalSbyCents
+        };
+
+        analyticsData = grouped;
+        renderGroupedTable(grouped, 'tenant');
+    }
+
+    function renderGroupedTable(data, viewMode) {
+        document.getElementById('analytics-error').style.display = 'none';
+        const hourlyControlsEl = document.getElementById('analytics-hourly-view-controls');
+        if (hourlyControlsEl) hourlyControlsEl.style.display = 'none';
+        document.getElementById('analytics-hourly-table-area').style.display = 'none';
+        analyticsHourlyTableReady = false;
+
+        if (!data.usage || data.usage.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        const tbody = document.querySelector('#analytics-table tbody');
+        tbody.innerHTML = '';
+
+        // Update header based on view mode
+        const headerEl = document.getElementById('analytics-group-header');
+        const groupHeader = viewMode === 'model'
+            ? 'Model'
+            : (viewMode === 'namespace' ? 'Namespace' : 'Tenant');
+        headerEl.innerHTML = groupHeader +
+            ' <span id="sort-name-icon">' + (analyticsSortColumn === 'name' ? (analyticsSortDirection === 'asc' ? '▲' : '▼') : '') + '</span>';
+
+        const totalInfMs = (typeof data.inference_ms === 'number')
+            ? data.inference_ms
+            : (
+                data.usage.reduce((sum, u) => sum + (u.inference_ms || 0), 0) +
+                (data.other?.inference_ms || 0)
+            );
+        const totalSbyMs = (typeof data.standby_ms === 'number')
+            ? data.standby_ms
+            : (
+                data.usage.reduce((sum, u) => sum + (u.standby_ms || 0), 0) +
+                (data.other?.standby_ms || 0)
+            );
+        const totalInfCents = (typeof data.inference_cents === 'number')
+            ? data.inference_cents
+            : (
+                data.usage.reduce((sum, u) => sum + (u.inference_cents || 0), 0) +
+                (data.other?.inference_cents || 0)
+            );
+        const totalSbyCents = (typeof data.standby_cents === 'number')
+            ? data.standby_cents
+            : (
+                data.usage.reduce((sum, u) => sum + (u.standby_cents || 0), 0) +
+                (data.other?.standby_cents || 0)
+            );
+        const totalCents = (typeof data.total_cents === 'number') ? data.total_cents : (totalInfCents + totalSbyCents);
+
+        // Sort data
+        let sortedData = [...data.usage];
+        sortedData.sort((a, b) => {
+            let aVal;
+            let bVal;
+            const aInfMs = a.inference_ms || 0;
+            const aSbyMs = a.standby_ms || 0;
+            const aInfCents = a.inference_cents || 0;
+            const aSbyCents = a.standby_cents || 0;
+            const aTotalCents = (typeof a.charge_cents === 'number') ? a.charge_cents : (aInfCents + aSbyCents);
+            const bInfMs = b.inference_ms || 0;
+            const bSbyMs = b.standby_ms || 0;
+            const bInfCents = b.inference_cents || 0;
+            const bSbyCents = b.standby_cents || 0;
+            const bTotalCents = (typeof b.charge_cents === 'number') ? b.charge_cents : (bInfCents + bSbyCents);
+
+            if (analyticsSortColumn === 'name') {
+                aVal = viewMode === 'model'
+                    ? a.funcname
+                    : (viewMode === 'namespace' ? a.namespace : a.tenant);
+                bVal = viewMode === 'model'
+                    ? b.funcname
+                    : (viewMode === 'namespace' ? b.namespace : b.tenant);
+                return analyticsSortDirection === 'asc'
+                    ? aVal.localeCompare(bVal)
+                    : bVal.localeCompare(aVal);
+            }
+
+            switch (analyticsSortColumn) {
+                case 'inf_hours':
+                    aVal = aInfMs;
+                    bVal = bInfMs;
+                    break;
+                case 'sby_hours':
+                    aVal = aSbyMs;
+                    bVal = bSbyMs;
+                    break;
+                case 'inf_cost':
+                    aVal = aInfCents;
+                    bVal = bInfCents;
+                    break;
+                case 'sby_cost':
+                    aVal = aSbyCents;
+                    bVal = bSbyCents;
+                    break;
+                case 'percent':
+                    aVal = totalCents > 0 ? (aTotalCents / totalCents) : 0;
+                    bVal = totalCents > 0 ? (bTotalCents / totalCents) : 0;
+                    break;
+                case 'total_cost':
+                default:
+                    aVal = aTotalCents;
+                    bVal = bTotalCents;
+                    break;
+            }
+            return analyticsSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
+        let selectedItem = null;
+        sortedData.forEach(item => {
+            const row = document.createElement('tr');
+            row.style.borderBottom = '1px solid #eee';
+            row.style.cursor = 'pointer';
+            const groupLabel = viewMode === 'model'
+                ? `${item.funcname} (${item.namespace})`
+                : (viewMode === 'namespace' ? item.namespace : item.tenant);
+            const infMs = item.inference_ms || 0;
+            const sbyMs = item.standby_ms || 0;
+            const infCents = item.inference_cents || 0;
+            const sbyCents = item.standby_cents || 0;
+            const chargeCents = (typeof item.charge_cents === 'number') ? item.charge_cents : (infCents + sbyCents);
+            const infHours = (infMs / 3600000).toFixed(2);
+            const sbyHours = (sbyMs / 3600000).toFixed(2);
+            const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : 0;
+
+            const barWidth = Math.min(percent, 100);
+            const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+            const rowKey = getAnalyticsGroupKey(viewMode, item);
+            if (rowKey === analyticsSelectedGroupKey) {
+                row.style.background = '#f0f7ff';
+                selectedItem = item;
+            }
+            row.onclick = () => {
+                analyticsSelectedGroupKey = rowKey;
+                renderGroupedTable(data, viewMode);
+            };
+
+            row.innerHTML = `
+                <td style="padding: 8px;" title="${groupLabel}">${truncateText(groupLabel, 40)}</td>
+                <td style="text-align: right; padding: 8px;">${infHours}</td>
+                <td style="text-align: right; padding: 8px;">${sbyHours}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(sbyCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(chargeCents)}</td>
+                <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Add "Other" row if present
+        if ((viewMode === 'model' || viewMode === 'namespace') && data.other && data.other.count > 0) {
+            const row = document.createElement('tr');
+            row.style.color = '#888';
+            row.style.fontStyle = 'italic';
+            row.style.borderBottom = '1px solid #eee';
+            const otherInfMs = data.other.inference_ms || 0;
+            const otherSbyMs = data.other.standby_ms || 0;
+            const otherInfCents = data.other.inference_cents || 0;
+            const otherSbyCents = data.other.standby_cents || 0;
+            const otherCents = (typeof data.other.charge_cents === 'number')
+                ? data.other.charge_cents
+                : (otherInfCents + otherSbyCents);
+            const percent = totalCents > 0 ? ((otherCents / totalCents) * 100).toFixed(1) : 0;
+            const barWidth = Math.min(percent, 100);
+            const bar = `<div style="background: #ccc; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+
+            row.innerHTML = `
+                <td style="padding: 8px;">Other (${data.other.count} ${viewMode === 'model' ? 'models' : 'namespaces'})</td>
+                <td style="text-align: right; padding: 8px;">${(otherInfMs / 3600000).toFixed(2)}</td>
+                <td style="text-align: right; padding: 8px;">${(otherSbyMs / 3600000).toFixed(2)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherInfCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherSbyCents)}</td>
+                <td style="text-align: right; padding: 8px;">${formatUsd(otherCents)}</td>
+                <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
+            `;
+            tbody.appendChild(row);
+        }
+
+        // Update totals
+        document.getElementById('analytics-table-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
+        document.getElementById('analytics-table-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-table-total-inf-cost').textContent = formatUsd(totalInfCents);
+        document.getElementById('analytics-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
+        document.getElementById('analytics-table-total-cost').textContent = formatUsd(totalCents);
+
+        // Update sort icons
+        const setSummarySortIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = analyticsSortColumn === column
+                ? (analyticsSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setSummarySortIcon('sort-name-icon', 'name');
+        setSummarySortIcon('sort-inf-hours-icon', 'inf_hours');
+        setSummarySortIcon('sort-sby-hours-icon', 'sby_hours');
+        setSummarySortIcon('sort-inf-cost-icon', 'inf_cost');
+        setSummarySortIcon('sort-sby-cost-icon', 'sby_cost');
+        setSummarySortIcon('sort-total-cost-icon', 'total_cost');
+        setSummarySortIcon('sort-percent-icon', 'percent');
+
+        // Show table, hide chart and empty state
+        document.getElementById('analytics-table-area').style.display = 'block';
+        document.getElementById('analytics-chart-area').style.display = 'none';
+        document.getElementById('analytics-empty').style.display = 'none';
+
+        if (selectedItem) {
+            loadAnalyticsGroupDetail(viewMode, selectedItem);
+        } else {
+            showAnalyticsGroupDetailPrompt(
+                viewMode === 'model'
+                    ? 'Select a model row above to view hourly drill-down.'
+                    : (viewMode === 'namespace'
+                        ? 'Select a namespace row above to view hourly drill-down.'
+                        : 'Select the tenant row above to view hourly drill-down.')
+            );
+        }
+    }
+
+    function sortAnalyticsTable(column) {
+        if (analyticsSortColumn === column) {
+            analyticsSortDirection = analyticsSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            analyticsSortColumn = column;
+            analyticsSortDirection = column === 'name' ? 'asc' : 'desc';
+        }
+
+        if (analyticsData) {
+            const viewMode = getAnalyticsViewMode();
+            renderGroupedTable(analyticsData, viewMode);
+        }
+    }
+
+    function renderAnalyticsHourlyChart(data) {
+        document.getElementById('analytics-error').style.display = 'none';
+        hideAnalyticsGroupDetail(true);
+        const chartEl = document.getElementById('analytics-chart-area');
+
+        if (!data.usage || data.usage.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
+
+        // For longer time ranges, aggregate to daily
+        const hours = data.usage.length;
+        const aggregateToDaily = hours > 48;
+
+        let displayData = data.usage;
+        if (aggregateToDaily) {
+            displayData = aggregateHourlyUsageToDays(data.usage);
+        }
+
+        const maxUsageMs = Math.max(...displayData.map(u => getAnalyticsUsageMs(u)), 1);
+
+        chartEl.innerHTML = `
+            <div style="display: flex; align-items: flex-end; height: 120px; gap: 2px; border-bottom: 1px solid #ccc; padding-bottom: 5px;">
+                ${displayData.map(u => {
+                    const usageMs = getAnalyticsUsageMs(u);
+                    const height = Math.max(2, (usageMs / maxUsageMs) * 100);
+                    const usageHours = (usageMs / 3600000).toFixed(2);
+                    const label = aggregateToDaily
+                        ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+                        : new Date(u.hour).getHours().toString().padStart(2, '0') + ':00';
+                    return `<div class="usage-bar" style="height: ${height}%; flex: 1;"
+                                title="${label}: ${usageHours} GPU-hours"></div>`;
+                }).join('')}
+            </div>
+            <div style="display: flex; gap: 2px; font-size: 10px; color: #666;">
+                ${displayData.map((u, i) => {
+                    const showLabel = aggregateToDaily
+                        ? (i % 5 === 0)
+                        : (i % 6 === 0);
+                    const label = showLabel
+                        ? (aggregateToDaily
+                            ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+                            : new Date(u.hour).getHours().toString().padStart(2, '0'))
+                        : '';
+                    return `<div style="flex: 1; text-align: center;">${label}</div>`;
+                }).join('')}
+            </div>
+            <div style="text-align: right; font-size: 10px; color: #888;">
+                (${aggregateToDaily ? 'Daily' : 'Hourly'} - Local)
+            </div>
+        `;
+
+        renderAnalyticsHourlyTable(displayData, aggregateToDaily);
+        analyticsHourlyTableReady = true;
+        updateAnalyticsHourlyViewButtons();
+        updateAnalyticsHourlyViewControls();
+        document.getElementById('analytics-table-area').style.display = 'none';
+        applyAnalyticsHourlyViewVisibility();
+        document.getElementById('analytics-empty').style.display = 'none';
+    }
+
+    function renderAnalyticsHourlyTable(displayData, aggregateToDaily) {
+        const tableBodyEl = document.querySelector('#analytics-hourly-table tbody');
+        const totalEl = document.getElementById('analytics-hourly-table-total');
+        const granularityEl = document.getElementById('analytics-hourly-table-granularity');
+        if (!tableBodyEl || !totalEl || !granularityEl) return;
+
+        granularityEl.textContent = aggregateToDaily ? 'Daily' : 'Hourly';
+
+        const sortedRows = [...displayData].sort((a, b) => b.hour.localeCompare(a.hour));
+        let totalMs = 0;
+
+        tableBodyEl.innerHTML = sortedRows.map(u => {
+            const usageMs = getAnalyticsUsageMs(u);
+            totalMs += usageMs;
+            const usageHours = usageMs / 3600000;
+            const periodLabel = aggregateToDaily
+                ? new Date(u.hour).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                : new Date(u.hour).toLocaleString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                });
+
+            return `
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="text-align: left; padding: 8px;">${periodLabel}</td>
+                    <td style="text-align: right; padding: 8px;">${usageHours.toFixed(2)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        totalEl.textContent = (totalMs / 3600000).toFixed(2);
+    }
+
+    function aggregateHourlyUsageByGranularity(hourlyData, granularity) {
+        const rows = Array.isArray(hourlyData) ? hourlyData : [];
+        if (granularity === 'hourly') {
+            return [...rows].sort((a, b) => (a.hour || '').localeCompare(b.hour || ''));
+        }
+
+        const bucketMap = new Map();
+        rows.forEach(h => {
+            const rawDate = new Date(h.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            let bucketEnd = null;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+                bucketEnd = new Date(bucketStart.getTime());
+                bucketEnd.setDate(bucketEnd.getDate() + 6);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: bucketEnd ? bucketEnd.toISOString() : null,
+                    charge_cents: 0,
+                    inference_cents: 0,
+                    standby_cents: 0,
+                    usage_ms: 0,
+                    inference_ms: 0,
+                    standby_ms: 0
+                });
+            }
+
+            const usageMs = (typeof h.usage_ms === 'number')
+                ? h.usage_ms
+                : ((h.inference_ms || 0) + (h.standby_ms || 0));
+            const bucket = bucketMap.get(key);
+            bucket.charge_cents += h.charge_cents || 0;
+            bucket.inference_cents += h.inference_cents || 0;
+            bucket.standby_cents += h.standby_cents || 0;
+            bucket.usage_ms += usageMs;
+            bucket.inference_ms += h.inference_ms || 0;
+            bucket.standby_ms += h.standby_ms || 0;
+        });
+
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function aggregateHourlyUsageToDays(hourlyData) {
+        return aggregateHourlyUsageByGranularity(hourlyData, 'daily');
+    }
+
+    function truncateText(text, maxLength) {
+        if (!text) return '--';
+        return text.length > maxLength ? text.substring(0, maxLength - 3) + '...' : text;
+    }
 </script>
 
 
@@ -317,7 +3546,7 @@
 
         const url = `/demo/generate_tenantuser?${params.toString()}`;
         try {
-            const response = await fetch(url);
+            const response = await fetchWithAuth(url);
 
             // 2. Check if the request was successful
             if (!response.ok) {
@@ -351,7 +3580,7 @@
         const url = `/demo/generate_namespaceuser?${params.toString()}`;
 
         try {
-            const response = await fetch(url);
+            const response = await fetchWithAuth(url);
 
             // 2. Handle Authentication/Redirects
             // If require_login redirects to a login page, the response.url will change
@@ -376,7 +3605,7 @@
     }
 
     async function fetchItems() {
-        const apikeys_resp = await fetch('/demo/generate_apikeys');
+        const apikeys_resp = await fetchWithAuth('/demo/generate_apikeys');
         const apikeys = await apikeys_resp.json();
         const apikey_tbody = document.querySelector('#items-table tbody');
         apikey_tbody.innerHTML = '';
@@ -394,7 +3623,7 @@
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
 
-        const roles_resp = await fetch('/demo/generate_roles');
+        const roles_resp = await fetchWithAuth('/demo/generate_roles');
         const roles = await roles_resp.json();
 
         // Target both table bodies
@@ -446,7 +3675,7 @@
             }
         });
 
-        const funcs_resp = await fetch('/demo/generate_funcs');
+        const funcs_resp = await fetchWithAuth('/demo/generate_funcs');
         const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
         funcs_tbody.innerHTML = '';
@@ -494,7 +3723,7 @@
         });
 
 
-        const namespaces_resp = await fetch('/demo/generate_namespaces');
+        const namespaces_resp = await fetchWithAuth('/demo/generate_namespaces');
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
@@ -549,7 +3778,7 @@
 
         };
 
-        const tenants_resp = await fetch('/demo/generate_tenants');
+        const tenants_resp = await fetchWithAuth('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
@@ -643,7 +3872,7 @@
                 })
             };
 
-            const response = await fetch("/demo/proxy/object/", options);
+            const response = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await response.text();
             if (response.status == '200') {
                 alert("Create Model successfully! " + text);
@@ -667,7 +3896,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/function/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/function/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -724,7 +3953,7 @@
                 })
             };
 
-            const apikeys_resp = await fetch("/demo/proxy/object/", options);
+            const apikeys_resp = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await apikeys_resp.text();
 
             if (apikeys_resp.status === 200) {
@@ -745,7 +3974,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/namespace/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/namespace/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -789,7 +4018,7 @@
                 })
             };
 
-            const resp = await fetch("/demo/proxy/object/", options);
+            const resp = await fetchWithAuth("/demo/proxy/object/", options);
             const text = await resp.text();
 
             if (resp.status === 200) {
@@ -810,7 +4039,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch('/demo/proxy/object/tenant/' + key + "/", {
+                    fetchWithAuth('/demo/proxy/object/tenant/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -840,7 +4069,7 @@
                         "keyname": keyname
                     })
                 };
-                await fetch("/demo/apikeys", body);
+                await fetchWithAuth("/demo/apikeys", body);
                 nameInput.value = '';
                 fetchItems();
             }
@@ -860,7 +4089,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetch("/demo/apikeys", {
+                    fetchWithAuth("/demo/apikeys", {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

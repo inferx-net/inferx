@@ -15,6 +15,7 @@ const DEFAULT_PROMPT: &str =
     "Can you provide ways to eat combinations of bananas and dragonfruits?";
 const DEFAULT_MAX_TOKENS: u32 = 20;
 const DEFAULT_GATEWAY_ENDPOINT: &str = "http://localhost:31501"; //"http://localhost:4000";
+const DEFAULT_TENANT: &str = "public";
 
 #[tokio::main]
 async fn main() {
@@ -33,11 +34,13 @@ async fn main() {
         duration_secs,
         modelalias,
         model,
-        show_outputs,
-        prompt,
-        max_tokens,
-        max_requests,
-        gateway_endpoint,
+    show_outputs,
+    prompt,
+    max_tokens,
+    max_requests,
+    gateway_endpoint,
+    token,
+    tenant,
     ) = if input_args.iter().all(|arg| arg.contains('=')) {
         parse_key_value_args(&program, &input_args)
     } else {
@@ -61,6 +64,8 @@ async fn main() {
         max_tokens,
         max_requests,
         &gateway_endpoint,
+        token,
+        &tenant,
     )
     .await;
 }
@@ -75,9 +80,12 @@ async fn run_hey(
     max_tokens: u32,
     max_requests: Option<usize>,
     gateway_endpoint: &str,
+    token: Option<String>,
+    tenant: &str,
 ) {
     let base = gateway_endpoint.trim_end_matches('/');
-    let url = format!("{}/funccall/public/{}/v1/completions", base, modelalias);
+    let tenant = tenant.trim_matches('/');
+    let url = format!("{}/funccall/{}/{}/v1/completions", base, tenant, modelalias);
     println!(
         "=== Running hey for model: {} (c={}, z={}s) ===",
         modelalias, concurrency, duration_secs
@@ -94,6 +102,7 @@ async fn run_hey(
     let fail = Arc::new(AtomicUsize::new(0));
     let mismatch = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
+    let token = token.filter(|t| !t.is_empty());
 
     let joined: Arc<Mutex<BTreeMap<String, i32>>> = Arc::new(Mutex::new(BTreeMap::new()));
     for _ in 0..concurrency {
@@ -109,6 +118,7 @@ async fn run_hey(
         let max_tokens = max_tokens;
         let stop_time = stop_time;
         let max_requests = max_requests;
+        let token = token.clone();
         handles.push(tokio::spawn(async move {
             let mut first = None;
             let mut output: BTreeMap<String, i32> = BTreeMap::new();
@@ -140,7 +150,12 @@ async fn run_hey(
                     "seed": 0
                 });
 
-                match client.post(&url).json(&body).send().await {
+                let mut req = client.post(&url).json(&body);
+                if let Some(ref token) = token {
+                    req = req.bearer_auth(token);
+                }
+
+                match req.send().await {
                     Ok(resp) => {
                         let status = resp.status();
                         match resp.text().await {
@@ -272,11 +287,13 @@ fn parse_positional_args(
     u32,
     Option<usize>,
     String,
+    Option<String>,
+    String,
 ) {
-    if args.len() < 3 || args.len() > 5 {
+    if args.len() < 3 || args.len() > 7 {
         fatal(
             program,
-            "expected 3 to 5 positional arguments",
+            "expected 3 to 7 positional arguments",
         );
     }
 
@@ -287,22 +304,54 @@ fn parse_positional_args(
         .parse()
         .unwrap_or_else(|_| fatal(program, "invalid duration seconds value"));
 
-    let (modelalias, model, max_requests) = match args.len() {
+    let (modelalias, model, max_requests, token, tenant) = match args.len() {
         3 => {
             let model = args[2].clone();
-            (model.clone(), model, None)
+            (model.clone(), model, None, None, DEFAULT_TENANT.to_owned())
         }
         4 => {
             if let Some(max) = try_parse_positive_usize(&args[3]) {
                 let model = args[2].clone();
-                (model.clone(), model, Some(max))
+                (model.clone(), model, Some(max), None, DEFAULT_TENANT.to_owned())
             } else {
-                (args[2].clone(), args[3].clone(), None)
+                (
+                    args[2].clone(),
+                    args[3].clone(),
+                    None,
+                    None,
+                    DEFAULT_TENANT.to_owned(),
+                )
             }
         }
         5 => {
             let max = parse_positive_usize(program, "max_requests", &args[4]);
-            (args[2].clone(), args[3].clone(), Some(max))
+            (
+                args[2].clone(),
+                args[3].clone(),
+                Some(max),
+                None,
+                DEFAULT_TENANT.to_owned(),
+            )
+        }
+        6 => {
+            let max = parse_positive_usize(program, "max_requests", &args[4]);
+            (
+                args[2].clone(),
+                args[3].clone(),
+                Some(max),
+                Some(args[5].clone()),
+                DEFAULT_TENANT.to_owned(),
+            )
+        }
+        7 => {
+            let max = parse_positive_usize(program, "max_requests", &args[4]);
+            (
+                args[2].clone(),
+                args[3].clone(),
+                Some(max),
+                Some(args[5].clone()),
+                args[6].clone(),
+            )
         }
         _ => unreachable!(),
     };
@@ -317,6 +366,8 @@ fn parse_positional_args(
         DEFAULT_MAX_TOKENS,
         max_requests,
         DEFAULT_GATEWAY_ENDPOINT.to_owned(),
+        token,
+        tenant,
     )
 }
 
@@ -333,6 +384,8 @@ fn parse_key_value_args(
     u32,
     Option<usize>,
     String,
+    Option<String>,
+    String,
 ) {
     let mut concurrency: Option<usize> = None;
     let mut duration_secs: Option<u64> = None;
@@ -343,6 +396,8 @@ fn parse_key_value_args(
     let mut max_tokens: Option<u32> = None;
     let mut max_requests: Option<usize> = None;
     let mut gateway_endpoint: Option<String> = None;
+    let mut token: Option<String> = None;
+    let mut tenant: Option<String> = None;
 
     for arg in args {
         let (key, raw_value) = arg
@@ -400,6 +455,12 @@ fn parse_key_value_args(
             "gatewayendpoint" | "gateway_endpoint" | "gateway" | "endpoint" => {
                 gateway_endpoint = Some(value.to_owned());
             }
+            "token" | "bearer" | "bearer_token" | "auth" | "authorization" => {
+                token = Some(value.to_owned());
+            }
+            "tenant" => {
+                tenant = Some(value.to_owned());
+            }
             _ => fatal(program, &format!("unknown argument '{}'", key)),
         }
     }
@@ -414,6 +475,7 @@ fn parse_key_value_args(
     let max_requests = max_requests;
     let gateway_endpoint = gateway_endpoint
         .unwrap_or_else(|| DEFAULT_GATEWAY_ENDPOINT.to_owned());
+    let tenant = tenant.unwrap_or_else(|| DEFAULT_TENANT.to_owned());
 
     (
         concurrency,
@@ -425,6 +487,8 @@ fn parse_key_value_args(
         max_tokens,
         max_requests,
         gateway_endpoint,
+        token,
+        tenant,
     )
 }
 
@@ -454,15 +518,15 @@ fn parse_duration_arg(value: &str) -> Result<u64, String> {
 
 fn print_usage(program: &str) {
     eprintln!(
-        "Usage (positional): {} <concurrency> <duration_secs> [<modelalias>] <model> [<max_requests>]",
+        "Usage (positional): {} <concurrency> <duration_secs> [<modelalias>] <model> [<max_requests>] [<token>] [<tenant>]",
         program
     );
     eprintln!(
-        "Usage (key-value): {} concurrency=<n> duration=<Ns|Nm|Nh> [alias=<modelalias>] model=<model> [prompt=<text>] [max_tokens=<n>] [max_requests=<n>] [gatewayendpoint=<url>] [show_output=<true|false>]",
+        "Usage (key-value): {} concurrency=<n> duration=<Ns|Nm|Nh> [alias=<modelalias>] model=<model> [prompt=<text>] [max_tokens=<n>] [max_requests=<n>] [gatewayendpoint=<url>] [token=<value>] [tenant=<name>] [show_output=<true|false>]",
         program
     );
     eprintln!(
-        "Example: {} concurrency=10 duration=20s model=\"deepseek-ai/DeepSeek-R1-Distill-Llama-70B_8GPU\" prompt=\"Write a haiku\" max_tokens=64 max_requests=500 gatewayendpoint=\"http://localhost:31501\"",
+        "Example: {} concurrency=10 duration=20s model=\"deepseek-ai/DeepSeek-R1-Distill-Llama-70B_8GPU\" prompt=\"Write a haiku\" max_tokens=64 max_requests=500 gatewayendpoint=\"http://localhost:31501\" token=\"YOUR_TOKEN\" tenant=\"public\"",
         program
     );
 }

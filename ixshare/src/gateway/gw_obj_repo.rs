@@ -19,9 +19,8 @@ use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::funcstatus_mgr::FuncStatusMgr;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatusDef;
-use inferxlib::obj_mgr::pod_mgr::{PodState, CreatePodType};
+use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
-use std::collections::BTreeMap;
 use inferxlib::obj_mgr::tenant_mgr::TenantMgr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,26 +52,10 @@ use inferxlib::obj_mgr::namespace_mgr::*;
 use inferxlib::obj_mgr::pod_mgr::PodMgr;
 
 use super::func_agent_mgr::FuncAgentMgr;
-use super::http_gateway::{GATEWAY_CONFIG, GatewayId};
+use super::http_gateway::GATEWAY_CONFIG;
 
 lazy_static::lazy_static! {
     pub static ref SCHEDULER_URL : Mutex<Option<String>> = Mutex::new(None);
-}
-
-/// Snapshot GPU tracking info for billing
-#[derive(Debug, Clone)]
-pub struct SnapshotGpuTrackingInfo {
-    pub tenant: String,
-    pub namespace: String,
-    pub funcname: String,
-    pub fprevision: i64,
-    pub nodename: String,
-    pub pod_id: String,
-    pub gpu_type: String,
-    pub gpu_count: i32,
-    pub vram_mb: i64,
-    pub total_vram_mb: i64,
-    pub start_time: std::time::Instant,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -129,9 +112,6 @@ pub struct GwObjRepoInner {
     pub funcpolicyMgr: FuncPolicyMgr,
 
     pub factory: InformerFactory,
-
-    // Snapshot GPU usage tracking: podKey -> (start_time, tracking_info)
-    pub snapshotGpuTracking: Mutex<BTreeMap<String, SnapshotGpuTrackingInfo>>,
 
     pub nodeListDone: AtomicBool,
     pub tenantListDone: AtomicBool,
@@ -210,7 +190,6 @@ impl GwObjRepo {
             snapshotMgr: FuncSnapshotMgr::default(),
             funcpolicyMgr: FuncPolicyMgr::default(),
             factory: factory,
-            snapshotGpuTracking: Mutex::new(BTreeMap::new()),
 
             tenantListDone: AtomicBool::new(false),
             namespaceListDone: AtomicBool::new(false),
@@ -607,26 +586,7 @@ impl GwObjRepo {
                         }
                         FuncPod::KEY => {
                             let podDef = FuncPod::FromDataObject(obj)?;
-                            self.podMgr.Add(podDef.clone())?;
-
-                            // Track snapshot pod for GPU usage billing
-                            if podDef.object.spec.create_type == CreatePodType::Snapshot {
-                                let pod_key = podDef.PodKey();
-                                let tracking_info = SnapshotGpuTrackingInfo {
-                                    tenant: podDef.tenant.clone(),
-                                    namespace: podDef.namespace.clone(),
-                                    funcname: podDef.object.spec.funcname.clone(),
-                                    fprevision: podDef.object.spec.fprevision,
-                                    nodename: podDef.object.spec.nodename.clone(),
-                                    pod_id: podDef.object.spec.id.clone(),
-                                    gpu_type: podDef.object.spec.allocResources.gpuType.0.clone(),
-                                    gpu_count: podDef.object.spec.reqResources.gpu.gpuCount as i32,
-                                    vram_mb: podDef.object.spec.reqResources.gpu.vRam as i64, // already in MB
-                                    total_vram_mb: (podDef.object.spec.allocResources.gpus.TotalVRam() / 1024 / 1024) as i64,
-                                    start_time: std::time::Instant::now(),
-                                };
-                                self.snapshotGpuTracking.lock().unwrap().insert(pod_key, tracking_info);
-                            }
+                            self.podMgr.Add(podDef)?;
                             // self.FuncAgentMgr().FuncPodEventHandler(event.clone())?;
                         }
                         ContainerSnapshot::KEY => {
@@ -739,39 +699,7 @@ impl GwObjRepo {
                         }
                         FuncPod::KEY => {
                             let podDef = FuncPod::FromDataObject(obj)?;
-                            self.podMgr.Remove(podDef.clone())?;
-
-                            // Clean up snapshot tracking; only audit if snapshot succeeded
-                            let pod_key = podDef.PodKey();
-                            if let Some(tracking_info) = self.snapshotGpuTracking.lock().unwrap().remove(&pod_key) {
-                                // Only audit GPU usage for successful snapshots
-                                if podDef.object.status.state == PodState::Snapshoted && tracking_info.gpu_count > 0 {
-                                    let duration = tracking_info.start_time.elapsed();
-                                    let duration_ms = duration.as_millis() as i64;
-                                    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
-                                    let start_time = now - chrono::Duration::milliseconds(duration_ms);
-
-                                    let gpu_usage = crate::audit::GpuUsage {
-                                        tenant: tracking_info.tenant,
-                                        namespace: tracking_info.namespace,
-                                        funcname: tracking_info.funcname,
-                                        fprevision: tracking_info.fprevision,
-                                        nodename: tracking_info.nodename,
-                                        pod_id: tracking_info.pod_id,
-                                        gpu_type: tracking_info.gpu_type,
-                                        gpu_count: tracking_info.gpu_count,
-                                        vram_mb: tracking_info.vram_mb,
-                                        total_vram_mb: tracking_info.total_vram_mb,
-                                        usage_type: "snapshot".to_string(),
-                                        start_time,
-                                        end_time: now,
-                                        duration_ms,
-                                        is_coldstart: false,
-                                        gateway_id: Some(GatewayId()),
-                                    };
-                                    crate::audit::GPU_USAGE_AGENT.Audit(gpu_usage);
-                                }
-                            }
+                            self.podMgr.Remove(podDef)?;
                             // self.FuncAgentMgr().FuncPodEventHandler(event.clone())?;
                         }
                         ContainerSnapshot::KEY => {
