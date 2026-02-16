@@ -2661,8 +2661,7 @@ impl SchedulerHandler {
             self.billing_tick_interval = Some(billing_interval);
         }
         if self.standby_billing_interval.is_none() {
-            // let mut standby_interval = tokio::time::interval(Duration::from_secs(600));
-            let mut standby_interval = tokio::time::interval(Duration::from_secs(60));
+            let mut standby_interval = tokio::time::interval(Duration::from_secs(600));
             standby_interval.tick().await; // Skip first immediate tick
             self.standby_billing_interval = Some(standby_interval);
         }
