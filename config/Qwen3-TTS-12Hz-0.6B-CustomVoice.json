@@ -1,0 +1,72 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-omni:v0.14.0",
+            "commands": [
+                "vllm",
+                "serve",
+                "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+                "--omni"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "ReadyMem": 3000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 8000
+                },
+                "parallel": 100
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
+                "path": "v1/audio/speech",
+                "body": {
+                    "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+                    "input": "Hello! The vLLM-Omni server is now running successfully and I am generating speech.",
+                    "voice": "Vivian",
+                    "response_format": "wav"
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}

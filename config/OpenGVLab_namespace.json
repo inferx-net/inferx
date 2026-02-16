@@ -1,0 +1,12 @@
+{
+    "type": "namespace",
+    "tenant": "public",
+    "namespace": "system",
+    "name": "OpenGVLab",
+    "object": {
+        "spec": {},
+        "status": {
+            "disable": false
+        }
+    }
+}
