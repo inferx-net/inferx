@@ -172,15 +172,25 @@ impl Default for ApiType {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum ModelType {
+    Public,
+    Private,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncSpec {
     pub image: String,
     pub commands: Vec<String>,
     pub envs: Vec<(String, String)>,
+    #[serde(default)]
     pub mounts: Vec<Mount>,
     pub endpoint: HttpEndpoint,
     #[serde(default)]
     pub version: i64,
+
+    #[serde(rename = "model_type", default = "ModelTypeDefault")]
+    pub modelType: ModelType,
 
     #[serde(default)]
     pub entrypoint: Vec<String>,
@@ -203,6 +213,10 @@ fn PromptDefault() -> String {
 
 fn FuncpolicyDefault() -> ObjRef<FuncPolicySpec> {
     return ObjRef::Obj(FuncPolicySpec::default());
+}
+
+fn ModelTypeDefault() -> ModelType {
+    return ModelType::Public;
 }
 
 impl FuncSpec {
@@ -245,6 +259,7 @@ impl Default for FuncSpec {
                 probeTimeout: 1000,
                 probetype: ProbeType::Prompt,
             },
+            modelType: ModelType::Public,
             entrypoint: Vec::new(),
             version: 0,
             resources: Resources::default(),
