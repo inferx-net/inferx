@@ -2,17 +2,19 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-1.5B-Instruct-1",
+    "name": "Qwen3-TTS-12Hz-1.7B-VoiceDesign",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-omni:v0.14.0",
             "commands": [
-                "--model",
-                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
-                "--gpu-memory-utilization",
-                "0.70",
-                "--max-model-len",
-                "1000"
+                "vllm",
+                "serve",
+                "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+                "--stage-configs-path",
+                "vllm_omni/model_executor/stage_configs/qwen3_tts.yaml",
+                "--enforce-eager",
+                "--trust-remote-code",
+                "--omni"
             ],
             "resources": {
                 "CPU": 12000,
@@ -21,7 +23,7 @@
                 "GPU": {
                     "Type": "Any",
                     "Count": 1,
-                    "vRam": 13000
+                    "vRam": 12000
                 }
             },
             "envs": [
@@ -32,14 +34,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "UVICORN_ACCESS_LOG",
-                    "0"
-                ],
-                [
-                    "VLLM_USE_GPU_MEMORY_RESERVATION",
-                    "True"
                 ]
             ],
             "mounts": [
@@ -51,18 +45,17 @@
             "endpoint": {
                 "port": 8000,
                 "schema": "Http",
-                "probe": "/health",
-                "probetype": "Prompt"
+                "probe": "/health"
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
-                "path": "v1/completions",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
+                "path": "v1/audio/speech",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
-                    "max_tokens": "800",
-                    "temperature": "0",
-                    "stream": "true"
+                    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+                    "input": "Hello! The vLLM-Omni server is now running successfully and I am generating speech.",
+                    "voice": "Vivian",
+                    "response_format": "wav"
                 }
             },
             "standby": {
@@ -74,7 +67,7 @@
                 "Link": {
                     "objType": "funcpolicy",
                     "namespace": "system",
-                    "name": "funcpolicy_1GPU"
+                    "name": "default_funcpolicy"
                 }
             }
         }

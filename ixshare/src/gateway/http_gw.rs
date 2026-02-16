@@ -401,6 +401,10 @@ impl HttpGateway {
         token: &Arc<AccessToken>,
         obj: DataObject<Value>,
     ) -> Result<i64> {
+        if !token.IsInferxAdmin() {
+            return Err(Error::NoPermission);
+        }
+
         let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
 
         let tenantName = tenant.tenant.clone();
@@ -430,13 +434,20 @@ impl HttpGateway {
         token: &Arc<AccessToken>,
         obj: DataObject<Value>,
     ) -> Result<i64> {
-        if !token.IsInferxAdmin() {
+        let tenant: Tenant = Tenant::FromDataObject(obj.clone())?;
+
+        // Only allow updating tenant in system/system
+        if &tenant.tenant != "system" || &tenant.namespace != "system" {
+            return Err(Error::CommonError(format!(
+                "invalid tenant or namespace name"
+            )));
+        }
+
+        // Check permission - must be tenant admin
+        if !token.IsTenantAdmin(&tenant.name) {
             return Err(Error::NoPermission);
         }
 
-        // let mut dataobj = obj;
-        // let tenant = Tenant::FromDataObject(dataobj)?;
-        // dataobj = tenant.DataObject();
         let version = self.client.Update(&obj, 0).await?;
         return Ok(version);
     }
@@ -913,21 +924,23 @@ impl HttpGateway {
             return namespaces;
         }
 
-        let mut namespaces = BTreeSet::new();
-        for (tenant, namespace) in token.UserNamespaces() {
-            namespaces.insert((tenant, namespace));
-        }
+        // Start with explicit namespace roles.
+        let mut namespaces: BTreeSet<(String, String)> =
+            token.UserNamespaces().into_iter().collect();
 
-        // Tenant users/admins are namespace users for every namespace in their tenant.
+        // Expand tenant-user/admin permissions to all namespaces under those tenants.
         for tenant in token.UserTenants() {
             match self.objRepo.namespaceMgr.GetObjects(&tenant, "") {
-                Ok(items) => {
-                    for ns in items {
+                Ok(list) => {
+                    for ns in list {
                         namespaces.insert((ns.Tenant(), ns.Name()));
                     }
                 }
                 Err(e) => {
-                    error!("UserNamespaces fail to list tenant {} namespaces: {:?}", tenant, e);
+                    error!(
+                        "UserNamespaces: failed to list namespaces for tenant {}: {:?}",
+                        tenant, e
+                    );
                 }
             }
         }

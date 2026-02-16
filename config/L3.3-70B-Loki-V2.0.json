@@ -1,27 +1,29 @@
 {
     "type": "function",
     "tenant": "public",
-    "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-1.5B-Instruct-1",
+    "namespace": "Trial",
+    "name": "L3.3-70B-Loki-V2.0",
     "object": {
         "spec": {
             "image": "vllm/vllm-openai:v0.9.0",
             "commands": [
                 "--model",
-                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                "CrucibleLab/L3.3-70B-Loki-V2.0",
+                "--disable-custom-all-reduce",
+                "--trust-remote-code",
                 "--gpu-memory-utilization",
-                "0.70",
+                "0.99",
                 "--max-model-len",
-                "1000"
+                "10000",
+                "--tensor-parallel-size=2"
             ],
             "resources": {
-                "CPU": 12000,
-                "Mem": 24000,
-                "ReadyMem": 3000,
+                "CPU": 20000,
+                "Mem": 100000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 13000
+                    "Count": 2,
+                    "vRam": 71000
                 }
             },
             "envs": [
@@ -32,14 +34,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "UVICORN_ACCESS_LOG",
-                    "0"
-                ],
-                [
-                    "VLLM_USE_GPU_MEMORY_RESERVATION",
-                    "True"
                 ]
             ],
             "mounts": [
@@ -51,15 +45,14 @@
             "endpoint": {
                 "port": 8000,
                 "schema": "Http",
-                "probe": "/health",
-                "probetype": "Prompt"
+                "probe": "/health"
             },
             "sample_query": {
                 "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
+                "prompt": "what is the integral of x^2 from 0 to 2?\nPlease reason step by step, and put your final answer within \\boxed{}.",
                 "path": "v1/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                    "model": "CrucibleLab/L3.3-70B-Loki-V2.0",
                     "max_tokens": "800",
                     "temperature": "0",
                     "stream": "true"
@@ -71,10 +64,22 @@
                 "pinned": "File"
             },
             "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "funcpolicy_1GPU"
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 2,
+                    "standby_per_node": 1,
+                    "parallel": 100,
+                    "queue_len": 1000,
+                    "queue_timeout": 30.0,
+                    "scaleout_policy": {
+                        "WaitQueueRatio": {
+                            "wait_ratio": 0.1
+                        }
+                    },
+                    "scalein_timeout": 0.01,
+                    "runtime_config": {
+                        "graph_sync": true
+                    }
                 }
             }
         }

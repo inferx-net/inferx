@@ -169,6 +169,10 @@ impl StateSvc {
             },
             EventType::Modified => {
                 match &obj.objType as &str {
+                    Tenant::KEY => {
+                        let spec: Tenant = Tenant::FromDataObject(obj)?;
+                        self.tenantMgr.Update(spec)?;
+                    }
                     Function::KEY => {
                         let oldspec = event.oldObj.clone().unwrap().To::<FuncObject>()?;
                         // Function::FromDataObject(event.oldObj.clone().unwrap())?;

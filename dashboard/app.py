@@ -351,8 +351,6 @@ def list_namespaceusers(role: str, tenant: str, namespace: str):
 
     return funcs
 
-
-
 def getfunc(tenant: str, namespace: str, funcname: str):
     access_token = session.get('access_token', '')
     if access_token == "":
@@ -505,7 +503,7 @@ def GetFailLog(tenant: str, namespace: str, funcname: str, revision: int, id: st
     url = "{}/faillog/{}/{}/{}/{}/{}".format(
         apihostaddr, tenant, namespace, funcname, revision, id
     )
-    resp = requests.get(url)
+    resp = requests.get(url, headers=headers)
     
     fail = json.loads(resp.content)
     fail["log"] = fail["log"].replace("\n", "<br>")
@@ -554,7 +552,6 @@ def text2img():
         }
     req = request.get_json()
     
-    print("text2img req ", req)
     prompt = req["prompt"]
     tenant = req.get("tenant")
     namespace = req.get("namespace")
@@ -563,14 +560,19 @@ def text2img():
     func = getfunc(tenant, namespace, funcname)
 
     sample = func["func"]["object"]["spec"]["sample_query"]
-    map = sample["body"]
 
-    postreq = {
-        "prompt": prompt
-    }
+    import copy
+    postreq = copy.deepcopy(sample["body"])
 
-    for index, (key, value) in enumerate(map.items()):
-        postreq[key] = value
+    # Locate and replace the prompt within the nested messages structure
+    try:
+        # Most models follow: messages[0] -> content[0] -> text
+        # We replace the placeholder text with the user-provided prompt
+        postreq["messages"][0]["content"][0]["text"] = prompt
+    except (KeyError, IndexError):
+        # Fallback in case the structure is slightly different
+        print("Warning: Could not find nested text field, falling back to top-level prompt.")
+        postreq["prompt"] = prompt
 
     url = "{}/funccall/{}/{}/{}/{}".format(apihostaddr, tenant, namespace, funcname, sample["path"] )
 
@@ -581,6 +583,55 @@ def text2img():
     excluded_headers = []
     headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
     return Response(resp.iter_content(1024000), resp.status_code, headers)
+
+
+@prefix_bp.route('/text2audio', methods=['POST'])
+@not_require_login
+def text2audio():
+    access_token = session.get('access_token', '')
+    if access_token == "":
+        headers = {
+            "Content-Type": "application/json",
+        }
+    else:
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            "Content-Type": "application/json",
+        }
+    req = request.get_json()
+    
+    prompt = req["prompt"]
+    tenant = req.get("tenant")
+    namespace = req.get("namespace")
+    funcname = req.get("funcname")
+    
+    func = getfunc(tenant, namespace, funcname)
+
+    sample = func["func"]["object"]["spec"]["sample_query"]
+
+    import copy
+    postreq = copy.deepcopy(sample["body"])
+
+    # Locate and replace the prompt within the nested messages structure
+    try:
+        # Most models follow: messages[0] -> content[0] -> text
+        # We replace the placeholder text with the user-provided prompt
+        postreq["input"] = prompt
+    except (KeyError, IndexError):
+        # Fallback in case the structure is slightly different
+        print("Warning: Could not find nested text field, falling back to top-level prompt.")
+        postreq["prompt"] = prompt
+
+    url = "{}/funccall/{}/{}/{}/{}".format(apihostaddr, tenant, namespace, funcname, sample["path"] )
+
+    # Stream the response from OpenAI API
+    resp = requests.post(url, headers=headers, json=postreq, stream=True)
+
+    # excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+    excluded_headers = []
+    headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
+    return Response(resp.iter_content(1024000), resp.status_code, headers)
+
 
 @prefix_bp.route('/generate_tenants', methods=['GET'])
 @require_login

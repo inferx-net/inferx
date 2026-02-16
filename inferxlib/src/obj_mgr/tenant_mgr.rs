@@ -38,6 +38,8 @@ fn default_resourcelimit() -> ResourceLimit {
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct TenantStatus {
     pub disable: bool,
+    #[serde(default)]
+    pub quota_exceeded: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -55,7 +57,7 @@ pub struct ResourceLimit {
 }
 
 fn default_funccnt() -> u64 {
-    2
+    10
 }
 
 fn default_allow_mem_standby() -> bool {

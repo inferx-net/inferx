@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: billing-quota-check-debug
+spec:
+  restartPolicy: Never
+  containers:
+    - name: util
+      image: inferx/inferx_util:v0.1.0
+      command: ["bash", "-c", "sleep infinity"]
+      env:
+        - name: PGHOST
+          value: db
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          value: audit_user
+        - name: PGPASSWORD
+          value: "123456"
+        - name: PGDATABASE
+          value: auditdb
+        - name: GATEWAY_URL
+          value: "http://gateway:4000"
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: billing-secrets
+              key: api-key
+      volumeMounts:
+        - name: sql-scripts
+          mountPath: /scripts
+  volumes:
+    - name: sql-scripts
+      configMap:
+        name: billing-sql-scripts

@@ -2,17 +2,20 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "Qwen2.5-Coder-1.5B-Instruct-1",
+    "name": "FLUX.2-klein-4B",
     "object": {
         "spec": {
-            "image": "vllm/vllm-openai:v0.9.0",
+            "image": "vllm/vllm-omni:v0.14.0",
             "commands": [
-                "--model",
-                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                "vllm",
+                "serve",
+                "black-forest-labs/FLUX.2-klein-4B",
+                "--enforce-eager",
+                "--trust-remote-code",
                 "--gpu-memory-utilization",
-                "0.70",
-                "--max-model-len",
-                "1000"
+                "0.99",
+                "--tensor-parallel-size=2",
+                "--omni"
             ],
             "resources": {
                 "CPU": 12000,
@@ -20,8 +23,8 @@
                 "ReadyMem": 3000,
                 "GPU": {
                     "Type": "Any",
-                    "Count": 1,
-                    "vRam": 13000
+                    "Count": 2,
+                    "vRam": 14300
                 }
             },
             "envs": [
@@ -32,14 +35,6 @@
                 [
                     "VLLM_CUDART_SO_PATH",
                     "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
-                ],
-                [
-                    "UVICORN_ACCESS_LOG",
-                    "0"
-                ],
-                [
-                    "VLLM_USE_GPU_MEMORY_RESERVATION",
-                    "True"
                 ]
             ],
             "mounts": [
@@ -51,30 +46,42 @@
             "endpoint": {
                 "port": 8000,
                 "schema": "Http",
-                "probe": "/health",
-                "probetype": "Prompt"
+                "probe": "/health"
             },
             "sample_query": {
-                "apiType": "text2text",
-                "prompt": "write a quick sort algorithm.",
-                "path": "v1/completions",
+                "apiType": "text2img",
+                "prompt": "A glass of water",
+                "path": "v1/chat/completions",
                 "body": {
-                    "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
-                    "max_tokens": "800",
-                    "temperature": "0",
-                    "stream": "true"
+                    "model": "aydin99/FLUX.2-klein-4B",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "A glass of water"
+                                }
+                            ]
+                        }
+                    ],
+                    "extra_body": {
+                        "num_inference_steps": 12,
+                        "width": 320,
+                        "height": 480
+                    }
                 }
             },
             "standby": {
-                "gpu": "File",
-                "pageable": "File",
-                "pinned": "File"
+                "gpu": "Blob",
+                "pageable": "Blob",
+                "pinned": "Blob"
             },
             "policy": {
                 "Link": {
                     "objType": "funcpolicy",
                     "namespace": "system",
-                    "name": "funcpolicy_1GPU"
+                    "name": "default_funcpolicy"
                 }
             }
         }

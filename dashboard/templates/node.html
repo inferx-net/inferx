@@ -9,8 +9,17 @@
     td {
         border: 1px solid black;
     }
+
+    .content table.ix-table {
+        font-size: 14px;
+    }
+
+    .content table.ix-table.node-detail-table th:nth-child(2),
+    .content table.ix-table.node-detail-table td:nth-child(2) {
+        text-align: left;
+    }
 </style>
-<table style="width:100%">
+<table class="ix-table node-detail-table" style="width:100%">
     <tr>
         <th>Node Name</th>
         <th>Node</th>
