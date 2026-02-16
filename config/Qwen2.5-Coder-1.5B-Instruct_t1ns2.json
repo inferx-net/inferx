@@ -1,0 +1,92 @@
+{
+    "type": "function",
+    "tenant": "tenant1",
+    "namespace": "ns2",
+    "name": "Qwen2.5-Coder-1.5B-Instruct",
+    "object": {
+        "spec": {
+            "image": "vllm/vllm-openai:v0.9.0",
+            "commands": [
+                "--model",
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                "--gpu-memory-utilization",
+                "0.70",
+                "--max-model-len",
+                "1000"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "ReadyMem": 3000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 13000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "UVICORN_ACCESS_LOG",
+                    "0"
+                ],
+                [
+                    "VLLM_USE_GPU_MEMORY_RESERVATION",
+                    "True"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health",
+                "probetype": "Prompt"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "prompt": "write a quick sort algorithm.",
+                "prompts": [
+                    "Write a Python function that computes Fibonacci numbers. Explain time complexity.",
+                    "Translate the following Chinese text to English: 今天天气很好。",
+                    "Explain general relativity in simple language.",
+                    "Write a legal contract clause about liability and indemnification.",
+                    "Summarize the plot of a fantasy novel involving dragons.",
+                    "Solve this calculus integral: ∫ x^3 log(x) dx",
+                    "Generate a JSON schema describing a user profile.",
+                    "Explain why emojis like 😀🔥🚀 represent byte-level tokens."
+                ],
+                "path": "v1/completions",
+                "body": {
+                    "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                    "max_tokens": "800",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "funcpolicy_1GPU"
+                }
+            }
+        }
+    }
+}

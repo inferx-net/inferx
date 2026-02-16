@@ -244,6 +244,10 @@ async fn TenantQuotaGuard(
     req: Request,
     next: Next,
 ) -> SResult<Response, StatusCode> {
+    if !GATEWAY_CONFIG.enforceBilling {
+        return Ok(next.run(req).await);
+    }
+
     let tenant = match tenant_from_path(req.uri().path()) {
         Some(t) if !t.is_empty() => t,
         _ => {
@@ -596,8 +600,10 @@ async fn PostPrompt(
     Json(req): Json<PromptReq>,
 ) -> SResult<Response, StatusCode> {
     error!("PostPrompt req is {:?}", &req);
-    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, &req.tenant) {
-        return Ok(resp);
+    if GATEWAY_CONFIG.enforceBilling {
+        if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, &req.tenant) {
+            return Ok(resp);
+        }
     }
     let client = reqwest::Client::new();
 
@@ -1565,8 +1571,10 @@ async fn CreateObj(
     } else {
         dataobj.tenant.as_str()
     };
-    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
-        return Ok(resp);
+    if GATEWAY_CONFIG.enforceBilling {
+        if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
+            return Ok(resp);
+        }
     }
     if dataobj.objType.as_str() == Tenant::KEY && !token.IsInferxAdmin() {
         let body = Body::from("service failure: No permission");
@@ -1617,8 +1625,10 @@ async fn UpdateObj(
     } else {
         dataobj.tenant.as_str()
     };
-    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
-        return Ok(resp);
+    if GATEWAY_CONFIG.enforceBilling {
+        if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
+            return Ok(resp);
+        }
     }
 
     let res = match dataobj.objType.as_str() {
@@ -3427,8 +3437,10 @@ async fn RbacGrant(
         ObjectType::Tenant => grant.name.as_str(),
         ObjectType::Namespace => grant.tenant.as_str(),
     };
-    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
-        return Ok(resp);
+    if GATEWAY_CONFIG.enforceBilling {
+        if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
+            return Ok(resp);
+        }
     }
     match gw
         .Rbac(
@@ -3471,8 +3483,10 @@ async fn RbacRevoke(
         ObjectType::Tenant => grant.name.as_str(),
         ObjectType::Namespace => grant.tenant.as_str(),
     };
-    if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
-        return Ok(resp);
+    if GATEWAY_CONFIG.enforceBilling {
+        if let Some(resp) = enforce_tenant_quota_for_write(&token, &gw, tenant_target) {
+            return Ok(resp);
+        }
     }
     match gw
         .Rbac(

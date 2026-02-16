@@ -161,6 +161,7 @@ pub struct GatewayConfig {
     pub nodeIp: String,
     pub schedulerPort: u16,
     pub auditdbAddr: String,
+    pub enforceBilling: bool,
     pub secretStoreAddr: String,
     pub keycloakconfig: KeycloadConfig,
     pub inferxAdminApikey: String,
@@ -223,6 +224,17 @@ impl GatewayConfig {
             Err(_) => config.auditdbAddr.clone(),
         };
 
+        let enforceBilling = match std::env::var("ENFORCE_BILLING") {
+            Ok(s) => match s.parse::<bool>() {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!("invalid ENFORCE_BILLING value '{}', defaulting to false", &s);
+                    false
+                }
+            },
+            Err(_) => false,
+        };
+
         let keycloakUrl = match std::env::var("KEYCLOAK_URL") {
             Ok(s) => s,
             Err(_) => config.keycloakconfig.url.clone(),
@@ -255,6 +267,7 @@ impl GatewayConfig {
             schedulerPort: schedulerPort,
             secretStoreAddr: secretStoreAddr,
             auditdbAddr: auditdbAddr,
+            enforceBilling: enforceBilling,
             keycloakconfig: KeycloadConfig {
                 url: keycloakUrl,
                 realm: keycloakRealm,
