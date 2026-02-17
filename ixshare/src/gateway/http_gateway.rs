@@ -1506,6 +1506,18 @@ async fn CreateApikey(
             return Ok(resp);
         }
         Err(e) => {
+            if is_apikey_duplicate_keyname_error(&e) {
+                let body = Body::from(format!(
+                    "API key name '{}' already exists. Please choose a different key name.",
+                    obj.keyname
+                ));
+                let resp = Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+
             let body = Body::from(format!("service failure {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
@@ -1513,6 +1525,28 @@ async fn CreateApikey(
                 .unwrap();
             return Ok(resp);
         }
+    }
+}
+
+fn is_apikey_duplicate_keyname_error(err: &Error) -> bool {
+    match err {
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            let is_unique_violation = db_err.code().as_deref() == Some("23505");
+            if !is_unique_violation {
+                return false;
+            }
+
+            if matches!(
+                db_err.constraint(),
+                Some("apikey_idx_username_keyname") | Some("apikey_idx_realm_username")
+            ) {
+                return true;
+            }
+
+            // Fallback for migrated environments where index names may differ.
+            db_err.message().contains("duplicate key value violates unique constraint")
+        }
+        _ => false,
     }
 }
 
