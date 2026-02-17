@@ -355,10 +355,13 @@
     <table class="admin-data-table" style="width:100%" id="items-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
+                <th style="width: 50px;">Select</th>
                 <th>Name</th>
                 <th>Username</th>
-                <th>Apikey</th>
+                <th>Scope</th>
+                <th>Restrict Tenant</th>
+                <th>Restrict Namespace</th>
+                <th>Created</th>
             </tr>
         </thead>
 
@@ -368,14 +371,56 @@
     </table>
 
     <form id="delete-form">
-        <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Apikeys</button>
+        <button id="delete-button" type="submit" onclick="delete_apikeys()">Delete Apikeys</button>
     </form>
 
     <h2>Add Apikey</h2>
-    <form id=" add-form">
+    <form id="add-form" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;">
+        <div>
+            <label for="apikey_name">Key Name</label><br>
             <input type="text" id="apikey_name" placeholder="Enter apikey name" required>
-            <button type="submit" onclick="create_apikey()">Add Apikey Name</button>
+        </div>
+        <div>
+            <label for="apikey_scope">Scope</label><br>
+            <select id="apikey_scope">
+                <option value="inference">inference</option>
+                <option value="read">read</option>
+                <option value="full">full</option>
+            </select>
+        </div>
+        <div>
+            <label for="apikey_restrict_tenant">Restrict Tenant</label><br>
+            <input type="text" id="apikey_restrict_tenant" placeholder="(optional)">
+        </div>
+        <div>
+            <label for="apikey_restrict_namespace">Restrict Namespace</label><br>
+            <input type="text" id="apikey_restrict_namespace" placeholder="(optional)">
+        </div>
+        <div>
+            <label for="apikey_expires_days">Expires In (days)</label><br>
+            <input type="number" id="apikey_expires_days" placeholder="(optional)" min="1">
+        </div>
+        <div>
+            <button type="submit" onclick="create_apikey()">Create Apikey</button>
+        </div>
     </form>
+
+    <!-- Modal to display newly created API key -->
+    <div id="apikey-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+        <div style="background:white; padding:30px; border-radius:8px; max-width:600px; width:90%; word-break:break-all;">
+            <h3 style="margin-top:0;">API Key Created</h3>
+            <p>Copy this key now. You will not be able to see it again.</p>
+            <div id="apikey-modal-value" style="background:#f0f0f0; padding:10px; font-family:monospace; font-size:14px; border-radius:4px; margin:10px 0;"></div>
+            <div style="margin-top:5px; font-size:13px; color:#555;">
+                <span>Scope: <strong id="apikey-modal-scope"></strong></span>
+                <span id="apikey-modal-expires-wrap" style="display:none;"> | Expires: <strong id="apikey-modal-expires"></strong></span>
+            </div>
+            <div style="margin-top:15px; text-align:right;">
+                <button onclick="copyApikeyToClipboard()" style="margin-right:10px;">Copy Key</button>
+                <button onclick="closeApikeyModal()">Close</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div id="Models" class="tabcontent">
@@ -3611,11 +3656,15 @@
         apikey_tbody.innerHTML = '';
         apikeys.forEach(key => {
             const row = document.createElement('tr');
+            const created = key.createtime ? new Date(key.createtime).toLocaleDateString() : '';
             row.innerHTML = `
-                <td style="text-align: center;"><input type="checkbox" data-id="${key.apikey}"></td>
+                <td style="text-align: center;"><input type="checkbox" data-keyname="${key.keyname}" data-username="${key.username}"></td>
                 <td style="text-align: center;">${key.keyname}</td>
                 <td style="text-align: center;">${key.username}</td>
-                <td style="text-align: center;">${key.apikey}</td>
+                <td style="text-align: center;">${key.scope || ''}</td>
+                <td style="text-align: center;">${key.restrict_tenant || ''}</td>
+                <td style="text-align: center;">${key.restrict_namespace || ''}</td>
+                <td style="text-align: center;">${created}</td>
             `;
             apikey_tbody.appendChild(row);
         });
@@ -4052,58 +4101,91 @@
     }
 
     async function create_apikey() {
-        var access_token = "{{ session['token'] }}";
         const nameInput = document.getElementById('apikey_name');
-        // const output = document.getElementById('output');
         const keyname = nameInput.value.trim();
+        if (!keyname) return;
+
+        const scope = document.getElementById('apikey_scope').value;
+        const restrictTenant = document.getElementById('apikey_restrict_tenant').value.trim();
+        const restrictNamespace = document.getElementById('apikey_restrict_namespace').value.trim();
+        const expiresDays = document.getElementById('apikey_expires_days').value;
+
+        const payload = {
+            "username": "",
+            "keyname": keyname,
+            "scope": scope
+        };
+        if (restrictTenant) payload.restrict_tenant = restrictTenant;
+        if (restrictNamespace) payload.restrict_namespace = restrictNamespace;
+        if (expiresDays) payload.expires_in_days = parseInt(expiresDays);
+
         try {
-            if (keyname) {
-                const body = {
-                    method: 'PUT',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        "apikey": "",
-                        "realm": "",
-                        "username": "",
-                        "keyname": keyname
-                    })
-                };
-                await fetchWithAuth("/demo/apikeys", body);
+            const resp = await fetchWithAuth("/demo/apikeys", {
+                method: 'PUT',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            if (resp.ok) {
+                const result = await resp.json();
+                showApikeyModal(result);
                 nameInput.value = '';
+                document.getElementById('apikey_restrict_tenant').value = '';
+                document.getElementById('apikey_restrict_namespace').value = '';
+                document.getElementById('apikey_expires_days').value = '';
+                document.getElementById('apikey_scope').value = 'inference';
                 fetchItems();
+            } else {
+                const errText = await resp.text();
+                alert("Failed to create API key: " + errText);
             }
         } catch (error) {
-            // output.innerHTML += error + '<br>';
-            // output.innerHTML += error.cause + '<br>';
-
+            alert("Error creating API key: " + error);
         }
     }
 
+    function showApikeyModal(result) {
+        document.getElementById('apikey-modal-value').textContent = result.apikey;
+        document.getElementById('apikey-modal-scope').textContent = result.scope;
+        if (result.expires_at) {
+            document.getElementById('apikey-modal-expires').textContent = result.expires_at;
+            document.getElementById('apikey-modal-expires-wrap').style.display = 'inline';
+        } else {
+            document.getElementById('apikey-modal-expires-wrap').style.display = 'none';
+        }
+        document.getElementById('apikey-modal').style.display = 'flex';
+    }
+
+    function closeApikeyModal() {
+        document.getElementById('apikey-modal').style.display = 'none';
+    }
+
+    function copyApikeyToClipboard() {
+        const key = document.getElementById('apikey-modal-value').textContent;
+        navigator.clipboard.writeText(key).then(() => {
+            alert('API key copied to clipboard');
+        });
+    }
+
     async function delete_apikeys() {
-        var access_token = "{{ session['token'] }}";
-        const nameInput = document.getElementById('apikey_name');
-        const keyname = nameInput.value.trim();
         try {
             const checkboxes = document.querySelectorAll('#items-table tbody input[type="checkbox"]:checked');
-            const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
-            if (keys.length > 0) {
-                await Promise.all(keys.map(key => {
-                    fetchWithAuth("/demo/apikeys", {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            "apikey": key,
-                            "realm": "",
-                            "username": "",
-                            "keyname": "",
-                            "keys": keys
-                        })
-                    });
-                }));
-            }
+            if (checkboxes.length === 0) return;
+
+            if (!confirm(`Delete ${checkboxes.length} selected API key(s)?`)) return;
+
+            await Promise.all(Array.from(checkboxes).map(cb => {
+                return fetchWithAuth("/demo/apikeys", {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        "username": cb.getAttribute('data-username'),
+                        "keyname": cb.getAttribute('data-keyname')
+                    })
+                });
+            }));
 
             fetchItems();
         } catch (error) {

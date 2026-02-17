@@ -257,7 +257,6 @@ def getapikeys():
 
 @prefix_bp.route('/admin')
 @require_login
-@require_admin
 def apikeys():
     return render_template(
         "admin.html"
@@ -281,7 +280,7 @@ def create_apikey():
     req = request.get_json()
     url = "{}/apikey/".format(apihostaddr)
     resp = requests.put(url, headers=headers, json=req)
-    return resp
+    return (resp.text, resp.status_code, {'Content-Type': resp.headers.get('Content-Type', 'application/json')})
 
 @prefix_bp.route('/apikeys', methods=['DELETE'])
 @require_login
@@ -294,7 +293,7 @@ def delete_apikey():
     req = request.get_json()
     url = "{}/apikey/".format(apihostaddr)
     resp = requests.delete(url, headers=headers, json=req)
-    return resp
+    return (resp.text, resp.status_code, {'Content-Type': resp.headers.get('Content-Type', 'application/json')})
 
 def read_markdown_file(filename):
     """Read and convert Markdown file to HTML"""
