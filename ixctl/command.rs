@@ -66,8 +66,62 @@ impl UserRole {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Apikey {
+    #[serde(default)]
+    pub key_id: i64,
     pub apikey: String,
     pub username: String,
+    pub keyname: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub restrict_tenant: Option<String>,
+    #[serde(default)]
+    pub restrict_namespace: Option<String>,
+    #[serde(default)]
+    pub createtime: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    #[serde(default)]
+    pub revoked_by: Option<String>,
+    #[serde(default)]
+    pub revoke_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ApikeyCreateRequest {
+    #[serde(default)]
+    pub username: String,
+    pub keyname: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub restrict_tenant: Option<String>,
+    #[serde(default)]
+    pub restrict_namespace: Option<String>,
+    #[serde(default)]
+    pub expires_in_days: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ApikeyCreateResponse {
+    pub apikey: String,
+    pub keyname: String,
+    pub scope: String,
+    #[serde(default)]
+    pub restrict_tenant: Option<String>,
+    #[serde(default)]
+    pub restrict_namespace: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ApikeyDeleteRequest {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
     pub keyname: String,
 }
 
