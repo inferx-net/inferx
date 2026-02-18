@@ -23,7 +23,7 @@ pub struct ApikeyCmd {
     pub verb: String,
     pub username: String,
     pub keyname: String,
-    pub scope: Option<String>,
+    pub access_level: Option<String>,
     pub restrict_tenant: Option<String>,
     pub restrict_namespace: Option<String>,
     pub expires_in_days: Option<u32>,
@@ -46,7 +46,10 @@ impl ApikeyCmd {
                 .or_else(|| cmd_matches.value_of("username"))
                 .unwrap_or("")
                 .to_string(),
-            scope: cmd_matches.value_of("scope").map(|s| s.to_string()),
+            access_level: cmd_matches
+                .value_of("access_level")
+                .or_else(|| cmd_matches.value_of("scope_legacy"))
+                .map(|s| s.to_string()),
             restrict_tenant: cmd_matches
                 .value_of("restrict_tenant")
                 .map(|s| s.to_string()),
@@ -86,24 +89,31 @@ impl ApikeyCmd {
                     .takes_value(true),
             )
             .arg(
-                Arg::with_name("scope")
+                Arg::with_name("access_level")
+                    .required(false)
+                    .long("access-level")
+                    .help("apikey access level: full|inference|read")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("scope_legacy")
                     .required(false)
                     .long("scope")
-                    .help("apikey scope: full|inference|read")
+                    .help("deprecated alias of --access-level")
                     .takes_value(true),
             )
             .arg(
                 Arg::with_name("restrict_tenant")
-                    .required(false)
+                    .required_if("verb", "create")
                     .long("restrict-tenant")
-                    .help("restrict apikey to tenant")
+                    .help("required: assign apikey to tenant")
                     .takes_value(true),
             )
             .arg(
                 Arg::with_name("restrict_namespace")
                     .required(false)
                     .long("restrict-namespace")
-                    .help("restrict apikey to namespace (requires restrict-tenant)")
+                    .help("optional: restrict apikey to namespace inside the tenant")
                     .takes_value(true),
             )
             .arg(
@@ -116,14 +126,14 @@ impl ApikeyCmd {
             .about("Manage API keys");
     }
 
-    fn ValidateScope(&self) -> Result<()> {
-        if let Some(scope) = &self.scope {
-            match scope.as_str() {
+    fn ValidateAccessLevel(&self) -> Result<()> {
+        if let Some(access_level) = &self.access_level {
+            match access_level.as_str() {
                 "full" | "inference" | "read" => (),
                 _ => {
                     return Err(Error::CommonError(format!(
-                        "invalid scope {} (expect full|inference|read)",
-                        scope
+                        "invalid access-level {} (expect full|inference|read)",
+                        access_level
                     )))
                 }
             }
@@ -133,7 +143,7 @@ impl ApikeyCmd {
     }
 
     fn ValidateCreateOptions(&self) -> Result<()> {
-        self.ValidateScope()?;
+        self.ValidateAccessLevel()?;
 
         if self.keyname.len() == 0 {
             return Err(Error::CommonError(format!(
@@ -141,10 +151,27 @@ impl ApikeyCmd {
             )));
         }
 
-        if self.restrict_namespace.is_some() && self.restrict_tenant.is_none() {
+        let restrict_tenant = match &self.restrict_tenant {
+            Some(t) => t.trim(),
+            None => {
+                return Err(Error::CommonError(format!(
+                    "Apikey create requires --restrict-tenant"
+                )))
+            }
+        };
+
+        if restrict_tenant.is_empty() {
             return Err(Error::CommonError(format!(
-                "restrict-namespace requires restrict-tenant"
+                "restrict-tenant cannot be empty"
             )));
+        }
+
+        if let Some(ns) = &self.restrict_namespace {
+            if ns.trim().is_empty() {
+                return Err(Error::CommonError(format!(
+                    "restrict-namespace cannot be empty"
+                )));
+            }
         }
 
         if let Some(days) = self.expires_in_days {
@@ -159,13 +186,13 @@ impl ApikeyCmd {
     }
 
     fn RejectCreateOnlyOptions(&self, verb: &str) -> Result<()> {
-        if self.scope.is_some()
+        if self.access_level.is_some()
             || self.restrict_tenant.is_some()
             || self.restrict_namespace.is_some()
             || self.expires_in_days.is_some()
         {
             return Err(Error::CommonError(format!(
-                "apikey {} does not accept create-only flags (--scope, --restrict-tenant, --restrict-namespace, --expires-in-days)",
+                "apikey {} does not accept create-only flags (--access-level/--scope, --restrict-tenant, --restrict-namespace, --expires-in-days)",
                 verb
             )));
         }
@@ -184,7 +211,7 @@ impl ApikeyCmd {
                 let req = ApikeyCreateRequest {
                     username: self.username.clone(),
                     keyname: self.keyname.clone(),
-                    scope: self.scope.clone(),
+                    access_level: self.access_level.clone(),
                     restrict_tenant: self.restrict_tenant.clone(),
                     restrict_namespace: self.restrict_namespace.clone(),
                     expires_in_days: self.expires_in_days,

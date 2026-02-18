@@ -14,7 +14,8 @@ pub struct Apikey {
     pub apikey: String,
     pub username: String,
     pub keyname: String,
-    pub scope: String,
+    #[serde(rename = "access_level")]
+    pub access_level: String,
     pub restrict_tenant: Option<String>,
     pub restrict_namespace: Option<String>,
     pub createtime: Option<chrono::NaiveDateTime>,
@@ -69,7 +70,7 @@ impl SqlSecret {
                 apikey,
                 username,
                 keyname,
-                scope,
+                access_level,
                 restrict_tenant,
                 restrict_namespace,
                 createtime,
@@ -85,7 +86,7 @@ impl SqlSecret {
             .bind(&key.apikey)
             .bind(&key.username)
             .bind(&key.keyname)
-            .bind(&key.scope)
+            .bind(&key.access_level)
             .bind(&key.restrict_tenant)
             .bind(&key.restrict_namespace)
             .bind(&key.expires_at)
@@ -104,7 +105,7 @@ impl SqlSecret {
                 apikey,
                 username,
                 keyname,
-                scope,
+                access_level,
                 restrict_tenant,
                 restrict_namespace,
                 createtime,
@@ -126,7 +127,7 @@ impl SqlSecret {
                 apikey,
                 username,
                 keyname,
-                scope,
+                access_level,
                 restrict_tenant,
                 restrict_namespace,
                 createtime,

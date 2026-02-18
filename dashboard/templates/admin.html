@@ -571,7 +571,7 @@
                 <th>Name</th>
                 <th>Username</th>
                 <th>Raw Key (Hidden)</th>
-                <th>Scope</th>
+                <th>Access Level</th>
                 <th>Restricted Tenant</th>
                 <th>Restricted Namespace</th>
                 <th>Created (Local)</th>
@@ -585,25 +585,25 @@
     </table>
 
     <div class="apikey-actions">
-        <form id="delete-form">
-            <button id="delete-button" type="submit" onclick="delete_apikeys()" disabled>Delete Apikeys</button>
+        <form id="delete-form" onsubmit="return false;">
+            <button id="delete-button" type="button" onclick="delete_apikeys()" disabled>Delete Apikeys</button>
         </form>
     </div>
 
     <div class="apikey-create-card">
         <h2>Create API Key</h2>
-        <div class="apikey-create-hint">Configure optional tenant/namespace restrictions and expiration.</div>
-        <form id="add-form" class="apikey-create-grid">
+        <div id="apikey-create-hint" class="apikey-create-hint">Select a tenant (required), then optionally narrow to a namespace and expiration.</div>
+        <form id="add-form" class="apikey-create-grid" onsubmit="return false;">
         <div class="apikey-field">
             <label for="apikey_name">Key Name</label>
             <input type="text" id="apikey_name" placeholder="Enter key name" required>
         </div>
         <div class="apikey-field">
-            <label for="apikey_scope" class="label-with-help">
-                <span>Scope</span>
-                <span class="field-help" tabindex="0" aria-label="Scope help" title="Permission level for this key. inference: inference endpoints only. read: read plus inference. full: read and write actions.">i</span>
+            <label for="apikey_access_level" class="label-with-help">
+                <span>Access Level</span>
+                <span class="field-help" tabindex="0" aria-label="Access level help" title="Permission level for this key. inference: inference endpoints only. read: read plus inference. full: read and write actions.">i</span>
             </label>
-            <select id="apikey_scope">
+            <select id="apikey_access_level">
                 <option value="inference">inference</option>
                 <option value="read">read</option>
                 <option value="full">full</option>
@@ -611,17 +611,17 @@
         </div>
         <div class="apikey-field">
             <label for="apikey_restrict_tenant" class="label-with-help">
-                <span>Restrict to Tenant</span>
-                <span class="field-help" tabindex="0" aria-label="Restrict tenant help" title="Optional. Limit this key to one tenant. If empty, the key can access all tenants allowed by your RBAC roles.">i</span>
+                <span>Tenant (Required)</span>
+                <span class="field-help" tabindex="0" aria-label="Tenant help" title="Required. Every API key must belong to exactly one tenant.">i</span>
             </label>
             <select id="apikey_restrict_tenant" onchange="onApikeyRestrictTenantChange()">
-                <option value="">(optional)</option>
+                <option value="">Select tenant</option>
             </select>
         </div>
         <div class="apikey-field">
             <label for="apikey_restrict_namespace" class="label-with-help">
                 <span>Restrict to Namespace</span>
-                <span class="field-help" tabindex="0" aria-label="Restrict namespace help" title="Optional. Limit this key to one namespace under the selected tenant. Namespace restriction requires tenant restriction.">i</span>
+                <span class="field-help" tabindex="0" aria-label="Restrict namespace help" title="Optional. Limit this key to one namespace under the selected tenant.">i</span>
             </label>
             <select id="apikey_restrict_namespace" disabled>
                 <option value="">(optional)</option>
@@ -632,7 +632,7 @@
             <input type="number" id="apikey_expires_days" placeholder="(optional)" min="1">
         </div>
         <div class="apikey-create-submit">
-            <button type="submit" onclick="create_apikey()">Create Apikey</button>
+            <button type="button" onclick="create_apikey()">Create Apikey</button>
         </div>
     </form>
     </div>
@@ -644,7 +644,7 @@
             <p>Copy this key now. You will not be able to see it again.</p>
             <div id="apikey-modal-value" style="background:#f0f0f0; padding:10px; font-family:monospace; font-size:14px; border-radius:0; margin:10px 0;"></div>
             <div style="margin-top:5px; font-size:13px; color:#555;">
-                <span>Scope: <strong id="apikey-modal-scope"></strong></span>
+                <span>Access Level: <strong id="apikey-modal-access-level"></strong></span>
                 <span id="apikey-modal-expires-wrap" style="display:none;"> | Expires (Local): <strong id="apikey-modal-expires"></strong></span>
             </div>
             <div style="margin-top:15px; text-align:right;">
@@ -1360,6 +1360,7 @@
     let billingCreditSortDirection = 'desc';
     let analyticsUsageRange = { mode: 'hours', hours: 24 };
     let apikeyRestrictNamespacesByTenant = {};
+    let apikeyCreatorIsInferxAdmin = false;
 
     // Called when Billing tab is opened
     async function populateBillingTenants() {
@@ -3824,6 +3825,46 @@
         selectEl.appendChild(option);
     }
 
+    function ensureSelectOption(selectEl, value, label) {
+        if (!selectEl) return;
+        const existing = Array.from(selectEl.options).find(option => option.value === value);
+        if (existing) return;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        selectEl.appendChild(option);
+    }
+
+    function configureApikeyCreateForm(roles) {
+        const hintEl = document.getElementById('apikey-create-hint');
+        const accessLevelSelect = document.getElementById('apikey_access_level');
+        const tenantSelect = document.getElementById('apikey_restrict_tenant');
+        const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+        if (!accessLevelSelect || !tenantSelect || !namespaceSelect) return;
+
+        apikeyCreatorIsInferxAdmin = IsAdmin(roles, "system", "");
+        if (apikeyCreatorIsInferxAdmin) {
+            ensureSelectOption(tenantSelect, 'system', 'system');
+            tenantSelect.value = 'system';
+            accessLevelSelect.value = 'full';
+            setSelectDefaultOption(namespaceSelect, '(not used)');
+            accessLevelSelect.disabled = true;
+            tenantSelect.disabled = true;
+            namespaceSelect.disabled = true;
+            if (hintEl) {
+                hintEl.textContent = 'Inferx admin self-created keys are forced to full access level on tenant system.';
+            }
+            return;
+        }
+
+        accessLevelSelect.disabled = false;
+        tenantSelect.disabled = false;
+        if (hintEl) {
+            hintEl.textContent = 'Select a tenant (required), then optionally narrow to a namespace and expiration.';
+        }
+        onApikeyRestrictTenantChange();
+    }
+
     function onApikeyRestrictTenantChange() {
         const tenantSelect = document.getElementById('apikey_restrict_tenant');
         const namespaceSelect = document.getElementById('apikey_restrict_namespace');
@@ -4041,7 +4082,7 @@
                 <td style="text-align: center;">${key.keyname}</td>
                 <td style="text-align: center;">${key.username}</td>
                 <td style="text-align: center;">${rawKeyCell}</td>
-                <td style="text-align: center;">${key.scope || ''}</td>
+                <td style="text-align: center;">${key.access_level || key.scope || ''}</td>
                 <td style="text-align: center;">${key.restrict_tenant || ''}</td>
                 <td style="text-align: center;">${key.restrict_namespace || ''}</td>
                 <td style="text-align: center;">${created}</td>
@@ -4272,7 +4313,7 @@
         // Populate API key restriction tenant/namespace dropdowns.
         if (apikeyRestrictTenantSelect && apikeyRestrictNamespaceSelect) {
             const prevTenant = apikeyRestrictTenantSelect.value;
-            setSelectDefaultOption(apikeyRestrictTenantSelect);
+            setSelectDefaultOption(apikeyRestrictTenantSelect, 'Select tenant');
 
             const tenantList = Array.from(apikeyTenantChoices).sort((a, b) => a.localeCompare(b));
             tenantList.forEach(tenant => {
@@ -4294,6 +4335,7 @@
 
             onApikeyRestrictTenantChange();
         }
+        configureApikeyCreateForm(roles);
     }
 
     async function create_func() {
@@ -4529,18 +4571,27 @@
         const keyname = nameInput.value.trim();
         if (!keyname) return;
 
-        const scope = document.getElementById('apikey_scope').value;
+        const accessLevel = document.getElementById('apikey_access_level').value;
         const restrictTenant = document.getElementById('apikey_restrict_tenant').value.trim();
         const restrictNamespace = document.getElementById('apikey_restrict_namespace').value.trim();
         const expiresDays = document.getElementById('apikey_expires_days').value;
+        if (!apikeyCreatorIsInferxAdmin && !restrictTenant) {
+            alert("Please select a tenant for this API key.");
+            return;
+        }
 
         const payload = {
             "username": "",
-            "keyname": keyname,
-            "scope": scope
+            "keyname": keyname
         };
-        if (restrictTenant) payload.restrict_tenant = restrictTenant;
-        if (restrictNamespace) payload.restrict_namespace = restrictNamespace;
+        if (apikeyCreatorIsInferxAdmin) {
+            payload.access_level = "full";
+            payload.restrict_tenant = "system";
+        } else {
+            payload.access_level = accessLevel;
+            payload.restrict_tenant = restrictTenant;
+            if (restrictNamespace) payload.restrict_namespace = restrictNamespace;
+        }
         if (expiresDays) payload.expires_in_days = parseInt(expiresDays);
 
         try {
@@ -4556,10 +4607,18 @@
                 const result = await resp.json();
                 showApikeyModal(result);
                 nameInput.value = '';
-                document.getElementById('apikey_restrict_tenant').value = '';
-                onApikeyRestrictTenantChange();
                 document.getElementById('apikey_expires_days').value = '';
-                document.getElementById('apikey_scope').value = 'inference';
+                if (apikeyCreatorIsInferxAdmin) {
+                    const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+                    document.getElementById('apikey_restrict_tenant').value = 'system';
+                    document.getElementById('apikey_access_level').value = 'full';
+                    setSelectDefaultOption(namespaceSelect, '(not used)');
+                    if (namespaceSelect) namespaceSelect.disabled = true;
+                } else {
+                    document.getElementById('apikey_restrict_tenant').value = '';
+                    onApikeyRestrictTenantChange();
+                    document.getElementById('apikey_access_level').value = 'inference';
+                }
                 fetchItems();
             } else {
                 const errText = await resp.text();
@@ -4572,6 +4631,12 @@
 
     function mapCreateApikeyError(errText, keyname) {
         const text = String(errText || '');
+        if (text.includes('restrict_tenant is required')) {
+            return 'Tenant is required for API key creation.';
+        }
+        if (text.includes('restrict_tenant cannot be empty')) {
+            return 'Tenant is required for API key creation.';
+        }
         const isDuplicateName = text.includes('duplicate key value violates unique constraint') &&
             (text.includes('(username, keyname)=') ||
              text.includes('apikey_idx_username_keyname') ||
@@ -4586,7 +4651,7 @@
 
     function showApikeyModal(result) {
         document.getElementById('apikey-modal-value').textContent = result.apikey;
-        document.getElementById('apikey-modal-scope').textContent = result.scope;
+        document.getElementById('apikey-modal-access-level').textContent = result.access_level || result.scope || '';
         if (result.expires_at) {
             document.getElementById('apikey-modal-expires').textContent = formatLocalDateTime(result.expires_at);
             document.getElementById('apikey-modal-expires-wrap').style.display = 'inline';

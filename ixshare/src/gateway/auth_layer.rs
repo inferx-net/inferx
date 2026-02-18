@@ -150,7 +150,7 @@ pub struct ApikeyCreateRequest {
     pub username: String,
     pub keyname: String,
     #[serde(default)]
-    pub scope: Option<String>,
+    pub access_level: Option<String>,
     #[serde(default)]
     pub restrict_tenant: Option<String>,
     #[serde(default)]
@@ -163,7 +163,7 @@ pub struct ApikeyCreateRequest {
 pub struct ApikeyCreateResponse {
     pub apikey: String,
     pub keyname: String,
-    pub scope: String,
+    pub access_level: String,
     pub restrict_tenant: Option<String>,
     pub restrict_namespace: Option<String>,
     pub expires_at: Option<String>,
@@ -242,7 +242,26 @@ impl AccessToken {
         return Self::ScopeLevel(&self.scope) >= Self::ScopeLevel(required);
     }
 
+    fn HasInferxAdminIdentity(&self) -> bool {
+        let prefix = Self::TENANT_ADMIN;
+        let systemtenant = Self::SYSTEM_TENANT;
+        let isSystemAdmin = self.roles.contains(&format!("{prefix}{systemtenant}"));
+        return &self.username == Self::INERX_ADMIN || isSystemAdmin;
+    }
+
+    fn IsSystemScopedInferxAdminApikey(&self) -> bool {
+        return self.sourceIsApikey
+            && self.CheckScope("full")
+            && self.restrictTenant.as_deref() == Some(Self::SYSTEM_TENANT)
+            && self.restrictNamespace.is_none()
+            && self.HasInferxAdminIdentity();
+    }
+
     fn AllowTenant(&self, tenant: &str) -> bool {
+        if self.IsSystemScopedInferxAdminApikey() {
+            return true;
+        }
+
         match &self.restrictTenant {
             Some(t) => t == tenant,
             None => true,
@@ -326,16 +345,14 @@ impl AccessToken {
             if !self.CheckScope("full") {
                 return false;
             }
-            if self.restrictTenant.is_some() || self.restrictNamespace.is_some() {
+            if (self.restrictTenant.is_some() || self.restrictNamespace.is_some())
+                && !self.IsSystemScopedInferxAdminApikey()
+            {
                 return false;
             }
         }
 
-        let prefix = Self::TENANT_ADMIN;
-        let systemtenant = Self::SYSTEM_TENANT;
-        let isSystemAdmin = self.roles.contains(&format!("{prefix}{systemtenant}"));
-
-        return &self.username == Self::INERX_ADMIN || isSystemAdmin;
+        return self.HasInferxAdminIdentity();
     }
 
     pub fn UserKey(&self) -> String {
@@ -681,28 +698,55 @@ impl TokenCache {
     fn ValidateScope(scope: &str) -> Result<()> {
         match scope {
             "full" | "inference" | "read" => Ok(()),
-            _ => Err(Error::CommonError(format!("invalid apikey scope {}", scope))),
+            _ => Err(Error::CommonError(format!(
+                "invalid apikey access_level {}",
+                scope
+            ))),
+        }
+    }
+
+    fn NormalizeRequiredTenant(restrict_tenant: &Option<String>) -> Result<String> {
+        let tenant = match restrict_tenant {
+            Some(t) => t.trim(),
+            None => return Err(Error::CommonError(format!("restrict_tenant is required"))),
+        };
+
+        if tenant.is_empty() {
+            return Err(Error::CommonError(format!(
+                "restrict_tenant cannot be empty"
+            )));
+        }
+
+        return Ok(tenant.to_owned());
+    }
+
+    fn NormalizeOptionalNamespace(restrict_namespace: &Option<String>) -> Result<Option<String>> {
+        match restrict_namespace {
+            Some(ns) => {
+                let normalized = ns.trim();
+                if normalized.is_empty() {
+                    return Err(Error::CommonError(format!(
+                        "restrict_namespace cannot be empty"
+                    )));
+                }
+                Ok(Some(normalized.to_owned()))
+            }
+            None => Ok(None),
         }
     }
 
     fn RoleAllowedByRestriction(
         role: &str,
-        restrict_tenant: &Option<String>,
-        restrict_namespace: &Option<String>,
+        restrict_tenant: &str,
+        restrict_namespace: Option<&str>,
     ) -> bool {
-        if restrict_tenant.is_none() && restrict_namespace.is_none() {
-            return true;
-        }
-
         let parts: Vec<&str> = role.trim_matches('/').split('/').collect();
 
         match parts.as_slice() {
             // /tenant/{admin|user}/{tenant}
             ["tenant", _, tenant] => {
-                if let Some(rt) = restrict_tenant {
-                    if tenant != rt {
-                        return false;
-                    }
+                if *tenant != restrict_tenant {
+                    return false;
                 }
                 // Namespace-restricted keys cannot retain tenant-level roles.
                 if restrict_namespace.is_some() {
@@ -712,13 +756,11 @@ impl TokenCache {
             }
             // /namespace/{admin|user}/{tenant}/{namespace}
             ["namespace", _, tenant, namespace] => {
-                if let Some(rt) = restrict_tenant {
-                    if tenant != rt {
-                        return false;
-                    }
+                if *tenant != restrict_tenant {
+                    return false;
                 }
                 if let Some(rn) = restrict_namespace {
-                    if namespace != rn {
+                    if *namespace != rn {
                         return false;
                     }
                 }
@@ -733,18 +775,14 @@ impl TokenCache {
         base: &Arc<AccessToken>,
         apikey: &Apikey,
     ) -> Result<AccessToken> {
-        let normalized_scope = Self::NormalizeScope(&apikey.scope);
+        let normalized_scope = Self::NormalizeScope(&apikey.access_level);
         Self::ValidateScope(&normalized_scope)?;
-        if apikey.restrict_namespace.is_some() && apikey.restrict_tenant.is_none() {
-            return Err(Error::CommonError(format!(
-                "invalid key restriction: restrict_namespace requires restrict_tenant"
-            )));
-        }
+        let restrict_tenant = Self::NormalizeRequiredTenant(&apikey.restrict_tenant)?;
+        let restrict_namespace = Self::NormalizeOptionalNamespace(&apikey.restrict_namespace)?;
 
         let mut filtered_roles = BTreeSet::new();
         for r in &base.roles {
-            if Self::RoleAllowedByRestriction(r, &apikey.restrict_tenant, &apikey.restrict_namespace)
-            {
+            if Self::RoleAllowedByRestriction(r, &restrict_tenant, restrict_namespace.as_deref()) {
                 filtered_roles.insert(r.clone());
             }
         }
@@ -755,8 +793,8 @@ impl TokenCache {
             apiKeys: base.apiKeys.clone(),
             scope: normalized_scope,
             sourceIsApikey: true,
-            restrictTenant: apikey.restrict_tenant.clone(),
-            restrictNamespace: apikey.restrict_namespace.clone(),
+            restrictTenant: Some(restrict_tenant),
+            restrictNamespace: restrict_namespace,
             updatetime: SystemTime::now(),
         })
     }
@@ -847,29 +885,68 @@ impl TokenCache {
             req.username.clone()
         };
 
-        let scope = Self::NormalizeScope(req.scope.as_deref().unwrap_or("inference"));
-        Self::ValidateScope(&scope)?;
         if req.keyname.trim().is_empty() {
-            return Err(Error::CommonError(format!("apikey keyname cannot be empty")));
-        }
-
-        if req.restrict_namespace.is_some() && req.restrict_tenant.is_none() {
             return Err(Error::CommonError(format!(
-                "restrict_namespace requires restrict_tenant"
+                "apikey keyname cannot be empty"
             )));
         }
-
-        if let Some(t) = &req.restrict_tenant {
-            if !token.IsInferxAdmin() && !token.IsTenantUser(t) {
-                return Err(Error::NoPermission);
+        let is_inferx_admin_self = token.IsInferxAdmin() && username == token.username;
+        let (access_level, restrict_tenant, restrict_namespace) = if is_inferx_admin_self {
+            if let Some(req_tenant) = &req.restrict_tenant {
+                if req_tenant.trim() != AccessToken::SYSTEM_TENANT {
+                    return Err(Error::CommonError(format!(
+                        "inferx admin self apikey restrict_tenant must be '{}'",
+                        AccessToken::SYSTEM_TENANT
+                    )));
+                }
             }
-        }
-
-        if let (Some(t), Some(ns)) = (&req.restrict_tenant, &req.restrict_namespace) {
-            if !token.IsInferxAdmin() && !token.IsNamespaceUser(t, ns) {
-                return Err(Error::NoPermission);
+            if let Some(req_namespace) = &req.restrict_namespace {
+                if !req_namespace.trim().is_empty() {
+                    return Err(Error::CommonError(format!(
+                        "inferx admin self apikey does not allow restrict_namespace"
+                    )));
+                }
             }
-        }
+            if let Some(req_access_level) = &req.access_level {
+                if req_access_level.trim() != "full" {
+                    return Err(Error::CommonError(format!(
+                        "inferx admin self apikey access_level must be full"
+                    )));
+                }
+            }
+            (
+                "full".to_owned(),
+                AccessToken::SYSTEM_TENANT.to_owned(),
+                None,
+            )
+        } else {
+            let access_level =
+                Self::NormalizeScope(req.access_level.as_deref().unwrap_or("inference"));
+            Self::ValidateScope(&access_level)?;
+            let restrict_tenant = Self::NormalizeRequiredTenant(&req.restrict_tenant)?;
+            let restrict_namespace = Self::NormalizeOptionalNamespace(&req.restrict_namespace)?;
+
+            if !token.IsInferxAdmin() {
+                match &restrict_namespace {
+                    // Namespace-scoped key: allow either tenant-level permission
+                    // or namespace-level permission for that exact namespace.
+                    Some(ns) => {
+                        if !token.IsTenantUser(&restrict_tenant)
+                            && !token.IsNamespaceUser(&restrict_tenant, ns)
+                        {
+                            return Err(Error::NoPermission);
+                        }
+                    }
+                    // Tenant-scoped key: require tenant-level permission.
+                    None => {
+                        if !token.IsTenantUser(&restrict_tenant) {
+                            return Err(Error::NoPermission);
+                        }
+                    }
+                }
+            }
+            (access_level, restrict_tenant, restrict_namespace)
+        };
 
         let expires_at = req
             .expires_in_days
@@ -883,9 +960,9 @@ impl TokenCache {
                 apikey: raw_apikey.clone(),
                 username: username.clone(),
                 keyname: req.keyname.clone(),
-                scope: scope.clone(),
-                restrict_tenant: req.restrict_tenant.clone(),
-                restrict_namespace: req.restrict_namespace.clone(),
+                access_level: access_level.clone(),
+                restrict_tenant: Some(restrict_tenant.clone()),
+                restrict_namespace: restrict_namespace.clone(),
                 createtime: None,
                 expires_at,
                 revoked_at: None,
@@ -900,9 +977,9 @@ impl TokenCache {
         return Ok(ApikeyCreateResponse {
             apikey: raw_apikey,
             keyname: req.keyname.clone(),
-            scope,
-            restrict_tenant: req.restrict_tenant.clone(),
-            restrict_namespace: req.restrict_namespace.clone(),
+            access_level,
+            restrict_tenant: Some(restrict_tenant),
+            restrict_namespace,
             expires_at: expires_at.map(|v| v.to_string()),
         });
     }

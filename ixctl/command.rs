@@ -71,8 +71,7 @@ pub struct Apikey {
     pub apikey: String,
     pub username: String,
     pub keyname: String,
-    #[serde(default)]
-    pub scope: String,
+    pub access_level: String,
     #[serde(default)]
     pub restrict_tenant: Option<String>,
     #[serde(default)]
@@ -94,8 +93,7 @@ pub struct ApikeyCreateRequest {
     #[serde(default)]
     pub username: String,
     pub keyname: String,
-    #[serde(default)]
-    pub scope: Option<String>,
+    pub access_level: Option<String>,
     #[serde(default)]
     pub restrict_tenant: Option<String>,
     #[serde(default)]
@@ -108,7 +106,7 @@ pub struct ApikeyCreateRequest {
 pub struct ApikeyCreateResponse {
     pub apikey: String,
     pub keyname: String,
-    pub scope: String,
+    pub access_level: String,
     #[serde(default)]
     pub restrict_tenant: Option<String>,
     #[serde(default)]
