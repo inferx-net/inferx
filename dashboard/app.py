@@ -159,6 +159,37 @@ def require_login(func):
         return func(*args, **kwargs)
     return wrapper
 
+
+def is_inferx_admin_user():
+    if session.get('username', '') == 'inferx_admin':
+        return True
+
+    try:
+        roles = listroles()
+    except Exception:
+        return False
+
+    if not isinstance(roles, list):
+        return False
+
+    for role in roles:
+        obj_type = str(role.get('objType', '')).lower()
+        role_name = str(role.get('role', '')).lower()
+        tenant = role.get('tenant', '')
+        if obj_type == 'tenant' and role_name == 'admin' and tenant == 'system':
+            return True
+
+    return False
+
+
+def require_admin(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if not is_inferx_admin_user():
+            return Response("No permission", status=403)
+        return func(*args, **kwargs)
+    return wrapper
+
 @prefix_bp.route('/login')
 def login():
     nonce = generate_token(20)
@@ -249,7 +280,7 @@ def create_apikey():
     req = request.get_json()
     url = "{}/apikey/".format(apihostaddr)
     resp = requests.put(url, headers=headers, json=req)
-    return resp
+    return (resp.text, resp.status_code, {'Content-Type': resp.headers.get('Content-Type', 'application/json')})
 
 @prefix_bp.route('/apikeys', methods=['DELETE'])
 @require_login
@@ -262,7 +293,7 @@ def delete_apikey():
     req = request.get_json()
     url = "{}/apikey/".format(apihostaddr)
     resp = requests.delete(url, headers=headers, json=req)
-    return resp
+    return (resp.text, resp.status_code, {'Content-Type': resp.headers.get('Content-Type', 'application/json')})
 
 def read_markdown_file(filename):
     """Read and convert Markdown file to HTML"""

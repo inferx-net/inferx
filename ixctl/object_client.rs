@@ -7,7 +7,10 @@ use std::time::Duration;
 use inferxlib::common::*;
 use serde_json::Value;
 
-use crate::command::{Apikey, Grant, RoleBinding, UserRole};
+use crate::command::{
+    Apikey, ApikeyCreateRequest, ApikeyCreateResponse, ApikeyDeleteRequest, Grant, RoleBinding,
+    UserRole,
+};
 
 pub struct ObjectClient {
     pub url: String,
@@ -315,7 +318,11 @@ impl ObjectClient {
         return Ok(obj);
     }
 
-    pub async fn CreateApikey(&self, token: &str, keyname: &str, username: &str) -> Result<String> {
+    pub async fn CreateApikey(
+        &self,
+        token: &str,
+        req: &ApikeyCreateRequest,
+    ) -> Result<ApikeyCreateResponse> {
         let client = self.Client();
         let url = format!("{}/apikey/", &self.url);
         println!("CreateApikey url {}", &url);
@@ -327,27 +334,25 @@ impl ObjectClient {
             );
         }
 
-        let key = Apikey {
-            username: username.to_owned(),
-            keyname: keyname.to_owned(),
-            apikey: String::new(),
-        };
-
-        let resp = client.put(&url).headers(headers).json(&key).send().await?;
+        let resp = client.put(&url).headers(headers).json(req).send().await?;
         let code = resp.status().as_u16();
+        let content = resp.text().await?;
         if code == StatusCode::OK {
-            let key = resp.text().await?;
-            return Ok(key);
+            let created = serde_json::from_str(&content)?;
+            return Ok(created);
         }
 
-        let content = resp.text().await?;
         return Err(Error::CommonError(format!(
             "Create fail with resp {}",
             content
         )));
     }
 
-    pub async fn DeleteApikey(&self, token: &str, keyname: &str, username: &str) -> Result<()> {
+    pub async fn DeleteApikey(
+        &self,
+        token: &str,
+        req: &ApikeyDeleteRequest,
+    ) -> Result<String> {
         let client = self.Client();
         let url = format!("{}/apikey/", &self.url);
         println!("DeleteApikey url {}", &url);
@@ -359,28 +364,21 @@ impl ObjectClient {
             );
         }
 
-        let key = Apikey {
-            username: username.to_owned(),
-            keyname: keyname.to_owned(),
-            apikey: String::new(),
-        };
-
         let resp = client
             .delete(&url)
             .headers(headers)
-            .json(&key)
+            .json(req)
             .send()
             .await?;
         let code = resp.status().as_u16();
         let content = resp.text().await?;
         println!("DeleteApikey code {:?} content {}", code, &content);
         if code == StatusCode::OK {
-            println!("successfully delete key {}", content);
-            return Ok(());
+            return Ok(content);
         }
 
         return Err(Error::CommonError(format!(
-            "Create fail with resp {}",
+            "Delete fail with resp {}",
             content
         )));
     }

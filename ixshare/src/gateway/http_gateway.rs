@@ -74,7 +74,7 @@ use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
 use super::auth_layer::Grant;
 use super::auth_layer::ObjectType;
 use super::auth_layer::PermissionType;
-use super::auth_layer::{AccessToken, GetTokenCache};
+use super::auth_layer::{AccessToken, ApikeyCreateRequest, ApikeyDeleteRequest, GetTokenCache};
 use super::func_agent_mgr::FuncAgentMgr;
 use super::func_agent_mgr::IxTimestamp;
 use super::func_agent_mgr::GW_OBJREPO;
@@ -85,8 +85,6 @@ use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
-use super::secret::Apikey;
-
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
 
 lazy_static::lazy_static! {
@@ -920,7 +918,16 @@ async fn DirectFuncCall(
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
 
-    if !token.IsNamespaceUser(&tenant, &namespace) {
+    if !token.CheckScope("inference") {
+        let body = Body::from(format!("service failure: insufficient scope"));
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    if !token.IsNamespaceInferenceUser(&tenant, &namespace) {
         let body = Body::from(format!("service failure: No permission"));
         let resp = Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -1100,7 +1107,16 @@ async fn FuncCall(
     let namespace = parts[3].to_owned();
     let funcname = parts[4].to_owned();
 
-    if !token.IsNamespaceUser(&tenant, &namespace) {
+    if !token.CheckScope("inference") {
+        let body = Body::from(format!("service failure: insufficient scope"));
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    if !token.IsNamespaceInferenceUser(&tenant, &namespace) {
         let body = Body::from(format!("service failure: No permission"));
         let resp = Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -1478,15 +1494,11 @@ async fn ReadPodFaillog(
 
 async fn CreateApikey(
     Extension(token): Extension<Arc<AccessToken>>,
-    Json(obj): Json<Apikey>,
+    Json(obj): Json<ApikeyCreateRequest>,
 ) -> SResult<Response, StatusCode> {
-    match GetTokenCache()
-        .await
-        .CreateApikey(&token, &obj.username, &obj.keyname)
-        .await
-    {
+    match GetTokenCache().await.CreateApikey(&token, &obj).await {
         Ok(apikey) => {
-            let body = Body::from(format!("{:?}", apikey));
+            let body = Body::from(serde_json::to_string(&apikey).unwrap());
             let resp = Response::builder()
                 .status(StatusCode::OK)
                 .body(body)
@@ -1494,6 +1506,18 @@ async fn CreateApikey(
             return Ok(resp);
         }
         Err(e) => {
+            if is_apikey_duplicate_keyname_error(&e) {
+                let body = Body::from(format!(
+                    "API key name '{}' already exists. Please choose a different key name.",
+                    obj.keyname
+                ));
+                let resp = Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(body)
+                    .unwrap();
+                return Ok(resp);
+            }
+
             let body = Body::from(format!("service failure {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)
@@ -1501,6 +1525,28 @@ async fn CreateApikey(
                 .unwrap();
             return Ok(resp);
         }
+    }
+}
+
+fn is_apikey_duplicate_keyname_error(err: &Error) -> bool {
+    match err {
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            let is_unique_violation = db_err.code().as_deref() == Some("23505");
+            if !is_unique_violation {
+                return false;
+            }
+
+            if matches!(
+                db_err.constraint(),
+                Some("apikey_idx_username_keyname") | Some("apikey_idx_realm_username")
+            ) {
+                return true;
+            }
+
+            // Fallback for migrated environments where index names may differ.
+            db_err.message().contains("duplicate key value violates unique constraint")
+        }
+        _ => false,
     }
 }
 
@@ -1531,24 +1577,20 @@ async fn GetApikeys(
 
 async fn DeleteApikey(
     Extension(token): Extension<Arc<AccessToken>>,
-    Json(apikey): Json<Apikey>,
+    Json(apikey): Json<ApikeyDeleteRequest>,
 ) -> SResult<Response, StatusCode> {
     error!("DeleteApikey *** {:?}", &apikey);
-    match GetTokenCache()
-        .await
-        .DeleteApiKey(&token, &apikey.keyname, &apikey.username)
-        .await
-    {
+    match GetTokenCache().await.DeleteApiKey(&token, &apikey).await {
         Ok(exist) => {
             if exist {
-                let body = Body::from(format!("{:?}", apikey));
+                let body = Body::from(format!("deleted key '{}'", apikey.keyname));
                 let resp = Response::builder()
                     .status(StatusCode::OK)
                     .body(body)
                     .unwrap();
                 return Ok(resp);
             } else {
-                let body = Body::from(format!("apikey {:?} not exist ", apikey));
+                let body = Body::from(format!("apikey {:?} not exist ", apikey.keyname));
                 let resp = Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(body)

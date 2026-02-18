@@ -71,6 +71,218 @@
         background: #e2ecf9;
     }
 
+    /* API key section polish */
+    #Apikeys .apikey-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-start;
+    }
+
+    #Apikeys .apikey-actions button {
+        padding: 8px 14px;
+        border: 1px solid #c9d5e6;
+        border-radius: 0;
+        background: #ffffff;
+        color: #334155;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    #Apikeys .apikey-actions button:enabled:hover {
+        background: #f6faff;
+        border-color: #afc2db;
+    }
+
+    #Apikeys .apikey-actions button:disabled {
+        background: #f3f4f6;
+        color: #9ca3af;
+        border-color: #d1d5db;
+        cursor: not-allowed;
+        pointer-events: none;
+        opacity: 0.75;
+    }
+
+    #Apikeys .apikey-raw-value {
+        font-family: monospace;
+        font-size: 12px;
+        letter-spacing: 0.2px;
+        color: #334155;
+    }
+
+    #Apikeys .apikey-copy-cell-btn {
+        margin-left: 8px;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid #c9d5e6;
+        border-radius: 0;
+        background: #ffffff;
+        color: #334155;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        cursor: pointer;
+    }
+
+    #Apikeys .apikey-copy-cell-btn:hover {
+        background: #f6faff;
+        border-color: #afc2db;
+    }
+
+    #Apikeys .apikey-copy-cell-btn svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        pointer-events: none;
+    }
+
+    #Apikeys .apikey-copy-cell-btn::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 6px);
+        transform: translateX(-50%);
+        background: #111827;
+        color: #ffffff;
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 3px 6px;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 10;
+    }
+
+    #Apikeys .apikey-copy-cell-btn:hover::after,
+    #Apikeys .apikey-copy-cell-btn:focus-visible::after {
+        opacity: 1;
+    }
+
+    #Apikeys .apikey-copy-cell-btn.copied {
+        border-color: #16a34a;
+        color: #166534;
+        background: #f0fdf4;
+    }
+
+    #Apikeys .apikey-create-card {
+        margin-top: 16px;
+        padding: 14px 16px 16px 16px;
+        border: 1px solid #cbd8ea;
+        border-radius: 0;
+        background: linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
+    }
+
+    #Apikeys .apikey-create-card h2 {
+        margin: 0;
+        font-size: 18px;
+        color: #1f2937;
+    }
+
+    #Apikeys .apikey-create-hint {
+        margin: 6px 0 12px 0;
+        font-size: 13px;
+        color: #546274;
+    }
+
+    #Apikeys .apikey-create-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px;
+        align-items: end;
+    }
+
+    #Apikeys .apikey-field label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 13px;
+        color: #334155;
+        font-weight: 600;
+    }
+
+    #Apikeys .label-with-help {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    #Apikeys .field-help {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border: 1px solid #94a3b8;
+        border-radius: 50%;
+        background: #ffffff;
+        color: #475569;
+        font-size: 11px;
+        line-height: 1;
+        cursor: default;
+        user-select: none;
+    }
+
+    #Apikeys .field-help:hover {
+        color: #1f2937;
+        border-color: #64748b;
+    }
+
+    #Apikeys .field-help:focus {
+        outline: 1px solid #6b9ad6;
+        outline-offset: 1px;
+    }
+
+    #Apikeys .apikey-field input,
+    #Apikeys .apikey-field select {
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid #b7c6dc;
+        border-radius: 0;
+        background: #fff;
+        color: #1f2937;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    #Apikeys .apikey-field input:focus,
+    #Apikeys .apikey-field select:focus {
+        outline: none;
+        border-color: #6b9ad6;
+        box-shadow: 0 0 0 2px rgba(107, 154, 214, 0.18);
+    }
+
+    #Apikeys .apikey-create-submit {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    #Apikeys .apikey-create-submit button {
+        min-width: 150px;
+        padding: 9px 14px;
+        border: 1px solid #2f6fb2;
+        border-radius: 0;
+        background: #3b82f6;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    #Apikeys .apikey-create-submit button:hover {
+        background: #2f74e8;
+    }
+
+    @media (max-width: 720px) {
+        #Apikeys .apikey-create-grid {
+            grid-template-columns: 1fr;
+        }
+
+        #Apikeys .apikey-create-submit button {
+            width: 100%;
+        }
+    }
+
     /* Billing tab styles */
     .summary-card {
         border: 1px solid #ccc;
@@ -355,10 +567,15 @@
     <table class="admin-data-table" style="width:100%" id="items-table">
         <thead>
             <tr>
-                <th style="width: 150px;">Select</th>
+                <th style="width: 50px;">Select</th>
                 <th>Name</th>
                 <th>Username</th>
-                <th>Apikey</th>
+                <th>Raw Key (Hidden)</th>
+                <th>Access Level</th>
+                <th>Restricted Tenant</th>
+                <th>Restricted Namespace</th>
+                <th>Created (Local)</th>
+                <th>Expires (Local)</th>
             </tr>
         </thead>
 
@@ -367,15 +584,75 @@
         </tbody>
     </table>
 
-    <form id="delete-form">
-        <button id="delete-button" type="submit" onclick="delete_apikeys()"">Delete Apikeys</button>
-    </form>
+    <div class="apikey-actions">
+        <form id="delete-form" onsubmit="return false;">
+            <button id="delete-button" type="button" onclick="delete_apikeys()" disabled>Delete Apikeys</button>
+        </form>
+    </div>
 
-    <h2>Add Apikey</h2>
-    <form id=" add-form">
-            <input type="text" id="apikey_name" placeholder="Enter apikey name" required>
-            <button type="submit" onclick="create_apikey()">Add Apikey Name</button>
+    <div class="apikey-create-card">
+        <h2>Create API Key</h2>
+        <div id="apikey-create-hint" class="apikey-create-hint">Select a tenant (required), then optionally narrow to a namespace and expiration.</div>
+        <form id="add-form" class="apikey-create-grid" onsubmit="return false;">
+        <div class="apikey-field">
+            <label for="apikey_name">Key Name</label>
+            <input type="text" id="apikey_name" placeholder="Enter key name" required>
+        </div>
+        <div class="apikey-field">
+            <label for="apikey_access_level" class="label-with-help">
+                <span>Access Level</span>
+                <span class="field-help" tabindex="0" aria-label="Access level help" title="Permission level for this key. inference: inference endpoints only. read: read plus inference. full: read and write actions.">i</span>
+            </label>
+            <select id="apikey_access_level">
+                <option value="inference">inference</option>
+                <option value="read">read</option>
+                <option value="full">full</option>
+            </select>
+        </div>
+        <div class="apikey-field">
+            <label for="apikey_restrict_tenant" class="label-with-help">
+                <span>Tenant (Required)</span>
+                <span class="field-help" tabindex="0" aria-label="Tenant help" title="Required. Every API key must belong to exactly one tenant.">i</span>
+            </label>
+            <select id="apikey_restrict_tenant" onchange="onApikeyRestrictTenantChange()">
+                <option value="">Select tenant</option>
+            </select>
+        </div>
+        <div class="apikey-field">
+            <label for="apikey_restrict_namespace" class="label-with-help">
+                <span>Restrict to Namespace</span>
+                <span class="field-help" tabindex="0" aria-label="Restrict namespace help" title="Optional. Limit this key to one namespace under the selected tenant.">i</span>
+            </label>
+            <select id="apikey_restrict_namespace" disabled>
+                <option value="">(optional)</option>
+            </select>
+        </div>
+        <div class="apikey-field">
+            <label for="apikey_expires_days">Expires In (days)</label>
+            <input type="number" id="apikey_expires_days" placeholder="(optional)" min="1">
+        </div>
+        <div class="apikey-create-submit">
+            <button type="button" onclick="create_apikey()">Create Apikey</button>
+        </div>
     </form>
+    </div>
+
+    <!-- Modal to display newly created API key -->
+    <div id="apikey-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
+        <div style="background:white; padding:30px; border-radius:0; max-width:600px; width:90%; word-break:break-all;">
+            <h3 style="margin-top:0;">API Key Created</h3>
+            <p>Copy this key now. You will not be able to see it again.</p>
+            <div id="apikey-modal-value" style="background:#f0f0f0; padding:10px; font-family:monospace; font-size:14px; border-radius:0; margin:10px 0;"></div>
+            <div style="margin-top:5px; font-size:13px; color:#555;">
+                <span>Access Level: <strong id="apikey-modal-access-level"></strong></span>
+                <span id="apikey-modal-expires-wrap" style="display:none;"> | Expires (Local): <strong id="apikey-modal-expires"></strong></span>
+            </div>
+            <div style="margin-top:15px; text-align:right;">
+                <button onclick="copyApikeyToClipboard()" style="margin-right:10px;">Copy Key</button>
+                <button onclick="closeApikeyModal()">Close</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div id="Models" class="tabcontent">
@@ -1082,6 +1359,8 @@
     let billingCreditSortColumn = 'date';
     let billingCreditSortDirection = 'desc';
     let analyticsUsageRange = { mode: 'hours', hours: 24 };
+    let apikeyRestrictNamespacesByTenant = {};
+    let apikeyCreatorIsInferxAdmin = false;
 
     // Called when Billing tab is opened
     async function populateBillingTenants() {
@@ -3537,6 +3816,186 @@
         });
     }
 
+    function setSelectDefaultOption(selectEl, label = '(optional)') {
+        if (!selectEl) return;
+        selectEl.innerHTML = '';
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = label;
+        selectEl.appendChild(option);
+    }
+
+    function ensureSelectOption(selectEl, value, label) {
+        if (!selectEl) return;
+        const existing = Array.from(selectEl.options).find(option => option.value === value);
+        if (existing) return;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        selectEl.appendChild(option);
+    }
+
+    function configureApikeyCreateForm(roles) {
+        const hintEl = document.getElementById('apikey-create-hint');
+        const accessLevelSelect = document.getElementById('apikey_access_level');
+        const tenantSelect = document.getElementById('apikey_restrict_tenant');
+        const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+        if (!accessLevelSelect || !tenantSelect || !namespaceSelect) return;
+
+        apikeyCreatorIsInferxAdmin = IsAdmin(roles, "system", "");
+        if (apikeyCreatorIsInferxAdmin) {
+            ensureSelectOption(tenantSelect, 'system', 'system');
+            tenantSelect.value = 'system';
+            accessLevelSelect.value = 'full';
+            setSelectDefaultOption(namespaceSelect, '(not used)');
+            accessLevelSelect.disabled = true;
+            tenantSelect.disabled = true;
+            namespaceSelect.disabled = true;
+            if (hintEl) {
+                hintEl.textContent = 'Inferx admin self-created keys are forced to full access level on tenant system.';
+            }
+            return;
+        }
+
+        accessLevelSelect.disabled = false;
+        tenantSelect.disabled = false;
+        if (hintEl) {
+            hintEl.textContent = 'Select a tenant (required), then optionally narrow to a namespace and expiration.';
+        }
+        onApikeyRestrictTenantChange();
+    }
+
+    function onApikeyRestrictTenantChange() {
+        const tenantSelect = document.getElementById('apikey_restrict_tenant');
+        const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+        if (!tenantSelect || !namespaceSelect) return;
+
+        const selectedTenant = tenantSelect.value;
+        const previousNamespace = namespaceSelect.value;
+        setSelectDefaultOption(namespaceSelect);
+
+        if (!selectedTenant) {
+            namespaceSelect.disabled = true;
+            return;
+        }
+
+        const namespaceList = apikeyRestrictNamespacesByTenant[selectedTenant] || [];
+        namespaceList.forEach(ns => {
+            const option = document.createElement('option');
+            option.value = ns;
+            option.textContent = ns;
+            namespaceSelect.appendChild(option);
+        });
+
+        if (previousNamespace && namespaceList.includes(previousNamespace)) {
+            namespaceSelect.value = previousNamespace;
+        }
+
+        // Keep enabled for tenant-only restrictions even when no namespace options exist.
+        namespaceSelect.disabled = false;
+    }
+
+    function updateDeleteApikeyButtonState() {
+        const deleteButton = document.getElementById('delete-button');
+        if (!deleteButton) return;
+
+        const hasSelection = document.querySelector('#items-table tbody input[type="checkbox"]:checked') !== null;
+        deleteButton.disabled = !hasSelection;
+    }
+
+    function formatLocalDateTime(value) {
+        if (!value) return '';
+        let normalized = String(value).trim();
+        if (!normalized) return '';
+
+        // Backend may return naive timestamps (no timezone). Treat them as UTC, then display local.
+        const hasTimezone = /(?:Z|[+\-]\d{2}:\d{2})$/.test(normalized);
+        if (!hasTimezone) {
+            normalized = normalized.replace(' ', 'T');
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(normalized)) {
+                normalized += 'Z';
+            }
+        }
+
+        const dt = new Date(normalized);
+        if (Number.isNaN(dt.getTime())) {
+            return String(value);
+        }
+
+        return dt.toLocaleString();
+    }
+
+    function maskApikey(rawKey) {
+        if (!rawKey) return '';
+        const s = String(rawKey);
+        if (s.length <= 8) return '********';
+        return `${s.slice(0, 3)}${'*'.repeat(Math.max(0, s.length - 7))}${s.slice(-4)}`;
+    }
+
+    async function copyTextToClipboard(text) {
+        if (!text) return false;
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                const copied = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                return copied;
+            } catch (_fallbackErr) {
+                return false;
+            }
+        }
+    }
+
+    async function copyApikeyFromRow(button) {
+        const cell = button.closest('td');
+        if (!cell) return;
+        const valueEl = cell.querySelector('.apikey-raw-value');
+        if (!valueEl) return;
+        const rawKey = valueEl.getAttribute('data-apikey') || '';
+        const copied = await copyTextToClipboard(rawKey);
+        if (!copied) {
+            const existingTimer = Number(button.dataset.resetTimer || 0);
+            if (existingTimer) {
+                window.clearTimeout(existingTimer);
+            }
+            button.classList.remove('copied');
+            button.setAttribute('data-tooltip', 'Copy failed');
+            button.setAttribute('aria-label', 'Copy failed');
+            const timerId = window.setTimeout(() => {
+                button.setAttribute('data-tooltip', 'Copy key');
+                button.setAttribute('aria-label', 'Copy key');
+                delete button.dataset.resetTimer;
+            }, 1400);
+            button.dataset.resetTimer = String(timerId);
+            return;
+        }
+
+        const existingTimer = Number(button.dataset.resetTimer || 0);
+        if (existingTimer) {
+            window.clearTimeout(existingTimer);
+        }
+
+        button.classList.add('copied');
+        button.setAttribute('data-tooltip', 'Copied');
+        button.setAttribute('aria-label', 'Copied');
+        const timerId = window.setTimeout(() => {
+            button.classList.remove('copied');
+            button.setAttribute('data-tooltip', 'Copy key');
+            button.setAttribute('aria-label', 'Copy key');
+            delete button.dataset.resetTimer;
+        }, 1400);
+        button.dataset.resetTimer = String(timerId);
+    }
+
     async function getTenantUsers(role, tenant) {
         // 1. Build the URL with parameters
         const params = new URLSearchParams({
@@ -3611,17 +4070,34 @@
         apikey_tbody.innerHTML = '';
         apikeys.forEach(key => {
             const row = document.createElement('tr');
+            const created = formatLocalDateTime(key.createtime);
+            const expires = formatLocalDateTime(key.expires_at);
+            const rawKey = key.apikey || '';
+            const maskedRawKey = maskApikey(rawKey);
+            const rawKeyCell = rawKey
+                ? `<span class="apikey-raw-value" data-apikey="${rawKey}">${maskedRawKey}</span><button type="button" class="apikey-copy-cell-btn" data-tooltip="Copy key" aria-label="Copy key" onclick="copyApikeyFromRow(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10"></rect><rect x="5" y="5" width="10" height="10"></rect></svg></button>`
+                : '';
             row.innerHTML = `
-                <td style="text-align: center;"><input type="checkbox" data-id="${key.apikey}"></td>
+                <td style="text-align: center;"><input type="checkbox" data-keyname="${key.keyname}" data-username="${key.username}" onchange="updateDeleteApikeyButtonState()"></td>
                 <td style="text-align: center;">${key.keyname}</td>
                 <td style="text-align: center;">${key.username}</td>
-                <td style="text-align: center;">${key.apikey}</td>
+                <td style="text-align: center;">${rawKeyCell}</td>
+                <td style="text-align: center;">${key.access_level || key.scope || ''}</td>
+                <td style="text-align: center;">${key.restrict_tenant || ''}</td>
+                <td style="text-align: center;">${key.restrict_namespace || ''}</td>
+                <td style="text-align: center;">${created}</td>
+                <td style="text-align: center;">${expires}</td>
             `;
             apikey_tbody.appendChild(row);
         });
+        updateDeleteApikeyButtonState();
 
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
+        const apikeyRestrictTenantSelect = document.getElementById("apikey_restrict_tenant");
+        const apikeyRestrictNamespaceSelect = document.getElementById("apikey_restrict_namespace");
+        const apikeyTenantChoices = new Set();
+        const apikeyNamespaceChoices = {};
 
         const roles_resp = await fetchWithAuth('/demo/generate_roles');
         const roles = await roles_resp.json();
@@ -3732,6 +4208,14 @@
             const isAdmin = IsAdmin(roles, key.tenant, key.name);
             const isUser = IsUser(roles, key.tenant, key.name);
 
+            if (isAdmin || isUser) {
+                apikeyTenantChoices.add(key.tenant);
+                if (!apikeyNamespaceChoices[key.tenant]) {
+                    apikeyNamespaceChoices[key.tenant] = new Set();
+                }
+                apikeyNamespaceChoices[key.tenant].add(key.name);
+            }
+
             const adminList = await getNamespaceUsers("admin", key.tenant, key.name);
             const userList = await getNamespaceUsers("user", key.tenant, key.name);
 
@@ -3787,6 +4271,10 @@
             const isAdmin = IsAdmin(roles, key.name, "");
             const isUser = IsUser(roles, key.name, "");
 
+            if (isAdmin || isUser) {
+                apikeyTenantChoices.add(key.name);
+            }
+
             const adminList = await getTenantUsers("admin", key.name);
             const userList = await getTenantUsers("user", key.name);
 
@@ -3814,11 +4302,40 @@
             `;
             tenants_tbody.appendChild(row);
 
-            const option = document.createElement("option");
-            option.value = key.name;
-            option.textContent = key.name;
-            tenant_dropdown.appendChild(option);
+            if (isAdmin) {
+                const option = document.createElement("option");
+                option.value = key.name;
+                option.textContent = key.name;
+                tenant_dropdown.appendChild(option);
+            }
         };
+
+        // Populate API key restriction tenant/namespace dropdowns.
+        if (apikeyRestrictTenantSelect && apikeyRestrictNamespaceSelect) {
+            const prevTenant = apikeyRestrictTenantSelect.value;
+            setSelectDefaultOption(apikeyRestrictTenantSelect, 'Select tenant');
+
+            const tenantList = Array.from(apikeyTenantChoices).sort((a, b) => a.localeCompare(b));
+            tenantList.forEach(tenant => {
+                const option = document.createElement('option');
+                option.value = tenant;
+                option.textContent = tenant;
+                apikeyRestrictTenantSelect.appendChild(option);
+            });
+
+            apikeyRestrictNamespacesByTenant = {};
+            Object.keys(apikeyNamespaceChoices).forEach(tenant => {
+                apikeyRestrictNamespacesByTenant[tenant] = Array.from(apikeyNamespaceChoices[tenant])
+                    .sort((a, b) => a.localeCompare(b));
+            });
+
+            if (prevTenant && tenantList.includes(prevTenant)) {
+                apikeyRestrictTenantSelect.value = prevTenant;
+            }
+
+            onApikeyRestrictTenantChange();
+        }
+        configureApikeyCreateForm(roles);
     }
 
     async function create_func() {
@@ -4050,58 +4567,132 @@
     }
 
     async function create_apikey() {
-        var access_token = "{{ session['token'] }}";
         const nameInput = document.getElementById('apikey_name');
-        // const output = document.getElementById('output');
         const keyname = nameInput.value.trim();
+        if (!keyname) return;
+
+        const accessLevel = document.getElementById('apikey_access_level').value;
+        const restrictTenant = document.getElementById('apikey_restrict_tenant').value.trim();
+        const restrictNamespace = document.getElementById('apikey_restrict_namespace').value.trim();
+        const expiresDays = document.getElementById('apikey_expires_days').value;
+        if (!apikeyCreatorIsInferxAdmin && !restrictTenant) {
+            alert("Please select a tenant for this API key.");
+            return;
+        }
+
+        const payload = {
+            "username": "",
+            "keyname": keyname
+        };
+        if (apikeyCreatorIsInferxAdmin) {
+            payload.access_level = "full";
+            payload.restrict_tenant = "system";
+        } else {
+            payload.access_level = accessLevel;
+            payload.restrict_tenant = restrictTenant;
+            if (restrictNamespace) payload.restrict_namespace = restrictNamespace;
+        }
+        if (expiresDays) payload.expires_in_days = parseInt(expiresDays);
+
         try {
-            if (keyname) {
-                const body = {
-                    method: 'PUT',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        "apikey": "",
-                        "realm": "",
-                        "username": "",
-                        "keyname": keyname
-                    })
-                };
-                await fetchWithAuth("/demo/apikeys", body);
+            const resp = await fetchWithAuth("/demo/apikeys", {
+                method: 'PUT',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            if (resp.ok) {
+                const result = await resp.json();
+                showApikeyModal(result);
                 nameInput.value = '';
+                document.getElementById('apikey_expires_days').value = '';
+                if (apikeyCreatorIsInferxAdmin) {
+                    const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+                    document.getElementById('apikey_restrict_tenant').value = 'system';
+                    document.getElementById('apikey_access_level').value = 'full';
+                    setSelectDefaultOption(namespaceSelect, '(not used)');
+                    if (namespaceSelect) namespaceSelect.disabled = true;
+                } else {
+                    document.getElementById('apikey_restrict_tenant').value = '';
+                    onApikeyRestrictTenantChange();
+                    document.getElementById('apikey_access_level').value = 'inference';
+                }
                 fetchItems();
+            } else {
+                const errText = await resp.text();
+                alert("Failed to create API key: " + mapCreateApikeyError(errText, keyname));
             }
         } catch (error) {
-            // output.innerHTML += error + '<br>';
-            // output.innerHTML += error.cause + '<br>';
-
+            alert("Error creating API key: " + error);
         }
     }
 
+    function mapCreateApikeyError(errText, keyname) {
+        const text = String(errText || '');
+        if (text.includes('restrict_tenant is required')) {
+            return 'Tenant is required for API key creation.';
+        }
+        if (text.includes('restrict_tenant cannot be empty')) {
+            return 'Tenant is required for API key creation.';
+        }
+        const isDuplicateName = text.includes('duplicate key value violates unique constraint') &&
+            (text.includes('(username, keyname)=') ||
+             text.includes('apikey_idx_username_keyname') ||
+             text.includes('apikey_idx_realm_username'));
+
+        if (isDuplicateName) {
+            return `API key name '${keyname}' already exists. Please choose a different key name.`;
+        }
+
+        return text;
+    }
+
+    function showApikeyModal(result) {
+        document.getElementById('apikey-modal-value').textContent = result.apikey;
+        document.getElementById('apikey-modal-access-level').textContent = result.access_level || result.scope || '';
+        if (result.expires_at) {
+            document.getElementById('apikey-modal-expires').textContent = formatLocalDateTime(result.expires_at);
+            document.getElementById('apikey-modal-expires-wrap').style.display = 'inline';
+        } else {
+            document.getElementById('apikey-modal-expires-wrap').style.display = 'none';
+        }
+        document.getElementById('apikey-modal').style.display = 'flex';
+    }
+
+    function closeApikeyModal() {
+        document.getElementById('apikey-modal').style.display = 'none';
+    }
+
+    function copyApikeyToClipboard() {
+        const key = document.getElementById('apikey-modal-value').textContent;
+        copyTextToClipboard(key).then(copied => {
+            if (copied) {
+                alert('API key copied to clipboard');
+            } else {
+                alert('Failed to copy API key');
+            }
+        });
+    }
+
     async function delete_apikeys() {
-        var access_token = "{{ session['token'] }}";
-        const nameInput = document.getElementById('apikey_name');
-        const keyname = nameInput.value.trim();
         try {
             const checkboxes = document.querySelectorAll('#items-table tbody input[type="checkbox"]:checked');
-            const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
-            if (keys.length > 0) {
-                await Promise.all(keys.map(key => {
-                    fetchWithAuth("/demo/apikeys", {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            "apikey": key,
-                            "realm": "",
-                            "username": "",
-                            "keyname": "",
-                            "keys": keys
-                        })
-                    });
-                }));
-            }
+            if (checkboxes.length === 0) return;
+
+            if (!confirm(`Delete ${checkboxes.length} selected API key(s)?`)) return;
+
+            await Promise.all(Array.from(checkboxes).map(cb => {
+                return fetchWithAuth("/demo/apikeys", {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        "username": cb.getAttribute('data-username'),
+                        "keyname": cb.getAttribute('data-keyname')
+                    })
+                });
+            }));
 
             fetchItems();
         } catch (error) {

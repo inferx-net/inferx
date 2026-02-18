@@ -682,7 +682,7 @@ impl HttpGateway {
         _tenant: &str,
         _namespace: &str,
     ) -> Result<Vec<DataObject<Value>>> {
-        let tenants = self.AdminTenants(token);
+        let tenants = self.UserTenants(token);
         let mut objs = Vec::new();
         for tenant in &tenants {
             let obj = match self.objRepo.tenantMgr.Get("system", "system", tenant) {
@@ -751,6 +751,8 @@ impl HttpGateway {
         tenant: &str,
         namespace: &str,
     ) -> Result<Vec<DataObject<Value>>> {
+        // TODO: Enforce the same read-scope + namespace-user/admin checks as ListFuncBrief
+        // for /objects/function/* to avoid weaker authorization on this generic list path.
         let mut objs = Vec::new();
         if tenant == "" {
             let namespaces = self.AdminNamespaces(token);
@@ -890,7 +892,26 @@ impl HttpGateway {
             return namespaces;
         }
 
-        return token.AdminNamespaces();
+        let mut namespaces = BTreeSet::new();
+        for (tenant, namespace) in token.AdminNamespaces() {
+            namespaces.insert((tenant, namespace));
+        }
+
+        // Tenant admins implicitly administer all namespaces in their tenant.
+        for tenant in token.AdminTenants() {
+            match self.objRepo.namespaceMgr.GetObjects(&tenant, "") {
+                Ok(items) => {
+                    for ns in items {
+                        namespaces.insert((ns.Tenant(), ns.Name()));
+                    }
+                }
+                Err(e) => {
+                    error!("AdminNamespaces fail to list tenant {} namespaces: {:?}", tenant, e);
+                }
+            }
+        }
+
+        return namespaces.into_iter().collect();
     }
 
     pub fn UserNamespaces(&self, token: &Arc<AccessToken>) -> Vec<(String, String)> {
@@ -933,6 +954,10 @@ impl HttpGateway {
         tenant: &str,
         namespace: &str,
     ) -> Result<Vec<FuncBrief>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         let mut objs = Vec::new();
         if tenant == "" {
             let namespaces = self.UserNamespaces(token);
@@ -973,6 +998,10 @@ impl HttpGateway {
         namespace: &str,
         funcname: &str,
     ) -> Result<FuncDetail> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -988,6 +1017,10 @@ impl HttpGateway {
         tenant: &str,
         namespace: &str,
     ) -> Result<Vec<FuncSnapshot>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         let mut objs = Vec::new();
         if tenant == "" {
             let namespaces = self.UserNamespaces(token);
@@ -1029,6 +1062,10 @@ impl HttpGateway {
         namespace: &str,
         funcname: &str,
     ) -> Result<FuncSnapshot> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1044,6 +1081,10 @@ impl HttpGateway {
         namespace: &str,
         funcname: &str,
     ) -> Result<Vec<FuncPod>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         let mut objs = Vec::new();
         if tenant == "" {
             let namespaces = self.UserNamespaces(token);
@@ -1085,6 +1126,10 @@ impl HttpGateway {
         namespace: &str,
         funcname: &str,
     ) -> Result<FuncPod> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1102,6 +1147,10 @@ impl HttpGateway {
         version: i64,
         id: &str,
     ) -> Result<String> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1122,6 +1171,10 @@ impl HttpGateway {
         version: i64,
         id: &str,
     ) -> Result<Vec<PodAuditLog>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1141,6 +1194,10 @@ impl HttpGateway {
         funcname: &str,
         version: i64,
     ) -> Result<Vec<SnapshotScheduleAudit>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1160,6 +1217,10 @@ impl HttpGateway {
         funcname: &str,
         version: i64,
     ) -> Result<Vec<PodFailLog>> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
@@ -1180,6 +1241,10 @@ impl HttpGateway {
         version: i64,
         id: &str,
     ) -> Result<PodFailLog> {
+        if !token.CheckScope("read") {
+            return Err(Error::NoPermission);
+        }
+
         if !token.IsNamespaceUser(tenant, namespace) {
             return Err(Error::NoPermission);
         }
