@@ -1,6 +1,6 @@
 ARCH := ${shell uname -m}
 VERSION := v0.2.0
-VERSION1 := v0.2.0t1
+VERSION1 := $(VERSION)
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -78,8 +78,8 @@ dash:
 	-rm ./target/dashboard/* -rf
 	cp ./dashboard/* ./target/dashboard -rL
 	cp ./deployment/dashboard.Dockerfile ./target/dashboard/Dockerfile
-	-sudo docker image rm inferx/inferx_dashboard:$(VERSION)
-	sudo docker build -t inferx/inferx_dashboard:$(VERSION) ./target/dashboard
+	-sudo docker image rm inferx/inferx_dashboard:$(VERSION1)
+	sudo docker build -t inferx/inferx_dashboard:$(VERSION1) ./target/dashboard
 
 pushdash: dash
 	# sudo docker login -u inferx
@@ -126,9 +126,9 @@ db:
 	cp ./dashboard/sql/*.sql ./target/postgres
 	cp ./deployment/postgres-entrypoint.sh ./target/postgres/postgres-entrypoint.sh
 	cp ./deployment/postgres.Dockerfile ./target/postgres/Dockerfile
-	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION) ./target/postgres
+	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION1) ./target/postgres
 	sudo docker image prune -f
-	# sudo docker push inferx/inferx_postgres:$(VERSION)
+	# sudo docker push inferx/inferx_postgres:$(VERSION1)
 
 pushdb: db
 	sudo docker push inferx/inferx_postgres:$(VERSION)
@@ -304,7 +304,7 @@ runallnb:
 	VERSION=$(VERSION1) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/ixproxy-nb.yaml | sudo kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/nodeagent-nb.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 	sudo kubectl apply -f k8s/ingress.yaml
 
 runallnbmg:
