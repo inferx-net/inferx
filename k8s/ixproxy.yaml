@@ -59,9 +59,9 @@ spec:
           - name: CACHE_MEMORY
             value: "10Gi"
           - name: ENABLE_2MB_PAGE
-            value: "false"  
+            value: "true"  
           - name: RESERVE_MEM_PERCENTAGE
-            value: "12"
+            value: "10"
           - name: CONTEXT_COUNT
             value: "1"      
           - name: ALLOC_CPU
@@ -70,16 +70,16 @@ spec:
                 containerName: ixproxy
                 resource: limits.cpu
           - name: ENALBE_BLOB
-            value: "false"
+            value: "true"
           resources:
             requests:
               cpu: "5"
               memory: "20Gi"              # Regular memory request (RAM)
-              # hugepages-2Mi: "30Gi" 
+              hugepages-2Mi: "30Gi" 
             limits:
               cpu: "20"
               memory: "80Gi"              # Regular memory request (RAM)
-              # hugepages-2Mi: "30Gi" 
+              hugepages-2Mi: "30Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev
@@ -90,10 +90,10 @@ spec:
               mountPath: /dev/shm
             # - mountPath: /opt/inferx/
             #   name: opt-inferx
-            # - mountPath: /opt/inferx/config
-            #   name: opt-inferx-config
-            # - mountPath: /opt/inferx/bin
-            #   name: opt-inferx-bin
+            - mountPath: /opt/inferx/config
+              name: opt-inferx-config
+            - mountPath: /opt/inferx/bin
+              name: opt-inferx-bin
             - mountPath: /opt/inferx/work
               name: opt-inferx-work
             - mountPath: /opt/inferx/log
