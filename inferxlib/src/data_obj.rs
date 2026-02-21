@@ -11,12 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use serde::Deserialize;
 use serde::Serialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::ops::Bound::*;
 use std::ops::Deref;
+use std::result::Result as SResult;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -78,12 +80,31 @@ pub struct EdgeListGraph<T: Serialize> {
     nodes: T,
 }
 
+pub fn validate_name<'de, D>(deserializer: D) -> SResult<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        Ok(s)
+    } else {
+        Err(serde::de::Error::custom(
+            "invalid characters: only 0-9, a-z, A-Z, '-' and '_' allowed",
+        ))
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct DataObject<SpecType: Serialize + Clone + core::fmt::Debug + Default> {
     #[serde(alias = "type")]
     pub objType: String,
+    #[serde(deserialize_with = "validate_name")]
     pub tenant: String,
+    #[serde(deserialize_with = "validate_name")]
     pub namespace: String,
+    #[serde(deserialize_with = "validate_name")]
     pub name: String,
     #[serde(default)]
     pub labels: Labels,
