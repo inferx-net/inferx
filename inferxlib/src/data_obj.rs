@@ -87,12 +87,12 @@ where
     let s = String::deserialize(deserializer)?;
 
     if s.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
     {
         Ok(s)
     } else {
         Err(serde::de::Error::custom(
-            "invalid characters: only 0-9, a-z, A-Z, '-' and '_' allowed",
+            "invalid characters: only 0-9, a-z, A-Z, '-', '_' and '.' allowed",
         ))
     }
 }
