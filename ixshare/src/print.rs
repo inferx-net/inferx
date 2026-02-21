@@ -443,7 +443,7 @@ impl Log {
     }
 
     pub fn WriteAll(&self, buf: &[u8]) {
-        self.rotate_if_needed(LOG_ROTATION_RETENTION);
+        // self.rotate_if_needed(LOG_ROTATION_RETENTION);
         self.lineNum.fetch_add(1, Ordering::Relaxed);
         let mut count = 0;
         while count < buf.len() {
