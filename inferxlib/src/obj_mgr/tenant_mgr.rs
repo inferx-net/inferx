@@ -42,7 +42,7 @@ pub struct TenantStatus {
     pub quota_exceeded: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResourceLimit {
     #[serde(default = "default_funccnt", rename = "max_funccount")]
     pub maxFuncCnt: u64,
@@ -54,6 +54,12 @@ pub struct ResourceLimit {
     pub maxStandby: u64,
     #[serde(default = "default_max_queue_len", rename = "max_queue_len")]
     pub maxQueueLen: usize,
+}
+
+impl Default for ResourceLimit {
+    fn default() -> Self {
+        default_resourcelimit()
+    }
 }
 
 fn default_funccnt() -> u64 {
@@ -76,10 +82,18 @@ fn default_max_queue_len() -> usize {
     100
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TenantSpec {
     #[serde(default = "default_resourcelimit", rename = "limit")]
     pub resourceLimit: ResourceLimit,
+}
+
+impl Default for TenantSpec {
+    fn default() -> Self {
+        Self {
+            resourceLimit: default_resourcelimit(),
+        }
+    }
 }
 
 pub type Tenant = DataObject<TenantObject>;

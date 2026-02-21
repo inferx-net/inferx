@@ -6,11 +6,12 @@ use inferxlib::{
         func_mgr::{FuncStatus, Function},
         funcpolicy_mgr::FuncPolicy,
         funcsnapshot_mgr::FuncSnapshot,
-        namespace_mgr::Namespace,
+        namespace_mgr::{Namespace, NamespaceObject},
         pod_mgr::FuncPod,
-        tenant_mgr::Tenant,
+        tenant_mgr::{Tenant, TenantObject, SYSTEM_NAMESPACE, SYSTEM_TENANT},
     },
 };
+use rand::Rng;
 
 use serde_json::Value;
 
@@ -25,6 +26,11 @@ use super::{
     gw_obj_repo::{FuncBrief, FuncDetail},
     http_gateway::HttpGateway,
 };
+
+const ONBOARD_TENANT_PREFIX: &str = "tn-";
+const ONBOARD_TENANT_SUFFIX_LEN: usize = 22;
+const ONBOARD_DEFAULT_NAMESPACE: &str = "default";
+const ONBOARD_MAX_ATTEMPTS: usize = 3;
 
 impl HttpGateway {
     pub async fn Rbac(
@@ -394,6 +400,233 @@ impl HttpGateway {
         };
 
         return Ok(users);
+    }
+
+    pub async fn Onboard(&self, token: &Arc<AccessToken>) -> Result<(String, bool)> {
+        if token.username == "anonymous" || token.sourceIsApikey || token.subject.is_empty() {
+            return Err(Error::NoPermission);
+        }
+
+        let sub = token.subject.clone();
+        let username = token.username.clone();
+        let token_cache = GetTokenCache().await;
+        let sql = &token_cache.sqlstore;
+
+        let mut created = false;
+        let mut row = match sql.GetOnboardInfo(&sub).await? {
+            Some(info) => info,
+            None => {
+                let (info, inserted_new) = self.CreatePendingOnboard(&sub, &username).await?;
+                created = inserted_new;
+                info
+            }
+        };
+
+        if row.status == "complete" {
+            return Ok((row.tenant_name, false));
+        }
+
+        if row.status == "failed" {
+            sql.ResetOnboard(&sub).await?;
+            row.status = "pending".to_owned();
+        }
+
+        if row.username != username {
+            sql.UpdateOnboardUsername(&sub, &username).await?;
+            row.username = username.clone();
+        }
+
+        if row.status != "pending" {
+            return Err(Error::CommonError(format!(
+                "invalid UserOnboard status {} for sub {}",
+                row.status, sub
+            )));
+        }
+
+        let mut restarts = 0;
+        loop {
+            if row.saga_step < 1 {
+                match self.CreateOnboardTenant(&row.tenant_name).await {
+                    Ok(()) => {
+                        sql.UpdateOnboardStep(&sub, 1).await?;
+                        row.saga_step = 1;
+                    }
+                    Err(e) => {
+                        if IsCreateConflictError(&e) {
+                            if restarts >= ONBOARD_MAX_ATTEMPTS {
+                                sql.MarkOnboardFailed(&sub).await?;
+                                return Err(Error::CommonError(format!(
+                                    "onboard exhausted tenant_name retries for sub {}",
+                                    sub
+                                )));
+                            }
+
+                            restarts += 1;
+                            sql.DeleteOnboard(&sub).await?;
+                            let (new_row, _) = self.CreatePendingOnboard(&sub, &username).await?;
+                            row = new_row;
+                            created = true;
+                            continue;
+                        }
+
+                        return Err(e);
+                    }
+                }
+            }
+
+            if row.saga_step < 2 {
+                self.EnsureRole(
+                    token,
+                    &username,
+                    &AccessToken::TenantAdminRole(&row.tenant_name),
+                )
+                .await?;
+                sql.UpdateOnboardStep(&sub, 2).await?;
+                row.saga_step = 2;
+            }
+
+            if row.saga_step < 3 {
+                match self
+                    .CreateOnboardNamespace(&row.tenant_name, ONBOARD_DEFAULT_NAMESPACE)
+                    .await
+                {
+                    Ok(()) => (),
+                    Err(e) => {
+                        if !IsCreateConflictError(&e) {
+                            return Err(e);
+                        }
+                    }
+                }
+
+                self.EnsureRole(
+                    token,
+                    &username,
+                    &AccessToken::NamespaceAdminRole(&row.tenant_name, ONBOARD_DEFAULT_NAMESPACE),
+                )
+                .await?;
+                sql.UpdateOnboardStep(&sub, 3).await?;
+                row.saga_step = 3;
+            }
+
+            sql.CompleteOnboard(&sub).await?;
+            return Ok((row.tenant_name.clone(), created));
+        }
+    }
+
+    async fn CreatePendingOnboard(
+        &self,
+        sub: &str,
+        username: &str,
+    ) -> Result<(super::secret::OnboardInfo, bool)> {
+        let token_cache = GetTokenCache().await;
+        let sql = &token_cache.sqlstore;
+
+        for _ in 0..ONBOARD_MAX_ATTEMPTS {
+            let tenant_name = GenerateTenantName();
+
+            if self.TenantExistsInStore(&tenant_name).await? {
+                continue;
+            }
+
+            match sql.InsertOnboard(sub, username, &tenant_name).await {
+                Ok(true) => {
+                    let row = sql.GetOnboardInfo(sub).await?;
+                    match row {
+                        Some(info) => return Ok((info, true)),
+                        None => {
+                            return Err(Error::CommonError(format!(
+                                "inserted UserOnboard but cannot read sub {}",
+                                sub
+                            )));
+                        }
+                    }
+                }
+                Ok(false) => {
+                    let row = sql.GetOnboardInfo(sub).await?;
+                    match row {
+                        Some(info) => return Ok((info, false)),
+                        None => {
+                            return Err(Error::CommonError(format!(
+                                "UserOnboard conflict but cannot read sub {}",
+                                sub
+                            )));
+                        }
+                    }
+                }
+                Err(e) => {
+                    if IsOnboardTenantConflictError(&e) {
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        return Err(Error::CommonError(format!(
+            "failed to allocate unique tenant_name after {} attempts",
+            ONBOARD_MAX_ATTEMPTS
+        )));
+    }
+
+    async fn CreateOnboardTenant(&self, tenant_name: &str) -> Result<()> {
+        let tenant = Tenant {
+            objType: Tenant::KEY.to_owned(),
+            tenant: SYSTEM_TENANT.to_owned(),
+            namespace: SYSTEM_NAMESPACE.to_owned(),
+            name: tenant_name.to_owned(),
+            labels: Default::default(),
+            annotations: Default::default(),
+            channelRev: 0,
+            srcEpoch: 0,
+            revision: 0,
+            object: TenantObject::default(),
+        };
+
+        self.client.Create(&tenant.DataObject()).await?;
+        return Ok(());
+    }
+
+    async fn CreateOnboardNamespace(&self, tenant_name: &str, namespace: &str) -> Result<()> {
+        let ns = Namespace {
+            objType: Namespace::KEY.to_owned(),
+            tenant: tenant_name.to_owned(),
+            namespace: SYSTEM_NAMESPACE.to_owned(),
+            name: namespace.to_owned(),
+            labels: Default::default(),
+            annotations: Default::default(),
+            channelRev: 0,
+            srcEpoch: 0,
+            revision: 0,
+            object: NamespaceObject::default(),
+        };
+
+        self.client.Create(&ns.DataObject()).await?;
+        return Ok(());
+    }
+
+    async fn EnsureRole(&self, token: &Arc<AccessToken>, username: &str, role: &str) -> Result<()> {
+        let token_cache = GetTokenCache().await;
+        match token_cache.sqlstore.AddRole(username, role).await {
+            Ok(()) => {
+                token_cache.EvactionToken(token);
+                return Ok(());
+            }
+            Err(e) => {
+                if IsUniqueViolationError(&e) {
+                    token_cache.EvactionToken(token);
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    async fn TenantExistsInStore(&self, tenant_name: &str) -> Result<bool> {
+        let obj = self
+            .client
+            .Get(Tenant::KEY, SYSTEM_TENANT, SYSTEM_NAMESPACE, tenant_name, 0)
+            .await?;
+        return Ok(obj.is_some());
     }
 
     pub async fn CreateTenant(
@@ -906,7 +1139,10 @@ impl HttpGateway {
                     }
                 }
                 Err(e) => {
-                    error!("AdminNamespaces fail to list tenant {} namespaces: {:?}", tenant, e);
+                    error!(
+                        "AdminNamespaces fail to list tenant {} namespaces: {:?}",
+                        tenant, e
+                    );
                 }
             }
         }
@@ -1254,5 +1490,58 @@ impl HttpGateway {
             .ReadPodFailLog(&tenant, &namespace, &funcname, version, id)
             .await?;
         return Ok(s);
+    }
+}
+
+fn GenerateTenantName() -> String {
+    const BASE36: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut rng = rand::thread_rng();
+    let mut suffix = String::with_capacity(ONBOARD_TENANT_SUFFIX_LEN);
+    for _ in 0..ONBOARD_TENANT_SUFFIX_LEN {
+        let idx = rng.gen_range(0..BASE36.len());
+        suffix.push(BASE36[idx] as char);
+    }
+
+    return format!("{ONBOARD_TENANT_PREFIX}{suffix}");
+}
+
+fn IsUniqueViolationError(err: &Error) -> bool {
+    match err {
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            db_err.code().as_deref() == Some("23505")
+        }
+        _ => false,
+    }
+}
+
+fn IsOnboardTenantConflictError(err: &Error) -> bool {
+    match err {
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            if db_err.code().as_deref() != Some("23505") {
+                return false;
+            }
+
+            if matches!(db_err.constraint(), Some("useronboard_idx_tenant_name")) {
+                return true;
+            }
+
+            return db_err
+                .message()
+                .contains("duplicate key value violates unique constraint");
+        }
+        _ => false,
+    }
+}
+
+fn IsCreateConflictError(err: &Error) -> bool {
+    match err {
+        Error::Exist(_) | Error::NewKeyExistsErr(_) => true,
+        Error::CommonError(msg) => {
+            let msg = msg.to_ascii_lowercase();
+            msg.contains("already exist")
+                || msg.contains("already exists")
+                || msg.contains("key exists")
+        }
+        _ => false,
     }
 }

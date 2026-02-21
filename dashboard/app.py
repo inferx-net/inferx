@@ -72,6 +72,7 @@ KEYCLOAK_URL = os.getenv('KEYCLOAK_URL', "http://192.168.0.22:31260/authn")
 KEYCLOAK_REALM_NAME = os.getenv('KEYCLOAK_REALM_NAME', "inferx")
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', "infer_client")
 KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', "M2Dse5531tdtyipZdGizLEeoOVgziQRX")
+FORCE_HTTPS_REDIRECTS = os.getenv('FORCE_HTTPS_REDIRECTS', 'false').lower() in ("1", "true", "yes")
 
 server_metadata_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/.well-known/openid-configuration"
 
@@ -99,6 +100,144 @@ keycloak = oauth.register(
 tls = False
 
 apihostaddr = os.getenv('INFERX_APIGW_ADDR', "http://localhost:4000")
+ONBOARD_MAX_RETRIES = int(os.getenv('ONBOARD_MAX_RETRIES', '3'))
+ONBOARD_BACKOFF_BASE_SEC = float(os.getenv('ONBOARD_BACKOFF_BASE_SEC', '0.5'))
+ONBOARD_TIMEOUT_SEC = float(os.getenv('ONBOARD_TIMEOUT_SEC', '10'))
+
+if FORCE_HTTPS_REDIRECTS:
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+
+def external_url(endpoint: str, **values) -> str:
+    values["_external"] = True
+    if FORCE_HTTPS_REDIRECTS:
+        values["_scheme"] = "https"
+    return url_for(endpoint, **values)
+
+
+def select_user_display_name(userinfo) -> str:
+    given_name = str(userinfo.get("given_name", "")).strip()
+    if given_name != "":
+        return given_name
+
+    name = str(userinfo.get("name", "")).strip()
+    if name != "":
+        return name.split()[0]
+
+    preferred_username = str(userinfo.get("preferred_username", "")).strip()
+    if preferred_username != "":
+        return preferred_username.split("@")[0].split(".")[0]
+
+    email = str(userinfo.get("email", "")).strip()
+    if email != "":
+        return email.split("@")[0].split(".")[0]
+
+    return ""
+
+
+def call_onboard_with_retry(access_token: str, sub: str):
+    if access_token == "":
+        raise Exception("missing access token for onboarding")
+
+    if sub == "":
+        raise Exception("missing sub claim for onboarding")
+
+    url = "{}/onboard".format(apihostaddr.rstrip('/'))
+    headers = {'Authorization': f'Bearer {access_token}'}
+
+    delay = ONBOARD_BACKOFF_BASE_SEC
+    last_error = "onboard failed"
+    for attempt in range(1, ONBOARD_MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, headers=headers, timeout=ONBOARD_TIMEOUT_SEC)
+            if resp.status_code == 200:
+                data = resp.json()
+                tenant_name = data.get("tenant_name", "")
+                if tenant_name == "":
+                    raise Exception("onboard response missing tenant_name")
+                return data
+
+            last_error = f"onboard attempt {attempt}/{ONBOARD_MAX_RETRIES} failed: HTTP {resp.status_code}, body={resp.text}"
+        except Exception as e:
+            last_error = f"onboard attempt {attempt}/{ONBOARD_MAX_RETRIES} exception: {e}"
+
+        if attempt < ONBOARD_MAX_RETRIES:
+            time.sleep(delay)
+            delay *= 2
+
+    raise Exception(last_error)
+
+
+def store_onboard_session(sub: str, onboard_info):
+    tenant_name = onboard_info.get('tenant_name', '')
+    session['sub'] = sub
+    # Keep backward compatibility with existing single-tenant reads.
+    session['tenant_name'] = tenant_name
+    # Prepare for future multi-tenant UX (switcher/invite join).
+    session['active_tenant_name'] = tenant_name
+    session['tenant_names'] = [tenant_name] if tenant_name != '' else []
+    session['tenant_role'] = onboard_info.get('role', '')
+    session['tenant_created'] = bool(onboard_info.get('created', False))
+
+
+def render_onboard_error(redirectpath: str, error_message: str, invite_code: str = ''):
+    target = redirectpath
+    if target == '':
+        target = url_for('prefix.ListFunc')
+
+    return render_template_string(
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Onboarding Failed</title>
+            <style>
+                body { font-family: Arial, sans-serif; background: #f8fafc; color: #111827; margin: 0; padding: 24px; }
+                .card { max-width: 640px; margin: 64px auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 24px; }
+                h1 { margin-top: 0; font-size: 24px; }
+                p { line-height: 1.5; }
+                pre { white-space: pre-wrap; background: #f3f4f6; border: 1px solid #e5e7eb; padding: 12px; border-radius: 8px; }
+                button { margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 8px; cursor: pointer; background: #2563eb; color: white; font-size: 14px; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>Tenant onboarding failed</h1>
+                <p>Your sign-in succeeded, but we could not finish creating/loading your tenant.</p>
+                <pre>{{ error_message }}</pre>
+                <form method="post" action="{{ url_for('prefix.onboard_retry') }}">
+                    <input type="hidden" name="redirectpath" value="{{ target }}">
+                    {% if invite_code %}
+                    <input type="hidden" name="invite_code" value="{{ invite_code }}">
+                    {% endif %}
+                    <button type="submit">Try Again</button>
+                </form>
+            </div>
+        </body>
+        </html>
+        """,
+        error_message=error_message,
+        target=target,
+        invite_code=invite_code,
+    ), 502
+
+
+def post_login_flow(sub: str, access_token: str, redirectpath: str, invite_code: str):
+    target = redirectpath if redirectpath != '' else url_for('prefix.ListFunc')
+
+    if invite_code == '':
+        invite_code = session.get('pending_invite_code', '')
+    if invite_code != '':
+        session['pending_invite_code'] = invite_code
+
+    # TODO(invite): branch this flow when invite APIs are implemented:
+    # - if invite_code exists, call join endpoint flow
+    # - otherwise run personal-tenant onboarding flow
+    onboard_info = call_onboard_with_retry(access_token, sub)
+    store_onboard_session(sub, onboard_info)
+    return target, invite_code
 
 def is_token_expired():
     # Check if token exists and has expiration time
@@ -137,7 +276,7 @@ def not_require_login(func):
             return func(*args, **kwargs)
 
         current_path = request.url
-        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
+        redirect_uri = external_url('prefix.login', redirectpath=current_path)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -150,7 +289,7 @@ def require_login(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         current_path = request.url
-        redirect_uri = url_for('prefix.login', redirectpath=current_path, _external=True)
+        redirect_uri = external_url('prefix.login', redirectpath=current_path)
         if 'token' not in session:
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
@@ -195,7 +334,10 @@ def login():
     nonce = generate_token(20)
     session['keycloak_nonce'] = nonce
     redirectpath=request.args.get('redirectpath', '')
-    redirect_uri = url_for('prefix.auth_callback', redirectpath=redirectpath,  _external=True)
+    invite_code=request.args.get('invite_code', '')
+    if invite_code != '':
+        session['pending_invite_code'] = invite_code
+    redirect_uri = external_url('prefix.auth_callback', redirectpath=redirectpath, invite_code=invite_code)
     return keycloak.authorize_redirect(
         redirect_uri=redirect_uri,
         nonce=nonce  # Pass nonce to Keycloak
@@ -209,22 +351,72 @@ def auth_callback():
         nonce = session.pop('keycloak_nonce', None)
 
         redirectpath=request.args.get('redirectpath', '')
+        invite_code=request.args.get('invite_code', '')
+        if invite_code == '':
+            invite_code = session.get('pending_invite_code', '')
     
         if not nonce:
             raise Exception("Missing nonce in session")
 
         userinfo = keycloak.parse_id_token(token, nonce=nonce)  # Validate nonce
+        sub = userinfo.get('sub', '')
+        if sub == '':
+            raise Exception("Missing sub claim in ID token")
+
+        username = str(userinfo.get('preferred_username', '')).strip()
+        if username == '':
+            username = str(userinfo.get('email', '')).strip()
+
         session['user'] = userinfo
-        session['username'] = userinfo.get('preferred_username')
+        session['username'] = username
+        session['display_name'] = select_user_display_name(userinfo)
         session['access_token'] = token.get('access_token')
         session['token'] = token
         session['id_token'] = token.get('id_token')
+        session['sub'] = sub
 
-        if redirectpath=='':
-            return redirect(url_for('prefix.ListFunc'))
-        return redirect(redirectpath)
+        target = redirectpath if redirectpath != '' else url_for('prefix.ListFunc')
+        try:
+            target, invite_code = post_login_flow(
+                sub,
+                session['access_token'],
+                redirectpath,
+                invite_code,
+            )
+        except Exception as onboard_error:
+            app.logger.error("Onboard failed for sub %s: %s", sub, onboard_error)
+            return render_onboard_error(target, str(onboard_error), invite_code)
+
+        return redirect(target)
     except Exception as e:
         return f"Authentication failed: {str(e)}", 403
+
+
+@prefix_bp.route('/onboard/retry', methods=['POST'])
+@require_login
+def onboard_retry():
+    redirectpath = request.form.get('redirectpath', '')
+    target = redirectpath if redirectpath != '' else url_for('prefix.ListFunc')
+    invite_code = request.form.get('invite_code', '')
+    if invite_code == '':
+        invite_code = session.get('pending_invite_code', '')
+    sub = session.get('sub', '')
+    if sub == '':
+        userinfo = session.get('user', {})
+        sub = userinfo.get('sub', '')
+
+    access_token = session.get('access_token', '')
+    try:
+        target, invite_code = post_login_flow(
+            sub,
+            access_token,
+            redirectpath,
+            invite_code,
+        )
+        return redirect(target)
+    except Exception as e:
+        app.logger.error("Onboard retry failed for sub %s: %s", sub, e)
+        return render_onboard_error(target, str(e), invite_code)
 
 @prefix_bp.route('/logout')
 def logout():
@@ -238,7 +430,7 @@ def logout():
 
     session.clear()
 
-    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={url_for('prefix.ListFunc', _external=True)}"
+    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={external_url('prefix.ListFunc')}"
     if id_token:
         logout_url += f"&id_token_hint={id_token}"
         

@@ -133,7 +133,7 @@
     </tr>
     {% for pod in func["pods"] %}
     <tr>
-        <td>{{ pod["tenant"] }}</td>
+        <td><span data-tenant-name="{{ pod['tenant'] }}">{{ pod["tenant"] }}</span></td>
         <td>{{ pod["namespace"] }}</td>
         <td><a href="{{ hosturl }}pod?tenant={{ pod[" tenant"] }}&&namespace={{ pod["namespace"] }}&&name={{ pod["name"]
                 }}">{{
@@ -290,7 +290,7 @@
     </tr>
     {% for fail in fails %}
     <tr>
-        <td>{{ fail["tenant"] }}</td>
+        <td><span data-tenant-name="{{ fail['tenant'] }}">{{ fail["tenant"] }}</span></td>
         <td>{{ fail["namespace"] }}</td>
         <td>{{ fail["fpname"] }}</td>
         <td>{{ fail["fprevision"] }}</td>
@@ -320,7 +320,7 @@
     </tr>
     {% for audit in snapshotaudit %}
     <tr>
-        <td>{{ audit["tenant"] }}</td>
+        <td><span data-tenant-name="{{ audit['tenant'] }}">{{ audit["tenant"] }}</span></td>
         <td>{{ audit["namespace"] }}</td>
         <td>{{ audit["funcname"] }}</td>
         <td>{{ audit["revision"] }}</td>

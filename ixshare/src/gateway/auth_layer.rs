@@ -29,7 +29,7 @@ use std::ops::Bound::Unbounded;
 
 use super::secret::{Apikey, SqlSecret};
 use crate::gateway::http_gateway::GATEWAY_CONFIG;
-use crate::{common::*, node_config::NODE_CONFIG};
+use crate::common::*;
 
 pub const SECRET_ADDR: &str = "postgresql://audit_user:123456@localhost:5431/secretdb";
 
@@ -40,7 +40,7 @@ pub async fn GetTokenCache() -> &'static TokenCache {
         .get_or_init(|| async {
             info!(
                 "GetTokenCache config {:?} secretstore addr {}",
-                &NODE_CONFIG.keycloakconfig, &GATEWAY_CONFIG.secretStoreAddr
+                &GATEWAY_CONFIG.keycloakconfig, &GATEWAY_CONFIG.secretStoreAddr
             );
             match TokenCache::New(
                 &GATEWAY_CONFIG.secretStoreAddr,
@@ -103,6 +103,10 @@ pub fn Realm(token: &KeycloakToken<String>) -> String {
 
 pub fn Username(token: &KeycloakToken<String>) -> String {
     return token.extra.profile.preferred_username.clone();
+}
+
+pub fn Subject(token: &KeycloakToken<String>) -> String {
+    return token.subject.clone();
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
@@ -177,8 +181,9 @@ pub struct ApikeyDeleteRequest {
     pub keyname: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AccessToken {
+    pub subject: String,
     pub username: String,
     pub roles: BTreeSet<String>,
     pub apiKeys: Vec<String>,
@@ -205,6 +210,7 @@ impl AccessToken {
         }
 
         return Self {
+            subject: "".to_owned(),
             username: username.to_owned(),
             roles: set,
             apiKeys: apikeys,
@@ -218,6 +224,7 @@ impl AccessToken {
 
     pub fn InferxAdminToken() -> Self {
         return Self {
+            subject: "".to_owned(),
             username: Self::INERX_ADMIN.to_owned(),
             roles: BTreeSet::new(),
             apiKeys: Vec::new(),
@@ -644,6 +651,7 @@ impl TokenCache {
             sqlstore: sqlstore,
             updatelock: Mutex::new(()),
             anonymous: Arc::new(AccessToken {
+                subject: "".to_owned(),
                 username: "anonymous".to_owned(),
                 roles: BTreeSet::new(),
                 apiKeys: Vec::new(),
@@ -788,6 +796,7 @@ impl TokenCache {
         }
 
         Ok(AccessToken {
+            subject: base.subject.clone(),
             username: base.username.clone(),
             roles: filtered_roles,
             apiKeys: base.apiKeys.clone(),
@@ -1168,6 +1177,7 @@ pub async fn auth_transform_keycloaktoken(
         match token {
             KeycloakAuthStatus::Success(t) => {
                 let username = Username(t);
+                let subject = Subject(t);
                 let token = match GetTokenCache().await.GetTokenByUsername(&username).await {
                     Err(e) => {
                         let body = Body::from(format!(
@@ -1183,7 +1193,13 @@ pub async fn auth_transform_keycloaktoken(
                     }
                     Ok(t) => t,
                 };
-                token
+                if token.subject == subject {
+                    token
+                } else {
+                    let mut with_subject = (*token).clone();
+                    with_subject.subject = subject;
+                    Arc::new(with_subject)
+                }
             }
             KeycloakAuthStatus::Failure(_) => match req.headers().get("Authorization") {
                 None => GetTokenCache().await.anonymous.clone(),

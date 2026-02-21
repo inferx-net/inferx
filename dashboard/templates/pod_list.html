@@ -53,7 +53,7 @@
     {% for idx in range(gpu_rows) %}
     <tr>
         {% if idx == 0 %}
-        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}">{{ pod['tenant'] }}</a></td>
+        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}"><span data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span></a></td>
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}">{{ pod['namespace'] }}</a></td>
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}&&name={{ pod['name'] }}">{{ pod['name'] }}</a></td>
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["status"]["state"] }}</td>
