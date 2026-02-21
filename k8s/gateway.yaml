@@ -41,7 +41,7 @@ spec:
           - name: RUN_SERVICE
             value: "Gateway"
           - name: ENFORCE_BILLING
-            value: "true"
+            value: "false"
           - name: INFERX_ADMIN_APIKEY
             value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: AUDITDB_ADDR

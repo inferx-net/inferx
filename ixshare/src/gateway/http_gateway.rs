@@ -327,7 +327,7 @@ impl HttpGateway {
             .expose_headers(Any);
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let auth_layer = NODE_CONFIG.keycloakconfig.AuthLayer();
+        let auth_layer = GATEWAY_CONFIG.keycloakconfig.AuthLayer();
 
         let app = Router::new()
             .route("/rbac/", post(RbacGrant))
@@ -341,6 +341,7 @@ impl HttpGateway {
             .route("/apikey/", get(GetApikeys))
             .route("/apikey/", put(CreateApikey))
             .route("/apikey/", delete(DeleteApikey))
+            .route("/onboard", post(Onboard))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -1518,6 +1519,50 @@ async fn CreateApikey(
                 return Ok(resp);
             }
 
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OnboardResponse {
+    tenant_name: String,
+    role: String,
+    created: bool,
+}
+
+async fn Onboard(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    match gw.Onboard(&token).await {
+        Ok((tenant_name, created)) => {
+            let body = Body::from(serde_json::to_string(&OnboardResponse {
+                tenant_name: tenant_name,
+                role: "admin".to_owned(),
+                created: created,
+            }).unwrap());
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(Error::NoPermission) => {
+            let body = Body::from("service failure: No permission");
+            let resp = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
             let body = Body::from(format!("service failure {:?}", e));
             let resp = Response::builder()
                 .status(StatusCode::BAD_REQUEST)

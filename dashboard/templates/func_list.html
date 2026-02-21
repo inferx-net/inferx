@@ -39,7 +39,7 @@
     {% for func in funcs %}
     <tr>
         <td><a href="{{ hosturl }}listfunc?tenant={{ func['func']['tenant'] }}">
-                {{ func['func']['tenant'] }}
+                <span data-tenant-name="{{ func['func']['tenant'] }}">{{ func['func']['tenant'] }}</span>
             </a></td>
         <td><a
                 href="{{ hosturl }}listfunc?tenant={{ func['func']['tenant'] }}&&namespace={{ func['func']['namespace'] }}">

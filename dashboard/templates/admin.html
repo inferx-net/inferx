@@ -793,6 +793,7 @@
 
         </tbody>
     </table>
+
 </div>
 
 <div id="Billing" class="tabcontent">
@@ -1296,6 +1297,40 @@
         return resp;
     }
 
+    function tenantDisplayLabel(tenantName) {
+        if (window.getTenantDisplayName) {
+            return window.getTenantDisplayName(tenantName);
+        }
+        return tenantName;
+    }
+
+    function tenantDisplayNameFromObj(tenantObj) {
+        if (window.tenantDisplayNameFromTenantObject) {
+            return window.tenantDisplayNameFromTenantObject(tenantObj);
+        }
+        return tenantObj?.name || '';
+    }
+
+    function tenantLinkLabelHtml(tenantName) {
+        return `<span data-tenant-name="${tenantName}">${tenantName}</span>`;
+    }
+
+    function upsertTenantDisplayMapFromList(tenants) {
+        if (!Array.isArray(tenants) || !window.updateTenantDisplayMap) {
+            return;
+        }
+
+        const map = {};
+        tenants.forEach((tenantObj) => {
+            const tenantName = String(tenantObj?.name || '').trim();
+            if (tenantName === '') {
+                return;
+            }
+            map[tenantName] = tenantDisplayNameFromObj(tenantObj);
+        });
+        window.updateTenantDisplayMap(map);
+    }
+
     function openTab(evt, tabName) {
         const tabcontent = document.getElementsByClassName("tabcontent");
         for (let i = 0; i < tabcontent.length; i++) {
@@ -1374,11 +1409,12 @@
                 fetchWithAuth('/demo/generate_tenants').then(r => r.json())
             ]);
 
+            upsertTenantDisplayMapFromList(tenants);
             tenants.forEach(t => {
                 if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
                     const option = document.createElement('option');
                     option.value = t.name;
-                    option.textContent = t.name;
+                    option.textContent = tenantDisplayNameFromObj(t);
                     dropdown.appendChild(option);
                 }
             });
@@ -1429,20 +1465,22 @@
 
         try {
             const tenants = await fetchWithAuth('/demo/generate_tenants').then(r => r.json());
+            upsertTenantDisplayMapFromList(tenants);
             tenants.forEach(t => {
+                const label = tenantDisplayNameFromObj(t);
                 const creditOption = document.createElement('option');
                 creditOption.value = t.name;
-                creditOption.textContent = t.name;
+                creditOption.textContent = label;
                 creditTenantDropdown.appendChild(creditOption);
 
                 const historyOption = document.createElement('option');
                 historyOption.value = t.name;
-                historyOption.textContent = t.name;
+                historyOption.textContent = label;
                 creditHistoryTenantDropdown.appendChild(historyOption);
 
                 const rateOption = document.createElement('option');
                 rateOption.value = t.name;
-                rateOption.textContent = t.name;
+                rateOption.textContent = label;
                 rateTenantDropdown.appendChild(rateOption);
             });
 
@@ -2480,7 +2518,7 @@
             if (data.records && data.records.length > 0) {
                 data.records.forEach(record => {
                     const row = document.createElement('tr');
-                    const scopeText = record.tenant ? `Tenant: ${record.tenant}` : 'Global';
+                    const scopeText = record.tenant ? `Tenant: ${tenantDisplayLabel(record.tenant)}` : 'Global';
                     const rateText = `${formatUsd(record.rate_cents_per_hour)} (${record.rate_cents_per_hour}¢/GPU-hr)`;
                     const effectiveFrom = record.effective_from ? new Date(record.effective_from).toLocaleString() : '-';
                     const effectiveTo = record.effective_to ? new Date(record.effective_to).toLocaleString() : '-';
@@ -2553,7 +2591,7 @@
         }
         const creditConfirm = window.confirm(
             `Confirm credit adjustment?\n` +
-            `Tenant: ${tenant}\n` +
+            `Tenant: ${tenantDisplayLabel(tenant)}\n` +
             `Amount: ${formatUsdSigned(amountCents)}\n` +
             `Note: ${note || '-'}\n` +
             `Payment Ref: ${paymentRef || '-'}`
@@ -3023,7 +3061,7 @@
         let endpoint = '';
         if (viewMode === 'tenant') {
             endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
-            titleEl.textContent = `Breakdown: ${tenant}`;
+            titleEl.textContent = `Breakdown: ${tenantDisplayLabel(tenant)}`;
         } else if (viewMode === 'model') {
             params.set('namespace', item.namespace || '');
             params.set('funcname', item.funcname || '');
@@ -3425,10 +3463,10 @@
             if (analyticsSortColumn === 'name') {
                 aVal = viewMode === 'model'
                     ? a.funcname
-                    : (viewMode === 'namespace' ? a.namespace : a.tenant);
+                    : (viewMode === 'namespace' ? a.namespace : tenantDisplayLabel(a.tenant));
                 bVal = viewMode === 'model'
                     ? b.funcname
-                    : (viewMode === 'namespace' ? b.namespace : b.tenant);
+                    : (viewMode === 'namespace' ? b.namespace : tenantDisplayLabel(b.tenant));
                 return analyticsSortDirection === 'asc'
                     ? aVal.localeCompare(bVal)
                     : bVal.localeCompare(aVal);
@@ -3471,7 +3509,7 @@
             row.style.cursor = 'pointer';
             const groupLabel = viewMode === 'model'
                 ? `${item.funcname} (${item.namespace})`
-                : (viewMode === 'namespace' ? item.namespace : item.tenant);
+                : (viewMode === 'namespace' ? item.namespace : tenantDisplayLabel(item.tenant));
             const infMs = item.inference_ms || 0;
             const sbyMs = item.standby_ms || 0;
             const infCents = item.inference_cents || 0;
@@ -4135,14 +4173,14 @@
 
             if (type === 'tenant') {
                 row.innerHTML = `
-            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${item.tenant}</a></td>
+            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${tenantLinkLabelHtml(item.tenant)}</a></td>
             <td style="text-align:center">${check(item.isAdmin)}</td>
             <td style="text-align:center">${check(item.isUser)}</td>
         `;
                 tenant_tbody.appendChild(row);
             } else {
                 row.innerHTML = `
-            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${item.tenant}</a></td>
+            <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}">${tenantLinkLabelHtml(item.tenant)}</a></td>
             <td style="text-align: center;"><a href="{{ hosturl }}listfunc?tenant=${item.tenant}&namespace=${item.namespace}">${item.namespace}</a></td>
             <td style="text-align:center">${check(item.isAdmin)}</td>
             <td style="text-align:center">${check(item.isUser)}</td>
@@ -4170,7 +4208,7 @@
                 </td>
                 <td style="text-align: center;">
                     <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
-                        ${key.func.tenant}
+                        ${tenantLinkLabelHtml(key.func.tenant)}
                     </a>
                 </td>
                 <td style="text-align: center;">
@@ -4231,7 +4269,7 @@
                 </td>
                 <td style="text-align: center; vertical-align: middle;">
                     <a href="{{ hosturl }}listfunc?tenant=${key.tenant}">
-                        ${key.tenant}
+                        ${tenantLinkLabelHtml(key.tenant)}
                     </a>
                 </td>
                 <td style="text-align: center;">
@@ -4256,7 +4294,7 @@
             if (isAdmin) {
                 const option = document.createElement("option");
                 option.value = key.tenant + "/" + key.name;
-                option.textContent = key.tenant + "/" + key.name;
+                option.textContent = `${tenantDisplayLabel(key.tenant)}/${key.name}`;
                 namespace_dropdown.appendChild(option);
             }
 
@@ -4264,6 +4302,7 @@
 
         const tenants_resp = await fetchWithAuth('/demo/generate_tenants');
         const tenants = await tenants_resp.json();
+        upsertTenantDisplayMapFromList(tenants);
         const tenants_tbody = document.querySelector('#tenants-table tbody');
         tenants_tbody.innerHTML = '';
         for (const key of tenants) {
@@ -4285,7 +4324,7 @@
                 <td style="text-align: center; vertical-align: middle;">
                     <a
                         href="{{ hosturl }}listfunc?tenant=${key.name}">
-                        ${key.name}
+                        ${tenantLinkLabelHtml(key.name)}
                     </a>
                 </td>
                 <td style="text-align: center;">${isAdmin
@@ -4305,7 +4344,7 @@
             if (isAdmin) {
                 const option = document.createElement("option");
                 option.value = key.name;
-                option.textContent = key.name;
+                option.textContent = tenantDisplayLabel(key.name);
                 tenant_dropdown.appendChild(option);
             }
         };
@@ -4319,7 +4358,7 @@
             tenantList.forEach(tenant => {
                 const option = document.createElement('option');
                 option.value = tenant;
-                option.textContent = tenant;
+                option.textContent = tenantDisplayLabel(tenant);
                 apikeyRestrictTenantSelect.appendChild(option);
             });
 
@@ -4336,6 +4375,9 @@
             onApikeyRestrictTenantChange();
         }
         configureApikeyCreateForm(roles);
+        if (window.applyTenantDisplayNames) {
+            window.applyTenantDisplayNames(document);
+        }
     }
 
     async function create_func() {

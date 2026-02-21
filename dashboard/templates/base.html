@@ -65,6 +65,14 @@
             margin-left: 50px;
             font-size: 20px;
         }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+
     </style>
 </head>
 
@@ -77,9 +85,9 @@
                     (contact: support@inferx.net)</</h2>
         </td>
     </table>
-    <a href="#" id="login_logout" style="font-size: 2em;float:right">
-        Action
-    </a>
+    <div class="topbar">
+        <a href="#" id="login_logout" style="font-size: 2em; margin-left: auto;">Action</a>
+    </div>
     <hr>
     <nav>
         <a href="{{ hosturl }}intro"> Introduction </a>
@@ -91,21 +99,127 @@
     </nav>
     <script>
         const link = document.querySelector('#login_logout');
-        const admin = document.querySelector('#admin');
-        if (location.protocol == 'https:') {
-            admin.style.display = 'none';
-            link.style.display = 'none';
-        } else {
-            const usernam = "{{ session['username'] }}";
-            if (usernam == "") {
-                const currentUrl = window.location.href;
-                link.href = '{{ hosturl }}' + "login";
-                link.textContent = 'login'
-            } else {
-                link.href = '{{ hosturl }}' + "logout";
-                link.textContent = "logout(" + usernam + ")";
+        const username = {{ session.get('username', '') | tojson }};
+        const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
+        const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
+        const tenantDisplayMap = {};
+
+        function tenantDisplayNameFromTenantObject(tenantObj) {
+            if (!tenantObj) {
+                return "";
+            }
+
+            const spec = tenantObj.object && tenantObj.object.spec ? tenantObj.object.spec : {};
+            const displayName = (spec.display_name || spec.displayName || "").trim();
+            if (displayName !== "") {
+                return displayName;
+            }
+
+            return (tenantObj.name || "").trim();
+        }
+
+        function getTenantDisplayName(tenantName) {
+            if (!tenantName) {
+                return "";
+            }
+
+            const mapped = tenantDisplayMap[tenantName];
+            if (typeof mapped === 'string' && mapped.trim() !== "") {
+                return mapped;
+            }
+
+            return tenantName;
+        }
+
+        function applyTenantDisplayNames(root = document) {
+            if (!root || !root.querySelectorAll) {
+                return;
+            }
+
+            const elems = root.querySelectorAll('[data-tenant-name]');
+            elems.forEach((elem) => {
+                const tenantName = (elem.dataset.tenantName || '').trim();
+                if (tenantName === "") {
+                    return;
+                }
+
+                const displayName = getTenantDisplayName(tenantName);
+                elem.textContent = displayName;
+                elem.title = tenantName;
+            });
+        }
+
+        function refreshTenantBadge() {
+            return;
+        }
+
+        function updateTenantDisplayMap(entries) {
+            if (!entries || typeof entries !== 'object') {
+                return;
+            }
+
+            Object.entries(entries).forEach(([tenantName, displayName]) => {
+                const tn = String(tenantName || '').trim();
+                if (tn === '') {
+                    return;
+                }
+
+                const dn = String(displayName || '').trim();
+                tenantDisplayMap[tn] = dn === '' ? tn : dn;
+            });
+
+            applyTenantDisplayNames(document);
+            refreshTenantBadge();
+            document.dispatchEvent(new CustomEvent('tenant-display-map-updated'));
+        }
+
+        async function loadTenantDisplayMap() {
+            if (username === '') {
+                refreshTenantBadge();
+                return;
+            }
+
+            try {
+                const resp = await fetch('/demo/generate_tenants');
+                if (!resp.ok) {
+                    refreshTenantBadge();
+                    return;
+                }
+
+                const tenants = await resp.json();
+                const updates = {};
+                tenants.forEach((tenantObj) => {
+                    const tenantName = String(tenantObj.name || '').trim();
+                    if (tenantName === '') {
+                        return;
+                    }
+
+                    const displayName = tenantDisplayNameFromTenantObject(tenantObj);
+                    updates[tenantName] = displayName === '' ? tenantName : displayName;
+                });
+
+                updateTenantDisplayMap(updates);
+            } catch (_e) {
+                refreshTenantBadge();
             }
         }
+
+        window.getTenantDisplayName = getTenantDisplayName;
+        window.applyTenantDisplayNames = applyTenantDisplayNames;
+        window.updateTenantDisplayMap = updateTenantDisplayMap;
+        window.tenantDisplayNameFromTenantObject = tenantDisplayNameFromTenantObject;
+
+        if (username == "") {
+            link.href = '{{ hosturl }}' + "login";
+            link.textContent = 'login'
+        } else {
+            link.href = '{{ hosturl }}' + "logout";
+            link.textContent = "logout(" + userDisplayName + ")";
+        }
+
+        refreshTenantBadge();
+        applyTenantDisplayNames(document);
+        loadTenantDisplayMap();
 
     </script>
     <hr>

@@ -35,6 +35,17 @@ pub struct User {
     pub username: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct OnboardInfo {
+    pub sub: String,
+    pub username: String,
+    pub tenant_name: String,
+    pub status: String,
+    pub saga_step: i32,
+    pub onboarded_at: Option<chrono::NaiveDateTime>,
+    pub completed_at: Option<chrono::NaiveDateTime>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlSecret {
     pub pool: PgPool,
@@ -270,5 +281,108 @@ impl SqlSecret {
             v.push(r.username);
         }
         return Ok(v);
+    }
+
+    pub async fn GetOnboardInfo(&self, sub: &str) -> Result<Option<OnboardInfo>> {
+        let query = "select
+                sub,
+                username,
+                tenant_name,
+                status,
+                saga_step,
+                onboarded_at,
+                completed_at
+            from UserOnboard
+            where sub = $1";
+
+        let info = sqlx::query_as::<_, OnboardInfo>(query)
+            .bind(sub)
+            .fetch_optional(&self.pool)
+            .await?;
+        return Ok(info);
+    }
+
+    pub async fn InsertOnboard(
+        &self,
+        sub: &str,
+        username: &str,
+        tenant_name: &str,
+    ) -> Result<bool> {
+        let query = "insert into UserOnboard (
+                sub, username, tenant_name, status, saga_step
+            ) values (
+                $1, $2, $3, 'pending', 0
+            ) on conflict (sub) do nothing";
+
+        let res = sqlx::query(query)
+            .bind(sub)
+            .bind(username)
+            .bind(tenant_name)
+            .execute(&self.pool)
+            .await?;
+
+        return Ok(res.rows_affected() == 1);
+    }
+
+    pub async fn UpdateOnboardStep(&self, sub: &str, saga_step: i32) -> Result<()> {
+        let query = "update UserOnboard
+            set saga_step = GREATEST(saga_step, $2)
+            where sub = $1";
+
+        let _res = sqlx::query(query)
+            .bind(sub)
+            .bind(saga_step)
+            .execute(&self.pool)
+            .await?;
+
+        return Ok(());
+    }
+
+    pub async fn CompleteOnboard(&self, sub: &str) -> Result<()> {
+        let query = "update UserOnboard
+            set status = 'complete',
+                saga_step = GREATEST(saga_step, 3),
+                completed_at = NOW()
+            where sub = $1";
+
+        let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn MarkOnboardFailed(&self, sub: &str) -> Result<()> {
+        let query = "update UserOnboard
+            set status = 'failed'
+            where sub = $1";
+
+        let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn ResetOnboard(&self, sub: &str) -> Result<()> {
+        let query = "update UserOnboard
+            set status = 'pending'
+            where sub = $1";
+
+        let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn DeleteOnboard(&self, sub: &str) -> Result<()> {
+        let query = "delete from UserOnboard where sub = $1";
+        let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn UpdateOnboardUsername(&self, sub: &str, username: &str) -> Result<()> {
+        let query = "update UserOnboard
+            set username = $2
+            where sub = $1";
+
+        let _res = sqlx::query(query)
+            .bind(sub)
+            .bind(username)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
     }
 }
