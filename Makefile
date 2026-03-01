@@ -1,6 +1,6 @@
 ARCH := ${shell uname -m}
-VERSION := v0.3.2beta2
-VERSION1 := v0.3.2beta2
+VERSION := v0.2.1
+VERSION1 := v0.2.1
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
