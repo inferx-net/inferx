@@ -115,6 +115,49 @@ PUBLIC_API_BASE_URL = os.getenv('INFERX_PUBLIC_API_BASE_URL', "").strip()
 ONBOARD_MAX_RETRIES = int(os.getenv('ONBOARD_MAX_RETRIES', '3'))
 ONBOARD_BACKOFF_BASE_SEC = float(os.getenv('ONBOARD_BACKOFF_BASE_SEC', '0.5'))
 ONBOARD_TIMEOUT_SEC = float(os.getenv('ONBOARD_TIMEOUT_SEC', '10'))
+MAX_GPU_VRAM_MB_ENV = "INFERX_MAX_GPU_VRAM_MB"
+MAX_GPU_COUNT_ENV = "INFERX_MAX_GPU_COUNT"
+
+
+def load_max_gpu_vram_mb_override():
+    raw = str(os.getenv(MAX_GPU_VRAM_MB_ENV, "0") or "").strip()
+    if raw == "":
+        return 0
+
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError("must be >= 0")
+        return value
+    except Exception as e:
+        app.logger.warning(
+            "failed to parse %s (%s), using node-derived max vRam",
+            MAX_GPU_VRAM_MB_ENV,
+            e,
+        )
+        return 0
+
+
+MAX_GPU_VRAM_MB_OVERRIDE = load_max_gpu_vram_mb_override()
+
+
+def load_max_gpu_count_override():
+    raw = str(os.getenv(MAX_GPU_COUNT_ENV, "0") or "").strip()
+    if raw == "":
+        return 0
+
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError("must be >= 0")
+        return value
+    except Exception as e:
+        app.logger.warning(
+            "failed to parse %s (%s), using node/supported GPU count limits",
+            MAX_GPU_COUNT_ENV,
+            e,
+        )
+        return 0
 
 VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-openai:v0.12.0",
@@ -179,6 +222,19 @@ def load_gpu_resource_lookup():
 
 GPU_RESOURCE_LOOKUP = load_gpu_resource_lookup()
 SUPPORTED_GPU_COUNTS = sorted(GPU_RESOURCE_LOOKUP.keys())
+MAX_GPU_COUNT_OVERRIDE = load_max_gpu_count_override()
+
+
+def resolve_effective_max_gpu_count(node_max_gpu_count: int) -> int:
+    max_supported_count = SUPPORTED_GPU_COUNTS[-1] if len(SUPPORTED_GPU_COUNTS) > 0 else 0
+    current_logic_max = node_max_gpu_count if node_max_gpu_count > 0 else max_supported_count
+    if current_logic_max <= 0:
+        return 0
+
+    if MAX_GPU_COUNT_OVERRIDE <= 0 or MAX_GPU_COUNT_OVERRIDE >= current_logic_max:
+        return current_logic_max
+
+    return MAX_GPU_COUNT_OVERRIDE
 
 DEFAULT_MODEL_ENVS = [
     ["LD_LIBRARY_PATH", "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"],
@@ -782,6 +838,9 @@ def gateway_headers(include_json: bool = False):
 
 
 def get_node_max_vram_mb():
+    if MAX_GPU_VRAM_MB_OVERRIDE > 0:
+        return MAX_GPU_VRAM_MB_OVERRIDE
+
     nodes = listnodes()
     max_vram = 0
     iter_nodes = nodes if isinstance(nodes, list) else []
@@ -813,6 +872,9 @@ def get_node_capacity_limits():
                 max_vram = vram
         except Exception:
             continue
+    max_gpu_count = resolve_effective_max_gpu_count(max_gpu_count)
+    if MAX_GPU_VRAM_MB_OVERRIDE > 0:
+        max_vram = MAX_GPU_VRAM_MB_OVERRIDE
     return max_vram, max_gpu_count
 
 

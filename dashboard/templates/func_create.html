@@ -494,7 +494,7 @@
                         <span class="field-help" tabindex="0" aria-label="vRam help" data-tooltip="Minimum GPU memory required per GPU in MB. Choose a value that fits the target nodes." title="Minimum GPU memory required per GPU in MB. Choose a value that fits the target nodes.">i</span>
                     </label>
                     <div>
-                        <input id="gpu-vram-input" type="number" min="1" step="1" placeholder="24000">
+                        <input id="gpu-vram-input" type="number" min="256" step="256" placeholder="24000">
                         <div class="hint" id="vram-hint">Loading node max vRam…</div>
                     </div>
                 </div>
@@ -579,6 +579,7 @@
         // Keep in sync with backend/runtime func policy defaults.
         const DEFAULT_POLICY_QUEUE_TIMEOUT_SEC = 30.0;
         const DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC = 1.0;
+        const VRAM_STEP_MB = 256;
 
         const tenantSelect = document.getElementById('tenant-select');
         const namespaceSelect = document.getElementById('namespace-select');
@@ -704,6 +705,20 @@
 
         function numbersEqual(a, b, epsilon = 1e-9) {
             return Math.abs(Number(a) - Number(b)) <= epsilon;
+        }
+
+        function getRecommendedDefaultVram(maxVramMb) {
+            if (!Number.isInteger(maxVramMb) || maxVramMb <= 0) {
+                return null;
+            }
+
+            let roundedVramMb = Math.floor((maxVramMb * 0.8) / VRAM_STEP_MB) * VRAM_STEP_MB;
+
+            if (roundedVramMb <= 0) {
+                roundedVramMb = Math.min(VRAM_STEP_MB, maxVramMb);
+            }
+
+            return roundedVramMb;
         }
 
         function setAdvancedSpecTextFromSystem(text) {
@@ -1367,9 +1382,12 @@
                 nodeMaxGpuCount = Number.parseInt(data.max_gpu_count, 10);
                 refreshGpuCountOptionsFromNodeCapacity();
                 if (Number.isInteger(nodeMaxVram) && nodeMaxVram > 0) {
-                    vramHint.textContent = `This is the maximum vRAM you can set. You may choose a lower value. A smaller vRAM setting can improve cold-start time if it still satisfies your token-length and concurrency requirements.`;
+                    const recommendedDefaultVram = getRecommendedDefaultVram(nodeMaxVram);
+                    vramHint.textContent = `Maximum vRAM: ${nodeMaxVram} MB. You may choose a different value. A smaller vRAM setting can improve cold-start time if it still satisfies your token-length and concurrency requirements.`;
                     if (!gpuVramInput.value) {
-                        gpuVramInput.value = String(nodeMaxVram);
+                        if (recommendedDefaultVram != null) {
+                            gpuVramInput.value = String(recommendedDefaultVram);
+                        }
                     }
                     gpuVramInput.max = String(nodeMaxVram);
                 } else {
@@ -1475,7 +1493,10 @@
             await loadNodeMaxVram();
 
             if (!INITIAL_MODEL && nodeMaxVram > 0 && !gpuVramInput.value) {
-                gpuVramInput.value = String(nodeMaxVram);
+                const recommendedDefaultVram = getRecommendedDefaultVram(nodeMaxVram);
+                if (recommendedDefaultVram != null) {
+                    gpuVramInput.value = String(recommendedDefaultVram);
+                }
             }
 
             if (!INITIAL_MODEL && (advancedSpecJson.value || '').trim() === '') {
