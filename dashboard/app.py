@@ -83,7 +83,10 @@ KEYCLOAK_URL = os.getenv('KEYCLOAK_URL', "http://192.168.0.22:31260/authn")
 KEYCLOAK_REALM_NAME = os.getenv('KEYCLOAK_REALM_NAME', "inferx")
 KEYCLOAK_CLIENT_ID = os.getenv('KEYCLOAK_CLIENT_ID', "infer_client")
 KEYCLOAK_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET', "M2Dse5531tdtyipZdGizLEeoOVgziQRX")
+KEYCLOAK_GOOGLE_IDP_ALIAS = os.getenv('KEYCLOAK_GOOGLE_IDP_ALIAS', "google").strip()
+KEYCLOAK_GITHUB_IDP_ALIAS = os.getenv('KEYCLOAK_GITHUB_IDP_ALIAS', "github").strip()
 FORCE_HTTPS_REDIRECTS = os.getenv('FORCE_HTTPS_REDIRECTS', 'false').lower() in ("1", "true", "yes")
+SESSION_SIZE_DEBUG = os.getenv('SESSION_SIZE_DEBUG', 'false').lower() in ("1", "true", "yes")
 
 server_metadata_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/.well-known/openid-configuration"
 
@@ -115,6 +118,49 @@ PUBLIC_API_BASE_URL = os.getenv('INFERX_PUBLIC_API_BASE_URL', "").strip()
 ONBOARD_MAX_RETRIES = int(os.getenv('ONBOARD_MAX_RETRIES', '3'))
 ONBOARD_BACKOFF_BASE_SEC = float(os.getenv('ONBOARD_BACKOFF_BASE_SEC', '0.5'))
 ONBOARD_TIMEOUT_SEC = float(os.getenv('ONBOARD_TIMEOUT_SEC', '10'))
+MAX_GPU_VRAM_MB_ENV = "INFERX_MAX_GPU_VRAM_MB"
+MAX_GPU_COUNT_ENV = "INFERX_MAX_GPU_COUNT"
+
+
+def load_max_gpu_vram_mb_override():
+    raw = str(os.getenv(MAX_GPU_VRAM_MB_ENV, "0") or "").strip()
+    if raw == "":
+        return 0
+
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError("must be >= 0")
+        return value
+    except Exception as e:
+        app.logger.warning(
+            "failed to parse %s (%s), using node-derived max vRam",
+            MAX_GPU_VRAM_MB_ENV,
+            e,
+        )
+        return 0
+
+
+MAX_GPU_VRAM_MB_OVERRIDE = load_max_gpu_vram_mb_override()
+
+
+def load_max_gpu_count_override():
+    raw = str(os.getenv(MAX_GPU_COUNT_ENV, "0") or "").strip()
+    if raw == "":
+        return 0
+
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError("must be >= 0")
+        return value
+    except Exception as e:
+        app.logger.warning(
+            "failed to parse %s (%s), using node/supported GPU count limits",
+            MAX_GPU_COUNT_ENV,
+            e,
+        )
+        return 0
 
 VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-openai:v0.12.0",
@@ -179,6 +225,19 @@ def load_gpu_resource_lookup():
 
 GPU_RESOURCE_LOOKUP = load_gpu_resource_lookup()
 SUPPORTED_GPU_COUNTS = sorted(GPU_RESOURCE_LOOKUP.keys())
+MAX_GPU_COUNT_OVERRIDE = load_max_gpu_count_override()
+
+
+def resolve_effective_max_gpu_count(node_max_gpu_count: int) -> int:
+    max_supported_count = SUPPORTED_GPU_COUNTS[-1] if len(SUPPORTED_GPU_COUNTS) > 0 else 0
+    current_logic_max = node_max_gpu_count if node_max_gpu_count > 0 else max_supported_count
+    if current_logic_max <= 0:
+        return 0
+
+    if MAX_GPU_COUNT_OVERRIDE <= 0 or MAX_GPU_COUNT_OVERRIDE >= current_logic_max:
+        return current_logic_max
+
+    return MAX_GPU_COUNT_OVERRIDE
 
 DEFAULT_MODEL_ENVS = [
     ["LD_LIBRARY_PATH", "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"],
@@ -234,6 +293,92 @@ def select_user_display_name(userinfo) -> str:
         return email.split("@")[0].split(".")[0]
 
     return ""
+
+
+def compact_legacy_session_payload():
+    # Flask default session is cookie-based; remove legacy bulky values so
+    # cookie size stays under browser limits.
+    session.pop("token", None)
+    session.pop("user", None)
+
+
+def json_value_size_bytes(value) -> int:
+    try:
+        return len(json.dumps(value, separators=(",", ":"), default=str).encode("utf-8"))
+    except Exception:
+        return len(str(value).encode("utf-8"))
+
+
+def session_key_sizes(payload: dict):
+    key_sizes = []
+    for key, value in payload.items():
+        key_sizes.append((str(key), json_value_size_bytes(value)))
+    key_sizes.sort(key=lambda row: row[1], reverse=True)
+    return key_sizes
+
+
+def estimate_signed_session_cookie_bytes(payload: dict) -> int:
+    try:
+        serializer = app.session_interface.get_signing_serializer(app)
+        if serializer is None:
+            return -1
+        signed = serializer.dumps(payload)
+        return len(signed.encode("utf-8"))
+    except Exception:
+        return -1
+
+
+def log_session_cookie_size_comparison(token, userinfo):
+    if not SESSION_SIZE_DEBUG:
+        return
+
+    current_payload = dict(session)
+    legacy_payload = dict(current_payload)
+    legacy_payload["user"] = userinfo
+    legacy_payload["token"] = token
+    legacy_payload["id_token"] = token.get("id_token")
+
+    current_cookie_bytes = estimate_signed_session_cookie_bytes(current_payload)
+    legacy_cookie_bytes = estimate_signed_session_cookie_bytes(legacy_payload)
+
+    current_top = session_key_sizes(current_payload)[:8]
+    legacy_top = session_key_sizes(legacy_payload)[:8]
+
+    app.logger.warning(
+        "session cookie size estimate (bytes): current=%s legacy(before-fix)=%s delta=%s current_top=%s legacy_top=%s",
+        current_cookie_bytes,
+        legacy_cookie_bytes,
+        (legacy_cookie_bytes - current_cookie_bytes)
+        if current_cookie_bytes >= 0 and legacy_cookie_bytes >= 0
+        else "n/a",
+        current_top,
+        legacy_top,
+    )
+
+
+def token_expires_at_from_oauth_token(token) -> float:
+    try:
+        expires_at = float(token.get("expires_at", 0) or 0)
+    except Exception:
+        expires_at = 0
+
+    if expires_at > 0:
+        return expires_at
+
+    try:
+        expires_in = float(token.get("expires_in", 0) or 0)
+    except Exception:
+        expires_in = 0
+
+    if expires_in > 0:
+        return time.time() + expires_in
+
+    return 0
+
+
+@app.before_request
+def compact_session_before_request():
+    compact_legacy_session_payload()
 
 
 def call_onboard_with_retry(access_token: str, sub: str):
@@ -360,44 +505,61 @@ def post_login_flow(sub: str, access_token: str, redirectpath: str, invite_code:
 
 def is_token_expired():
     # Check if token exists and has expiration time
-    if 'token' not in session:
+    access_token = str(session.get('access_token', '') or '')
+    if access_token == "":
         return True
-    
-    token = session['token']
-    return token.get('expires_at', 0) < time.time()
+
+    expires_at = float(session.get('token_expires_at', 0) or 0)
+    if expires_at <= 0:
+        return True
+
+    return expires_at < time.time()
 
 def refresh_token_if_needed():
-    if 'token' not in session:
+    access_token = str(session.get('access_token', '') or '')
+    if access_token == "":
         return False
-    
-    token = session['token']
+
     if is_token_expired():
+        refresh_token = str(session.get('refresh_token', '') or '')
+        if refresh_token == "":
+            return False
         try:
             new_token = keycloak.fetch_access_token(
-                refresh_token=token['refresh_token'],
+                refresh_token=refresh_token,
                 grant_type='refresh_token'
             )
-            session['token'] = new_token
-            session['access_token'] = new_token['access_token']
+            new_access_token = str(new_token.get('access_token', '') or '')
+            if new_access_token == '':
+                raise Exception("refresh token response missing access_token")
+
+            session['access_token'] = new_access_token
+            new_refresh_token = str(new_token.get('refresh_token', '') or '')
+            if new_refresh_token != '':
+                session['refresh_token'] = new_refresh_token
+            session['token_expires_at'] = token_expires_at_from_oauth_token(new_token)
+            compact_legacy_session_payload()
             return True
         except Exception as e:
             # Handle refresh error (e.g., invalid refresh token)
             print(f"Token refresh failed: {e}")
-            session.pop('token', None)
+            session.pop('access_token', None)
+            session.pop('refresh_token', None)
+            session.pop('token_expires_at', None)
+            compact_legacy_session_payload()
             return False
     return True
 
 def not_require_login(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        compact_legacy_session_payload()
         access_token = session.get('access_token', '')
         if access_token == "":
             return func(*args, **kwargs)
 
         current_path = request.url
         redirect_uri = external_url('prefix.login', redirectpath=current_path)
-        if 'token' not in session:
-            return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
             return redirect(redirect_uri)
 
@@ -407,9 +569,10 @@ def not_require_login(func):
 def require_login(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        compact_legacy_session_payload()
         current_path = request.url
         redirect_uri = external_url('prefix.login', redirectpath=current_path)
-        if 'token' not in session:
+        if session.get('access_token', '') == '':
             return redirect(redirect_uri)
         if is_token_expired() and not refresh_token_if_needed():
             return redirect(redirect_uri)
@@ -516,16 +679,63 @@ def require_admin(func):
 
 @prefix_bp.route('/login')
 def login():
-    nonce = generate_token(20)
-    session['keycloak_nonce'] = nonce
     redirectpath=request.args.get('redirectpath', '')
     invite_code=request.args.get('invite_code', '')
+    idp_hint = str(request.args.get('idp', '') or '').strip()
+    if idp_hint == '':
+        idp_hint = str(request.args.get('idp_hint', '') or '').strip()
+    return begin_auth_redirect(redirectpath, invite_code, idp_hint=idp_hint)
+
+
+def begin_auth_redirect(redirectpath: str, invite_code: str, kc_action: str = '', idp_hint: str = ''):
+    nonce = generate_token(20)
+    session['keycloak_nonce'] = nonce
     if invite_code != '':
         session['pending_invite_code'] = invite_code
     redirect_uri = external_url('prefix.auth_callback', redirectpath=redirectpath, invite_code=invite_code)
-    return keycloak.authorize_redirect(
-        redirect_uri=redirect_uri,
-        nonce=nonce  # Pass nonce to Keycloak
+    authorize_params = {
+        "redirect_uri": redirect_uri,
+        "nonce": nonce,
+    }
+    if kc_action != '':
+        authorize_params["kc_action"] = kc_action
+    if idp_hint != '':
+        authorize_params["kc_idp_hint"] = idp_hint
+    return keycloak.authorize_redirect(**authorize_params)
+
+
+def build_login_entry_url(redirectpath: str, invite_code: str, idp: str = '') -> str:
+    values = {}
+    if redirectpath != '':
+        values["redirectpath"] = redirectpath
+    if invite_code != '':
+        values["invite_code"] = invite_code
+    if idp != '':
+        values["idp"] = idp
+    return url_for('prefix.login', **values)
+
+
+@prefix_bp.route('/signup')
+@prefix_bp.route('/register')
+def signup():
+    redirectpath=request.args.get('redirectpath', '')
+    invite_code=request.args.get('invite_code', '')
+    default_login_url = build_login_entry_url(redirectpath, invite_code)
+    google_signup_url = default_login_url
+    github_signup_url = default_login_url
+
+    if KEYCLOAK_GOOGLE_IDP_ALIAS != '':
+        google_signup_url = build_login_entry_url(redirectpath, invite_code, idp=KEYCLOAK_GOOGLE_IDP_ALIAS)
+    if KEYCLOAK_GITHUB_IDP_ALIAS != '':
+        github_signup_url = build_login_entry_url(redirectpath, invite_code, idp=KEYCLOAK_GITHUB_IDP_ALIAS)
+
+    return render_template(
+        'signup.html',
+        google_signup_url=google_signup_url,
+        github_signup_url=github_signup_url,
+        login_url=default_login_url,
+        has_google=KEYCLOAK_GOOGLE_IDP_ALIAS != '',
+        has_github=KEYCLOAK_GITHUB_IDP_ALIAS != '',
     )
 
 @prefix_bp.route('auth/callback')
@@ -552,13 +762,15 @@ def auth_callback():
         if username == '':
             username = str(userinfo.get('email', '')).strip()
 
-        session['user'] = userinfo
         session['username'] = username
         session['display_name'] = select_user_display_name(userinfo)
-        session['access_token'] = token.get('access_token')
-        session['token'] = token
-        session['id_token'] = token.get('id_token')
+        session['access_token'] = str(token.get('access_token', '') or '')
+        session['refresh_token'] = str(token.get('refresh_token', '') or '')
+        session['token_expires_at'] = token_expires_at_from_oauth_token(token)
+        session['id_token'] = str(token.get('id_token', '') or '')
         session['sub'] = sub
+        compact_legacy_session_payload()
+        log_session_cookie_size_comparison(token, userinfo)
 
         target = redirectpath if redirectpath != '' else url_for('prefix.ListFunc')
         try:
@@ -586,9 +798,6 @@ def onboard_retry():
     if invite_code == '':
         invite_code = session.get('pending_invite_code', '')
     sub = session.get('sub', '')
-    if sub == '':
-        userinfo = session.get('user', {})
-        sub = userinfo.get('sub', '')
 
     access_token = session.get('access_token', '')
     try:
@@ -615,14 +824,14 @@ def logout():
 
     session.clear()
 
-    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={external_url('prefix.ListFunc')}"
+    logout_url = f"{end_session_endpoint}?post_logout_redirect_uri={external_url('prefix.Home')}"
     if id_token:
         logout_url += f"&id_token_hint={id_token}"
         
     return redirect(logout_url)
 
 def getapikeys():
-    access_token = session.get('token')['access_token']
+    access_token = session.get('access_token', '')
     # Include the access token in the Authorization header
     headers = {'Authorization': f'Bearer {access_token}'}
     
@@ -704,26 +913,118 @@ def listfuncs(tenant: str, namespace: str):
     return funcs
 
 def list_tenantusers(role: str, tenant: str):
+    role = str(role or "").strip()
+    tenant = str(tenant or "").strip()
+    if role == "" or tenant == "":
+        return []
+
     access_token = session.get('access_token', '')
     if access_token == "":
         headers = {}
     else:
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/rbac/tenantusers/{}/{}/".format(apihostaddr, role, tenant)
-    resp = requests.get(url, headers=headers)
-    funcs = json.loads(resp.content)  
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+    except requests.exceptions.RequestException as e:
+        app.logger.warning("list_tenantusers request failed role=%s tenant=%s: %s", role, tenant, e)
+        return []
+
+    if not resp.ok:
+        app.logger.warning(
+            "list_tenantusers non-OK response role=%s tenant=%s status=%s body=%r",
+            role,
+            tenant,
+            resp.status_code,
+            (resp.text or "")[:240],
+        )
+        return []
+
+    body = (resp.text or "").strip()
+    if body == "":
+        app.logger.warning(
+            "list_tenantusers empty response role=%s tenant=%s status=%s",
+            role,
+            tenant,
+            resp.status_code,
+        )
+        return []
+
+    try:
+        funcs = json.loads(body)
+    except Exception as e:
+        app.logger.warning(
+            "list_tenantusers invalid JSON role=%s tenant=%s status=%s body=%r error=%s",
+            role,
+            tenant,
+            resp.status_code,
+            body[:240],
+            e,
+        )
+        return []
 
     return funcs
 
 def list_namespaceusers(role: str, tenant: str, namespace: str):
+    role = str(role or "").strip()
+    tenant = str(tenant or "").strip()
+    namespace = str(namespace or "").strip()
+    if role == "" or tenant == "" or namespace == "":
+        return []
+
     access_token = session.get('access_token', '')
     if access_token == "":
         headers = {}
     else:
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/rbac/namespaceusers/{}/{}/{}/".format(apihostaddr, role, tenant, namespace)
-    resp = requests.get(url, headers=headers)
-    funcs = json.loads(resp.content)  
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+    except requests.exceptions.RequestException as e:
+        app.logger.warning(
+            "list_namespaceusers request failed role=%s tenant=%s namespace=%s: %s",
+            role,
+            tenant,
+            namespace,
+            e,
+        )
+        return []
+
+    if not resp.ok:
+        app.logger.warning(
+            "list_namespaceusers non-OK response role=%s tenant=%s namespace=%s status=%s body=%r",
+            role,
+            tenant,
+            namespace,
+            resp.status_code,
+            (resp.text or "")[:240],
+        )
+        return []
+
+    body = (resp.text or "").strip()
+    if body == "":
+        app.logger.warning(
+            "list_namespaceusers empty response role=%s tenant=%s namespace=%s status=%s",
+            role,
+            tenant,
+            namespace,
+            resp.status_code,
+        )
+        return []
+
+    try:
+        funcs = json.loads(body)
+    except Exception as e:
+        app.logger.warning(
+            "list_namespaceusers invalid JSON role=%s tenant=%s namespace=%s status=%s body=%r error=%s",
+            role,
+            tenant,
+            namespace,
+            resp.status_code,
+            body[:240],
+            e,
+        )
+        return []
 
     return funcs
 
@@ -782,6 +1083,9 @@ def gateway_headers(include_json: bool = False):
 
 
 def get_node_max_vram_mb():
+    if MAX_GPU_VRAM_MB_OVERRIDE > 0:
+        return MAX_GPU_VRAM_MB_OVERRIDE
+
     nodes = listnodes()
     max_vram = 0
     iter_nodes = nodes if isinstance(nodes, list) else []
@@ -813,6 +1117,9 @@ def get_node_capacity_limits():
                 max_vram = vram
         except Exception:
             continue
+    max_gpu_count = resolve_effective_max_gpu_count(max_gpu_count)
+    if MAX_GPU_VRAM_MB_OVERRIDE > 0:
+        max_vram = MAX_GPU_VRAM_MB_OVERRIDE
     return max_vram, max_gpu_count
 
 
@@ -1620,9 +1927,25 @@ def stream_response(response):
     finally:
         response.close()
 
+
+def parse_inferx_timeout_seconds(raw_value, default_value: float = 60.0, min_value: float = 1.0, max_value: float = 600.0) -> float:
+    try:
+        value = float(str(raw_value or "").strip())
+    except Exception:
+        value = default_value
+
+    if value < min_value:
+        return min_value
+    if value > max_value:
+        return max_value
+    return value
+
 @prefix_bp.route('/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @not_require_login
 def proxy(path):
+    # TODO(auth-hardening): migrate dashboard JS calls to send explicit Authorization
+    # headers (for example via a dedicated fetch wrapper) and stop implicit session
+    # token injection in this generic proxy endpoint.
     access_token = session.get('access_token', '')
     headers = {key: value for key, value in request.headers if key.lower() != 'host'}
     normalized_path = path.lstrip('/')
@@ -1636,6 +1959,11 @@ def proxy(path):
     
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"
+    # Keep proxy read-timeout slightly above client-declared inference timeout so
+    # backend timeout responses are returned directly when possible.
+    requested_timeout_sec = parse_inferx_timeout_seconds(request.headers.get("X-Inferx-Timeout"), default_value=60.0)
+    proxy_read_timeout_sec = min(requested_timeout_sec + 5.0, 600.0)
+    connect_timeout_sec = 10.0
 
     try:
         resp = requests.request(
@@ -1645,8 +1973,14 @@ def proxy(path):
             data=request.get_data(),
             cookies=request.cookies,
             allow_redirects=False,
-            timeout=60,
+            timeout=(connect_timeout_sec, proxy_read_timeout_sec),
             stream=True
+        )
+    except requests.exceptions.Timeout:
+        return Response(
+            f"Upstream request timed out after {proxy_read_timeout_sec:.0f}s (requested timeout={requested_timeout_sec:.0f}s).",
+            status=504,
+            mimetype='text/plain',
         )
     except requests.exceptions.RequestException as e:
         return Response(f"Error connecting to backend server: {e}", status=502)
@@ -1695,7 +2029,13 @@ def proxy1(path):
     
 
 
+@app.route("/healthz")
+def healthz():
+    return ("ok", 200)
+
+
 @prefix_bp.route("/intro")
+@require_login
 def md():
     # name = request.args.get("name")
     name = 'home.md'
@@ -1705,11 +2045,13 @@ def md():
     )
 
 @prefix_bp.route('/doc/<path:filename>')
+@require_login
 def route_build_files(filename):
     root_dir = os.path.dirname(os.getcwd()) + "/doc"
     return send_from_directory(root_dir, filename)
 
 @prefix_bp.route("/funclog")
+@require_login
 def funclog():
     namespace = request.args.get("namespace")
     funcId = request.args.get("funcId")
@@ -1893,8 +2235,20 @@ def func_save():
 
 
 @prefix_bp.route("/")
-@prefix_bp.route("/listfunc")
 @not_require_login
+def Home():
+    if session.get('access_token', '') != '':
+        return redirect(url_for('prefix.ListFunc'))
+
+    return render_template(
+        "entry.html",
+        signup_url=url_for('prefix.signup'),
+        login_url=url_for('prefix.login'),
+    )
+
+
+@prefix_bp.route("/listfunc")
+@require_login
 def ListFunc():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -1961,7 +2315,7 @@ def ListFunc():
 
 
 @prefix_bp.route("/listsnapshot")
-@not_require_login
+@require_login
 def ListSnapshot():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -1978,7 +2332,7 @@ def ListSnapshot():
 
 
 @prefix_bp.route("/func", methods=("GET", "POST"))
-@not_require_login
+@require_login
 def GetFunc():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2048,7 +2402,7 @@ def GetFunc():
     )
 
 @prefix_bp.route("/listnode")
-@not_require_login
+@require_login
 @require_admin
 def ListNode():
     nodes = listnodes()
@@ -2063,7 +2417,7 @@ def ListNode():
     return render_template("node_list.html", nodes=nodes)
 
 @prefix_bp.route("/node")
-@not_require_login
+@require_login
 @require_admin
 def GetNode():
     name = request.args.get("name")
@@ -2077,7 +2431,7 @@ def GetNode():
 
 
 @prefix_bp.route("/listpod")
-@not_require_login
+@require_login
 def ListPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2094,7 +2448,7 @@ def ListPod():
 
 
 @prefix_bp.route("/pod")
-@not_require_login
+@require_login
 def GetPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2126,7 +2480,7 @@ def GetPod():
 
 
 @prefix_bp.route("/failpod")
-@not_require_login
+@require_login
 def GetFailPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")

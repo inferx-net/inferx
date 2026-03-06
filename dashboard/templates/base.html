@@ -300,7 +300,7 @@
 
         @media (max-width: 900px) {
             .brand-actions-cell {
-                width: 150px;
+                width: 220px;
             }
 
             .brand-auth-link {
@@ -333,6 +333,7 @@
 </head>
 
 <body>
+    {% set is_logged_in = session.get('access_token', '') != '' %}
     {% set request_path = request.path if request is defined and request.path is defined else '' %}
     {% set request_path_no_slash = request_path.rstrip('/') %}
     {% set nav_models_active = request_path_no_slash in ('',) or '/listfunc' in request_path or '/func_create' in request_path or '/func' in request_path or '/funclog' in request_path %}
@@ -356,6 +357,7 @@
             </td>
         </tr>
     </table>
+    {% if is_logged_in %}
     <nav>
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
         <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
@@ -367,11 +369,13 @@
             <img class="nav-support-icon" src="https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png" alt="" aria-hidden="true" loading="lazy">
         </a>
     </nav>
+    {% endif %}
     <script>
         const link = document.querySelector('#login_logout');
         const authMenu = document.querySelector('#brand-auth-menu');
         const authDropdown = document.querySelector('#brand-auth-dropdown');
         const logoutLink = document.querySelector('#brand-auth-logout');
+        const isLoggedIn = {{ is_logged_in | tojson }};
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
@@ -487,7 +491,7 @@
         }
 
         async function loadTenantDisplayMap() {
-            if (username === '') {
+            if (!isLoggedIn) {
                 refreshTenantBadge();
                 return;
             }
@@ -522,7 +526,7 @@
                 return;
             }
 
-            if (username === '') {
+            if (!isLoggedIn) {
                 setNodesNavVisibility(false);
                 return;
             }
@@ -551,7 +555,7 @@
         window.updateTenantDisplayMap = updateTenantDisplayMap;
         window.tenantDisplayNameFromTenantObject = tenantDisplayNameFromTenantObject;
 
-        if (username == "") {
+        if (!isLoggedIn) {
             link.href = loginUrl;
             link.textContent = 'Log in';
             link.removeAttribute('aria-haspopup');
@@ -562,7 +566,7 @@
             }
         } else {
             link.href = '#';
-            link.textContent = userDisplayName || username;
+            link.textContent = userDisplayName || username || 'Account';
             link.setAttribute('aria-haspopup', 'menu');
             link.setAttribute('aria-expanded', 'false');
             link.classList.add('has-menu');
@@ -592,7 +596,9 @@
         configureNodesNavVisibility();
 
     </script>
+    {% if is_logged_in %}
     <hr class="nav-divider">
+    {% endif %}
     <div class="content">
         {% block content %} {% endblock %}
     </div>
