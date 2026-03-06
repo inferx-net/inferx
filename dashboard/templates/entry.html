@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <title>InferX</title>
+    <style>
+        :root {
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #dbe4f0;
+            --text: #0f172a;
+            --muted: #475569;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary-bg: #eef2ff;
+            --secondary-border: #c7d2fe;
+            --secondary-text: #1e3a8a;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: var(--text);
+            background: radial-gradient(circle at top, #e2e8f0 0%, var(--bg) 45%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .entry-card {
+            width: min(460px, 100%);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--card);
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+            padding: 28px 24px;
+            text-align: center;
+        }
+
+        .entry-title {
+            margin: 0 0 8px;
+            font-size: clamp(28px, 6vw, 36px);
+            line-height: 1.1;
+        }
+
+        .entry-subtitle {
+            margin: 0 0 22px;
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.45;
+        }
+
+        .entry-actions {
+            display: grid;
+            gap: 10px;
+        }
+
+        .entry-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 46px;
+            border-radius: 9px;
+            border: 1px solid transparent;
+            font-weight: 600;
+            font-size: 14px;
+            text-decoration: none;
+            transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+        }
+
+        .entry-btn.login {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #ffffff;
+        }
+
+        .entry-btn.login:hover {
+            background: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+
+        .entry-btn.signup {
+            background: var(--secondary-bg);
+            border-color: var(--secondary-border);
+            color: var(--secondary-text);
+        }
+
+        .entry-btn.signup:hover {
+            background: #e0e7ff;
+            border-color: #a5b4fc;
+        }
+    </style>
+</head>
+<body>
+    <main class="entry-card">
+        <h1 class="entry-title">InferX</h1>
+        <p class="entry-subtitle">Serverless GPU inference for production workloads.</p>
+        <div class="entry-actions">
+            <a class="entry-btn signup" href="{{ signup_url }}">Sign up</a>
+            <a class="entry-btn login" href="{{ login_url }}">Log in</a>
+        </div>
+    </main>
+</body>
+</html>

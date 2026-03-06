@@ -4955,7 +4955,6 @@
     }
 
     async function create_func() {
-        var access_token = "{{ session['token'] }}";
         const namespace_dropdown = document.getElementById("namespace_dropdown");
         const isSelected = namespace_dropdown.selectedIndex !== -1;
         if (!isSelected) {
@@ -5023,7 +5022,6 @@
     }
 
     async function delete_funcs() {
-        var access_token = "{{ session['token'] }}";
         try {
             const checkboxes = document.querySelectorAll('#models-table tbody input[type="checkbox"]:checked');
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));

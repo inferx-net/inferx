@@ -40,7 +40,7 @@ spec:
               mountPath: /etc/letsencrypt/
           livenessProbe:
             httpGet:
-              path: /intro?name=home.md
+              path: /healthz
               port: 1250
             initialDelaySeconds: 10
             periodSeconds: 10

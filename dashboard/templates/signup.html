@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .signup-shell {
+        min-height: calc(100vh - 220px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 12px 36px;
+    }
+
+    .signup-card {
+        width: min(560px, 100%);
+        background: #ffffff;
+        border: 1px solid #dbe7f6;
+        border-radius: 12px;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.10);
+        padding: 28px;
+    }
+
+    .signup-title {
+        margin: 0 0 10px;
+        color: #0f172a;
+        font-size: clamp(22px, 3vw, 32px);
+        line-height: 1.1;
+    }
+
+    .signup-subtitle {
+        margin: 0 0 20px;
+        color: #475569;
+        font-size: 15px;
+        line-height: 1.5;
+    }
+
+    .signup-actions {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .signup-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 44px;
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #0f172a;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .signup-btn:hover {
+        background: #eff6ff;
+        border-color: #93c5fd;
+    }
+
+    .signup-note {
+        margin: 0;
+        font-size: 13px;
+        color: #64748b;
+    }
+
+    .signup-footer {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #e2e8f0;
+        font-size: 13px;
+        color: #475569;
+    }
+
+    .signup-footer a {
+        color: #1d4ed8;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .signup-footer a:hover {
+        text-decoration: underline;
+    }
+
+    @media (max-width: 640px) {
+        .signup-shell {
+            min-height: auto;
+            padding: 16px 0 28px;
+        }
+
+        .signup-card {
+            border-radius: 10px;
+            padding: 20px;
+        }
+    }
+</style>
+
+<section class="signup-shell" aria-labelledby="signup-title">
+    <div class="signup-card">
+        <h2 id="signup-title" class="signup-title">Sign up for InferX</h2>
+        <p class="signup-subtitle">Continue with your organization identity provider.</p>
+
+        <div class="signup-actions">
+            {% if has_google %}
+            <a class="signup-btn" href="{{ google_signup_url }}">Continue with Google</a>
+            {% endif %}
+            {% if has_github %}
+            <a class="signup-btn" href="{{ github_signup_url }}">Continue with GitHub</a>
+            {% endif %}
+            {% if not has_google and not has_github %}
+            <a class="signup-btn" href="{{ login_url }}">Continue</a>
+            {% endif %}
+        </div>
+
+        <p class="signup-note">Your first successful Google/GitHub sign-in creates your InferX user profile automatically.</p>
+
+        <div class="signup-footer">
+            Already have an account? <a href="{{ login_url }}">Log in</a>
+        </div>
+    </div>
+</section>
+{% endblock %}
