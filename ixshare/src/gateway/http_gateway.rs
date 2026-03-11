@@ -86,6 +86,7 @@ use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
+const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 
 lazy_static::lazy_static! {
     #[derive(Debug)]
@@ -1181,7 +1182,7 @@ async fn FuncCall(
     let (parts, body) = req.into_parts();
 
     // Collect the body bytes
-    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+    let bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
         Err(_e) => {
             let resp = FailureResponse(
                 Error::BAD_REQUEST(StatusCode::BAD_REQUEST),
