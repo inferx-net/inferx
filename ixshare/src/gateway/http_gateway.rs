@@ -1199,7 +1199,7 @@ async fn FuncCall(
 
     let json_req: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-    error!("FuncCall get req {:#?}", json_req);
+    trace!("FuncCall get req {:#?}", json_req);
     let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
 
     let mut retry = 0;

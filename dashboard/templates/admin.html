@@ -1471,6 +1471,46 @@
         return tenantObj?.name || '';
     }
 
+    function billingTenantOwnerNameFromObj(tenantObj) {
+        const spec = tenantObj?.object?.spec || {};
+        const firstName = String(spec.first_name || spec.firstName || spec.given_name || spec.givenName || '').trim();
+        const lastName = String(spec.last_name || spec.lastName || spec.family_name || spec.familyName || '').trim();
+        const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+        if (fullName !== '') {
+            return fullName;
+        }
+
+        return String(spec.display_name || spec.displayName || '').trim();
+    }
+
+    function billingTenantOptionLabelFromObj(tenantObj) {
+        return billingTenantOptionLabel(tenantObj, '');
+    }
+
+    function billingTenantOptionLabel(tenantObj, ownerNameOverride) {
+        const tenantName = String(tenantObj?.name || '').trim();
+        if (tenantName === '') {
+            return '';
+        }
+
+        const ownerName = String(ownerNameOverride || '').trim() || billingTenantOwnerNameFromObj(tenantObj);
+        return ownerName !== '' ? `${tenantName} (${ownerName})` : tenantName;
+    }
+
+    function billingAnalyticsTenantLabel(tenantName) {
+        const normalizedTenantName = String(tenantName || '').trim();
+        if (normalizedTenantName === '') {
+            return '';
+        }
+
+        const ownerName = String(billingTenantOwnerNames[normalizedTenantName] || '').trim();
+        if (ownerName !== '') {
+            return `${normalizedTenantName} (${ownerName})`;
+        }
+
+        return tenantDisplayLabel(normalizedTenantName);
+    }
+
     function tenantLinkLabelHtml(tenantName) {
         return `<span data-tenant-name="${tenantName}">${tenantName}</span>`;
     }
@@ -1541,6 +1581,8 @@
     let billingAdminMessageTimer = null;
     let billingIsSubmitting = false;
     let billingTenantsPopulated = false;
+    let billingTenantsLoadingPromise = null;
+    let billingTenantOwnerNames = {};
     let billingAdminTenantsPopulated = false;
     let billingAdminAccessReady = false;
     let billingAdminAccessPromise = null;
@@ -1569,21 +1611,44 @@
     // Called when Billing tab is opened
     async function populateBillingTenants() {
         if (billingTenantsPopulated) return;
+        if (billingTenantsLoadingPromise) return billingTenantsLoadingPromise;
 
         const dropdown = document.getElementById('billing_tenant_select');
         const readonlyEl = document.getElementById('billing-tenant-readonly');
+        if (!dropdown) return;
 
-        try {
+        billingTenantsLoadingPromise = (async () => {
             const [roles, tenants] = await Promise.all([
                 fetchWithAuth('/generate_roles').then(r => r.json()),
                 fetchWithAuth('/generate_tenants').then(r => r.json())
             ]);
+            billingTenantOwnerNames = {};
+
+            if (IsInferxAdmin(roles)) {
+                try {
+                    const ownerResp = await fetchWithAuth('/proxy1/admin/tenants');
+                    if (ownerResp.ok) {
+                        const ownerRows = await ownerResp.json();
+                        if (Array.isArray(ownerRows)) {
+                            ownerRows.forEach((row) => {
+                                const tenantName = String(row?.tenant_name || '').trim();
+                                const ownerName = String(row?.display_name || '').trim();
+                                if (tenantName !== '' && ownerName !== '') {
+                                    billingTenantOwnerNames[tenantName] = ownerName;
+                                }
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Failed to load Billing tenant owner names:', error);
+                }
+            }
 
             upsertTenantDisplayMapFromList(tenants);
             const allowedTenants = [];
             tenants.forEach(t => {
                 if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
-                    const label = tenantDisplayNameFromObj(t);
+                    const label = billingTenantOptionLabel(t, billingTenantOwnerNames[t.name]);
                     const option = document.createElement('option');
                     option.value = t.name;
                     option.textContent = label;
@@ -1609,9 +1674,15 @@
             }
 
             billingTenantsPopulated = true;
-        } catch (error) {
-            console.error('Failed to populate billing tenants:', error);
-        }
+        })()
+            .catch((error) => {
+                console.error('Failed to populate billing tenants:', error);
+            })
+            .finally(() => {
+                billingTenantsLoadingPromise = null;
+            });
+
+        return billingTenantsLoadingPromise;
     }
 
     function showBillingAdminMessage(message, isError) {
@@ -1782,14 +1853,30 @@
             tr.appendChild(createdTd);
 
             const actionsTd = document.createElement('td');
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.textContent = 'Add Credit';
-            btn.style.padding = '4px 10px';
-            btn.addEventListener('click', () => {
+            const actionsWrap = document.createElement('div');
+            actionsWrap.style.display = 'flex';
+            actionsWrap.style.gap = '8px';
+            actionsWrap.style.flexWrap = 'wrap';
+
+            const creditBtn = document.createElement('button');
+            creditBtn.type = 'button';
+            creditBtn.textContent = 'Add Credit';
+            creditBtn.style.padding = '4px 10px';
+            creditBtn.addEventListener('click', () => {
                 billingAdminSelectTenantForCredits(String(row?.tenant_name || ''));
             });
-            actionsTd.appendChild(btn);
+            actionsWrap.appendChild(creditBtn);
+
+            const billingBtn = document.createElement('button');
+            billingBtn.type = 'button';
+            billingBtn.textContent = 'Billing';
+            billingBtn.style.padding = '4px 10px';
+            billingBtn.addEventListener('click', () => {
+                billingAdminOpenTenantBilling(String(row?.tenant_name || ''));
+            });
+            actionsWrap.appendChild(billingBtn);
+
+            actionsTd.appendChild(actionsWrap);
             tr.appendChild(actionsTd);
 
             tbody.appendChild(tr);
@@ -1870,6 +1957,43 @@
         }
 
         showBillingAdminMessage(`Selected tenant '${tenant}' in Add Credits form.`, false);
+    }
+
+    async function billingAdminOpenTenantBilling(tenantName) {
+        const tenant = String(tenantName || '').trim();
+        if (!tenant) return;
+
+        await initBillingAdminAccess();
+        if (!billingAdminIsInferxAdmin) {
+            showBillingAdminMessage('Permission denied. Only Inferx administrators can open tenant billing from Billing Admin.', true);
+            return;
+        }
+
+        const billingTabBtn = document.querySelector(`button[onclick*="'Billing'"]`);
+        if (!billingTabBtn) {
+            showBillingAdminMessage('Billing tab is unavailable.', true);
+            return;
+        }
+
+        openTab({ currentTarget: billingTabBtn }, 'Billing');
+        await populateBillingTenants();
+
+        const dropdown = document.getElementById('billing_tenant_select');
+        if (!dropdown) return;
+
+        const exists = Array.from(dropdown.options || []).some((opt) => opt.value === tenant);
+        if (!exists) {
+            showBillingAdminMessage(`Tenant '${tenant}' is not available in the Billing tab.`, true);
+            return;
+        }
+
+        dropdown.value = tenant;
+        await loadBillingData();
+
+        const billingTab = document.getElementById('Billing');
+        if (billingTab && billingTab.scrollIntoView) {
+            billingTab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     }
 
     function onBillingRateScopeChange() {
@@ -3493,7 +3617,7 @@
         let endpoint = '';
         if (viewMode === 'tenant') {
             endpoint = `/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
-            titleEl.textContent = `Breakdown: ${tenantDisplayLabel(tenant)}`;
+            titleEl.textContent = `Breakdown: ${billingAnalyticsTenantLabel(tenant)}`;
         } else if (viewMode === 'model') {
             params.set('namespace', item.namespace || '');
             params.set('funcname', item.funcname || '');
@@ -3895,10 +4019,10 @@
             if (analyticsSortColumn === 'name') {
                 aVal = viewMode === 'model'
                     ? a.funcname
-                    : (viewMode === 'namespace' ? a.namespace : tenantDisplayLabel(a.tenant));
+                    : (viewMode === 'namespace' ? a.namespace : billingAnalyticsTenantLabel(a.tenant));
                 bVal = viewMode === 'model'
                     ? b.funcname
-                    : (viewMode === 'namespace' ? b.namespace : tenantDisplayLabel(b.tenant));
+                    : (viewMode === 'namespace' ? b.namespace : billingAnalyticsTenantLabel(b.tenant));
                 return analyticsSortDirection === 'asc'
                     ? aVal.localeCompare(bVal)
                     : bVal.localeCompare(aVal);
@@ -3941,7 +4065,7 @@
             row.style.cursor = 'pointer';
             const groupLabel = viewMode === 'model'
                 ? `${item.funcname} (${item.namespace})`
-                : (viewMode === 'namespace' ? item.namespace : tenantDisplayLabel(item.tenant));
+                : (viewMode === 'namespace' ? item.namespace : billingAnalyticsTenantLabel(item.tenant));
             const infMs = item.inference_ms || 0;
             const sbyMs = item.standby_ms || 0;
             const infCents = item.inference_cents || 0;

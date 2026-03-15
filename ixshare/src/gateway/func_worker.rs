@@ -518,7 +518,7 @@ impl FuncWorker {
                     tracking_info.gpu_count = pod.object.spec.reqResources.gpu.gpuCount as i32;
                     tracking_info.vram_mb = pod.object.spec.reqResources.gpu.vRam as i64; // already in MB
                     tracking_info.total_vram_mb = (pod.object.spec.allocResources.gpus.TotalVRam() / 1024 / 1024) as i64;
-                    info!(
+                    trace!(
                         "GpuTracking: populated for pod={}, gpu_count={}, gpu_type={}, vram_mb={}, total_vram_mb={}",
                         pod_name, tracking_info.gpu_count, tracking_info.gpu_type, tracking_info.vram_mb, tracking_info.total_vram_mb
                     );
