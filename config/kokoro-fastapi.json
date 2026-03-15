@@ -1,0 +1,68 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "kokoro-fastapi",
+    "object": {
+        "spec": {
+            "image": "ghcr.io/remsky/kokoro-fastapi-gpu:latest",
+            "commands": [
+                "/bin/sh",
+                "-c",
+                "echo 'import torch; torch.backends.cudnn.enabled=False' > /app/sitecustomize.py && bash entrypoint.sh"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 5000
+                }
+            },
+            "envs": [
+                [
+                    "PYTHONPATH",
+                    "/app:$PYTHONPATH"
+                ],
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "endpoint": {
+                "port": 8880,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2audio",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
+                "path": "v1/audio/speech",
+                "body": {
+                    "model": "kokoro",
+                    "input": "This is a test of the Infer X serverless infrastructure. That is great!",
+                    "voice": "af_bella",
+                    "speed": "1.0",
+                    "response_format": "wav"
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}
