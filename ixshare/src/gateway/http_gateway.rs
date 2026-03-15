@@ -30,7 +30,7 @@ use opentelemetry::KeyValue;
 use axum::extract::{Query, Request, State};
 use axum::http::HeaderValue;
 use axum::middleware::{from_fn_with_state, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use axum::{
     body::Body, extract::Path, routing::delete, routing::get, routing::head, routing::post,
@@ -65,6 +65,7 @@ use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
+use crate::na;
 use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use crate::peer_mgr::IxTcpClient;
 use crate::print::{set_trace_logging, trace_logging_enabled};
@@ -85,6 +86,7 @@ use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
+use super::scheduler_client::SCHEDULER_CLIENT;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
 const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 
@@ -393,7 +395,7 @@ impl HttpGateway {
             .route("/pods/:tenant/:namespace/:funcname/", get(GetFuncPods))
             .route(
                 "/pod/:tenant/:namespace/:funcname/:version/:id/",
-                get(GetFuncPod),
+                get(GetFuncPod).delete(KillPod),
             )
             .route("/functions/:tenant/:namespace/", get(ListFuncBrief))
             .route(
@@ -3881,6 +3883,59 @@ async fn GetFuncPod(
                 .body(body)
                 .unwrap();
             return Ok(resp);
+        }
+    }
+}
+
+async fn KillPod(
+    State(_gw): State<HttpGateway>,
+    Extension(token): Extension<Arc<AccessToken>>,
+    Path((tenant, namespace, funcname, version, id)): Path<(String, String, String, i64, String)>,
+) -> impl IntoResponse {
+    if !token.IsNamespaceAdmin(&tenant, &namespace) {
+        let body = Body::from("service failure: No permission");
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap()
+            .into_response();
+    }
+
+    let req = na::KillPodReq {
+        tenant,
+        namespace,
+        funcname,
+        fprevision: version,
+        id,
+    };
+
+    let mut client = match SCHEDULER_CLIENT.GetClient().await {
+        Ok(client) => client,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+
+    match client.kill_pod(req).await {
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()).into_response(),
+        Ok(resp) => {
+            let resp = resp.into_inner();
+            let status =
+                na::KillPodStatus::from_i32(resp.status).unwrap_or(na::KillPodStatus::Internal);
+
+            match status {
+                na::KillPodStatus::Ok if resp.error.is_empty() => {
+                    StatusCode::ACCEPTED.into_response()
+                }
+                na::KillPodStatus::Ok => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, resp.error).into_response()
+                }
+                na::KillPodStatus::NotFound => (StatusCode::NOT_FOUND, resp.error).into_response(),
+                na::KillPodStatus::InvalidState => {
+                    (StatusCode::CONFLICT, resp.error).into_response()
+                }
+                na::KillPodStatus::Internal => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, resp.error).into_response()
+                }
+            }
         }
     }
 }

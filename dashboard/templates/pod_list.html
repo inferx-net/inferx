@@ -4,6 +4,27 @@
 <style>
     .content table.ix-table {
         font-size: 14px;
+        table-layout: fixed;
+    }
+
+    .pod-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .pod-name-col,
+    .pod-name-cell {
+        width: 25%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    .pod-name-cell a {
+        display: block;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
     }
 
     .gpu-slot-table {
@@ -21,21 +42,44 @@
     .gpu-slot-table thead th {
         background-color: #f2f2f2;
     }
+
+    .btn-terminate {
+        background: #c0392b;
+        color: white;
+        border: none;
+        padding: 3px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    .btn-terminate:hover {
+        background: #a93226;
+    }
+
+    .btn-terminate:disabled {
+        background: #888;
+        cursor: default;
+    }
 </style>
 
+<div class="pod-table-wrap">
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;" border="1">
     <tr>
         <th rowspan="2">Tenant</th>
         <th rowspan="2">Namespace</th>
-        <th rowspan="2">Pod Name</th>
+        <th rowspan="2" class="pod-name-col">Pod Name</th>
         <th rowspan="2">State</th>
+        {% if is_inferx_admin %}
         <th rowspan="2">Node Name</th>
+        {% endif %}
         <th rowspan="2">Req. GPU Count</th>
         <th rowspan="2">Req. GPU vRam (MB)</th>
         <th rowspan="2">Type</th>
         <th colspan="3">Standby (MB)</th>
         <th rowspan="2">Allocated GPU vRam (MB)</th>
         <th colspan="2">Allocated GPU Slots</th>
+        <th rowspan="2">Operations</th>
     </tr>
     <tr>
         <th>GPU</th>
@@ -53,9 +97,13 @@
         {% if idx == 0 %}
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}"><span data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span></a></td>
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}">{{ pod['namespace'] }}</a></td>
-        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}&&name={{ pod['name'] }}">{{ pod['name'] }}</a></td>
-        <td rowspan="{{ gpu_rows }}">{{ pod["object"]["status"]["state"] }}</td>
+        {% set pod_name_prefix = pod['tenant'] ~ '/' ~ pod['namespace'] ~ '/' %}
+        {% set pod_display_name = pod['name'].replace(pod_name_prefix, '', 1) %}
+        <td rowspan="{{ gpu_rows }}" class="pod-name-cell"><a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}&&name={{ pod['name'] }}" title="{{ pod['name'] }}">{{ pod_display_name }}</a></td>
+        <td rowspan="{{ gpu_rows }}" class="pod-state">{{ pod["object"]["status"]["state"] }}</td>
+        {% if is_inferx_admin %}
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</td>
+        {% endif %}
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Count"] }}</td>
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["reqResources"]["GPU"]["vRam"] }}</td>
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["create_type"] }}</td>
@@ -81,10 +129,70 @@
         {% else %}
         <td colspan="2">N/A</td>
         {% endif %}
+
+        {% if idx == 0 %}
+        <td rowspan="{{ gpu_rows }}" class="pod-operations">
+            {% set state = pod["object"]["status"]["state"] %}
+            {% if state in ["Ready", "Standby"] %}
+            <button class="btn-terminate"
+                    data-tenant="{{ pod['tenant'] }}"
+                    data-namespace="{{ pod['namespace'] }}"
+                    data-funcname="{{ pod['object']['spec']['funcname'] }}"
+                    data-fprevision="{{ pod['object']['spec']['fprevision'] }}"
+                    data-id="{{ pod['object']['spec']['id'] }}"
+                    onclick="terminatePod(this)">
+                Terminate
+            </button>
+            {% endif %}
+        </td>
+        {% endif %}
     </tr>
     {% endfor %}
     {% endfor %}
 </table>
+</div>
+
+<script>
+async function terminatePod(btn) {
+    const { tenant, namespace, funcname, fprevision, id } = btn.dataset;
+    if (!confirm(`Terminate pod ${id}?`)) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Terminating...';
+
+    const url = `/proxy/pod/${encodeURIComponent(tenant)}`
+        + `/${encodeURIComponent(namespace)}`
+        + `/${encodeURIComponent(funcname)}`
+        + `/${encodeURIComponent(fprevision)}`
+        + `/${encodeURIComponent(id)}/`;
+
+    try {
+        const resp = await fetch(url, { method: 'DELETE' });
+        if (resp.status === 202) {
+            const row = btn.closest('tr');
+            const stateCell = row ? row.querySelector('.pod-state') : null;
+            const operationsCell = btn.closest('.pod-operations');
+
+            if (stateCell) {
+                stateCell.textContent = 'Terminating';
+            }
+
+            if (operationsCell) {
+                operationsCell.textContent = '';
+            }
+        } else {
+            const msg = await resp.text();
+            alert(`Failed: ${msg}`);
+            btn.disabled = false;
+            btn.textContent = 'Terminate';
+        }
+    } catch (err) {
+        alert(`Network error: ${err}`);
+        btn.disabled = false;
+        btn.textContent = 'Terminate';
+    }
+}
+</script>
 
 {{ hosturl }}
 {% endblock %}

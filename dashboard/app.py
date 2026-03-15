@@ -2444,7 +2444,13 @@ def ListPod():
     else:
         pods = listpods(tenant, namespace, "")
 
-    return render_template("pod_list.html", pods=pods)
+    is_inferx_admin = is_inferx_admin_user()
+
+    return render_template(
+        "pod_list.html",
+        pods=pods,
+        is_inferx_admin=is_inferx_admin,
+    )
 
 
 @prefix_bp.route("/pod")
