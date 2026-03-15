@@ -597,6 +597,10 @@ impl FuncStatus {
 pub enum WorkerHandlerMsg {
     StartWorker(na::CreateFuncPodReq),
     StopWorker(na::TerminatePodReq),
+    KillPod {
+        req: na::KillPodReq,
+        resp: Sender<na::KillPodResp>,
+    },
     ConnectScheduler((na::ConnectReq, Sender<na::ConnectResp>)),
     LeaseWorker((na::LeaseWorkerReq, Sender<na::LeaseWorkerResp>)),
     ReturnWorker((na::ReturnWorkerReq, Sender<na::ReturnWorkerResp>)),
@@ -636,6 +640,12 @@ pub enum WorkerHandlerMsg {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct TerminatingMeta {
+    pub since: Instant,
+    pub stuck_retry_count: u32,
+}
+
 #[derive(Debug)]
 pub struct SchedulerHandler {
     // nodename -> nodeEpoch
@@ -669,6 +679,8 @@ pub struct SchedulerHandler {
     /********************idle pods ************************* */
     // returnId --> PodKey()
     pub idlePods: LruCache<String, ()>,
+
+    pub terminating_pods: BTreeMap<String, TerminatingMeta>,
 
     // temp pods storage when the func is not ready
     // funcname name -> <Podid --> WorkerPod>
@@ -739,6 +751,7 @@ impl Default for SchedulerHandler {
             snapshots: BTreeMap::new(),
             pendingsnapshots: BTreeMap::new(),
             idlePods: LruCache::unbounded(),
+            terminating_pods: BTreeMap::new(),
             funcPods: BTreeMap::new(),
             SnapshotSched: BiIndex::New(),
             funcpolicy: BTreeMap::new(),
@@ -795,6 +808,17 @@ impl SchedulerHandler {
             .entry(nodename.to_string())
             .or_insert_with(|| Arc::new(Semaphore::new(2)))
             .clone()
+    }
+
+    fn mark_terminating(&mut self, pod: &WorkerPod) {
+        pod.SetState(WorkerPodState::Terminating);
+        self.terminating_pods.insert(
+            pod.pod.PodKey(),
+            TerminatingMeta {
+                since: Instant::now(),
+                stuck_retry_count: 0,
+            },
+        );
     }
 
     /// Spawn an RPC task with global and per-node concurrency limits, timeout protection,
@@ -1249,6 +1273,28 @@ impl SchedulerHandler {
     }
 
     pub fn ProcessStopWorkerComplete(&mut self, pod_key: &str, result: Result<()>) {
+        if let Some(meta) = self.terminating_pods.get_mut(pod_key) {
+            match &result {
+                Ok(()) => {
+                    meta.stuck_retry_count = 0;
+                }
+                Err(e) => {
+                    meta.stuck_retry_count += 1;
+                    if meta.stuck_retry_count >= 5 {
+                        error!(
+                            "pod {} TerminatePod RPC failed after {} attempts: {:?}",
+                            pod_key, meta.stuck_retry_count, e
+                        );
+                    } else {
+                        warn!(
+                            "pod {} TerminatePod RPC failed (attempt {}): {:?}",
+                            pod_key, meta.stuck_retry_count, e
+                        );
+                    }
+                }
+            }
+        }
+
         match result {
             Ok(()) => {
                 info!(
@@ -1810,7 +1856,7 @@ impl SchedulerHandler {
             // the gateway might lease the failure pod again and return multiple times.
             // we can't stopworker mutiple times. do some check.
             if state != WorkerPodState::Terminating {
-                worker.SetState(WorkerPodState::Terminating);
+                self.mark_terminating(&worker);
                 match self.StopWorker(&worker.pod) {
                     Ok(()) => (),
                     Err(e) => {
@@ -1823,8 +1869,10 @@ impl SchedulerHandler {
                 }
             }
         } else {
-            worker.SetIdle(SetIdleSource::ProcessReturnWorkerReq);
-            self.idlePods.put(worker.pod.PodKey(), ());
+            if worker.State() != WorkerPodState::Terminating {
+                worker.SetIdle(SetIdleSource::ProcessReturnWorkerReq);
+                self.idlePods.put(worker.pod.PodKey(), ());
+            }
         }
 
         let resp = na::ReturnWorkerResp {
@@ -1834,6 +1882,70 @@ impl SchedulerHandler {
         tx.send(resp).unwrap();
 
         return Ok(());
+    }
+
+    pub async fn ProcessKillPod(&mut self, req: &na::KillPodReq) -> na::KillPodResp {
+        let pod_key = FuncPod::FuncPodKey(
+            &req.tenant,
+            &req.namespace,
+            &req.funcname,
+            req.fprevision,
+            &req.id,
+        );
+
+        let pod = match self.pods.get(&pod_key) {
+            Some(pod) => pod.clone(),
+            None => {
+                return na::KillPodResp {
+                    error: format!("pod not found: {}", pod_key),
+                    status: na::KillPodStatus::NotFound.into(),
+                }
+            }
+        };
+
+        match pod.State() {
+            WorkerPodState::Idle => {
+                self.idlePods.pop(&pod_key);
+                match self.StopWorker(&pod.pod) {
+                    Ok(()) => {
+                        self.mark_terminating(&pod);
+                        na::KillPodResp {
+                            error: String::new(),
+                            status: na::KillPodStatus::Ok.into(),
+                        }
+                    }
+                    Err(e) => {
+                        self.idlePods.put(pod_key, ());
+                        na::KillPodResp {
+                            error: format!("{:?}", e),
+                            status: na::KillPodStatus::Internal.into(),
+                        }
+                    }
+                }
+            }
+            WorkerPodState::Standby | WorkerPodState::Working(_) => match self.StopWorker(&pod.pod)
+            {
+                Ok(()) => {
+                    self.mark_terminating(&pod);
+                    na::KillPodResp {
+                        error: String::new(),
+                        status: na::KillPodStatus::Ok.into(),
+                    }
+                }
+                Err(e) => na::KillPodResp {
+                    error: format!("{:?}", e),
+                    status: na::KillPodStatus::Internal.into(),
+                },
+            },
+            WorkerPodState::Terminating => na::KillPodResp {
+                error: "pod is already terminating".to_string(),
+                status: na::KillPodStatus::InvalidState.into(),
+            },
+            state => na::KillPodResp {
+                error: format!("pod {} is not in a killable state: {:?}", pod_key, state),
+                status: na::KillPodStatus::InvalidState.into(),
+            },
+        }
     }
 
     pub fn GetFuncPod(
@@ -2574,7 +2686,7 @@ impl SchedulerHandler {
                         e
                     );
                 }
-                Ok(()) => (),
+                Ok(()) => self.mark_terminating(&p),
             }
         }
 
@@ -2700,6 +2812,10 @@ impl SchedulerHandler {
                         }
                         WorkerHandlerMsg::ReturnWorker((m, tx)) => {
                             self.ProcessReturnWorkerReq(m, tx).await.ok();
+                        }
+                        WorkerHandlerMsg::KillPod { req, resp } => {
+                            let result = self.ProcessKillPod(&req).await;
+                            let _ = resp.send(result);
                         }
                         WorkerHandlerMsg::RefreshGateway(m) => {
                             self.ProcessRefreshGateway(m).await?;
@@ -3851,8 +3967,7 @@ impl SchedulerHandler {
             // Remove from idle pool but don't free resources yet
             let removed = self.idlePods.pop(&terminated_podkey).is_some();
             assert!(removed);
-            // Set state to Terminating
-            worker.SetState(WorkerPodState::Terminating);
+            self.mark_terminating(worker);
         }
 
         // CRITICAL: Reserve snapshot resource BEFORE RPC to prevent race condition
@@ -4393,7 +4508,7 @@ impl SchedulerHandler {
         // 1. Update pod states
         pod.SetState(WorkerPodState::Resuming);
         for worker in &terminateWorkers {
-            worker.SetState(WorkerPodState::Terminating);
+            self.mark_terminating(worker);
         }
 
         // 2. Update resource accounting
@@ -5486,6 +5601,8 @@ impl SchedulerHandler {
         let podKey: String = pod.PodKey();
         let nodeName = pod.object.spec.nodename.clone();
         let funcKey = pod.FuncKey();
+
+        self.terminating_pods.remove(&podKey);
 
         // End billing for snapshot pod if still running (cleanup on removal)
         if pod.object.spec.create_type == CreatePodType::Snapshot {

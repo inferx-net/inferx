@@ -1,6 +1,6 @@
 ARCH := ${shell uname -m}
-VERSION := v0.2.1
-VERSION1 := v0.2.1
+VERSION := v0.2.3beta1
+VERSION1 := v0.2.3beta1
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -239,7 +239,7 @@ runna:
 	# -sudo rm /opt/inferx/log/*.log
 	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 stopna:
-	# sudo kubectl delete DaemonSet ixproxy
+	sudo kubectl delete DaemonSet ixproxy
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
 
@@ -346,3 +346,22 @@ runallcx:
 	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
 	kubectl apply -f k8s/ingress.yaml
+
+runallcwnew:
+	-sudo rm /opt/inferx/log/*.log
+	# kubectl apply -f k8s1/billing-secrets.yaml
+	kubectl apply -f k8s1/billing-sql-scripts-configmap.yaml
+	kubectl apply -f k8s1/etcd.yaml
+	kubectl apply -f k8s1/keycloak_postgres.yaml
+	kubectl apply -f k8s1/keycloak.yaml
+	VERSION=$(VERSION1) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/gateway-cwnew.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s1/ixproxy-cwnew.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s1/nodeagent-cwnew.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/dashboard-cwnew.yaml | kubectl apply -f -
+	kubectl apply -f k8s1/ingress-cwnew.yaml
+	kubectl apply -f k8s1/billing-cronjobs.yaml

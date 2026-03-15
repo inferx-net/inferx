@@ -254,6 +254,30 @@ pub struct RefreshGatewayResp {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KillPodReq {
+    #[prost(string, tag = "1")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(int64, tag = "4")]
+    pub fprevision: i64,
+    #[prost(string, tag = "5")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KillPodResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+    #[prost(enumeration = "KillPodStatus", tag = "2")]
+    pub status: i32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NodeAgentRespMsg {
     #[prost(oneof = "node_agent_resp_msg::MessageBody", tags = "100, 200")]
     pub message_body: ::core::option::Option<node_agent_resp_msg::MessageBody>,
@@ -759,6 +783,39 @@ pub struct PodEvent {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
+pub enum KillPodStatus {
+    Ok = 0,
+    NotFound = 1,
+    InvalidState = 2,
+    Internal = 3,
+}
+impl KillPodStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            KillPodStatus::Ok => "OK",
+            KillPodStatus::NotFound => "NOT_FOUND",
+            KillPodStatus::InvalidState => "INVALID_STATE",
+            KillPodStatus::Internal => "INTERNAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OK" => Some(Self::Ok),
+            "NOT_FOUND" => Some(Self::NotFound),
+            "INVALID_STATE" => Some(Self::InvalidState),
+            "INTERNAL" => Some(Self::Internal),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
 pub enum CreatePodType {
     Normal = 0,
     Snapshot = 2,
@@ -958,6 +1015,25 @@ pub mod scheduler_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/na.SchedulerService/RefreshGateway",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn kill_pod(
+            &mut self,
+            request: impl tonic::IntoRequest<super::KillPodReq>,
+        ) -> Result<tonic::Response<super::KillPodResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.SchedulerService/KillPod",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
@@ -1352,6 +1428,10 @@ pub mod scheduler_service_server {
             &self,
             request: tonic::Request<super::RefreshGatewayReq>,
         ) -> Result<tonic::Response<super::RefreshGatewayResp>, tonic::Status>;
+        async fn kill_pod(
+            &self,
+            request: tonic::Request<super::KillPodReq>,
+        ) -> Result<tonic::Response<super::KillPodResp>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct SchedulerServiceServer<T: SchedulerService> {
@@ -1561,6 +1641,43 @@ pub mod scheduler_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = RefreshGatewaySvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.SchedulerService/KillPod" => {
+                    #[allow(non_camel_case_types)]
+                    struct KillPodSvc<T: SchedulerService>(pub Arc<T>);
+                    impl<
+                        T: SchedulerService,
+                    > tonic::server::UnaryService<super::KillPodReq> for KillPodSvc<T> {
+                        type Response = super::KillPodResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::KillPodReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).kill_pod(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KillPodSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

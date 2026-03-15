@@ -21,6 +21,7 @@ service SchedulerService {
   rpc LeaseWorker(LeaseWorkerReq) returns (LeaseWorkerResp) {}
   rpc ReturnWorker(ReturnWorkerReq) returns (ReturnWorkerResp) {}
   rpc RefreshGateway(RefreshGatewayReq) returns (RefreshGatewayResp) {}
+  rpc KillPod(KillPodReq) returns (KillPodResp) {}
 }
 
 service NodeAgentService {
@@ -169,6 +170,26 @@ message RefreshGatewayReq {
 
 message RefreshGatewayResp {
   string error = 1;
+}
+
+message KillPodReq {
+  string tenant = 1;
+  string namespace = 2;
+  string funcname = 3;
+  int64 fprevision = 4;
+  string id = 5;
+}
+
+enum KillPodStatus {
+  OK = 0;
+  NOT_FOUND = 1;
+  INVALID_STATE = 2;
+  INTERNAL = 3;
+}
+
+message KillPodResp {
+  string error = 1;
+  KillPodStatus status = 2;
 }
 
 message NodeAgentRespMsg {
