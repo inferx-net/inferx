@@ -95,7 +95,7 @@
     {% for idx in range(gpu_rows) %}
     <tr>
         {% if idx == 0 %}
-        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}"><span data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span></a></td>
+        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}"><span class="pod-list-tenant-label" data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span></a></td>
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}">{{ pod['namespace'] }}</a></td>
         {% set pod_name_prefix = pod['tenant'] ~ '/' ~ pod['namespace'] ~ '/' %}
         {% set pod_display_name = pod['name'].replace(pod_name_prefix, '', 1) %}
@@ -133,7 +133,7 @@
         {% if idx == 0 %}
         <td rowspan="{{ gpu_rows }}" class="pod-operations">
             {% set state = pod["object"]["status"]["state"] %}
-            {% if state in ["Ready", "Standby"] %}
+            {% if session.get('access_token', '') != '' and state in ["Ready", "Standby"] %}
             <button class="btn-terminate"
                     data-tenant="{{ pod['tenant'] }}"
                     data-namespace="{{ pod['namespace'] }}"
@@ -192,6 +192,60 @@ async function terminatePod(btn) {
         btn.textContent = 'Terminate';
     }
 }
+
+{% if is_inferx_admin %}
+const podListTenantOwnerNames = {};
+
+function applyPodListTenantLabels() {
+    document.querySelectorAll('.pod-list-tenant-label[data-tenant-name]').forEach((elem) => {
+        const tenantName = String(elem.dataset.tenantName || '').trim();
+        if (tenantName === '') {
+            return;
+        }
+
+        const ownerName = String(podListTenantOwnerNames[tenantName] || '').trim();
+        if (ownerName !== '') {
+            elem.textContent = `${tenantName} (${ownerName})`;
+            elem.title = tenantName;
+            return;
+        }
+
+        if (typeof window.getTenantDisplayName === 'function') {
+            elem.textContent = window.getTenantDisplayName(tenantName);
+            elem.title = tenantName;
+        }
+    });
+}
+
+async function loadPodListTenantOwnerNames() {
+    try {
+        const resp = await fetch('/proxy1/admin/tenants');
+        if (!resp.ok) {
+            return;
+        }
+
+        const rows = await resp.json();
+        if (!Array.isArray(rows)) {
+            return;
+        }
+
+        rows.forEach((row) => {
+            const tenantName = String(row?.tenant_name || '').trim();
+            const ownerName = String(row?.display_name || '').trim();
+            if (tenantName !== '' && ownerName !== '') {
+                podListTenantOwnerNames[tenantName] = ownerName;
+            }
+        });
+
+        applyPodListTenantLabels();
+    } catch (error) {
+        console.warn('Failed to load pod list tenant owner names:', error);
+    }
+}
+
+document.addEventListener('tenant-display-map-updated', applyPodListTenantLabels);
+loadPodListTenantOwnerNames();
+{% endif %}
 </script>
 
 {{ hosturl }}

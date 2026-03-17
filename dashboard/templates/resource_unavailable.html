@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .resource-unavailable-wrap {
+        display: flex;
+        justify-content: center;
+        padding: 48px 16px;
+    }
+
+    .resource-unavailable-card {
+        width: min(720px, 100%);
+        border: 1px solid #d7dee8;
+        border-radius: 14px;
+        padding: 28px;
+        background: linear-gradient(180deg, #fff8f8 0%, #ffffff 100%);
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    .resource-unavailable-eyebrow {
+        display: inline-block;
+        margin-bottom: 10px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #fff1f2;
+        color: #be123c;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .resource-unavailable-card h2 {
+        margin: 0 0 12px 0;
+        color: #0f172a;
+        font-size: 28px;
+        line-height: 1.2;
+    }
+
+    .resource-unavailable-card p {
+        margin: 0 0 12px 0;
+        color: #475569;
+        font-size: 15px;
+        line-height: 1.6;
+    }
+
+    .resource-unavailable-meta {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 8px 14px;
+        margin: 18px 0;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: #f8fafc;
+    }
+
+    .resource-unavailable-meta dt {
+        color: #64748b;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .resource-unavailable-meta dd {
+        margin: 0;
+        color: #0f172a;
+        font-size: 14px;
+        font-weight: 600;
+        word-break: break-word;
+    }
+
+    .resource-unavailable-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+    }
+
+    .resource-unavailable-actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .resource-unavailable-actions a.primary {
+        background: #d64161;
+        color: #ffffff;
+    }
+
+    .resource-unavailable-actions a.primary:hover {
+        background: #c22f50;
+    }
+
+    .resource-unavailable-actions a.secondary {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #334155;
+    }
+
+    .resource-unavailable-actions a.secondary:hover {
+        background: #f8fafc;
+    }
+</style>
+
+<div class="resource-unavailable-wrap">
+    <div class="resource-unavailable-card">
+        <div class="resource-unavailable-eyebrow">{{ resource_kind }}</div>
+        <h2>{{ resource_kind }} {{ resource_name }} is no longer available</h2>
+        <p>{{ message }}</p>
+        {% if suggestion %}
+        <p>{{ suggestion }}</p>
+        {% endif %}
+
+        <dl class="resource-unavailable-meta">
+            {% if tenant %}
+            <dt>Tenant</dt>
+            <dd><span data-tenant-name="{{ tenant }}">{{ tenant }}</span></dd>
+            {% endif %}
+            {% if namespace %}
+            <dt>Namespace</dt>
+            <dd>{{ namespace }}</dd>
+            {% endif %}
+            {% if resource_name %}
+            <dt>Name</dt>
+            <dd>{{ resource_name }}</dd>
+            {% endif %}
+        </dl>
+
+        <div class="resource-unavailable-actions">
+            <a class="primary" href="{{ primary_href }}">{{ primary_label }}</a>
+            {% if secondary_href and secondary_label %}
+            <a class="secondary" href="{{ secondary_href }}">{{ secondary_label }}</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -702,6 +702,20 @@
         vertical-align: middle;
         box-sizing: border-box;
     }
+
+    .billing-admin-tenant-link {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: #2563eb;
+        text-decoration: underline;
+        cursor: pointer;
+        font: inherit;
+    }
+
+    .billing-admin-tenant-link:hover {
+        color: #1d4ed8;
+    }
 </style>
 
 <div class="tab">
@@ -1062,10 +1076,10 @@
         <!-- Usage Analytics Section -->
         <div id="usage-analytics-container" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 15px;">
             <h3 style="cursor: pointer; margin: 0;" onclick="toggleUsageAnalytics()">
-                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▶</span>
+                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▼</span>
             </h3>
 
-            <div id="usage-analytics-content" style="display: none; margin-top: 15px;">
+            <div id="usage-analytics-content" style="display: block; margin-top: 15px;">
                 <div id="analytics-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
                     <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
                     <input type="datetime-local" id="usage-start" style="font-size: 12px;">
@@ -1098,8 +1112,8 @@
                 <!-- View Mode Selector -->
                 <div style="margin-bottom: 15px;">
                     <label>View By:</label>
-                    <input type="radio" name="analytics-view" value="tenant" checked onchange="loadAnalyticsView()"> Tenant
-                    <input type="radio" name="analytics-view" value="model" onchange="loadAnalyticsView()"> Model
+                    <input type="radio" name="analytics-view" value="tenant" onchange="loadAnalyticsView()"> Tenant
+                    <input type="radio" name="analytics-view" value="model" checked onchange="loadAnalyticsView()"> Model
                     <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
                 </div>
 
@@ -1302,6 +1316,7 @@
                 <table class="ix-table admin-data-table" style="width:100%; margin-top: 12px;" id="billing-admin-tenant-profile-table">
                     <thead>
                         <tr>
+                            <th style="width: 56px;">#</th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('tenant_name')">Tenant Name <span id="billing-admin-tenant-sort-tenant_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('display_name')">Owner Name <span id="billing-admin-tenant-sort-display_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('email')">Email <span id="billing-admin-tenant-sort-email"></span></th>
@@ -1312,7 +1327,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr><td colspan="7" style="text-align: center; color: #888;">Loading tenant directory...</td></tr>
+                        <tr><td colspan="8" style="text-align: center; color: #888;">Loading tenant directory...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1812,11 +1827,29 @@
         const sortedRows = rows.slice().sort(compareBillingAdminTenantProfileRows);
         updateBillingAdminTenantProfilesSortIcons();
 
-        sortedRows.forEach((row) => {
+        sortedRows.forEach((row, index) => {
             const tr = document.createElement('tr');
+            const tenantName = String(row?.tenant_name || '');
+            const reverseIndex = sortedRows.length - index;
+
+            const indexTd = document.createElement('td');
+            indexTd.textContent = String(reverseIndex);
+            indexTd.style.textAlign = 'center';
+            tr.appendChild(indexTd);
 
             const tenantTd = document.createElement('td');
-            tenantTd.textContent = String(row?.tenant_name || '');
+            if (tenantName !== '') {
+                const tenantLink = document.createElement('button');
+                tenantLink.type = 'button';
+                tenantLink.className = 'billing-admin-tenant-link';
+                tenantLink.textContent = tenantName;
+                tenantLink.addEventListener('click', () => {
+                    billingAdminOpenTenantBilling(tenantName);
+                });
+                tenantTd.appendChild(tenantLink);
+            } else {
+                tenantTd.textContent = '—';
+            }
             tr.appendChild(tenantTd);
 
             const ownerTd = document.createElement('td');
@@ -1863,7 +1896,7 @@
             creditBtn.textContent = 'Add Credit';
             creditBtn.style.padding = '4px 10px';
             creditBtn.addEventListener('click', () => {
-                billingAdminSelectTenantForCredits(String(row?.tenant_name || ''));
+                billingAdminSelectTenantForCredits(tenantName);
             });
             actionsWrap.appendChild(creditBtn);
 
@@ -1872,7 +1905,7 @@
             billingBtn.textContent = 'Billing';
             billingBtn.style.padding = '4px 10px';
             billingBtn.addEventListener('click', () => {
-                billingAdminOpenTenantBilling(String(row?.tenant_name || ''));
+                billingAdminOpenTenantBilling(tenantName);
             });
             actionsWrap.appendChild(billingBtn);
 
@@ -3307,6 +3340,7 @@
     openTab = function(evt, tabName) {
         originalOpenTab(evt, tabName);
         if (tabName === 'Billing') {
+            ensureAnalyticsDefaultViewMode();
             populateBillingTenants();
         } else if (tabName === 'BillingAdmin') {
             initBillingAdminAccess().then(() => {
@@ -3323,7 +3357,7 @@
     // Usage Analytics Functions
     // =====================================================
 
-    let analyticsExpanded = false;
+    let analyticsExpanded = true;
     let analyticsData = null;
     let analyticsSortColumn = 'total_cost';
     let analyticsSortDirection = 'desc';
@@ -3336,6 +3370,18 @@
     let analyticsDetailGranularity = 'hourly';
     let analyticsDetailSortColumn = 'period';
     let analyticsDetailSortDirection = 'desc';
+    let analyticsInitialViewApplied = false;
+
+    function ensureAnalyticsDefaultViewMode() {
+        if (analyticsInitialViewApplied) return;
+
+        const modelRadio = document.querySelector('input[name="analytics-view"][value="model"]');
+        if (modelRadio) {
+            modelRadio.checked = true;
+        }
+
+        analyticsInitialViewApplied = true;
+    }
 
     function toggleUsageAnalytics() {
         analyticsExpanded = !analyticsExpanded;
@@ -3951,6 +3997,24 @@
         renderGroupedTable(grouped, 'tenant');
     }
 
+    function escapeAnalyticsHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function analyticsModelHref(item) {
+        const tenant = String(item?.tenant || document.getElementById('billing_tenant_select')?.value || '').trim();
+        const namespace = String(item?.namespace || '').trim();
+        const funcname = String(item?.funcname || '').trim();
+        if (!tenant || !namespace || !funcname) return '';
+
+        return `{{ hosturl }}func?tenant=${encodeURIComponent(tenant)}&namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(funcname)}`;
+    }
+
     function renderGroupedTable(data, viewMode) {
         document.getElementById('analytics-error').style.display = 'none';
         const hourlyControlsEl = document.getElementById('analytics-hourly-view-controls');
@@ -4074,6 +4138,8 @@
             const infHours = (infMs / 3600000).toFixed(2);
             const sbyHours = (sbyMs / 3600000).toFixed(2);
             const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : 0;
+            const safeGroupLabel = escapeAnalyticsHtml(truncateText(groupLabel, 40));
+            const safeGroupTitle = escapeAnalyticsHtml(groupLabel);
 
             const barWidth = Math.min(percent, 100);
             const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
@@ -4087,8 +4153,16 @@
                 renderGroupedTable(data, viewMode);
             };
 
+            let groupCellHtml = safeGroupLabel;
+            if (viewMode === 'model') {
+                const modelHref = analyticsModelHref(item);
+                if (modelHref !== '') {
+                    groupCellHtml = `<a href="${modelHref}" onclick="event.stopPropagation();">${safeGroupLabel}</a>`;
+                }
+            }
+
             row.innerHTML = `
-                <td style="padding: 8px;" title="${groupLabel}">${truncateText(groupLabel, 40)}</td>
+                <td style="padding: 8px;" title="${safeGroupTitle}">${groupCellHtml}</td>
                 <td style="text-align: right; padding: 8px;">${infHours}</td>
                 <td style="text-align: right; padding: 8px;">${sbyHours}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
