@@ -45,6 +45,18 @@
         word-break: break-word;
     }
 
+    .models-table .select-col {
+        text-align: center;
+        vertical-align: middle;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    .models-table .select-col input[type="checkbox"] {
+        display: block;
+        margin: 0 auto;
+    }
+
     .func-list-toolbar {
         display: flex;
         justify-content: flex-end;
@@ -156,7 +168,7 @@
     </colgroup>
     <thead>
         <tr>
-            <th rowspan="2" style="width: 34px;">
+            <th rowspan="2" class="select-col" style="width: 34px;">
                 <input id="select-all-models" type="checkbox" aria-label="Select all models" {% if not can_manage_models %}disabled aria-disabled="true"{% endif %}>
             </th>
             <th rowspan="2">Tenant</th>
@@ -187,7 +199,7 @@
         {% set spec = func['func']['object']['spec'] %}
         {% set row_can_manage = func.get('can_edit_delete', false) %}
         <tr>
-            <td>
+            <td class="select-col">
                 <input
                     class="model-select"
                     type="checkbox"
