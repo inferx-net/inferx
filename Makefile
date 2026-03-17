@@ -1,6 +1,9 @@
 ARCH := ${shell uname -m}
-VERSION := v0.2.3beta1
-VERSION1 := v0.2.3beta1
+VERSION := v0.2.3
+VERSION1 := v0.2.3.1
+DASHBOARD_VERION ?= v0.2.3.1
+RUNTIME_VERSION ?= v0.2.3
+
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
 
@@ -184,7 +187,7 @@ stopall:
 	sudo kubectl delete all --all 
 
 rundash:
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 
 stopdash:
 	sudo kubectl delete deployment inferx-dashboard
@@ -365,3 +368,26 @@ runallcwnew:
 	VERSION=$(VERSION1) envsubst < k8s1/dashboard-cwnew.yaml | kubectl apply -f -
 	kubectl apply -f k8s1/ingress-cwnew.yaml
 	kubectl apply -f k8s1/billing-cronjobs.yaml
+
+runall:
+# 	-sudo rm /opt/inferx/log/*.log
+	kubectl apply -f k8s1/billing-secrets.yaml
+	kubectl apply -f k8s1/billing-sql-scripts-configmap.yaml
+	kubectl apply -f k8s1/etcd.yaml
+	kubectl apply -f k8s1/keycloak_postgres.yaml
+	kubectl apply -f k8s1/keycloak.yaml
+	VERSION=$(RUNTIME_VERSION) envsubst < k8s1/binary-updater.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/gateway.yaml | kubectl apply -f -
+	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
+	VERSION=$(VERSION) envsubst < k8s1/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERION) envsubst < k8s1/dashboard.yaml | kubectl apply -f -
+# 	kubectl apply -f k8s1/ingress-cwnew.yaml
+	kubectl apply -f k8s1/billing-cronjobs.yaml
+
+binupdate:
+	VERSION=$(RUNTIME_VERSION) envsubst < k8s1/binary-updater.yaml | kubectl apply -f -
