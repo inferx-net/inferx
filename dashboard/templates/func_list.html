@@ -257,6 +257,8 @@
     {% if can_manage_models %}
     <p>Create your first model to start serving inference requests from the dashboard.</p>
     <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
+    {% elif session.get('access_token', '') == '' %}
+    <p>No public models are available right now. Log in or use ixctl with IFERX_APIKEY to create one.</p>
     {% else %}
     <p>No models are available for this account yet, and you do not have permission to create one.</p>
     {% endif %}

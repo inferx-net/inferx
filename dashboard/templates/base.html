@@ -334,6 +334,8 @@
 
 <body>
     {% set is_logged_in = session.get('access_token', '') != '' %}
+    {% set is_gateway_aligned_anonymous_active = dashboard_gateway_aligned_anonymous_active | default(false) %}
+    {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active %}
     {% set request_path = request.path if request is defined and request.path is defined else '' %}
     {% set request_path_no_slash = request_path.rstrip('/') %}
     {% set nav_models_active = request_path_no_slash in ('',) or '/listfunc' in request_path or '/func_create' in request_path or '/func' in request_path or '/funclog' in request_path %}
@@ -357,13 +359,15 @@
             </td>
         </tr>
     </table>
-    {% if is_logged_in %}
+    {% if show_public_nav %}
     <nav>
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
         <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
         <a href="{{ hosturl }}listsnapshot" class="{% if nav_snapshots_active %}active{% endif %}"> Snapshots </a>
-        <a href="{{ hosturl }}listnode" id="nav-nodes-link" class="{% if nav_nodes_active %}active{% endif %}" style="display: none;"> Nodes </a>
+        <a href="{{ hosturl }}listnode" id="nav-nodes-link" class="{% if nav_nodes_active %}active{% endif %}"{% if not dashboard_gateway_aligned_anonymous_access %} style="display: none;"{% endif %}> Nodes </a>
+        {% if is_logged_in %}
         <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>
+        {% endif %}
         <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack" aria-label="Support on Slack" target="_blank" rel="noopener noreferrer">
             <span class="nav-support-text">Support</span>
             <img class="nav-support-icon" src="https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png" alt="" aria-hidden="true" loading="lazy">
@@ -376,6 +380,8 @@
         const authDropdown = document.querySelector('#brand-auth-dropdown');
         const logoutLink = document.querySelector('#brand-auth-logout');
         const isLoggedIn = {{ is_logged_in | tojson }};
+        const dashboardGatewayAlignedAnonymousAccess = {{ dashboard_gateway_aligned_anonymous_access | tojson }};
+        const isGatewayAlignedAnonymousActive = {{ is_gateway_aligned_anonymous_active | tojson }};
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
@@ -491,7 +497,7 @@
         }
 
         async function loadTenantDisplayMap() {
-            if (!isLoggedIn) {
+            if (!isLoggedIn && !isGatewayAlignedAnonymousActive) {
                 refreshTenantBadge();
                 return;
             }
@@ -523,6 +529,11 @@
 
         async function configureNodesNavVisibility() {
             if (!navNodesLink) {
+                return;
+            }
+
+            if (dashboardGatewayAlignedAnonymousAccess) {
+                setNodesNavVisibility(true);
                 return;
             }
 
@@ -596,7 +607,7 @@
         configureNodesNavVisibility();
 
     </script>
-    {% if is_logged_in %}
+    {% if show_public_nav %}
     <hr class="nav-divider">
     {% endif %}
     <div class="content">

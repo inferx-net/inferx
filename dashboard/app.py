@@ -57,12 +57,21 @@ SLACK_INVITE_URL = os.getenv(
     "SLACK_INVITE_URL",
     "https://join.slack.com/t/inferxcommunity/shared_invite/zt-3pp01352q-MM3CuRprsoeb68QKwygXjQ",
 ).strip()
+DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS = os.getenv(
+    "DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS",
+    "false",
+).lower() in ("1", "true", "yes")
 
 
 @app.context_processor
 def inject_dashboard_links():
     return {
         "slack_invite_url": SLACK_INVITE_URL,
+        "dashboard_gateway_aligned_anonymous_access": DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS,
+        "dashboard_gateway_aligned_anonymous_active": (
+            DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
+            and session.get('access_token', '') == ''
+        ),
     }
 
 #Create a Blueprint with a common prefix
@@ -582,6 +591,27 @@ def require_login(func):
     return wrapper
 
 
+def require_login_unless_gateway_aligned_anonymous_enabled(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        compact_legacy_session_payload()
+        current_path = request.url
+        redirect_uri = external_url('prefix.login', redirectpath=current_path)
+        if session.get('access_token', '') == '':
+            if DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS:
+                return func(*args, **kwargs)
+            return redirect(redirect_uri)
+        if is_token_expired() and not refresh_token_if_needed():
+            return redirect(redirect_uri)
+
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def is_gateway_aligned_anonymous_request():
+    return DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS and session.get('access_token', '') == ''
+
+
 def is_inferx_admin_user():
     if session.get('username', '') == 'inferx_admin':
         return True
@@ -659,6 +689,13 @@ def can_view_public_tenant(roles=None):
     return is_inferx_admin_user()
 
 
+def can_access_public_tenant_in_dashboard(roles=None):
+    if is_gateway_aligned_anonymous_request():
+        return True
+
+    return can_view_public_tenant(roles)
+
+
 def resource_item_tenant_name(item) -> str:
     if not isinstance(item, dict):
         return ""
@@ -698,7 +735,7 @@ def filter_public_tenant_tenants(tenants, include_public: bool):
 
 
 def deny_public_tenant_request(tenant: str):
-    if is_public_tenant_name(tenant) and not can_view_public_tenant():
+    if is_public_tenant_name(tenant) and not can_access_public_tenant_in_dashboard():
         return Response("No permission", status=403)
 
     return None
@@ -735,6 +772,17 @@ def has_admin_role_for_model(roles, target_tenant: str, target_namespace: str = 
 def require_admin(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        if not is_inferx_admin_user():
+            return Response("No permission", status=403)
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def require_admin_unless_gateway_aligned_anonymous_enabled(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS:
+            return func(*args, **kwargs)
         if not is_inferx_admin_user():
             return Response("No permission", status=403)
         return func(*args, **kwargs)
@@ -878,10 +926,11 @@ def onboard_retry():
 @prefix_bp.route('/logout')
 def logout():
     # Keycloak logout endpoint
-    end_session_endpoint = (
-        f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/protocol/openid-connect/logout"
+    end_session_endpoint = keycloak.load_server_metadata().get(
+        'end_session_endpoint',
+        f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/protocol/openid-connect/logout",
     )
-    
+
     id_token = session.get('id_token', '')
     # return redirect(end_session_endpoint)
 
@@ -2007,20 +2056,23 @@ def text2audio():
 
 
 @prefix_bp.route('/generate_tenants', methods=['GET'])
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def generate_tenants():
     tenants = listtenants()
-    tenants = filter_public_tenant_tenants(tenants, include_public=can_view_public_tenant())
+    tenants = filter_public_tenant_tenants(
+        tenants,
+        include_public=can_access_public_tenant_in_dashboard(),
+    )
     print("tenants ", tenants)
     return tenants
 
 @prefix_bp.route('/generate_namespaces', methods=['GET'])
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def generate_namespaces():
     namespaces = listnamespaces()
     namespaces = filter_public_tenant_resource_items(
         namespaces,
-        include_public=can_view_public_tenant(),
+        include_public=can_access_public_tenant_in_dashboard(),
     )
     print("namespaces ", namespaces)
     return namespaces
@@ -2033,10 +2085,13 @@ def generate_roles():
     return roles
 
 @prefix_bp.route('/generate_funcs', methods=['GET'])
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def generate_funcs():
     funcs = listfuncs("", "")
-    funcs = filter_public_tenant_resource_items(funcs, include_public=can_view_public_tenant())
+    funcs = filter_public_tenant_resource_items(
+        funcs,
+        include_public=can_access_public_tenant_in_dashboard(),
+    )
     return funcs
 
 @prefix_bp.route('/generate_tenantuser', methods=['GET'])
@@ -2469,6 +2524,8 @@ def func_save():
 def Home():
     if session.get('access_token', '') != '':
         return redirect(url_for('prefix.ListFunc'))
+    if DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS:
+        return redirect(url_for('prefix.ListFunc'))
 
     return render_template(
         "entry.html",
@@ -2478,7 +2535,7 @@ def Home():
 
 
 @prefix_bp.route("/listfunc")
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def ListFunc():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2501,7 +2558,10 @@ def ListFunc():
         roles = []
 
     is_inferx_admin = can_view_public_tenant(roles)
-    funcs = filter_public_tenant_resource_items(funcs, include_public=is_inferx_admin)
+    funcs = filter_public_tenant_resource_items(
+        funcs,
+        include_public=can_access_public_tenant_in_dashboard(roles),
+    )
 
     count = 0
     gpucount = 0
@@ -2547,7 +2607,7 @@ def ListFunc():
 
 
 @prefix_bp.route("/listsnapshot")
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def ListSnapshot():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2562,14 +2622,14 @@ def ListSnapshot():
 
     snapshots = filter_public_tenant_resource_items(
         snapshots,
-        include_public=can_view_public_tenant(),
+        include_public=can_access_public_tenant_in_dashboard(),
     )
 
     return render_template("snapshot_list.html", snapshots=snapshots)
 
 
 @prefix_bp.route("/func", methods=("GET", "POST"))
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def GetFunc():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2691,8 +2751,8 @@ def GetFunc():
     )
 
 @prefix_bp.route("/listnode")
-@require_login
-@require_admin
+@require_login_unless_gateway_aligned_anonymous_enabled
+@require_admin_unless_gateway_aligned_anonymous_enabled
 def ListNode():
     nodes = listnodes()
 
@@ -2706,8 +2766,8 @@ def ListNode():
     return render_template("node_list.html", nodes=nodes)
 
 @prefix_bp.route("/node")
-@require_login
-@require_admin
+@require_login_unless_gateway_aligned_anonymous_enabled
+@require_admin_unless_gateway_aligned_anonymous_enabled
 def GetNode():
     name = request.args.get("name")
     node = getnode(name)
@@ -2720,7 +2780,7 @@ def GetNode():
 
 
 @prefix_bp.route("/listpod")
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def ListPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2734,7 +2794,10 @@ def ListPod():
         pods = listpods(tenant, namespace, "")
 
     is_inferx_admin = can_view_public_tenant()
-    pods = filter_public_tenant_resource_items(pods, include_public=is_inferx_admin)
+    pods = filter_public_tenant_resource_items(
+        pods,
+        include_public=can_access_public_tenant_in_dashboard(),
+    )
 
     return render_template(
         "pod_list.html",
@@ -2744,7 +2807,7 @@ def ListPod():
 
 
 @prefix_bp.route("/pod")
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def GetPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -2829,7 +2892,7 @@ def GetPod():
 
 
 @prefix_bp.route("/failpod")
-@require_login
+@require_login_unless_gateway_aligned_anonymous_enabled
 def GetFailPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
