@@ -267,7 +267,7 @@
 <section class="empty-model-state" aria-live="polite">
     <h2>No models yet</h2>
     {% if can_manage_models %}
-    <p>Create your first model to start serving inference requests from the dashboard.</p>
+    <p>Create your first model to start serving inference with a few clicks.</p>
     <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
     {% elif session.get('access_token', '') == '' %}
     <p>No public models are available right now. Log in or use ixctl with IFERX_APIKEY to create one.</p>
