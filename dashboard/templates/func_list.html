@@ -6,6 +6,29 @@
         font-size: 14px;
     }
 
+    .empty-model-state {
+        max-width: 520px;
+        margin: 72px auto;
+        padding: 40px 32px;
+        text-align: center;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fbff;
+    }
+
+    .empty-model-state h2 {
+        margin: 0 0 10px;
+        font-size: 24px;
+        color: #0f172a;
+    }
+
+    .empty-model-state p {
+        margin: 0 0 20px;
+        font-size: 15px;
+        line-height: 1.5;
+        color: #475569;
+    }
+
     .models-table {
         table-layout: fixed;
     }
@@ -101,7 +124,9 @@
     }
 </style>
 
-{% if can_manage_models %}
+{% set has_models = funcs is not none and (funcs|length) > 0 %}
+
+{% if has_models and can_manage_models %}
 <div class="func-list-toolbar">
     <div class="func-list-actions">
         <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
@@ -109,30 +134,49 @@
 </div>
 {% endif %}
 
+{% if has_models %}
 <table class="ix-table models-table" style="width:100%; text-align: center;">
+    <colgroup>
+        <col style="width: 34px;">
+        <col>
+        <col>
+        <col style="width: 18%;">
+        <col>
+        <col style="width: 72px;">
+        <col style="width: 78px;">
+        <col style="width: 64px;">
+        <col style="width: 82px;">
+        <col style="width: 64px;">
+        <col style="width: 96px;">
+        <col style="width: 62px;">
+        <col style="width: 74px;">
+        <col>
+        <col style="width: 88px;">
+        <col>
+    </colgroup>
     <thead>
         <tr>
-            <th rowspan="2" style="width: 42px;">
+            <th rowspan="2" style="width: 34px;">
                 <input id="select-all-models" type="checkbox" aria-label="Select all models" {% if not can_manage_models %}disabled aria-disabled="true"{% endif %}>
             </th>
             <th rowspan="2">Tenant</th>
             <th rowspan="2">Namespace</th>
-            <th rowspan="2">Model Name</th>
+            <th rowspan="2" style="width: 18%;">Model Name</th>
             <th rowspan="2">Type</th>
-            <th rowspan="2">GPU Count</th>
-            <th rowspan="2">vRam (GB)</th>
-            <th rowspan="2">CPU</th>
-            <th rowspan="2">Memory (GB)</th>
+            <th rowspan="2" style="width: 72px;">GPU Count</th>
+            <th rowspan="2" style="width: 78px;">vRam (GB)</th>
+            <th rowspan="2" style="width: 64px;">CPU</th>
+            <th rowspan="2" style="width: 82px;">Memory (GB)</th>
             <th colspan="3">Standby</th>
-            <th rowspan="2">State</th>
+            <th rowspan="2" style="width: 74px;">State</th>
             <th rowspan="2">Snapshot Nodes</th>
-            <th rowspan="2">Revision</th>
+            <th rowspan="2" style="width: 88px; white-space: nowrap;">Revision</th>
             <th rowspan="2">Actions</th>
         </tr>
         <tr>
-            <th>GPU</th>
-            <th>Pageable</th>
-            <th>Pinned</th>
+            <th style="width: 64px;">GPU</th>
+            <th style="width: 96px; white-space: nowrap;">Pageable</th>
+            <th style="width: 62px;">Pinned</th>
         </tr>
     </thead>
     <tbody>
@@ -156,7 +200,7 @@
             </td>
             <td>
                 <a href="{{ hosturl }}listfunc?tenant={{ tenant }}">
-                    <span data-tenant-name="{{ tenant }}">{{ tenant }}</span>
+                    <span class="model-list-tenant-label" data-tenant-name="{{ tenant }}">{{ tenant }}</span>
                 </a>
             </td>
             <td>
@@ -207,8 +251,19 @@
 </div>
 <div id="delete-status" aria-live="polite"></div>
 {% endif %}
+{% else %}
+<section class="empty-model-state" aria-live="polite">
+    <h2>No models yet</h2>
+    {% if can_manage_models %}
+    <p>Create your first model to start serving inference requests from the dashboard.</p>
+    <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
+    {% else %}
+    <p>No models are available for this account yet, and you do not have permission to create one.</p>
+    {% endif %}
+</section>
+{% endif %}
 
-{% if is_inferx_admin %}
+{% if has_models and is_inferx_admin %}
 <h2 style="text-align: center;">Summary</h2>
 
 <table class="ix-table" style="width: 500px; margin: auto; text-align: center;">
@@ -339,6 +394,60 @@
             setStatus(`Deleted ${rows.length} model(s). Reloading...`, 'success');
             window.location.reload();
         });
+
+        {% if is_inferx_admin %}
+        const modelListTenantOwnerNames = {};
+
+        function applyModelListTenantLabels() {
+            document.querySelectorAll('.model-list-tenant-label[data-tenant-name]').forEach((elem) => {
+                const tenantName = String(elem.dataset.tenantName || '').trim();
+                if (tenantName === '') {
+                    return;
+                }
+
+                const ownerName = String(modelListTenantOwnerNames[tenantName] || '').trim();
+                if (ownerName !== '') {
+                    elem.textContent = `${tenantName} (${ownerName})`;
+                    elem.title = tenantName;
+                    return;
+                }
+
+                if (typeof window.getTenantDisplayName === 'function') {
+                    elem.textContent = window.getTenantDisplayName(tenantName);
+                    elem.title = tenantName;
+                }
+            });
+        }
+
+        async function loadModelListTenantOwnerNames() {
+            try {
+                const resp = await fetch('/proxy1/admin/tenants');
+                if (!resp.ok) {
+                    return;
+                }
+
+                const rows = await resp.json();
+                if (!Array.isArray(rows)) {
+                    return;
+                }
+
+                rows.forEach((row) => {
+                    const tenantName = String(row?.tenant_name || '').trim();
+                    const ownerName = String(row?.display_name || '').trim();
+                    if (tenantName !== '' && ownerName !== '') {
+                        modelListTenantOwnerNames[tenantName] = ownerName;
+                    }
+                });
+
+                applyModelListTenantLabels();
+            } catch (error) {
+                console.warn('Failed to load model list tenant owner names:', error);
+            }
+        }
+
+        document.addEventListener('tenant-display-map-updated', applyModelListTenantLabels);
+        loadModelListTenantOwnerNames();
+        {% endif %}
 
         syncSelectAll();
         syncDeleteButtonState();

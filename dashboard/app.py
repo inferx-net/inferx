@@ -16,6 +16,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 import pytz
 
 import requests
@@ -641,6 +642,68 @@ def has_inferx_admin_role(roles):
     return False
 
 
+PUBLIC_TENANT_NAME = "public"
+
+
+def is_public_tenant_name(tenant_name: str) -> bool:
+    return str(tenant_name or "").strip().lower() == PUBLIC_TENANT_NAME
+
+
+def can_view_public_tenant(roles=None):
+    if session.get('username', '') == 'inferx_admin':
+        return True
+
+    if roles is not None:
+        return has_inferx_admin_role(roles)
+
+    return is_inferx_admin_user()
+
+
+def resource_item_tenant_name(item) -> str:
+    if not isinstance(item, dict):
+        return ""
+
+    tenant = str(item.get('tenant', '') or '').strip()
+    if tenant != "":
+        return tenant
+
+    func = item.get('func')
+    if isinstance(func, dict):
+        return str(func.get('tenant', '') or '').strip()
+
+    return ""
+
+
+def filter_public_tenant_resource_items(items, include_public: bool):
+    if include_public or not isinstance(items, list):
+        return items
+
+    return [
+        item
+        for item in items
+        if not is_public_tenant_name(resource_item_tenant_name(item))
+    ]
+
+
+def filter_public_tenant_tenants(tenants, include_public: bool):
+    if include_public or not isinstance(tenants, list):
+        return tenants
+
+    return [
+        tenant
+        for tenant in tenants
+        if isinstance(tenant, dict)
+        and not is_public_tenant_name(str(tenant.get('name', '') or '').strip())
+    ]
+
+
+def deny_public_tenant_request(tenant: str):
+    if is_public_tenant_name(tenant) and not can_view_public_tenant():
+        return Response("No permission", status=403)
+
+    return None
+
+
 def has_admin_role_for_model(roles, target_tenant: str, target_namespace: str = ""):
     if not isinstance(roles, list):
         return False
@@ -1029,6 +1092,15 @@ def list_namespaceusers(role: str, tenant: str, namespace: str):
     return funcs
 
 def getfunc(tenant: str, namespace: str, funcname: str):
+    resp, func = getfunc_response(tenant, namespace, funcname)
+    if func is None:
+        raise ValueError(
+            f"invalid function response status={resp.status_code} tenant={tenant} namespace={namespace} name={funcname}"
+        )
+    return func
+
+
+def getfunc_response(tenant: str, namespace: str, funcname: str):
     access_token = session.get('access_token', '')
     if access_token == "":
         headers = {}
@@ -1036,8 +1108,7 @@ def getfunc(tenant: str, namespace: str, funcname: str):
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/function/{}/{}/{}/".format(apihostaddr, tenant, namespace, funcname)
     resp = requests.get(url, headers=headers)
-    func = json.loads(resp.content)
-    return func
+    return resp, response_json_or_none(resp)
 
 
 def listsnapshots(tenant: str, namespace: str):
@@ -1070,6 +1141,145 @@ def getnode(name: str):
 
 def json_error(message: str, status: int = 400):
     return jsonify({"error": message}), status
+
+
+def response_json_or_none(resp):
+    body = (resp.text or "").strip()
+    if body == "":
+        return None
+
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def dashboard_href(endpoint: str, **params) -> str:
+    href = url_for(endpoint)
+    query = {}
+    for key, value in params.items():
+        text = str(value or "").strip()
+        if text != "":
+            query[key] = text
+
+    if len(query) == 0:
+        return href
+
+    return f"{href}?{urlencode(query)}"
+
+
+def extract_upstream_error_message(resp, payload) -> str:
+    if isinstance(payload, dict):
+        for key in ("error", "message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip() != "":
+                return value.strip()
+
+    if isinstance(payload, str) and payload.strip() != "":
+        return payload.strip()
+
+    if resp is None:
+        return ""
+
+    text = str(resp.text or "").strip()
+    if text == "" or text.startswith("<"):
+        return ""
+
+    if len(text) > 240:
+        return text[:237] + "..."
+
+    return text
+
+
+def is_upstream_resource_unavailable(resp, payload) -> bool:
+    if resp is None:
+        return False
+
+    if resp.status_code in (404, 410):
+        return True
+
+    if resp.status_code != 400:
+        return False
+
+    detail = extract_upstream_error_message(resp, payload).lower()
+    if detail == "":
+        return False
+
+    unavailable_markers = (
+        "notexist",
+        "not found",
+        "doesn't exist",
+        "doesnt exist",
+        "no such",
+    )
+    return any(marker in detail for marker in unavailable_markers)
+
+
+def render_resource_unavailable_page(
+    *,
+    resource_kind: str,
+    resource_name: str,
+    tenant: str = "",
+    namespace: str = "",
+    message: str,
+    suggestion: str = "",
+    primary_href: str,
+    primary_label: str,
+    secondary_href: str = "",
+    secondary_label: str = "",
+    detail: str = "",
+    status: int = 404,
+):
+    return (
+        render_template(
+            "resource_unavailable.html",
+            resource_kind=resource_kind,
+            resource_name=resource_name,
+            tenant=tenant,
+            namespace=namespace,
+            message=message,
+            suggestion=suggestion,
+            primary_href=primary_href,
+            primary_label=primary_label,
+            secondary_href=secondary_href,
+            secondary_label=secondary_label,
+            detail=detail,
+        ),
+        status,
+    )
+
+
+def render_resource_load_error_page(
+    *,
+    resource_kind: str,
+    resource_name: str,
+    tenant: str = "",
+    namespace: str = "",
+    primary_href: str,
+    primary_label: str,
+    secondary_href: str = "",
+    secondary_label: str = "",
+    upstream_status: int = 502,
+    detail: str = "",
+):
+    suggestion = f"The backend returned HTTP {upstream_status}."
+    if detail != "":
+        suggestion += " You can go back and try again later."
+
+    return render_resource_unavailable_page(
+        resource_kind=resource_kind,
+        resource_name=resource_name,
+        tenant=tenant,
+        namespace=namespace,
+        message=f"This {resource_kind.lower()} page could not be loaded right now.",
+        suggestion=suggestion,
+        primary_href=primary_href,
+        primary_label=primary_label,
+        secondary_href=secondary_href,
+        secondary_label=secondary_label,
+        detail=detail,
+        status=502,
+    )
 
 
 def gateway_headers(include_json: bool = False):
@@ -1551,6 +1761,15 @@ def listpods(tenant: str, namespace: str, funcname: str):
 
 
 def getpod(tenant: str, namespace: str, podname: str):
+    resp, pod = getpod_response(tenant, namespace, podname)
+    if pod is None:
+        raise ValueError(
+            f"invalid pod response status={resp.status_code} tenant={tenant} namespace={namespace} name={podname}"
+        )
+    return pod
+
+
+def getpod_response(tenant: str, namespace: str, podname: str):
     access_token = session.get('access_token', '')
     if access_token == "":
         headers = {}
@@ -1558,9 +1777,7 @@ def getpod(tenant: str, namespace: str, podname: str):
         headers = {'Authorization': f'Bearer {access_token}'}
     url = "{}/pod/{}/".format(apihostaddr, podname)
     resp = requests.get(url, headers=headers)
-    pod = json.loads(resp.content)
-
-    return pod
+    return resp, response_json_or_none(resp)
 
 
 def getpodaudit(tenant: str, namespace: str, fpname: str, fprevision: int, id: str):
@@ -1793,6 +2010,7 @@ def text2audio():
 @require_login
 def generate_tenants():
     tenants = listtenants()
+    tenants = filter_public_tenant_tenants(tenants, include_public=can_view_public_tenant())
     print("tenants ", tenants)
     return tenants
 
@@ -1800,6 +2018,10 @@ def generate_tenants():
 @require_login
 def generate_namespaces():
     namespaces = listnamespaces()
+    namespaces = filter_public_tenant_resource_items(
+        namespaces,
+        include_public=can_view_public_tenant(),
+    )
     print("namespaces ", namespaces)
     return namespaces
 
@@ -1814,6 +2036,7 @@ def generate_roles():
 @require_login
 def generate_funcs():
     funcs = listfuncs("", "")
+    funcs = filter_public_tenant_resource_items(funcs, include_public=can_view_public_tenant())
     return funcs
 
 @prefix_bp.route('/generate_tenantuser', methods=['GET'])
@@ -2086,8 +2309,15 @@ def FuncCreate():
         except ValueError as e:
             return json_error(str(e), 400)
 
+        deny_resp = deny_public_tenant_request(tenant)
+        if deny_resp is not None:
+            return deny_resp
+
         try:
             full_func = getfunc(tenant, namespace, name)
+            deny_resp = deny_public_tenant_request(resource_item_tenant_name(full_func))
+            if deny_resp is not None:
+                return deny_resp
             initial_model_data = project_func_for_edit(full_func)
             page_mode = "update"
         except Exception as e:
@@ -2270,6 +2500,9 @@ def ListFunc():
     if not isinstance(roles, list):
         roles = []
 
+    is_inferx_admin = can_view_public_tenant(roles)
+    funcs = filter_public_tenant_resource_items(funcs, include_public=is_inferx_admin)
+
     count = 0
     gpucount = 0
     vram = 0
@@ -2304,7 +2537,6 @@ def ListFunc():
         and str(role.get('objType', '')).lower() in ('tenant', 'namespace')
         for role in roles
     )
-    is_inferx_admin = session.get('username', '') == 'inferx_admin' or has_inferx_admin_role(roles)
     return render_template(
         "func_list.html",
         funcs=funcs,
@@ -2328,6 +2560,11 @@ def ListSnapshot():
     else:
         snapshots = listsnapshots(tenant, namespace)
 
+    snapshots = filter_public_tenant_resource_items(
+        snapshots,
+        include_public=can_view_public_tenant(),
+    )
+
     return render_template("snapshot_list.html", snapshots=snapshots)
 
 
@@ -2338,9 +2575,61 @@ def GetFunc():
     namespace = request.args.get("namespace")
     name = request.args.get("name")
 
-    func = getfunc(tenant, namespace, name)
-    
-    sample = func["func"]["object"]["spec"]["sample_query"]
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    func_resp, func = getfunc_response(tenant, namespace, name)
+    if is_upstream_resource_unavailable(func_resp, func):
+        return render_resource_unavailable_page(
+            resource_kind="Model",
+            resource_name=name,
+            tenant=tenant,
+            namespace=namespace,
+            message="This model is no longer available in the dashboard.",
+            suggestion="It may have been deleted, moved, or you may no longer have access to it.",
+            primary_href=dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace),
+            primary_label="Back to Models",
+            secondary_href=dashboard_href("prefix.ListFunc"),
+            secondary_label="All Models",
+            detail=extract_upstream_error_message(func_resp, func),
+            status=404,
+        )
+    if not func_resp.ok:
+        return render_resource_load_error_page(
+            resource_kind="Model",
+            resource_name=name,
+            tenant=tenant,
+            namespace=namespace,
+            primary_href=dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace),
+            primary_label="Back to Models",
+            secondary_href=dashboard_href("prefix.ListFunc"),
+            secondary_label="All Models",
+            upstream_status=func_resp.status_code,
+            detail=extract_upstream_error_message(func_resp, func),
+        )
+
+    deny_resp = deny_public_tenant_request(resource_item_tenant_name(func))
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        sample = func["func"]["object"]["spec"]["sample_query"]
+    except (KeyError, TypeError):
+        return render_resource_unavailable_page(
+            resource_kind="Model",
+            resource_name=name,
+            tenant=tenant,
+            namespace=namespace,
+            message="This model is no longer available in the dashboard.",
+            suggestion="It may have been deleted, moved, or the backend no longer has full details for it.",
+            primary_href=dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace),
+            primary_label="Back to Models",
+            secondary_href=dashboard_href("prefix.ListFunc"),
+            secondary_label="All Models",
+            detail=extract_upstream_error_message(func_resp, func),
+            status=404,
+        )
     map = sample["body"]
     apiType = sample["apiType"]
     isAdmin = func["isAdmin"]
@@ -2444,7 +2733,8 @@ def ListPod():
     else:
         pods = listpods(tenant, namespace, "")
 
-    is_inferx_admin = is_inferx_admin_user()
+    is_inferx_admin = can_view_public_tenant()
+    pods = filter_public_tenant_resource_items(pods, include_public=is_inferx_admin)
 
     return render_template(
         "pod_list.html",
@@ -2459,11 +2749,64 @@ def GetPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
     podname = request.args.get("name")
-    pod = getpod(tenant, namespace, podname)
 
-    funcname = pod["object"]["spec"]["funcname"]
-    version = pod["object"]["spec"]["fprevision"]
-    id = pod["object"]["spec"]["id"]
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    pod_resp, pod = getpod_response(tenant, namespace, podname)
+    if is_upstream_resource_unavailable(pod_resp, pod):
+        return render_resource_unavailable_page(
+            resource_kind="Pod",
+            resource_name=podname,
+            tenant=tenant,
+            namespace=namespace,
+            message="This pod is no longer available in the dashboard.",
+            suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
+            primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
+            primary_label="Back to Pods",
+            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
+            secondary_label="View Snapshots",
+            detail=extract_upstream_error_message(pod_resp, pod),
+            status=404,
+        )
+    if not pod_resp.ok:
+        return render_resource_load_error_page(
+            resource_kind="Pod",
+            resource_name=podname,
+            tenant=tenant,
+            namespace=namespace,
+            primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
+            primary_label="Back to Pods",
+            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
+            secondary_label="View Snapshots",
+            upstream_status=pod_resp.status_code,
+            detail=extract_upstream_error_message(pod_resp, pod),
+        )
+
+    deny_resp = deny_public_tenant_request(resource_item_tenant_name(pod))
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        funcname = pod["object"]["spec"]["funcname"]
+        version = pod["object"]["spec"]["fprevision"]
+        id = pod["object"]["spec"]["id"]
+    except (KeyError, TypeError):
+        return render_resource_unavailable_page(
+            resource_kind="Pod",
+            resource_name=podname,
+            tenant=tenant,
+            namespace=namespace,
+            message="This pod is no longer available in the dashboard.",
+            suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
+            primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
+            primary_label="Back to Pods",
+            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
+            secondary_label="View Snapshots",
+            detail=extract_upstream_error_message(pod_resp, pod),
+            status=404,
+        )
     log = readpodlog(tenant, namespace, funcname, version, id)
 
     audits = getpodaudit(tenant, namespace, funcname, version, id)
@@ -2493,6 +2836,10 @@ def GetFailPod():
     name = request.args.get("name")
     version = request.args.get("version")
     id = request.args.get("id")
+
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
 
     log = GetFailLog(tenant, namespace, name, version, id)
 
