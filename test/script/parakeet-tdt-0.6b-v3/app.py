@@ -37,7 +37,7 @@ class Message(BaseModel):
     content: Union[str, List[ContentItem]]
 
 class ChatCompletionRequest(BaseModel):
-    model: str
+    model: Optional[str] = "nvidia/parakeet-tdt-0.6b-v3"
     messages: List[Message]
     stream: Optional[bool] = False
 
