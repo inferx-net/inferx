@@ -22,6 +22,12 @@ import pytz
 import requests
 import markdown
 import functools
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
 
 from flask import (
     Blueprint,
@@ -255,6 +261,21 @@ DEFAULT_MODEL_ENVS = [
 ]
 
 RESERVED_ENV_KEYS = {row[0] for row in DEFAULT_MODEL_ENVS}
+CATALOG_RESERVED_ENV_KEYS = {
+    "HF_HUB_OFFLINE",
+    "TRANSFORMERS_OFFLINE",
+}
+CATALOG_PLATFORM_ENV_KEYS = RESERVED_ENV_KEYS | CATALOG_RESERVED_ENV_KEYS
+SECRDB_ADDR = os.getenv("SECRDB_ADDR", "postgresql://secret:123456@localhost:5431/secretdb").strip()
+CATALOG_FULL_SPEC_REQUIRED_KEYS = {
+    "image",
+    "commands",
+    "resources",
+    "envs",
+    "endpoint",
+    "sample_query",
+    "standby",
+}
 
 FIXED_ENDPOINT = {"port": 8000, "schema": "Http", "probe": "/health"}
 FIXED_STANDBY = {"gpu": "File", "pageable": "File", "pinned": "File"}
@@ -1658,17 +1679,334 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
     return spec
 
 
-def project_func_for_edit(full_func):
-    if not isinstance(full_func, dict) or "func" not in full_func:
-        raise ValueError("Invalid function response")
-    func_obj = full_func.get("func")
-    if not isinstance(func_obj, dict):
-        raise ValueError("Invalid function object")
+def clone_json_value(value):
+    return json.loads(json.dumps(value))
 
-    tenant = str(func_obj.get("tenant", "")).strip()
-    namespace = str(func_obj.get("namespace", "")).strip()
-    name = str(func_obj.get("name", "")).strip()
-    spec = (((func_obj.get("object") or {}).get("spec")) or {})
+
+def parse_named_command_arg(commands, flag_name):
+    if not isinstance(commands, list):
+        return ""
+    i = 0
+    while i < len(commands):
+        token = commands[i]
+        if token == flag_name:
+            if i + 1 < len(commands):
+                return str(commands[i + 1]).strip()
+            return ""
+        if isinstance(token, str) and token.startswith(f"{flag_name}="):
+            return token.split("=", 1)[1].strip()
+        i += 1
+    return ""
+
+
+def upsert_named_command_arg(commands, flag_name, value):
+    normalized_value = str(value).strip()
+    if normalized_value == "":
+        raise ValueError(f"`{flag_name}` value must be non-empty")
+
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    merged_commands = []
+    inserted = False
+    i = 0
+    while i < len(normalized_commands):
+        token = normalized_commands[i]
+        if token == flag_name:
+            if not inserted:
+                merged_commands.extend([flag_name, normalized_value])
+                inserted = True
+            i += 2 if i + 1 < len(normalized_commands) else 1
+            continue
+        if isinstance(token, str) and token.startswith(f"{flag_name}="):
+            if not inserted:
+                merged_commands.append(f"{flag_name}={normalized_value}")
+                inserted = True
+            i += 1
+            continue
+        merged_commands.append(token)
+        i += 1
+
+    if not inserted:
+        merged_commands.extend([flag_name, normalized_value])
+
+    return merged_commands
+
+
+def parse_catalog_id(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("`catalog_id` must be a positive integer")
+
+    if isinstance(value, int):
+        catalog_id = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if raw == "":
+            return None
+        try:
+            catalog_id = int(raw)
+        except ValueError:
+            raise ValueError("`catalog_id` must be a positive integer")
+    else:
+        raise ValueError("`catalog_id` must be a positive integer")
+
+    if catalog_id <= 0:
+        raise ValueError("`catalog_id` must be a positive integer")
+    return catalog_id
+
+
+def normalize_catalog_source(catalog_source):
+    if not isinstance(catalog_source, dict):
+        return None
+
+    catalog_id = catalog_source.get("catalog_id")
+    catalog_version = catalog_source.get("catalog_version")
+    try:
+        catalog_id = int(catalog_id)
+        catalog_version = int(catalog_version)
+    except (TypeError, ValueError):
+        return None
+
+    if catalog_id <= 0 or catalog_version <= 0:
+        return None
+
+    return {
+        "catalog_id": catalog_id,
+        "catalog_version": catalog_version,
+    }
+
+
+def ensure_catalog_db_available():
+    if psycopg2 is None or RealDictCursor is None:
+        raise RuntimeError("catalog support requires `psycopg2-binary` in the dashboard environment")
+    if SECRDB_ADDR == "":
+        raise RuntimeError("SECRDB_ADDR is empty")
+
+
+def normalize_catalog_json_field(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def fetch_active_catalog_entry(catalog_id: int):
+    ensure_catalog_db_available()
+
+    query = """
+        SELECT
+            id,
+            slug,
+            display_name,
+            source_model_id,
+            catalog_version,
+            default_func_spec,
+            is_active
+        FROM ModelCatalogEntry
+        WHERE id = %s
+          AND is_active = true
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (catalog_id,))
+                row = cursor.fetchone()
+    except Exception as e:
+        raise RuntimeError(f"failed to query catalog entry {catalog_id}: {e}")
+
+    if row is None:
+        raise LookupError(f"catalog entry {catalog_id} not found")
+
+    entry = dict(row)
+    entry["default_func_spec"] = normalize_catalog_json_field(entry.get("default_func_spec"))
+    return entry
+
+
+def validate_catalog_template_spec(spec):
+    if not isinstance(spec, dict):
+        raise ValueError("catalog `default_func_spec` must be an object")
+
+    missing_keys = sorted(CATALOG_FULL_SPEC_REQUIRED_KEYS - set(spec.keys()))
+    if missing_keys:
+        raise ValueError(f"catalog `default_func_spec` is missing `{missing_keys[0]}`")
+
+    image = spec.get("image")
+    if not isinstance(image, str) or image not in VLLM_IMAGE_WHITELIST:
+        raise ValueError("catalog `default_func_spec.image` must be one of the whitelisted vllm image tags")
+
+    commands = spec.get("commands")
+    if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
+        raise ValueError("catalog `default_func_spec.commands` must be an array of strings")
+
+    resources = spec.get("resources")
+    if not isinstance(resources, dict):
+        raise ValueError("catalog `default_func_spec.resources` must be an object")
+    gpu = resources.get("GPU")
+    if not isinstance(gpu, dict):
+        raise ValueError("catalog `default_func_spec.resources.GPU` must be an object")
+    for key in ("Count", "vRam"):
+        value = gpu.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"catalog `default_func_spec.resources.GPU.{key}` must be a positive integer")
+
+    envs = spec.get("envs")
+    if not isinstance(envs, list):
+        raise ValueError("catalog `default_func_spec.envs` must be an array")
+    for idx, pair in enumerate(envs):
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(f"catalog `default_func_spec.envs[{idx}]` must be [key, value]")
+        if not isinstance(pair[0], str) or not isinstance(pair[1], str):
+            raise ValueError(f"catalog `default_func_spec.envs[{idx}]` key/value must be strings")
+
+    for key in ("endpoint", "sample_query", "standby"):
+        if not isinstance(spec.get(key), dict):
+            raise ValueError(f"catalog `default_func_spec.{key}` must be an object")
+
+    hf_model = extract_model_arg_from_commands(commands).strip()
+    if hf_model == "":
+        raise ValueError("catalog `default_func_spec.commands` must include `--model`")
+
+    return clone_json_value(spec)
+
+
+def normalize_catalog_override_spec(spec, max_node_vram, max_node_gpu_count=0):
+    if not isinstance(spec, dict):
+        raise ValueError("`spec` must be an object")
+
+    resources = spec.get("resources")
+    if not isinstance(resources, dict):
+        raise ValueError("`spec.resources` must be an object")
+    gpu = resources.get("GPU")
+    if not isinstance(gpu, dict):
+        raise ValueError("`spec.resources.GPU` must be an object")
+
+    gpu_count = gpu.get("Count")
+    if not isinstance(gpu_count, int) or isinstance(gpu_count, bool):
+        raise ValueError("`spec.resources.GPU.Count` must be an integer")
+    if gpu_count not in GPU_RESOURCE_LOOKUP:
+        allowed_counts = ", ".join(str(v) for v in SUPPORTED_GPU_COUNTS)
+        raise ValueError(f"`spec.resources.GPU.Count` must be one of: {allowed_counts}")
+    if max_node_gpu_count > 0 and gpu_count > max_node_gpu_count:
+        raise ValueError(f"`spec.resources.GPU.Count` must be <= node max GPU count ({max_node_gpu_count})")
+
+    gpu_vram = gpu.get("vRam")
+    if not isinstance(gpu_vram, int) or isinstance(gpu_vram, bool):
+        raise ValueError("`spec.resources.GPU.vRam` must be an integer (MB)")
+    if gpu_vram <= 0:
+        raise ValueError("`spec.resources.GPU.vRam` must be > 0")
+    if max_node_vram > 0 and gpu_vram > max_node_vram:
+        raise ValueError(f"`spec.resources.GPU.vRam` must be <= node max ({max_node_vram})")
+
+    commands = spec.get("commands", [])
+    if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
+        raise ValueError("`spec.commands` must be an array of strings")
+    max_model_len = parse_named_command_arg(commands, "--max-model-len")
+    if max_model_len != "":
+        try:
+            max_model_len_int = int(max_model_len)
+        except ValueError:
+            raise ValueError("`--max-model-len` must be a positive integer")
+        if max_model_len_int <= 0:
+            raise ValueError("`--max-model-len` must be a positive integer")
+        max_model_len = str(max_model_len_int)
+    else:
+        max_model_len = None
+
+    envs = spec.get("envs", [])
+    if envs is None:
+        envs = []
+    if not isinstance(envs, list):
+        raise ValueError("`spec.envs` must be an array of [key, value] pairs")
+
+    normalized_envs = []
+    for idx, pair in enumerate(envs):
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(f"`spec.envs[{idx}]` must be [key, value]")
+        key, value = pair
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError(f"`spec.envs[{idx}]` key/value must be strings")
+        if key in CATALOG_PLATFORM_ENV_KEYS:
+            continue
+        normalized_envs.append([key, value])
+
+    return {
+        "gpu_count": gpu_count,
+        "gpu_vram": gpu_vram,
+        "max_model_len": max_model_len,
+        "envs": normalized_envs,
+    }
+
+
+def merge_catalog_envs(template_envs, customer_envs):
+    ordered_keys = []
+    merged_envs = {}
+    template_reserved = {}
+
+    def _add_pair(key, value):
+        if key not in merged_envs:
+            ordered_keys.append(key)
+        merged_envs[key] = value
+
+    for pair in template_envs if isinstance(template_envs, list) else []:
+        if not isinstance(pair, list) or len(pair) != 2:
+            continue
+        key, value = pair
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        _add_pair(key, value)
+        if key in CATALOG_PLATFORM_ENV_KEYS:
+            template_reserved[key] = value
+
+    for pair in customer_envs if isinstance(customer_envs, list) else []:
+        if not isinstance(pair, list) or len(pair) != 2:
+            continue
+        key, value = pair
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if key in CATALOG_PLATFORM_ENV_KEYS:
+            continue
+        _add_pair(key, value)
+
+    for key, value in template_reserved.items():
+        _add_pair(key, value)
+
+    return [[key, merged_envs[key]] for key in ordered_keys]
+
+
+def build_catalog_full_spec(base_spec, normalized_override_spec, catalog_source=None):
+    full_spec = validate_catalog_template_spec(base_spec)
+    full_resources = full_spec.setdefault("resources", {})
+    full_gpu = full_resources.setdefault("GPU", {})
+    full_gpu["Count"] = normalized_override_spec["gpu_count"]
+    full_gpu["vRam"] = normalized_override_spec["gpu_vram"]
+
+    if normalized_override_spec["max_model_len"] is not None:
+        full_spec["commands"] = upsert_named_command_arg(
+            full_spec.get("commands", []),
+            "--max-model-len",
+            normalized_override_spec["max_model_len"],
+        )
+
+    full_spec["envs"] = merge_catalog_envs(
+        full_spec.get("envs", []),
+        normalized_override_spec["envs"],
+    )
+
+    if catalog_source is not None:
+        full_spec["catalog_source"] = dict(catalog_source)
+
+    return full_spec
+
+
+def project_spec_for_editor(
+    spec,
+    *,
+    tenant="",
+    namespace="",
+    name="",
+    hf_model="",
+    editable_env_exclusions=None,
+    extra_fields=None,
+):
     if not isinstance(spec, dict):
         raise ValueError("Function spec missing")
 
@@ -1689,6 +2027,8 @@ def project_func_for_edit(full_func):
     else:
         clean_commands = [str(item) for item in strip_reserved_command_args(commands)]
 
+    excluded_env_keys = editable_env_exclusions if editable_env_exclusions is not None else RESERVED_ENV_KEYS
+
     envs = spec.get("envs", [])
     if not isinstance(envs, list):
         envs = []
@@ -1697,7 +2037,7 @@ def project_func_for_edit(full_func):
         if not isinstance(pair, list) or len(pair) != 2:
             continue
         key, value = pair
-        if isinstance(key, str) and isinstance(value, str) and key not in RESERVED_ENV_KEYS:
+        if isinstance(key, str) and isinstance(value, str) and key not in excluded_env_keys:
             clean_envs.append([key, value])
 
     gpu_spec = (((spec.get("resources") or {}).get("GPU")) or {})
@@ -1717,15 +2057,15 @@ def project_func_for_edit(full_func):
             projected_policy_obj["scalein_timeout"] = float(policy_obj["scalein_timeout"])
 
     sample_query = spec.get("sample_query", {})
-    hf_model = ""
+    resolved_hf_model = hf_model.strip() if isinstance(hf_model, str) else ""
     if isinstance(sample_query, dict):
         body = sample_query.get("body", {})
         if isinstance(body, dict):
             model_value = body.get("model", "")
             if isinstance(model_value, str):
-                hf_model = model_value.strip()
-    if hf_model == "":
-        hf_model = extract_model_arg_from_commands(commands).strip()
+                resolved_hf_model = model_value.strip()
+    if resolved_hf_model == "":
+        resolved_hf_model = extract_model_arg_from_commands(commands).strip()
 
     projected_sample_query = None
     if isinstance(sample_query, dict):
@@ -1743,15 +2083,77 @@ def project_func_for_edit(full_func):
     projected_spec["commands"] = full_commands_for_advanced
     advanced_spec = json.loads(json.dumps(projected_spec))
 
-    return {
+    payload = {
         "tenant": tenant,
         "namespace": namespace,
         "name": name,
-        "hf_model": hf_model,
+        "hf_model": resolved_hf_model,
         "spec": projected_spec,
         "basic_spec": basic_spec,
         "advanced_spec": advanced_spec,
     }
+    if isinstance(extra_fields, dict):
+        payload.update(extra_fields)
+    return payload
+
+
+def project_catalog_entry_for_create(catalog_entry):
+    if not isinstance(catalog_entry, dict):
+        raise ValueError("Invalid catalog entry")
+
+    slug = str(catalog_entry.get("slug", "")).strip()
+    if slug == "":
+        raise ValueError("Catalog entry slug is missing")
+
+    catalog_source = {
+        "catalog_id": int(catalog_entry["id"]),
+        "catalog_version": int(catalog_entry["catalog_version"]),
+    }
+    spec = validate_catalog_template_spec(catalog_entry.get("default_func_spec"))
+
+    return project_spec_for_editor(
+        spec,
+        name=slug,
+        editable_env_exclusions=CATALOG_PLATFORM_ENV_KEYS,
+        extra_fields={
+            "catalog_source": catalog_source,
+            "catalog_mode": True,
+            "catalog_display_name": str(catalog_entry.get("display_name", "")).strip(),
+            "catalog_slug": slug,
+        },
+    )
+
+
+def project_func_for_edit(full_func):
+    if not isinstance(full_func, dict) or "func" not in full_func:
+        raise ValueError("Invalid function response")
+    func_obj = full_func.get("func")
+    if not isinstance(func_obj, dict):
+        raise ValueError("Invalid function object")
+
+    tenant = str(func_obj.get("tenant", "")).strip()
+    namespace = str(func_obj.get("namespace", "")).strip()
+    name = str(func_obj.get("name", "")).strip()
+    spec = (((func_obj.get("object") or {}).get("spec")) or {})
+    if not isinstance(spec, dict):
+        raise ValueError("Function spec missing")
+
+    catalog_source = normalize_catalog_source(spec.get("catalog_source"))
+    extra_fields = {}
+    editable_env_exclusions = RESERVED_ENV_KEYS
+    if catalog_source is not None:
+        extra_fields["catalog_source"] = catalog_source
+        extra_fields["catalog_mode"] = True
+        editable_env_exclusions = CATALOG_PLATFORM_ENV_KEYS
+
+    return project_spec_for_editor(
+        spec,
+        tenant=tenant,
+        namespace=namespace,
+        name=name,
+        editable_env_exclusions=editable_env_exclusions,
+        extra_fields=extra_fields,
+    )
 
 
 def parse_edit_key(edit_key: str):
@@ -2355,10 +2757,27 @@ def nodes_max_vram():
 @require_login
 def FuncCreate():
     edit_key = request.args.get("edit", "").strip()
+    catalog_id_raw = request.args.get("catalog_id", "").strip()
     initial_model_data = None
     page_mode = "create"
 
-    if edit_key != "":
+    if edit_key != "" and catalog_id_raw != "":
+        return json_error("`edit` and `catalog_id` cannot be used together", 400)
+
+    if catalog_id_raw != "":
+        try:
+            catalog_id = parse_catalog_id(catalog_id_raw)
+            catalog_entry = fetch_active_catalog_entry(catalog_id)
+            initial_model_data = project_catalog_entry_for_create(catalog_entry)
+        except ValueError as e:
+            return json_error(str(e), 400)
+        except LookupError as e:
+            return json_error(str(e), 404)
+        except RuntimeError as e:
+            return json_error(str(e), 502)
+        except Exception as e:
+            return json_error(f"failed to load catalog entry: {e}", 500)
+    elif edit_key != "":
         try:
             tenant, namespace, name = parse_edit_key(edit_key)
         except ValueError as e:
@@ -2396,14 +2815,19 @@ def func_save():
     if not isinstance(req, dict):
         return json_error("Request body must be a JSON object", 400)
 
-    allowed_top_level_keys = {"mode", "tenant", "namespace", "name", "hf_model", "spec", "editor_mode"}
+    allowed_top_level_keys = {"mode", "tenant", "namespace", "name", "hf_model", "spec", "editor_mode", "catalog_id"}
     unknown_top_level_keys = set(req.keys()) - allowed_top_level_keys
     if unknown_top_level_keys:
         return json_error(f"Unknown top-level key: {sorted(unknown_top_level_keys)[0]}", 400)
 
-    for key in ("mode", "tenant", "namespace", "name", "hf_model", "spec"):
+    for key in ("mode", "tenant", "namespace", "name", "spec"):
         if key not in req:
             return json_error(f"Missing required field: `{key}`", 400)
+
+    try:
+        catalog_id = parse_catalog_id(req.get("catalog_id"))
+    except ValueError as e:
+        return json_error(str(e), 400)
 
     mode = req.get("mode")
     if mode not in ("create", "update"):
@@ -2415,51 +2839,107 @@ def func_save():
     tenant = req.get("tenant")
     namespace = req.get("namespace")
     name = req.get("name")
-    hf_model = req.get("hf_model")
+    hf_model = req.get("hf_model", "")
     app.logger.info(
-        "func_save received hf_model=%r tenant=%r namespace=%r name=%r mode=%r editor_mode=%r",
+        "func_save received hf_model=%r tenant=%r namespace=%r name=%r mode=%r editor_mode=%r catalog_id=%r",
         hf_model,
         tenant,
         namespace,
         name,
         mode,
         editor_mode,
+        catalog_id,
     )
     spec = req.get("spec")
 
-    for field_name, field_value in (("tenant", tenant), ("namespace", namespace), ("name", name), ("hf_model", hf_model)):
+    for field_name, field_value in (("tenant", tenant), ("namespace", namespace), ("name", name)):
         if not isinstance(field_value, str) or field_value.strip() == "":
             return json_error(f"`{field_name}` must be a non-empty string", 400)
+    if hf_model is None:
+        hf_model = ""
+    if not isinstance(hf_model, str):
+        return json_error("`hf_model` must be a string", 400)
 
     tenant = tenant.strip()
     namespace = namespace.strip()
     name = name.strip()
     hf_model = hf_model.strip()
     app.logger.info(
-        "func_save normalized hf_model=%r tenant=%r namespace=%r name=%r mode=%r editor_mode=%r",
+        "func_save normalized hf_model=%r tenant=%r namespace=%r name=%r mode=%r editor_mode=%r catalog_id=%r",
         hf_model,
         tenant,
         namespace,
         name,
         mode,
         editor_mode,
+        catalog_id,
     )
+
+    if mode == "update" and catalog_id is not None:
+        return json_error("`catalog_id` is only allowed when creating a new model from the catalog", 400)
 
     try:
         max_node_vram, max_node_gpu_count = get_node_capacity_limits()
     except Exception as e:
         return json_error(f"failed to read node capacity limits: {e}", 502)
 
+    existing_spec = None
+    existing_catalog_source = None
+    if mode == "update":
+        try:
+            existing_full_func = getfunc(tenant, namespace, name)
+            existing_spec = ((((existing_full_func.get("func") or {}).get("object") or {}).get("spec")) or {})
+            if not isinstance(existing_spec, dict):
+                return json_error("existing function spec is missing", 502)
+            existing_catalog_source = normalize_catalog_source(existing_spec.get("catalog_source"))
+        except Exception as e:
+            return json_error(f"failed to load existing model: {e}", 502)
+
     try:
-        partial_spec = validate_partial_spec(
-            spec,
-            max_node_vram,
-            max_node_gpu_count=max_node_gpu_count,
-            editor_mode=editor_mode,
-        )
-        full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
+        if catalog_id is not None:
+            catalog_entry = fetch_active_catalog_entry(catalog_id)
+            catalog_template_spec = validate_catalog_template_spec(catalog_entry.get("default_func_spec"))
+            catalog_source = {
+                "catalog_id": int(catalog_entry["id"]),
+                "catalog_version": int(catalog_entry["catalog_version"]),
+            }
+            if hf_model == "":
+                hf_model = extract_model_arg_from_commands(catalog_template_spec.get("commands", [])).strip()
+            normalized_override_spec = normalize_catalog_override_spec(
+                spec,
+                max_node_vram,
+                max_node_gpu_count=max_node_gpu_count,
+            )
+            full_spec = build_catalog_full_spec(
+                catalog_template_spec,
+                normalized_override_spec,
+                catalog_source=catalog_source,
+            )
+        elif existing_catalog_source is not None:
+            if hf_model == "":
+                hf_model = extract_model_arg_from_commands((existing_spec or {}).get("commands", [])).strip()
+            normalized_override_spec = normalize_catalog_override_spec(
+                spec,
+                max_node_vram,
+                max_node_gpu_count=max_node_gpu_count,
+            )
+            full_spec = build_catalog_full_spec(
+                existing_spec,
+                normalized_override_spec,
+                catalog_source=existing_catalog_source,
+            )
+        else:
+            if hf_model == "":
+                raise ValueError("`hf_model` must be a non-empty string")
+            partial_spec = validate_partial_spec(
+                spec,
+                max_node_vram,
+                max_node_gpu_count=max_node_gpu_count,
+                editor_mode=editor_mode,
+            )
+            full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
         app.logger.info(
-            "func_save built spec model fields editor_mode=%r command_model=%r sample_model=%r",
+            "func_save built spec model fields editor_mode=%r command_model=%r sample_model=%r catalog_source=%r",
             editor_mode,
             (
                 full_spec.get("commands", [None, None])[1]
@@ -2471,6 +2951,7 @@ def func_save():
                 if isinstance(full_spec.get("sample_query"), dict)
                 else None
             ),
+            normalize_catalog_source(full_spec.get("catalog_source")),
         )
     except ValueError as e:
         return json_error(str(e), 400)

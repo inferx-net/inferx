@@ -180,6 +180,14 @@ pub enum ModelType {
     Private,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CatalogSource {
+    #[serde(rename = "catalog_id")]
+    pub catalogId: i64,
+    #[serde(rename = "catalog_version")]
+    pub catalogVersion: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncSpec {
     pub image: String,
@@ -207,6 +215,9 @@ pub struct FuncSpec {
 
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
+
+    #[serde(rename = "catalog_source", default, skip_serializing_if = "Option::is_none")]
+    pub catalogSource: Option<CatalogSource>,
 }
 
 fn PromptDefault() -> String {
@@ -268,6 +279,7 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             sampleCall: SampleCall::default(),
             policy: Default::default(),
+            catalogSource: None,
         };
     }
 }

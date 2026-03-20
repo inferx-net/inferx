@@ -373,6 +373,9 @@
 
     <div id="error-banner" class="error-banner" role="alert"></div>
     <div id="success-banner" class="success-banner" aria-live="polite"></div>
+    <div id="catalog-mode-banner" class="warning-banner" aria-live="polite" style="display:none;">
+        Catalog-backed save preserves the stored runtime template. Only GPU count, vRAM, max model length, and non-platform env vars are applied as customer overrides.
+    </div>
     <div id="advanced-warning-banner" class="warning-banner" aria-live="polite">
         Changes made in Advanced are not reflected back in Basic fields.
     </div>
@@ -580,6 +583,10 @@
         const DEFAULT_POLICY_QUEUE_TIMEOUT_SEC = 30.0;
         const DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC = 1.0;
         const VRAM_STEP_MB = 256;
+        const IS_CATALOG_MODE = !!(
+            INITIAL_MODEL
+            && INITIAL_MODEL.catalog_mode
+        );
 
         const tenantSelect = document.getElementById('tenant-select');
         const namespaceSelect = document.getElementById('namespace-select');
@@ -606,6 +613,7 @@
         const panelAdvanced = document.getElementById('panel-advanced');
         const advancedSpecJson = document.getElementById('advanced-spec-json');
         const warningBanner = document.getElementById('advanced-warning-banner');
+        const catalogModeBanner = document.getElementById('catalog-mode-banner');
         const errorBanner = document.getElementById('error-banner');
         const successBanner = document.getElementById('success-banner');
         const saveBtn = document.getElementById('save-model-btn');
@@ -1243,6 +1251,12 @@
             const initialNamespace = INITIAL_MODEL && typeof INITIAL_MODEL.namespace === 'string' ? INITIAL_MODEL.namespace.trim() : '';
             const initialName = INITIAL_MODEL && typeof INITIAL_MODEL.name === 'string' ? INITIAL_MODEL.name.trim() : '';
             const initialHfModel = INITIAL_MODEL && typeof INITIAL_MODEL.hf_model === 'string' ? INITIAL_MODEL.hf_model.trim() : '';
+            const initialCatalogSource = (
+                INITIAL_MODEL
+                && INITIAL_MODEL.catalog_source
+                && typeof INITIAL_MODEL.catalog_source === 'object'
+                && !Array.isArray(INITIAL_MODEL.catalog_source)
+            ) ? INITIAL_MODEL.catalog_source : null;
             const tenant = PAGE_MODE === 'update' ? initialTenant : (tenantSelect.value || '').trim();
             const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || '').trim();
             const name = PAGE_MODE === 'update' ? initialName : (functionNameInput.value || '').trim();
@@ -1261,13 +1275,17 @@
                 throw new Error('HuggingFace Model is required');
             }
 
-            return {
+            const payload = {
                 mode: PAGE_MODE,
                 tenant: tenant,
                 namespace: namespace,
                 name: name,
                 hf_model: hfModel
             };
+            if (PAGE_MODE === 'create' && initialCatalogSource && initialCatalogSource.catalog_id != null) {
+                payload.catalog_id = initialCatalogSource.catalog_id;
+            }
+            return payload;
         }
 
         async function submitModel() {
@@ -1447,6 +1465,9 @@
         async function init() {
             initializeImageOptions();
             refreshGpuCountOptionsFromNodeCapacity();
+            if (catalogModeBanner) {
+                catalogModeBanner.style.display = IS_CATALOG_MODE ? 'block' : 'none';
+            }
             policyEnabledCheckbox.addEventListener('change', () => setPolicyEnabled(policyEnabledCheckbox.checked));
             tenantSelect.addEventListener('change', () => rebuildNamespaceOptions({ preserveCurrent: false }));
             tabBasic.addEventListener('click', () => setActiveTab('basic'));
