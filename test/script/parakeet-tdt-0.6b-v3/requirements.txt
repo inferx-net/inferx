@@ -1,0 +1,4 @@
+soundfile
+librosa
+python-multipart
+nemo_toolkit[asr]

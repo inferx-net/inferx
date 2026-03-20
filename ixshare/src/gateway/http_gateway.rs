@@ -1176,7 +1176,7 @@ async fn FuncCall(
 
     let timeout = (timeoutSec * 1000.0) as u64;
 
-    let uri = format!("http://127.0.0.1{}", remainPath); // &func.object.spec.endpoint.path);
+    let uri = format!("{}", remainPath); // &func.object.spec.endpoint.path);
     *req.uri_mut() = Uri::try_from(uri).unwrap();
 
     let mut res;
