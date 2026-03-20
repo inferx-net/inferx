@@ -7,9 +7,6 @@
         "spec": {
             "image": "ghcr.io/remsky/kokoro-fastapi-gpu:latest",
             "commands": [
-                "/bin/sh",
-                "-c",
-                "echo 'import torch; torch.backends.cudnn.enabled=False' > /app/sitecustomize.py && bash entrypoint.sh"
             ],
             "resources": {
                 "CPU": 12000,
@@ -21,10 +18,7 @@
                 }
             },
             "envs": [
-                [
-                    "PYTHONPATH",
-                    "/app:$PYTHONPATH"
-                ],
+
                 [
                     "LD_LIBRARY_PATH",
                     "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
