@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Mutex;
 use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
 
+use crate::obj_mgr::func_mgr::MountFile;
 use crate::obj_mgr::nodestatus_mgr::Quantity;
 use crate::obj_mgr::pod_mgr::{FuncPod, PodState};
 
@@ -146,4 +147,5 @@ pub struct ContainerDef {
     pub stdin_once: bool,
     pub resources: NodeResources,
     pub ports: Vec<ContainerPort>,
+    pub mountfiles: Vec<MountFile>,
 }

@@ -183,6 +183,16 @@ pub enum ModelType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MountFile {
+    #[serde(rename = "src_path")]
+    pub srcpath: String,
+    #[serde(rename = "target_path")]
+    pub targetpath: String,
+    #[serde(default)]
+    pub data: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncSpec {
     pub image: String,
     pub commands: Vec<String>,
@@ -209,6 +219,9 @@ pub struct FuncSpec {
 
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
+
+    #[serde(default)]
+    pub mountfiles: Vec<MountFile>,
 }
 
 fn PromptDefault() -> String {
@@ -270,6 +283,7 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             sampleCall: SampleCall::default(),
             policy: Default::default(),
+            mountfiles: Default::default(),
         };
     }
 }

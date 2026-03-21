@@ -1,0 +1,70 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "parakeet-tdt",
+    "object": {
+        "spec": {
+            "image": "local/parakeet-tdt-api:0.6b-v3",
+            "commands": [],
+            "resources": {
+                "CPU": 20000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 14000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "unknown",
+                "prompt": "Describe the sounds you hear in this audio.",
+                "path": "v1/chat/completions",
+                "dataUrl": "https://www.kozco.com/tech/piano2.wav",
+                "body": {
+                    "model": "Qwen/Qwen2.5-Omni-3B",
+                    "max_tokens": "200",
+                    "temperature": "0"
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Obj": {
+                    "min_replica": 0,
+                    "max_replica": 1,
+                    "standby_per_node": 1,
+                    "parallel": 20,
+                    "queue_len": 10,
+                    "runtime_config": {
+                        "graph_sync": false
+                    }
+                }
+            }
+        }
+    }
+}
