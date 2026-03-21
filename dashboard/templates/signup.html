@@ -26,6 +26,13 @@
         line-height: 1.1;
     }
 
+    .signup-brand-lockup {
+        display: inline-flex;
+        align-items: flex-start;
+        gap: 4px;
+        white-space: nowrap;
+    }
+
     .signup-subtitle {
         margin: 0 0 20px;
         color: #475569;
@@ -98,7 +105,13 @@
 
 <section class="signup-shell" aria-labelledby="signup-title">
     <div class="signup-card">
-        <h2 id="signup-title" class="signup-title">Sign up for InferX</h2>
+        <h2 id="signup-title" class="signup-title">
+            Sign up for
+            <span class="signup-brand-lockup">
+                <span>InferX</span>
+                <span class="brand-beta-badge">Beta</span>
+            </span>
+        </h2>
         <p class="signup-subtitle">Continue with your organization identity provider.</p>
 
         <div class="signup-actions">

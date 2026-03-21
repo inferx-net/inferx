@@ -178,6 +178,7 @@ VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-openai:v0.14.0",
     "vllm/vllm-openai:v0.15.0",
     "vllm/vllm-openai:v0.16.0",
+    "vllm/vllm-openai:v0.17.1",
     "vllm/vllm-omni:v0.14.0",
 ]
 
