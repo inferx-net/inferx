@@ -17,7 +17,8 @@ use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use inferxlib::{common::*, data_obj::DataObject};
 use serde_json::Value;
 
-use crate::command::GlobalConfig;
+use crate::{command::GlobalConfig, create::LoadAttachFiles};
+use inferxlib::obj_mgr::func_mgr::Function;
 
 #[derive(Debug)]
 pub struct UpdateCmd {
@@ -55,7 +56,7 @@ impl UpdateCmd {
             Ok(c) => c,
         };
 
-        let o = match DataObject::<Value>::NewFromString(&content) {
+        let obj = match DataObject::<Value>::NewFromString(&content) {
             Err(e) => {
                 println!(
                     "Can't parse file {} as Json with error {:?}",
@@ -66,9 +67,20 @@ impl UpdateCmd {
             Ok(c) => c,
         };
 
-        let version = client.Update(&gConfig.accessToken, o.clone()).await?;
+        let obj = match obj.objType.as_str() {
+            Function::KEY => match LoadAttachFiles(&obj) {
+                Err(e) => {
+                    println!("Can't load attached fileswith error {:?}", e);
+                    return Ok(());
+                }
+                Ok(o) => o,
+            },
+            _ => obj,
+        };
 
-        let obj = o.CopyWithRev(version, version);
+        let version = client.Update(&gConfig.accessToken, obj.clone()).await?;
+
+        let obj = obj.CopyWithRev(version, version);
 
         println!("{:#?}", obj);
 
