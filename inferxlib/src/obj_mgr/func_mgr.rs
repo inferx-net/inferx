@@ -156,6 +156,8 @@ pub fn DefaultLoadingTimeout() -> u64 {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
+    #[serde(rename = "unknown")]
+    Unknown,
     #[serde(rename = "text2text")]
     Text2Text,
     #[serde(rename = "image2text")]
