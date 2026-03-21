@@ -1,7 +1,7 @@
 ARCH := ${shell uname -m}
 VERSION := v0.2.3
 VERSION1 := v0.2.3.1
-DASHBOARD_VERION ?= v0.2.3.1
+DASHBOARD_VERSION ?= v0.2.3.2
 RUNTIME_VERSION ?= v0.2.3
 
 NODE_NAME=${shell hostname}
@@ -81,13 +81,13 @@ dash:
 	-rm ./target/dashboard/* -rf
 	cp ./dashboard/* ./target/dashboard -rL
 	cp ./deployment/dashboard.Dockerfile ./target/dashboard/Dockerfile
-	-sudo docker image rm inferx/inferx_dashboard:$(VERSION1)
-	sudo docker build -t inferx/inferx_dashboard:$(VERSION1) ./target/dashboard
+	-sudo docker image rm inferx/inferx_dashboard:$(DASHBOARD_VERSION)
+	sudo docker build -t inferx/inferx_dashboard:$(DASHBOARD_VERSION) ./target/dashboard
 
 pushdash: dash
 	# sudo docker login -u inferx
-	sudo docker tag inferx/inferx_dashboard:$(VERSION1) inferx/inferx_dashboard:$(VERSION1)
-	sudo docker push inferx/inferx_dashboard:$(VERSION1)
+	sudo docker tag inferx/inferx_dashboard:$(DASHBOARD_VERSION) inferx/inferx_dashboard:$(DASHBOARD_VERSION)
+	sudo docker push inferx/inferx_dashboard:$(DASHBOARD_VERSION)
 
 runmodel:
 	mkdir -p ./target/runmodel
@@ -187,7 +187,7 @@ stopall:
 	sudo kubectl delete all --all 
 
 rundash:
-	VERSION=$(VERSION1) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 
 stopdash:
 	sudo kubectl delete deployment inferx-dashboard
@@ -385,7 +385,7 @@ runall:
 	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s1/nodeagent.yaml | kubectl apply -f -
-	VERSION=$(DASHBOARD_VERION) envsubst < k8s1/dashboard.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s1/dashboard.yaml | kubectl apply -f -
 # 	kubectl apply -f k8s1/ingress-cwnew.yaml
 	kubectl apply -f k8s1/billing-cronjobs.yaml
 

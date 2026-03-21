@@ -46,9 +46,28 @@
         }
 
         .entry-title {
+            display: inline-flex;
+            align-items: flex-start;
+            gap: 4px;
             margin: 0 0 8px;
             font-size: clamp(28px, 6vw, 36px);
             line-height: 1.1;
+        }
+
+        .entry-beta-badge {
+            display: inline-block;
+            padding: 0 3px;
+            border-radius: 999px;
+            background: #fbbf24;
+            color: #1f2937;
+            font-size: 0.3em;
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            position: relative;
+            top: -0.55em;
         }
 
         .entry-subtitle {
@@ -101,7 +120,10 @@
 </head>
 <body>
     <main class="entry-card">
-        <h1 class="entry-title">InferX</h1>
+        <h1 class="entry-title">
+            <span>InferX</span>
+            <span class="entry-beta-badge">Beta</span>
+        </h1>
         <p class="entry-subtitle">Serverless GPU inference for production workloads.</p>
         <div class="entry-actions">
             <a class="entry-btn signup" href="{{ signup_url }}">Sign up</a>
