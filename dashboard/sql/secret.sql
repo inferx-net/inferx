@@ -55,31 +55,32 @@ CREATE TABLE TenantProfile (
     updated_at      TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE ModelCatalogEntry (
+CREATE TABLE CatalogModel (
     id                    BIGSERIAL PRIMARY KEY,
     slug                  VARCHAR NOT NULL UNIQUE,
     display_name          VARCHAR NOT NULL,
     provider              VARCHAR NOT NULL,
-    model_type            VARCHAR NOT NULL,
+    modality              VARCHAR NOT NULL,
     brief_intro           TEXT NOT NULL,
     detailed_intro        TEXT NOT NULL DEFAULT '',
     source_kind           VARCHAR NOT NULL DEFAULT 'huggingface',
-    source_model_id       VARCHAR NOT NULL UNIQUE,
+    source_model_id       VARCHAR NOT NULL,
     parameter_count_b     NUMERIC(10,2),
     is_moe                BOOLEAN NOT NULL DEFAULT false,
     tags                  JSONB NOT NULL DEFAULT '[]'::jsonb,
     recommended_use_cases JSONB NOT NULL DEFAULT '[]'::jsonb,
     default_func_spec     JSONB NOT NULL,
-    is_active             BOOLEAN NOT NULL DEFAULT true,
+    is_active             BOOLEAN NOT NULL DEFAULT false,
     catalog_version       INTEGER NOT NULL DEFAULT 1,
     createtime            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updatetime            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_mce_provider ON ModelCatalogEntry (provider);
-CREATE INDEX idx_mce_type ON ModelCatalogEntry (model_type);
-CREATE INDEX idx_mce_active ON ModelCatalogEntry (is_active);
-CREATE INDEX idx_mce_tags ON ModelCatalogEntry USING GIN (tags);
+CREATE INDEX idx_mce_provider ON CatalogModel (provider);
+CREATE INDEX idx_mce_modality ON CatalogModel (modality);
+CREATE INDEX idx_mce_active ON CatalogModel (is_active);
+CREATE INDEX idx_mce_source_model_id ON CatalogModel (source_model_id);
+CREATE INDEX idx_mce_tags ON CatalogModel USING GIN (tags);
 
 CREATE OR REPLACE FUNCTION set_updatetime()
 RETURNS TRIGGER AS $$
@@ -89,5 +90,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER mce_updatetime BEFORE UPDATE ON ModelCatalogEntry
+CREATE TRIGGER mce_updatetime BEFORE UPDATE ON CatalogModel
 FOR EACH ROW EXECUTE FUNCTION set_updatetime();

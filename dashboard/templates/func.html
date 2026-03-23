@@ -37,26 +37,6 @@
         padding: 2px;
     }
 
-    .sample-rest-call-box {
-        position: relative;
-        display: inline-block;
-    }
-
-    .sample-rest-call-copy {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.15s ease;
-        z-index: 1;
-    }
-
-    .sample-rest-call-box:hover .sample-rest-call-copy,
-    .sample-rest-call-box:focus-within .sample-rest-call-copy {
-        opacity: 1;
-        pointer-events: auto;
-    }
 </style>
 
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
@@ -142,8 +122,8 @@
 <textarea id="debug" rows="20" cols="120" hidden></textarea>
 
 <h2>Sample Rest Call</h2>
-<div class="sample-rest-call-box">
-    <button class="sample-rest-call-copy" type="button" onclick="copySampleRestCall()">Copy</button>
+<div class="copyable-area">
+    <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('restcall')">Copy</button>
     <textarea id="restcall" rows="8" cols="120">
 {{ func["sampleRestCall"] }}
 </textarea>
@@ -692,28 +672,6 @@
 
         button.disabled = false;
         cancelBtn.disabled = true;
-    }
-
-    async function copySampleRestCall() {
-        const restcall = document.getElementById('restcall');
-        if (!restcall) {
-            return;
-        }
-
-        const text = restcall.value;
-        try {
-            if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(text);
-            } else {
-                restcall.focus();
-                restcall.select();
-                document.execCommand('copy');
-            }
-        } catch (err) {
-            restcall.focus();
-            restcall.select();
-            document.execCommand('copy');
-        }
     }
 
     async function streamOutputImage() {

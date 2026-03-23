@@ -1,0 +1,582 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .catalog-editor {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+    }
+
+    .catalog-editor h2,
+    .catalog-editor h3 {
+        margin: 0;
+    }
+
+    .editor-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+
+    .editor-subtitle {
+        color: #64748b;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .editor-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .panel {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        border-radius: 2px;
+        padding: 14px;
+        margin-bottom: 14px;
+    }
+
+    .panel h3 {
+        margin: 0 0 10px 0;
+        font-size: 16px;
+        color: #1f2937;
+    }
+
+    .catalog-editor-message {
+        display: none;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        font-size: 14px;
+    }
+
+    .catalog-editor-message.error {
+        background: #fff1f2;
+        border: 1px solid #fecdd3;
+        color: #9f1239;
+    }
+
+    .catalog-editor-message.success {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+    }
+
+    .catalog-editor-grid {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 10px 12px;
+        align-items: start;
+    }
+
+    .catalog-editor-field {
+        display: contents;
+    }
+
+    .catalog-editor-field.full {
+        grid-column: 1 / -1;
+    }
+
+    .catalog-editor-grid label {
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .catalog-editor-control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+    }
+
+    .catalog-editor-grid input,
+    .catalog-editor-grid select,
+    .catalog-editor-grid textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #fff;
+        color: #1f2937;
+        font-size: 14px;
+    }
+
+    .catalog-editor-grid textarea {
+        resize: vertical;
+        min-height: 120px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        line-height: 1.35;
+    }
+
+    .catalog-editor-grid input:disabled,
+    .catalog-editor-grid select:disabled,
+    .catalog-editor-grid textarea:disabled {
+        background: #f8fafc;
+        color: #475569;
+    }
+
+    .catalog-editor-hint {
+        color: #475569;
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.45;
+    }
+
+    .catalog-editor-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .catalog-editor-inline input[type="checkbox"] {
+        width: auto;
+    }
+
+    .catalog-editor-form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+        flex-wrap: wrap;
+    }
+
+    @media (max-width: 900px) {
+        .catalog-editor-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .catalog-editor-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+    }
+</style>
+
+<div class="catalog-editor">
+    <div id="admin-catalog-error" class="catalog-editor-message error" role="alert"></div>
+    <div id="admin-catalog-success" class="catalog-editor-message success" role="status"></div>
+
+    <div class="editor-header">
+        <div>
+            <h2>{{ catalog_admin_page_title or 'Catalog Entry Editor' }}</h2>
+            <div class="editor-subtitle">
+                {{ catalog_admin_page_subtitle or 'Create or update catalog entries. This page is restricted to InferX administrators.' }}
+            </div>
+            <div class="catalog-editor-hint">New entries are created unpublished. Verify deployment from the catalog detail page, then publish when ready for regular users.</div>
+        </div>
+        <div class="editor-actions">
+            <a class="ix-btn secondary" href="{{ catalog_back_href or url_for('prefix.CatalogList') }}">{{ catalog_back_label or 'Back to Catalog' }}</a>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3 id="admin-catalog-form-title">Create Catalog Entry</h3>
+        <form id="admin-catalog-form">
+            <input id="admin-catalog-id" type="hidden" value="">
+            <div class="catalog-editor-grid">
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-display-name">Display Name</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-display-name" type="text" placeholder="Qwen2.5-Coder-1.5B-Instruct">
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-provider">Provider</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-provider" type="text" placeholder="Qwen">
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-modality">Modality</label>
+                    <div class="catalog-editor-control">
+                        <select id="admin-catalog-modality">
+                            <option value="text">text</option>
+                            <option value="image">image</option>
+                            <option value="audio">audio</option>
+                            <option value="multimodal">multimodal</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-parameter-count">Parameter Count (B)</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-parameter-count" type="number" min="0" step="0.01" placeholder="1.50">
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-source-kind">Source Kind</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-source-kind" type="text" value="huggingface">
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-source-model-id">Source Model ID</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-source-model-id" type="text" placeholder="Qwen/Qwen2.5-Coder-1.5B-Instruct">
+                        <div class="catalog-editor-hint">Immutable after creation. The dashboard derives `slug` from this value.</div>
+                    </div>
+                </div>
+                <div class="catalog-editor-field full">
+                    <label for="admin-catalog-brief-intro">Brief Intro</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-brief-intro" type="text" placeholder="Lightweight code-focused Qwen model.">
+                    </div>
+                </div>
+                <div class="catalog-editor-field full">
+                    <label for="admin-catalog-detailed-intro">Detailed Intro</label>
+                    <div class="catalog-editor-control">
+                        <textarea id="admin-catalog-detailed-intro" rows="4" placeholder="Longer description shown on the detail page."></textarea>
+                    </div>
+                </div>
+                <div class="catalog-editor-field full">
+                    <label for="admin-catalog-tags">Tags</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-tags" type="text" placeholder="LLM, Code, Multilingual">
+                        <div class="catalog-editor-hint">Comma-separated list. Stored as a JSON string array.</div>
+                    </div>
+                </div>
+                <div class="catalog-editor-field full">
+                    <label for="admin-catalog-use-cases">Recommended Use Cases</label>
+                    <div class="catalog-editor-control">
+                        <input id="admin-catalog-use-cases" type="text" placeholder="Code generation, Code assistant, Chat">
+                        <div class="catalog-editor-hint">Comma-separated list. Stored as a JSON string array.</div>
+                    </div>
+                </div>
+                <div class="catalog-editor-field full">
+                    <label for="admin-catalog-default-spec">Default Func Spec JSON</label>
+                    <div class="catalog-editor-control">
+                        <textarea id="admin-catalog-default-spec" rows="22" placeholder='{
+  "image": "vllm/vllm-openai:v0.16.0",
+  "commands": [
+    "--model",
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+  ],
+  "resources": {
+    "CPU": 12000,
+    "Mem": 24000,
+    "GPU": {
+      "Type": "Any",
+      "Count": 1,
+      "vRam": 13000
+    }
+  },
+  "envs": [],
+  "endpoint": {
+    "port": 8000,
+    "schema": "Http",
+    "probe": "/health"
+  },
+  "sample_query": {
+    "apiType": "text2text",
+    "prompt": "write a quick sort algorithm.",
+    "body": {
+      "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    }
+  },
+  "standby": {
+    "gpu": "File",
+    "pageable": "File",
+    "pinned": "File"
+  }
+}'></textarea>
+                        <div class="catalog-editor-hint">Full deploy template. This is validated server-side before any write.</div>
+                    </div>
+                </div>
+                <div class="catalog-editor-field">
+                    <label for="admin-catalog-is-moe">MoE</label>
+                    <div class="catalog-editor-control">
+                        <div class="catalog-editor-inline">
+                            <input id="admin-catalog-is-moe" type="checkbox">
+                            <span class="catalog-editor-hint">Check if this is a Mixture of Experts model.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="catalog-editor-form-actions">
+                <button id="admin-catalog-reset-btn" class="ix-btn secondary" type="button">Reset</button>
+                <button id="admin-catalog-save-btn" class="ix-btn" type="submit">Create Entry</button>
+                <button id="admin-catalog-save-publish-btn" class="ix-btn secondary" type="submit" data-submit-action="publish">Save &amp; Publish</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    (() => {
+        const initialEditEntry = {{ initial_edit_entry | tojson }};
+
+        const errorBanner = document.getElementById('admin-catalog-error');
+        const successBanner = document.getElementById('admin-catalog-success');
+        const resetBtn = document.getElementById('admin-catalog-reset-btn');
+        const form = document.getElementById('admin-catalog-form');
+        const formTitle = document.getElementById('admin-catalog-form-title');
+        const saveBtn = document.getElementById('admin-catalog-save-btn');
+        const savePublishBtn = document.getElementById('admin-catalog-save-publish-btn');
+
+        const idInput = document.getElementById('admin-catalog-id');
+        const displayNameInput = document.getElementById('admin-catalog-display-name');
+        const providerInput = document.getElementById('admin-catalog-provider');
+        const modalitySelect = document.getElementById('admin-catalog-modality');
+        const parameterCountInput = document.getElementById('admin-catalog-parameter-count');
+        const sourceKindInput = document.getElementById('admin-catalog-source-kind');
+        const sourceModelIdInput = document.getElementById('admin-catalog-source-model-id');
+        const briefIntroInput = document.getElementById('admin-catalog-brief-intro');
+        const detailedIntroInput = document.getElementById('admin-catalog-detailed-intro');
+        const tagsInput = document.getElementById('admin-catalog-tags');
+        const useCasesInput = document.getElementById('admin-catalog-use-cases');
+        const defaultSpecInput = document.getElementById('admin-catalog-default-spec');
+        const isMoeInput = document.getElementById('admin-catalog-is-moe');
+        const initialEditId = {{ initial_edit_entry_id | tojson }};
+
+        function formatDefaultSpecInput() {
+            const rawValue = defaultSpecInput.value.trim();
+            if (!rawValue) {
+                return null;
+            }
+            try {
+                const parsed = JSON.parse(rawValue);
+                defaultSpecInput.value = JSON.stringify(parsed, null, 2);
+                return parsed;
+            } catch (_err) {
+                return null;
+            }
+        }
+
+        function showMessage(node, message) {
+            if (!node) {
+                return;
+            }
+            if (!message) {
+                node.style.display = 'none';
+                node.textContent = '';
+                return;
+            }
+            node.textContent = message;
+            node.style.display = 'block';
+        }
+
+        function clearMessages() {
+            showMessage(errorBanner, '');
+            showMessage(successBanner, '');
+        }
+
+        function parseCommaSeparatedList(value) {
+            return String(value || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter((item) => item !== '');
+        }
+
+        function setPublishButtonState(visible, label) {
+            if (!savePublishBtn) {
+                return;
+            }
+            savePublishBtn.style.display = visible ? '' : 'none';
+            savePublishBtn.textContent = label || 'Save & Publish';
+        }
+
+        function setCreateMode() {
+            idInput.value = '';
+            formTitle.textContent = 'Create Unpublished Catalog Entry';
+            saveBtn.textContent = 'Create Unpublished Entry';
+            setPublishButtonState(true, 'Save & Publish');
+            resetBtn.textContent = 'Clear Form';
+            sourceKindInput.disabled = false;
+            sourceModelIdInput.disabled = false;
+            sourceKindInput.value = 'huggingface';
+            displayNameInput.value = '';
+            providerInput.value = '';
+            modalitySelect.value = 'text';
+            parameterCountInput.value = '';
+            briefIntroInput.value = '';
+            detailedIntroInput.value = '';
+            tagsInput.value = '';
+            useCasesInput.value = '';
+            defaultSpecInput.value = '';
+            isMoeInput.checked = false;
+        }
+
+        function populateEditForm(entry) {
+            if (!entry || typeof entry !== 'object') {
+                showMessage(errorBanner, 'Catalog entry data is unavailable for edit mode.');
+                return;
+            }
+
+            clearMessages();
+            idInput.value = String(entry.id);
+            formTitle.textContent = `Edit Catalog Entry #${entry.id}`;
+            saveBtn.textContent = 'Update Entry';
+            setPublishButtonState(!entry.is_active, 'Update & Publish');
+            resetBtn.textContent = 'Discard Changes';
+            sourceKindInput.disabled = true;
+            sourceModelIdInput.disabled = true;
+            displayNameInput.value = entry.display_name || '';
+            providerInput.value = entry.provider || '';
+            modalitySelect.value = entry.modality || 'text';
+            parameterCountInput.value = entry.parameter_count_b != null ? String(entry.parameter_count_b) : '';
+            sourceKindInput.value = entry.source_kind || 'huggingface';
+            sourceModelIdInput.value = entry.source_model_id || '';
+            briefIntroInput.value = entry.brief_intro || '';
+            detailedIntroInput.value = entry.detailed_intro || '';
+            tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
+            useCasesInput.value = Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases.join(', ') : '';
+            defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
+            isMoeInput.checked = !!entry.is_moe;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function buildPayload() {
+            let defaultFuncSpec;
+            const rawDefaultSpec = defaultSpecInput.value.trim();
+            if (rawDefaultSpec === '') {
+                defaultFuncSpec = {};
+            } else {
+                try {
+                    defaultFuncSpec = JSON.parse(rawDefaultSpec);
+                    defaultSpecInput.value = JSON.stringify(defaultFuncSpec, null, 2);
+                } catch (err) {
+                    throw new Error(`Default func spec JSON is invalid: ${err.message}`);
+                }
+            }
+
+            const payload = {
+                display_name: displayNameInput.value.trim(),
+                provider: providerInput.value.trim(),
+                modality: modalitySelect.value.trim(),
+                brief_intro: briefIntroInput.value.trim(),
+                detailed_intro: detailedIntroInput.value.trim(),
+                parameter_count_b: parameterCountInput.value.trim() === '' ? null : Number(parameterCountInput.value),
+                is_moe: isMoeInput.checked,
+                tags: parseCommaSeparatedList(tagsInput.value),
+                recommended_use_cases: parseCommaSeparatedList(useCasesInput.value),
+                default_func_spec: defaultFuncSpec
+            };
+
+            if (!idInput.value) {
+                payload.source_kind = sourceKindInput.value.trim();
+                payload.source_model_id = sourceModelIdInput.value.trim();
+            }
+            return payload;
+        }
+
+        async function parseResponsePayload(resp) {
+            const text = await resp.text();
+            let data = {};
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (_err) {
+                data = {};
+            }
+            return { text, data };
+        }
+
+        async function submitForm(event) {
+            event.preventDefault();
+            clearMessages();
+
+            let payload;
+            try {
+                payload = buildPayload();
+            } catch (err) {
+                showMessage(errorBanner, err.message || String(err));
+                return;
+            }
+
+            const isUpdate = idInput.value !== '';
+            const submitAction = String(event.submitter?.dataset?.submitAction || '').trim().toLowerCase();
+            const shouldPublish = submitAction === 'publish';
+            const url = isUpdate
+                ? `{{ hosturl }}admin/catalog/entries/${encodeURIComponent(idInput.value)}`
+                : '{{ url_for("prefix.AdminCatalogCreate") }}';
+            const method = isUpdate ? 'POST' : 'PUT';
+            const originalSaveText = saveBtn.textContent;
+            const originalSavePublishText = savePublishBtn ? savePublishBtn.textContent : '';
+
+            saveBtn.disabled = true;
+            if (savePublishBtn) {
+                savePublishBtn.disabled = true;
+            }
+            try {
+                const resp = await fetch(url, {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const { text, data } = await parseResponsePayload(resp);
+                if (!resp.ok) {
+                    throw new Error((data && data.error) || text || `Request failed (HTTP ${resp.status})`);
+                }
+                const entry = data && data.entry && typeof data.entry === 'object' ? data.entry : null;
+                if (shouldPublish && entry && entry.id != null) {
+                    const publishResp = await fetch(`{{ hosturl }}admin/catalog/entries/${encodeURIComponent(entry.id)}/publish`, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    const { text: publishText, data: publishData } = await parseResponsePayload(publishResp);
+                    if (!publishResp.ok) {
+                        if (entry) {
+                            populateEditForm(entry);
+                            showMessage(
+                                successBanner,
+                                isUpdate ? 'Catalog entry updated but is still unpublished.' : 'Catalog entry created but is still unpublished.'
+                            );
+                        }
+                        throw new Error(
+                            `${isUpdate ? 'Update' : 'Create'} succeeded, but publish failed: ${
+                                (publishData && publishData.error) || publishText || `Request failed (HTTP ${publishResp.status})`
+                            }`
+                        );
+                    }
+                }
+                if (entry && entry.slug) {
+                    window.location.href = `{{ hosturl }}catalog/${encodeURIComponent(entry.slug)}`;
+                    return;
+                }
+                showMessage(successBanner, isUpdate ? 'Catalog entry updated.' : 'Catalog entry created.');
+            } catch (err) {
+                showMessage(errorBanner, err.message || String(err));
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = originalSaveText;
+                if (savePublishBtn) {
+                    savePublishBtn.disabled = false;
+                    savePublishBtn.textContent = originalSavePublishText;
+                }
+            }
+        }
+
+        form?.addEventListener('submit', submitForm);
+        defaultSpecInput?.addEventListener('blur', () => {
+            formatDefaultSpecInput();
+        });
+        resetBtn?.addEventListener('click', () => {
+            clearMessages();
+            if (initialEditEntry && initialEditId != null) {
+                populateEditForm(initialEditEntry);
+                return;
+            }
+            setCreateMode();
+        });
+
+        if (initialEditEntry && initialEditId != null && String(initialEditId).trim() !== '') {
+            populateEditForm(initialEditEntry);
+        } else {
+            setCreateMode();
+        }
+        formatDefaultSpecInput();
+    })();
+</script>
+{% endblock %}

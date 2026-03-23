@@ -14,6 +14,7 @@
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -71,7 +72,15 @@ DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS = os.getenv(
 
 @app.context_processor
 def inject_dashboard_links():
+    script_root = ""
+    try:
+        script_root = str(getattr(request, "script_root", "") or "").rstrip("/")
+    except Exception:
+        script_root = ""
+    hosturl = f"{script_root}/" if script_root != "" else "/"
+
     return {
+        "hosturl": hosturl,
         "slack_invite_url": SLACK_INVITE_URL,
         "dashboard_gateway_aligned_anonymous_access": DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS,
         "dashboard_gateway_aligned_anonymous_active": (
@@ -266,6 +275,30 @@ CATALOG_RESERVED_ENV_KEYS = {
     "TRANSFORMERS_OFFLINE",
 }
 CATALOG_PLATFORM_ENV_KEYS = RESERVED_ENV_KEYS | CATALOG_RESERVED_ENV_KEYS
+CATALOG_ALLOWED_API_TYPES = {"text2text", "image2text", "audio2text", "text2img", "text2audio"}
+CATALOG_ALLOWED_STANDBY_TYPES = {"File", "Mem", "Blob"}
+CATALOG_ALLOWED_MOUNT_HOSTPATH_PREFIXES = ("/opt/inferx/",)
+CATALOG_HF_CACHE_MOUNTPATH = "/root/.cache/huggingface"
+CATALOG_EDITABLE_ENTRY_FIELDS = {
+    "display_name",
+    "provider",
+    "modality",
+    "brief_intro",
+    "detailed_intro",
+    "parameter_count_b",
+    "is_moe",
+    "tags",
+    "recommended_use_cases",
+    "default_func_spec",
+}
+CATALOG_CREATE_REQUIRED_FIELDS = {
+    "display_name",
+    "provider",
+    "modality",
+    "brief_intro",
+    "source_model_id",
+    "default_func_spec",
+}
 SECRDB_ADDR = os.getenv("SECRDB_ADDR", "postgresql://secret:123456@localhost:5431/secretdb").strip()
 CATALOG_FULL_SPEC_REQUIRED_KEYS = {
     "image",
@@ -276,6 +309,28 @@ CATALOG_FULL_SPEC_REQUIRED_KEYS = {
     "sample_query",
     "standby",
 }
+CATALOG_ENTRY_SELECT_COLUMNS = """
+    SELECT
+        id,
+        slug,
+        display_name,
+        provider,
+        modality,
+        brief_intro,
+        detailed_intro,
+        source_kind,
+        source_model_id,
+        parameter_count_b,
+        is_moe,
+        tags,
+        recommended_use_cases,
+        default_func_spec,
+        is_active,
+        catalog_version,
+        createtime,
+        updatetime
+    FROM CatalogModel
+"""
 
 FIXED_ENDPOINT = {"port": 8000, "schema": "Http", "probe": "/health"}
 FIXED_STANDBY = {"gpu": "File", "pageable": "File", "pinned": "File"}
@@ -634,7 +689,8 @@ def is_gateway_aligned_anonymous_request():
 
 
 def is_inferx_admin_user():
-    if session.get('username', '') == 'inferx_admin':
+    username = str(session.get('username', '') or '').strip().lower()
+    if username in ('inferx_admin', 'inferxadmin'):
         return True
 
     if session.get('access_token', '') == '':
@@ -645,17 +701,7 @@ def is_inferx_admin_user():
     except Exception:
         return False
 
-    if not isinstance(roles, list):
-        return False
-
-    for role in roles:
-        obj_type = str(role.get('objType', '')).lower()
-        role_name = str(role.get('role', '')).lower()
-        tenant = role.get('tenant', '')
-        if obj_type == 'tenant' and role_name == 'admin' and tenant == 'system':
-            return True
-
-    return False
+    return has_inferx_admin_role(roles)
 
 
 def has_any_tenant_or_namespace_admin_role():
@@ -981,6 +1027,168 @@ def apikeys():
         "admin.html"
     )
 
+
+def catalog_admin_error_response(message):
+    normalized = str(message or "")
+    if "duplicate key value violates unique constraint" in normalized:
+        if "source_model_id" in normalized:
+            return json_error("The database still enforces a unique source_model_id constraint. Run the catalog migration before creating multiple variants for the same upstream model.", 409)
+        if "slug" in normalized:
+            return json_error("A catalog entry with this slug already exists.", 409)
+        return json_error("A catalog entry with the same unique key already exists.", 409)
+    return json_error(normalized, 500)
+
+
+def render_catalog_admin_page(*, initial_edit_entry_id=None):
+    try:
+        entries = list_catalog_entries(active_only=False)
+    except Exception as e:
+        return json_error(f"failed to load admin catalog entries: {e}", 500)
+
+    selected_entry = None
+    if initial_edit_entry_id is not None:
+        try:
+            selected_entry = query_catalog_entry_by_id(int(initial_edit_entry_id), active_only=False)
+        except LookupError as e:
+            return json_error(str(e), 404)
+        except Exception as e:
+            return json_error(f"failed to load catalog entry {initial_edit_entry_id}: {e}", 500)
+
+    catalog_back_href = dashboard_href("prefix.CatalogList")
+    catalog_back_label = "Back to Catalog"
+    page_title = "New Catalog Entry"
+    page_subtitle = "Admin-only editor for model catalog entries. New entries start unpublished until you publish them from the catalog detail page."
+    if selected_entry is not None:
+        page_title = "Edit Catalog Entry"
+        display_name = str(selected_entry.get("display_name", "")).strip()
+        if display_name != "":
+            page_subtitle = f"Editing {display_name}."
+        if str(selected_entry.get("slug", "")).strip() != "":
+            catalog_back_href = dashboard_href("prefix.CatalogDetail", slug=selected_entry["slug"])
+            catalog_back_label = "Back to Catalog Model"
+
+    return render_template(
+        "admin_catalog.html",
+        catalog_entries=entries,
+        initial_edit_entry_id=initial_edit_entry_id,
+        initial_edit_entry=selected_entry,
+        catalog_back_href=catalog_back_href,
+        catalog_back_label=catalog_back_label,
+        catalog_admin_page_title=page_title,
+        catalog_admin_page_subtitle=page_subtitle,
+    )
+
+
+@prefix_bp.route('/admin/catalog')
+@require_login
+@require_admin
+def AdminCatalog():
+    edit_raw = str(request.args.get("edit", "") or "").strip()
+    if edit_raw != "":
+        try:
+            catalog_id = parse_catalog_id(edit_raw)
+        except ValueError as e:
+            return json_error(str(e), 400)
+        return redirect(url_for('prefix.CatalogAdminEdit', catalog_id=catalog_id))
+    return redirect(url_for('prefix.CatalogAdminNew'))
+
+
+@prefix_bp.route('/catalog/new')
+@require_login
+@require_admin
+def CatalogAdminNew():
+    return render_catalog_admin_page(initial_edit_entry_id=None)
+
+
+@prefix_bp.route('/catalog/<int:catalog_id>/edit')
+@require_login
+@require_admin
+def CatalogAdminEdit(catalog_id: int):
+    return render_catalog_admin_page(initial_edit_entry_id=catalog_id)
+
+
+@prefix_bp.route('/admin/catalog/entries', methods=['GET'])
+@require_login
+@require_admin
+def AdminCatalogEntries():
+    try:
+        entries = list_catalog_entries(active_only=False)
+    except Exception as e:
+        return json_error(f"failed to load catalog entries: {e}", 500)
+    return jsonify({"entries": entries})
+
+
+@prefix_bp.route('/admin/catalog/entries', methods=['PUT'])
+@require_login
+@require_admin
+def AdminCatalogCreate():
+    req = request.get_json(silent=True)
+    try:
+        payload = normalize_catalog_admin_payload(req or {})
+        entry = insert_catalog_entry(payload)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry}), 201
+
+
+@prefix_bp.route('/admin/catalog/entries/<int:catalog_id>', methods=['POST'])
+@require_login
+@require_admin
+def AdminCatalogUpdate(catalog_id: int):
+    req = request.get_json(silent=True)
+    try:
+        existing_entry = query_catalog_entry_by_id(catalog_id, active_only=False)
+        payload = normalize_catalog_admin_payload(req or {}, existing_entry=existing_entry)
+        entry = update_catalog_entry(catalog_id, payload)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry})
+
+
+@prefix_bp.route('/admin/catalog/entries/<int:catalog_id>/publish', methods=['POST'])
+@require_login
+@require_admin
+def AdminCatalogPublish(catalog_id: int):
+    try:
+        entry = set_catalog_entry_active(catalog_id, is_active=True)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry})
+
+
+@prefix_bp.route('/admin/catalog/entries/<int:catalog_id>/unpublish', methods=['POST'])
+@require_login
+@require_admin
+def AdminCatalogUnpublish(catalog_id: int):
+    try:
+        entry = set_catalog_entry_active(catalog_id, is_active=False)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry})
+
+
+@prefix_bp.route('/admin/catalog/entries/<int:catalog_id>/deactivate', methods=['POST'])
+@require_login
+@require_admin
+def AdminCatalogDeactivate(catalog_id: int):
+    try:
+        entry = set_catalog_entry_active(catalog_id, is_active=False)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry})
+
 @prefix_bp.route('/generate_apikeys', methods=['GET'])
 @require_login
 def generate_apikeys():
@@ -1225,17 +1433,13 @@ def response_json_or_none(resp):
 
 
 def dashboard_href(endpoint: str, **params) -> str:
-    href = url_for(endpoint)
-    query = {}
+    values = {}
     for key, value in params.items():
         text = str(value or "").strip()
         if text != "":
-            query[key] = text
+            values[key] = text
 
-    if len(query) == 0:
-        return href
-
-    return f"{href}?{urlencode(query)}"
+    return url_for(endpoint, **values)
 
 
 def extract_upstream_error_message(resp, payload) -> str:
@@ -1487,7 +1691,49 @@ def strip_reserved_envs(envs):
     return filtered
 
 
-def validate_partial_spec(spec, max_node_vram, max_node_gpu_count=0, editor_mode="basic"):
+def split_image_name_and_tag(image):
+    normalized = str(image or "").strip()
+    if normalized == "":
+        return "", ""
+    last_slash = normalized.rfind("/")
+    last_colon = normalized.rfind(":")
+    if last_colon > last_slash:
+        return normalized[:last_colon], normalized[last_colon + 1:]
+    return normalized, ""
+
+
+def validate_image_value(
+    image,
+    *,
+    label,
+    require_whitelist=True,
+    locked_image_name=None,
+    require_tag=False,
+):
+    if not isinstance(image, str) or image.strip() == "":
+        raise ValueError(f"{label} must be a non-empty string")
+    normalized = image.strip()
+    image_name, image_tag = split_image_name_and_tag(normalized)
+    if require_tag and image_tag == "":
+        raise ValueError(f"{label} must include a tag/version")
+    if locked_image_name is not None:
+        if image_name != locked_image_name:
+            raise ValueError(f"{label} must keep image name `{locked_image_name}` and may only change the tag/version")
+        return normalized
+    if require_whitelist and normalized not in VLLM_IMAGE_WHITELIST:
+        raise ValueError(f"{label} must be one of the whitelisted vllm image tags")
+    return normalized
+
+
+def validate_partial_spec(
+    spec,
+    max_node_vram,
+    max_node_gpu_count=0,
+    editor_mode="basic",
+    *,
+    require_image_whitelist=True,
+    locked_image_name=None,
+):
     if not isinstance(spec, dict):
         raise ValueError("`spec` must be an object")
 
@@ -1500,9 +1746,13 @@ def validate_partial_spec(spec, max_node_vram, max_node_gpu_count=0, editor_mode
         if required_key not in spec:
             raise ValueError(f"Missing required `spec.{required_key}`")
 
-    image = spec.get("image")
-    if not isinstance(image, str) or image not in VLLM_IMAGE_WHITELIST:
-        raise ValueError("`spec.image` must be one of the whitelisted vllm image tags")
+    image = validate_image_value(
+        spec.get("image"),
+        label="`spec.image`",
+        require_whitelist=require_image_whitelist,
+        locked_image_name=locked_image_name,
+        require_tag=locked_image_name is not None,
+    )
 
     commands = spec.get("commands")
     if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
@@ -1789,21 +2039,113 @@ def normalize_catalog_json_field(value):
     return value
 
 
-def fetch_active_catalog_entry(catalog_id: int):
+def format_catalog_datetime(value):
+    if value is None:
+        return ""
+    try:
+        dt = value
+        if getattr(dt, "tzinfo", None) is not None:
+            dt = dt.astimezone(timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(value)
+
+
+def normalize_catalog_datetime_value(value):
+    if value is None:
+        return None
+    try:
+        dt = value
+        if getattr(dt, "tzinfo", None) is not None:
+            return dt.astimezone(timezone.utc).isoformat()
+        return dt.isoformat()
+    except Exception:
+        return str(value)
+
+
+def normalize_catalog_api_type(api_type):
+    normalized = str(api_type or "").strip()
+    if normalized.lower() == "openai":
+        return "text2text"
+    return normalized
+
+
+def build_catalog_default_summary(default_func_spec):
+    spec = default_func_spec if isinstance(default_func_spec, dict) else {}
+    resources = spec.get("resources")
+    if not isinstance(resources, dict):
+        resources = {}
+    gpu = resources.get("GPU")
+    if not isinstance(gpu, dict):
+        gpu = {}
+    commands = spec.get("commands")
+    if not isinstance(commands, list):
+        commands = []
+    sample_query = spec.get("sample_query")
+    if not isinstance(sample_query, dict):
+        sample_query = {}
+
+    gpu_count = gpu.get("Count") if isinstance(gpu.get("Count"), int) and not isinstance(gpu.get("Count"), bool) else None
+    gpu_vram = gpu.get("vRam") if isinstance(gpu.get("vRam"), int) and not isinstance(gpu.get("vRam"), bool) else None
+    image = spec.get("image") if isinstance(spec.get("image"), str) else ""
+    max_model_len = parse_named_command_arg(commands, "--max-model-len")
+    max_model_len = max_model_len if max_model_len != "" else None
+    api_type = normalize_catalog_api_type(sample_query.get("apiType"))
+
+    summary_parts = []
+    if gpu_count is not None:
+        summary_parts.append(f"{gpu_count}xGPU")
+    if gpu_vram is not None:
+        summary_parts.append(f"{gpu_vram} MB")
+
+    return {
+        "default_api_type": api_type,
+        "default_gpu_count": gpu_count,
+        "default_gpu_vram": gpu_vram,
+        "default_image": image,
+        "default_max_model_len": max_model_len,
+        "default_summary": " ".join(summary_parts),
+    }
+
+
+def normalize_catalog_entry_row(row):
+    if not isinstance(row, dict):
+        raise ValueError("Invalid catalog entry row")
+
+    entry = dict(row)
+    for key in ("tags", "recommended_use_cases", "default_func_spec"):
+        entry[key] = normalize_catalog_json_field(entry.get(key))
+
+    if not isinstance(entry.get("tags"), list):
+        entry["tags"] = []
+    if not isinstance(entry.get("recommended_use_cases"), list):
+        entry["recommended_use_cases"] = []
+    if not isinstance(entry.get("default_func_spec"), dict):
+        entry["default_func_spec"] = {}
+
+    parameter_count = entry.get("parameter_count_b")
+    if parameter_count is not None:
+        try:
+            entry["parameter_count_b"] = float(parameter_count)
+        except Exception:
+            entry["parameter_count_b"] = None
+
+    entry["createtime_display"] = format_catalog_datetime(entry.get("createtime"))
+    entry["updatetime_display"] = format_catalog_datetime(entry.get("updatetime"))
+    entry["createtime"] = normalize_catalog_datetime_value(entry.get("createtime"))
+    entry["updatetime"] = normalize_catalog_datetime_value(entry.get("updatetime"))
+    entry.update(build_catalog_default_summary(entry.get("default_func_spec")))
+    return entry
+
+
+def query_catalog_entry_by_id(catalog_id: int, *, active_only=False):
     ensure_catalog_db_available()
 
-    query = """
-        SELECT
-            id,
-            slug,
-            display_name,
-            source_model_id,
-            catalog_version,
-            default_func_spec,
-            is_active
-        FROM ModelCatalogEntry
+    query = f"""
+        {CATALOG_ENTRY_SELECT_COLUMNS}
         WHERE id = %s
-          AND is_active = true
+        {"AND is_active = true" if active_only else ""}
     """
     try:
         with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
@@ -1816,30 +2158,670 @@ def fetch_active_catalog_entry(catalog_id: int):
     if row is None:
         raise LookupError(f"catalog entry {catalog_id} not found")
 
-    entry = dict(row)
-    entry["default_func_spec"] = normalize_catalog_json_field(entry.get("default_func_spec"))
-    return entry
+    return normalize_catalog_entry_row(dict(row))
 
 
-def validate_catalog_template_spec(spec):
+def fetch_active_catalog_entry(catalog_id: int):
+    return query_catalog_entry_by_id(catalog_id, active_only=True)
+
+
+def query_catalog_entry_by_slug(slug: str, *, active_only=False):
+    ensure_catalog_db_available()
+    normalized_slug = str(slug or "").strip()
+    if normalized_slug == "":
+        raise ValueError("catalog slug is required")
+
+    query = f"""
+        {CATALOG_ENTRY_SELECT_COLUMNS}
+        WHERE slug = %s
+        {"AND is_active = true" if active_only else ""}
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (normalized_slug,))
+                row = cursor.fetchone()
+    except Exception as e:
+        raise RuntimeError(f"failed to query catalog entry `{normalized_slug}`: {e}")
+
+    if row is None:
+        raise LookupError(f"catalog entry `{normalized_slug}` not found")
+
+    return normalize_catalog_entry_row(dict(row))
+
+
+def fetch_active_catalog_entry_by_slug(slug: str):
+    return query_catalog_entry_by_slug(slug, active_only=True)
+
+
+def require_catalog_entry_visible_to_current_user(entry):
+    if bool((entry or {}).get("is_active")) or is_inferx_admin_user():
+        return entry
+
+    entry_slug = str((entry or {}).get("slug", "")).strip()
+    entry_id = (entry or {}).get("id")
+    if entry_slug != "":
+        raise LookupError(f"catalog entry `{entry_slug}` not found")
+    raise LookupError(f"catalog entry {entry_id} not found")
+
+
+def fetch_catalog_entry_for_current_user(catalog_id: int):
+    entry = query_catalog_entry_by_id(catalog_id, active_only=False)
+    return require_catalog_entry_visible_to_current_user(entry)
+
+
+def fetch_catalog_entry_by_slug_for_current_user(slug: str):
+    entry = query_catalog_entry_by_slug(slug, active_only=False)
+    return require_catalog_entry_visible_to_current_user(entry)
+
+
+def list_catalog_entries_by_source_model_id(source_model_id: str, *, active_only=False):
+    ensure_catalog_db_available()
+    normalized_source_model_id = str(source_model_id or "").strip()
+    if normalized_source_model_id == "":
+        raise ValueError("catalog source_model_id is required")
+
+    query = f"""
+        {CATALOG_ENTRY_SELECT_COLUMNS}
+        WHERE source_model_id = %s
+        {"AND is_active = true" if active_only else ""}
+        ORDER BY createtime DESC, id DESC
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (normalized_source_model_id,))
+                rows = cursor.fetchall()
+    except Exception as e:
+        raise RuntimeError(f"failed to query catalog entries by source_model_id `{normalized_source_model_id}`: {e}")
+
+    normalized_entries = []
+    for row in rows:
+        normalized_entries.append(normalize_catalog_entry_row(dict(row)))
+    return normalized_entries
+
+
+def query_catalog_entry_by_source_model_id(source_model_id: str, *, active_only=False):
+    entries = list_catalog_entries_by_source_model_id(source_model_id, active_only=active_only)
+    if not entries:
+        normalized_source_model_id = str(source_model_id or "").strip()
+        raise LookupError(f"catalog entry for `{normalized_source_model_id}` not found")
+    if len(entries) > 1:
+        normalized_source_model_id = str(source_model_id or "").strip()
+        raise LookupError(f"multiple catalog entries exist for `{normalized_source_model_id}`; query by id or slug instead")
+    return entries[0]
+
+
+def list_catalog_entries(*, active_only=False):
+    ensure_catalog_db_available()
+
+    query = f"""
+        {CATALOG_ENTRY_SELECT_COLUMNS}
+        {"WHERE is_active = true" if active_only else ""}
+        ORDER BY display_name ASC, id ASC
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+    except Exception as e:
+        raise RuntimeError(f"failed to query catalog entries: {e}")
+
+    normalized_entries = []
+    for row in rows:
+        normalized_entries.append(normalize_catalog_entry_row(dict(row)))
+    return normalized_entries
+
+
+def list_active_catalog_entries():
+    return list_catalog_entries(active_only=True)
+
+
+def normalize_catalog_admin_payload(req, *, existing_entry=None):
+    if not isinstance(req, dict):
+        raise ValueError("catalog payload must be an object")
+
+    allowed_fields = set(CATALOG_EDITABLE_ENTRY_FIELDS) | {"source_kind", "source_model_id"}
+    unknown_fields = sorted(set(req.keys()) - allowed_fields)
+    if unknown_fields:
+        raise ValueError(f"Unknown catalog field `{unknown_fields[0]}`")
+
+    if existing_entry is not None:
+        if "source_kind" in req and str(req.get("source_kind") or "").strip() != str(existing_entry.get("source_kind") or "").strip():
+            raise ValueError("`source_kind` is immutable after creation")
+        if "source_model_id" in req and str(req.get("source_model_id") or "").strip() != str(existing_entry.get("source_model_id") or "").strip():
+            raise ValueError("`source_model_id` is immutable after creation")
+
+    source_kind = normalize_catalog_string_field(
+        (existing_entry or {}).get("source_kind") if existing_entry is not None else req.get("source_kind", "huggingface"),
+        "source_kind",
+    )
+    source_model_id = normalize_catalog_string_field(
+        (existing_entry or {}).get("source_model_id") if existing_entry is not None else req.get("source_model_id"),
+        "source_model_id",
+    )
+    if existing_entry is None:
+        missing_create_fields = sorted(
+            field
+            for field in CATALOG_CREATE_REQUIRED_FIELDS
+            if field not in req or req.get(field) in (None, "")
+        )
+        if missing_create_fields:
+            raise ValueError(f"`{missing_create_fields[0]}` is required")
+
+    try:
+        max_node_vram, max_node_gpu_count = get_node_capacity_limits()
+    except Exception:
+        max_node_vram, max_node_gpu_count = 0, 0
+
+    default_func_spec = validate_catalog_template_spec(
+        req.get("default_func_spec"),
+        source_model_id=source_model_id,
+        max_node_vram=max_node_vram,
+        max_node_gpu_count=max_node_gpu_count,
+    )
+
+    display_name = normalize_catalog_string_field(req.get("display_name"), "display_name")
+    provider = normalize_catalog_string_field(req.get("provider"), "provider")
+
+    return {
+        "slug": str((existing_entry or {}).get("slug", "")).strip() if existing_entry is not None else build_catalog_slug(provider, display_name),
+        "display_name": display_name,
+        "provider": provider,
+        "modality": normalize_catalog_string_field(req.get("modality"), "modality"),
+        "brief_intro": normalize_catalog_string_field(req.get("brief_intro"), "brief_intro"),
+        "detailed_intro": normalize_catalog_string_field(req.get("detailed_intro"), "detailed_intro", allow_empty=True),
+        "source_kind": source_kind,
+        "source_model_id": source_model_id,
+        "parameter_count_b": normalize_catalog_parameter_count(req.get("parameter_count_b")),
+        "is_moe": bool(req.get("is_moe")),
+        "tags": normalize_catalog_string_list(req.get("tags"), "tags"),
+        "recommended_use_cases": normalize_catalog_string_list(req.get("recommended_use_cases"), "recommended_use_cases"),
+        "default_func_spec": default_func_spec,
+    }
+
+
+def insert_catalog_entry(entry_payload):
+    ensure_catalog_db_available()
+    query = """
+        INSERT INTO CatalogModel (
+            slug,
+            display_name,
+            provider,
+            modality,
+            brief_intro,
+            detailed_intro,
+            source_kind,
+            source_model_id,
+            parameter_count_b,
+            is_moe,
+            tags,
+            recommended_use_cases,
+            default_func_spec,
+            is_active
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s
+        )
+        RETURNING *
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    query,
+                    (
+                        entry_payload["slug"],
+                        entry_payload["display_name"],
+                        entry_payload["provider"],
+                        entry_payload["modality"],
+                        entry_payload["brief_intro"],
+                        entry_payload["detailed_intro"],
+                        entry_payload["source_kind"],
+                        entry_payload["source_model_id"],
+                        entry_payload["parameter_count_b"],
+                        entry_payload["is_moe"],
+                        json.dumps(entry_payload["tags"]),
+                        json.dumps(entry_payload["recommended_use_cases"]),
+                        json.dumps(entry_payload["default_func_spec"]),
+                        False,
+                    ),
+                )
+                row = cursor.fetchone()
+            conn.commit()
+    except Exception as e:
+        raise RuntimeError(f"failed to create catalog entry: {e}")
+    return normalize_catalog_entry_row(dict(row))
+
+
+def update_catalog_entry(catalog_id: int, entry_payload):
+    ensure_catalog_db_available()
+    query = """
+        UPDATE CatalogModel
+        SET
+            display_name = %s,
+            provider = %s,
+            modality = %s,
+            brief_intro = %s,
+            detailed_intro = %s,
+            parameter_count_b = %s,
+            is_moe = %s,
+            tags = %s::jsonb,
+            recommended_use_cases = %s::jsonb,
+            default_func_spec = %s::jsonb,
+            catalog_version = catalog_version + 1
+        WHERE id = %s
+        RETURNING *
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(
+                    query,
+                    (
+                        entry_payload["display_name"],
+                        entry_payload["provider"],
+                        entry_payload["modality"],
+                        entry_payload["brief_intro"],
+                        entry_payload["detailed_intro"],
+                        entry_payload["parameter_count_b"],
+                        entry_payload["is_moe"],
+                        json.dumps(entry_payload["tags"]),
+                        json.dumps(entry_payload["recommended_use_cases"]),
+                        json.dumps(entry_payload["default_func_spec"]),
+                        catalog_id,
+                    ),
+                )
+                row = cursor.fetchone()
+            conn.commit()
+    except Exception as e:
+        raise RuntimeError(f"failed to update catalog entry {catalog_id}: {e}")
+    if row is None:
+        raise LookupError(f"catalog entry {catalog_id} not found")
+    return normalize_catalog_entry_row(dict(row))
+
+
+def deactivate_catalog_entry(catalog_id: int):
+    return set_catalog_entry_active(catalog_id, is_active=False)
+
+
+def set_catalog_entry_active(catalog_id: int, *, is_active: bool):
+    ensure_catalog_db_available()
+    existing_entry = query_catalog_entry_by_id(catalog_id, active_only=False)
+    desired_active = bool(is_active)
+    if bool(existing_entry.get("is_active")) == desired_active:
+        return existing_entry
+
+    query = """
+        UPDATE CatalogModel
+        SET is_active = %s,
+            catalog_version = catalog_version + 1
+        WHERE id = %s
+        RETURNING *
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (desired_active, catalog_id))
+                row = cursor.fetchone()
+            conn.commit()
+    except Exception as e:
+        action = "publish" if desired_active else "unpublish"
+        raise RuntimeError(f"failed to {action} catalog entry {catalog_id}: {e}")
+    if row is None:
+        raise LookupError(f"catalog entry {catalog_id} not found")
+    return normalize_catalog_entry_row(dict(row))
+
+
+def collect_catalog_filter_options(entries):
+    providers = sorted({str(entry.get("provider", "")).strip() for entry in entries if str(entry.get("provider", "")).strip() != ""})
+    modalities = sorted({str(entry.get("modality", "")).strip() for entry in entries if str(entry.get("modality", "")).strip() != ""})
+    api_types = sorted({str(entry.get("default_api_type", "")).strip() for entry in entries if str(entry.get("default_api_type", "")).strip() != ""})
+    tags = sorted({
+        str(tag).strip()
+        for entry in entries
+        for tag in (entry.get("tags") if isinstance(entry.get("tags"), list) else [])
+        if str(tag).strip() != ""
+    })
+    return {
+        "providers": providers,
+        "modalities": modalities,
+        "api_types": api_types,
+        "tags": tags,
+    }
+
+
+def list_accessible_tenant_names():
+    tenants = filter_public_tenant_tenants(
+        listtenants(),
+        include_public=can_access_public_tenant_in_dashboard(),
+    )
+    names = []
+    seen = set()
+    for tenant in tenants if isinstance(tenants, list) else []:
+        name = str((tenant or {}).get("name", "")).strip()
+        if name == "" or name.lower() == "system" or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def list_accessible_namespace_names_for_tenant(tenant: str):
+    normalized_tenant = str(tenant or "").strip()
+    namespaces = filter_public_tenant_resource_items(
+        listnamespaces(),
+        include_public=can_access_public_tenant_in_dashboard(),
+    )
+    names = []
+    seen = set()
+    for namespace in namespaces if isinstance(namespaces, list) else []:
+        row_tenant = str((namespace or {}).get("tenant", "")).strip()
+        row_name = str((namespace or {}).get("name", "")).strip()
+        if row_tenant != normalized_tenant or row_name == "" or row_name in seen:
+            continue
+        seen.add(row_name)
+        names.append(row_name)
+    return names
+
+
+def resolve_catalog_deploy_target_context():
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant == "" or active_tenant.lower() == "system":
+        tenant_names = list_accessible_tenant_names()
+        if len(tenant_names) == 1:
+            active_tenant = tenant_names[0]
+        else:
+            return {
+                "available": False,
+                "tenant": "",
+                "namespace": "",
+                "message": "Deploy Now needs one active tenant. Use Customize & Deploy to choose the target explicitly.",
+            }
+
+    namespace_names = list_accessible_namespace_names_for_tenant(active_tenant)
+    if len(namespace_names) == 1:
+        return {
+            "available": True,
+            "tenant": active_tenant,
+            "namespace": namespace_names[0],
+            "message": "",
+        }
+    if len(namespace_names) == 0:
+        return {
+            "available": False,
+            "tenant": active_tenant,
+            "namespace": "",
+            "message": f"No accessible namespace was found under tenant `{active_tenant}`. Use Customize & Deploy instead.",
+        }
+    return {
+        "available": False,
+        "tenant": active_tenant,
+        "namespace": "",
+        "message": f"Deploy Now is disabled because tenant `{active_tenant}` has multiple accessible namespaces. Use Customize & Deploy to choose one.",
+    }
+
+
+def normalize_catalog_slug_component(value, field_name):
+    normalized = str(value or "").strip().lower()
+    if normalized == "":
+        raise ValueError(f"`{field_name}` is required")
+    normalized = re.sub(r"\s+", "-", normalized)
+    normalized = re.sub(r"[^a-z0-9._-]+", "-", normalized)
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    if normalized == "":
+        raise ValueError(f"`{field_name}` must contain at least one alphanumeric character")
+    return normalized
+
+
+def build_catalog_slug(provider, display_name):
+    provider_slug = normalize_catalog_slug_component(provider, "provider")
+    display_name_slug = normalize_catalog_slug_component(display_name, "display_name")
+    return f"{provider_slug}--{display_name_slug}"
+
+
+def build_catalog_default_func_name(catalog_entry):
+    if not isinstance(catalog_entry, dict):
+        raise ValueError("Invalid catalog entry")
+
+    source_model_id = str(catalog_entry.get("source_model_id", "")).strip()
+    source_model_parts = [part.strip() for part in source_model_id.split("/") if part.strip() != ""]
+    if source_model_parts:
+        try:
+            return normalize_catalog_slug_component(source_model_parts[-1], "source_model_id")
+        except ValueError:
+            pass
+
+    display_name = str(catalog_entry.get("display_name", "")).strip()
+    if display_name != "":
+        try:
+            return normalize_catalog_slug_component(display_name, "display_name")
+        except ValueError:
+            pass
+
+    slug = str(catalog_entry.get("slug", "")).strip()
+    if slug != "":
+        return slug
+
+    raise ValueError("Catalog entry is missing source_model_id, display_name, and slug")
+
+
+def normalize_catalog_string_field(value, field_name, *, allow_empty=False):
+    normalized = str(value or "").strip()
+    if not allow_empty and normalized == "":
+        raise ValueError(f"`{field_name}` is required")
+    return normalized
+
+
+def normalize_catalog_string_list(values, field_name):
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError(f"`{field_name}` must be an array of strings")
+
+    normalized = []
+    seen = set()
+    for idx, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(f"`{field_name}[{idx}]` must be a string")
+        token = item.strip()
+        if token == "":
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(token)
+    return normalized
+
+
+def normalize_catalog_parameter_count(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("`parameter_count_b` must be a number")
+    try:
+        normalized = round(float(value), 2)
+    except Exception:
+        raise ValueError("`parameter_count_b` must be a number")
+    if normalized <= 0:
+        raise ValueError("`parameter_count_b` must be > 0")
+    return normalized
+
+
+def find_model_command_values(commands):
+    values = []
+    if not isinstance(commands, list):
+        return values
+    i = 0
+    while i < len(commands):
+        token = commands[i]
+        if token == "--model":
+            if i + 1 >= len(commands):
+                values.append("")
+                break
+            values.append(str(commands[i + 1]).strip())
+            i += 2
+            continue
+        if isinstance(token, str) and token.startswith("--model="):
+            values.append(token.split("=", 1)[1].strip())
+        i += 1
+    return values
+
+
+def validate_catalog_command_tokens(commands):
+    unsafe_markers = ("&&", "||", ";", "|", "`", "$(", "\n", "\r")
+    for idx, token in enumerate(commands):
+        if any(marker in token for marker in unsafe_markers):
+            raise ValueError(f"catalog `default_func_spec.commands[{idx}]` contains an unsafe shell token")
+
+
+def validate_catalog_mounts(mounts):
+    if mounts is None:
+        return [], False
+    if not isinstance(mounts, list):
+        raise ValueError("catalog `default_func_spec.mounts` must be an array")
+
+    normalized_mounts = []
+    has_hf_cache_mount = False
+    for idx, mount in enumerate(mounts):
+        if not isinstance(mount, dict):
+            raise ValueError(f"catalog `default_func_spec.mounts[{idx}]` must be an object")
+        hostpath = normalize_catalog_string_field(mount.get("hostpath"), f"default_func_spec.mounts[{idx}].hostpath")
+        mountpath = normalize_catalog_string_field(mount.get("mountpath"), f"default_func_spec.mounts[{idx}].mountpath")
+        if not any(hostpath.startswith(prefix) for prefix in CATALOG_ALLOWED_MOUNT_HOSTPATH_PREFIXES):
+            raise ValueError(f"catalog `default_func_spec.mounts[{idx}].hostpath` must start with an approved prefix")
+        if mountpath == CATALOG_HF_CACHE_MOUNTPATH:
+            has_hf_cache_mount = True
+        normalized_mounts.append({"hostpath": hostpath, "mountpath": mountpath})
+    return normalized_mounts, has_hf_cache_mount
+
+
+def validate_catalog_policy(policy):
+    if policy is None:
+        return None
+    if not isinstance(policy, dict):
+        raise ValueError("catalog `default_func_spec.policy` must be an object")
+    policy_keys = set(policy.keys())
+    if policy_keys == {"Link"}:
+        link = policy.get("Link")
+        if not isinstance(link, dict):
+            raise ValueError("catalog `default_func_spec.policy.Link` must be an object")
+        normalized_link = {
+            "objType": normalize_catalog_string_field(link.get("objType"), "default_func_spec.policy.Link.objType"),
+            "namespace": normalize_catalog_string_field(link.get("namespace"), "default_func_spec.policy.Link.namespace"),
+            "name": normalize_catalog_string_field(link.get("name"), "default_func_spec.policy.Link.name"),
+        }
+        return {"Link": normalized_link}
+    if policy_keys == {"Obj"}:
+        obj = policy.get("Obj")
+        if not isinstance(obj, dict):
+            raise ValueError("catalog `default_func_spec.policy.Obj` must be an object")
+        normalized_obj = {}
+        integer_fields = {
+            "min_replica": 0,
+            "max_replica": 1,
+            "standby_per_node": 0,
+            "parallel": 1,
+            "queue_len": 1,
+        }
+        for field_name, minimum in integer_fields.items():
+            if field_name not in obj:
+                if field_name in ("min_replica", "max_replica", "standby_per_node"):
+                    raise ValueError(f"catalog `default_func_spec.policy.Obj.{field_name}` is required")
+                continue
+            value = obj[field_name]
+            if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                comparator = ">=" if minimum == 0 else ">="
+                raise ValueError(f"catalog `default_func_spec.policy.Obj.{field_name}` must be an integer {comparator} {minimum}")
+            normalized_obj[field_name] = value
+        if (
+            "min_replica" in normalized_obj
+            and "max_replica" in normalized_obj
+            and normalized_obj["max_replica"] < normalized_obj["min_replica"]
+        ):
+            raise ValueError("catalog `default_func_spec.policy.Obj.max_replica` must be >= min_replica")
+
+        for field_name in ("queue_timeout", "scalein_timeout"):
+            if field_name not in obj:
+                continue
+            value = obj[field_name]
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0:
+                raise ValueError(f"catalog `default_func_spec.policy.Obj.{field_name}` must be a number >= 0")
+            normalized_obj[field_name] = float(value)
+
+        if "runtime_config" in obj:
+            runtime_config = obj["runtime_config"]
+            if not isinstance(runtime_config, dict):
+                raise ValueError("catalog `default_func_spec.policy.Obj.runtime_config` must be an object")
+            normalized_runtime_config = {}
+            if "graph_sync" in runtime_config:
+                if not isinstance(runtime_config["graph_sync"], bool):
+                    raise ValueError("catalog `default_func_spec.policy.Obj.runtime_config.graph_sync` must be a boolean")
+                normalized_runtime_config["graph_sync"] = runtime_config["graph_sync"]
+            normalized_obj["runtime_config"] = normalized_runtime_config
+
+        if "scaleout_policy" in obj:
+            scaleout_policy = obj["scaleout_policy"]
+            if not isinstance(scaleout_policy, dict) or set(scaleout_policy.keys()) != {"WaitQueueRatio"}:
+                raise ValueError("catalog `default_func_spec.policy.Obj.scaleout_policy` must be `{ \"WaitQueueRatio\": { ... } }`")
+            wait_queue_ratio = scaleout_policy.get("WaitQueueRatio")
+            if not isinstance(wait_queue_ratio, dict):
+                raise ValueError("catalog `default_func_spec.policy.Obj.scaleout_policy.WaitQueueRatio` must be an object")
+            wait_ratio = wait_queue_ratio.get("wait_ratio")
+            if not isinstance(wait_ratio, (int, float)) or isinstance(wait_ratio, bool) or float(wait_ratio) < 0:
+                raise ValueError("catalog `default_func_spec.policy.Obj.scaleout_policy.WaitQueueRatio.wait_ratio` must be a number >= 0")
+            normalized_obj["scaleout_policy"] = {"WaitQueueRatio": {"wait_ratio": float(wait_ratio)}}
+
+        return {"Obj": normalized_obj}
+
+    raise ValueError("catalog `default_func_spec.policy` must contain exactly one of `Obj` or `Link`")
+
+
+def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0, max_node_gpu_count=0):
     if not isinstance(spec, dict):
         raise ValueError("catalog `default_func_spec` must be an object")
 
+    normalized_spec = clone_json_value(spec)
     missing_keys = sorted(CATALOG_FULL_SPEC_REQUIRED_KEYS - set(spec.keys()))
     if missing_keys:
         raise ValueError(f"catalog `default_func_spec` is missing `{missing_keys[0]}`")
 
-    image = spec.get("image")
-    if not isinstance(image, str) or image not in VLLM_IMAGE_WHITELIST:
-        raise ValueError("catalog `default_func_spec.image` must be one of the whitelisted vllm image tags")
+    image = validate_image_value(
+        normalized_spec.get("image"),
+        label="catalog `default_func_spec.image`",
+        require_whitelist=False,
+        require_tag=True,
+    )
+    normalized_spec["image"] = image
 
-    commands = spec.get("commands")
+    commands = normalized_spec.get("commands")
     if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
         raise ValueError("catalog `default_func_spec.commands` must be an array of strings")
+    commands = [str(item) for item in commands]
+    validate_catalog_command_tokens(commands)
+    model_values = find_model_command_values(commands)
+    if len(model_values) != 1 or model_values[0] == "":
+        raise ValueError("catalog `default_func_spec.commands` must contain exactly one valid `--model`")
+    hf_model = model_values[0]
+    if source_model_id != "" and hf_model != str(source_model_id).strip():
+        raise ValueError("catalog `default_func_spec.commands` `--model` must match `source_model_id`")
+    normalized_spec["commands"] = commands
 
-    resources = spec.get("resources")
+    resources = normalized_spec.get("resources")
     if not isinstance(resources, dict):
         raise ValueError("catalog `default_func_spec.resources` must be an object")
+    cpu = resources.get("CPU")
+    mem = resources.get("Mem")
+    if not isinstance(cpu, int) or isinstance(cpu, bool) or cpu <= 0:
+        raise ValueError("catalog `default_func_spec.resources.CPU` must be a positive integer")
+    if not isinstance(mem, int) or isinstance(mem, bool) or mem <= 0:
+        raise ValueError("catalog `default_func_spec.resources.Mem` must be a positive integer")
+    for optional_key in ("ReadyMem", "CacheMem"):
+        if optional_key in resources:
+            optional_value = resources.get(optional_key)
+            if not isinstance(optional_value, int) or isinstance(optional_value, bool) or optional_value < 0:
+                raise ValueError(f"catalog `default_func_spec.resources.{optional_key}` must be a non-negative integer")
     gpu = resources.get("GPU")
     if not isinstance(gpu, dict):
         raise ValueError("catalog `default_func_spec.resources.GPU` must be an object")
@@ -1847,114 +2829,108 @@ def validate_catalog_template_spec(spec):
         value = gpu.get(key)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError(f"catalog `default_func_spec.resources.GPU.{key}` must be a positive integer")
+    if max_node_gpu_count > 0 and gpu["Count"] > max_node_gpu_count:
+        raise ValueError(f"catalog `default_func_spec.resources.GPU.Count` must be <= node max GPU count ({max_node_gpu_count})")
+    if max_node_vram > 0 and gpu["vRam"] > max_node_vram:
+        raise ValueError(f"catalog `default_func_spec.resources.GPU.vRam` must be <= node max ({max_node_vram})")
+    if "Type" in gpu and (not isinstance(gpu.get("Type"), str) or str(gpu.get("Type")).strip() == ""):
+        raise ValueError("catalog `default_func_spec.resources.GPU.Type` must be a non-empty string when present")
 
-    envs = spec.get("envs")
+    envs = normalized_spec.get("envs")
     if not isinstance(envs, list):
         raise ValueError("catalog `default_func_spec.envs` must be an array")
+    normalized_envs = []
+    env_keys = set()
     for idx, pair in enumerate(envs):
         if not isinstance(pair, list) or len(pair) != 2:
             raise ValueError(f"catalog `default_func_spec.envs[{idx}]` must be [key, value]")
         if not isinstance(pair[0], str) or not isinstance(pair[1], str):
             raise ValueError(f"catalog `default_func_spec.envs[{idx}]` key/value must be strings")
-
-    for key in ("endpoint", "sample_query", "standby"):
-        if not isinstance(spec.get(key), dict):
-            raise ValueError(f"catalog `default_func_spec.{key}` must be an object")
-
-    hf_model = extract_model_arg_from_commands(commands).strip()
-    if hf_model == "":
-        raise ValueError("catalog `default_func_spec.commands` must include `--model`")
-
-    return clone_json_value(spec)
-
-
-def normalize_catalog_override_spec(spec, max_node_vram, max_node_gpu_count=0):
-    if not isinstance(spec, dict):
-        raise ValueError("`spec` must be an object")
-
-    resources = spec.get("resources")
-    if not isinstance(resources, dict):
-        raise ValueError("`spec.resources` must be an object")
-    gpu = resources.get("GPU")
-    if not isinstance(gpu, dict):
-        raise ValueError("`spec.resources.GPU` must be an object")
-
-    gpu_count = gpu.get("Count")
-    if not isinstance(gpu_count, int) or isinstance(gpu_count, bool):
-        raise ValueError("`spec.resources.GPU.Count` must be an integer")
-    if gpu_count not in GPU_RESOURCE_LOOKUP:
-        allowed_counts = ", ".join(str(v) for v in SUPPORTED_GPU_COUNTS)
-        raise ValueError(f"`spec.resources.GPU.Count` must be one of: {allowed_counts}")
-    if max_node_gpu_count > 0 and gpu_count > max_node_gpu_count:
-        raise ValueError(f"`spec.resources.GPU.Count` must be <= node max GPU count ({max_node_gpu_count})")
-
-    gpu_vram = gpu.get("vRam")
-    if not isinstance(gpu_vram, int) or isinstance(gpu_vram, bool):
-        raise ValueError("`spec.resources.GPU.vRam` must be an integer (MB)")
-    if gpu_vram <= 0:
-        raise ValueError("`spec.resources.GPU.vRam` must be > 0")
-    if max_node_vram > 0 and gpu_vram > max_node_vram:
-        raise ValueError(f"`spec.resources.GPU.vRam` must be <= node max ({max_node_vram})")
-
-    commands = spec.get("commands", [])
-    if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
-        raise ValueError("`spec.commands` must be an array of strings")
-    max_model_len = parse_named_command_arg(commands, "--max-model-len")
-    if max_model_len != "":
-        try:
-            max_model_len_int = int(max_model_len)
-        except ValueError:
-            raise ValueError("`--max-model-len` must be a positive integer")
-        if max_model_len_int <= 0:
-            raise ValueError("`--max-model-len` must be a positive integer")
-        max_model_len = str(max_model_len_int)
-    else:
-        max_model_len = None
-
-    envs = spec.get("envs", [])
-    if envs is None:
-        envs = []
-    if not isinstance(envs, list):
-        raise ValueError("`spec.envs` must be an array of [key, value] pairs")
-
-    normalized_envs = []
-    for idx, pair in enumerate(envs):
-        if not isinstance(pair, list) or len(pair) != 2:
-            raise ValueError(f"`spec.envs[{idx}]` must be [key, value]")
-        key, value = pair
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise ValueError(f"`spec.envs[{idx}]` key/value must be strings")
-        if key in CATALOG_PLATFORM_ENV_KEYS:
-            continue
+        key = pair[0].strip()
+        value = pair[1]
+        if key == "":
+            raise ValueError(f"catalog `default_func_spec.envs[{idx}]` key must be non-empty")
+        if key in env_keys:
+            raise ValueError(f"catalog `default_func_spec.envs` contains duplicate key `{key}`")
+        env_keys.add(key)
         normalized_envs.append([key, value])
+    normalized_spec["envs"] = normalized_envs
 
-    return {
-        "gpu_count": gpu_count,
-        "gpu_vram": gpu_vram,
-        "max_model_len": max_model_len,
-        "envs": normalized_envs,
-    }
+    endpoint = normalized_spec.get("endpoint")
+    if not isinstance(endpoint, dict):
+        raise ValueError("catalog `default_func_spec.endpoint` must be an object")
+    if not isinstance(endpoint.get("port"), int) or isinstance(endpoint.get("port"), bool) or endpoint.get("port") <= 0:
+        raise ValueError("catalog `default_func_spec.endpoint.port` must be a positive integer")
+    if not isinstance(endpoint.get("probe"), str) or str(endpoint.get("probe")).strip() == "":
+        raise ValueError("catalog `default_func_spec.endpoint.probe` must be a non-empty string")
+    if not isinstance(endpoint.get("schema"), str) or str(endpoint.get("schema")).strip() == "":
+        raise ValueError("catalog `default_func_spec.endpoint.schema` must be a non-empty string")
+    if "probeTimeout" in endpoint:
+        probe_timeout = endpoint.get("probeTimeout")
+        if not isinstance(probe_timeout, int) or isinstance(probe_timeout, bool) or probe_timeout <= 0:
+            raise ValueError("catalog `default_func_spec.endpoint.probeTimeout` must be a positive integer")
+
+    sample_query = normalized_spec.get("sample_query")
+    if not isinstance(sample_query, dict):
+        raise ValueError("catalog `default_func_spec.sample_query` must be an object")
+    api_type = normalize_catalog_api_type(sample_query.get("apiType"))
+    if api_type not in CATALOG_ALLOWED_API_TYPES:
+        raise ValueError("catalog `default_func_spec.sample_query.apiType` must be a supported api type")
+    if not isinstance(sample_query.get("path"), str) or str(sample_query.get("path")).strip() == "":
+        raise ValueError("catalog `default_func_spec.sample_query.path` must be a non-empty string")
+    if not isinstance(sample_query.get("prompt"), str) or str(sample_query.get("prompt")).strip() == "":
+        raise ValueError("catalog `default_func_spec.sample_query.prompt` must be a non-empty string")
+    body = sample_query.get("body")
+    if not isinstance(body, dict) or len(body) == 0:
+        raise ValueError("catalog `default_func_spec.sample_query.body` must be a non-empty object")
+    if "model" in body:
+        if not isinstance(body.get("model"), str) or body.get("model", "").strip() != hf_model:
+            raise ValueError("catalog `default_func_spec.sample_query.body.model` must match `--model` when present")
+    normalized_spec["sample_query"]["apiType"] = api_type
+
+    standby = normalized_spec.get("standby")
+    if not isinstance(standby, dict):
+        raise ValueError("catalog `default_func_spec.standby` must be an object")
+    for field_name in ("gpu", "pageable", "pinned"):
+        standby_value = standby.get(field_name)
+        if standby_value not in CATALOG_ALLOWED_STANDBY_TYPES:
+            raise ValueError(f"catalog `default_func_spec.standby.{field_name}` must be one of {sorted(CATALOG_ALLOWED_STANDBY_TYPES)}")
+
+    normalized_mounts, has_hf_cache_mount = validate_catalog_mounts(normalized_spec.get("mounts"))
+    if "mounts" in normalized_spec or normalized_mounts:
+        normalized_spec["mounts"] = normalized_mounts
+
+    entrypoint = normalized_spec.get("entrypoint")
+    if entrypoint is not None:
+        if not isinstance(entrypoint, list) or any(not isinstance(item, str) for item in entrypoint):
+            raise ValueError("catalog `default_func_spec.entrypoint` must be an array of strings")
+
+    normalized_policy = validate_catalog_policy(normalized_spec.get("policy"))
+    if normalized_policy is not None:
+        normalized_spec["policy"] = normalized_policy
+
+    return normalized_spec
 
 
-def merge_catalog_envs(template_envs, customer_envs):
+def merge_protected_envs(base_envs, customer_envs, protected_env_keys):
     ordered_keys = []
     merged_envs = {}
-    template_reserved = {}
+    base_protected = {}
 
     def _add_pair(key, value):
         if key not in merged_envs:
             ordered_keys.append(key)
         merged_envs[key] = value
 
-    for pair in template_envs if isinstance(template_envs, list) else []:
+    for pair in base_envs if isinstance(base_envs, list) else []:
         if not isinstance(pair, list) or len(pair) != 2:
             continue
         key, value = pair
         if not isinstance(key, str) or not isinstance(value, str):
             continue
         _add_pair(key, value)
-        if key in CATALOG_PLATFORM_ENV_KEYS:
-            template_reserved[key] = value
+        if key in protected_env_keys:
+            base_protected[key] = value
 
     for pair in customer_envs if isinstance(customer_envs, list) else []:
         if not isinstance(pair, list) or len(pair) != 2:
@@ -1962,39 +2938,196 @@ def merge_catalog_envs(template_envs, customer_envs):
         key, value = pair
         if not isinstance(key, str) or not isinstance(value, str):
             continue
-        if key in CATALOG_PLATFORM_ENV_KEYS:
+        if key in protected_env_keys:
+            if key not in base_protected:
+                _add_pair(key, value)
             continue
         _add_pair(key, value)
 
-    for key, value in template_reserved.items():
+    for key, value in base_protected.items():
         _add_pair(key, value)
 
     return [[key, merged_envs[key]] for key in ordered_keys]
 
 
-def build_catalog_full_spec(base_spec, normalized_override_spec, catalog_source=None):
-    full_spec = validate_catalog_template_spec(base_spec)
-    full_resources = full_spec.setdefault("resources", {})
-    full_gpu = full_resources.setdefault("GPU", {})
-    full_gpu["Count"] = normalized_override_spec["gpu_count"]
-    full_gpu["vRam"] = normalized_override_spec["gpu_vram"]
+def build_updated_full_spec_from_saved_spec(
+    hf_model: str,
+    spec,
+    saved_spec,
+    *,
+    max_node_vram,
+    max_node_gpu_count=0,
+    editor_mode="basic",
+    protected_env_keys=None,
+    require_image_whitelist=True,
+    locked_image_name=None,
+):
+    partial_spec = validate_partial_spec(
+        spec,
+        max_node_vram,
+        max_node_gpu_count=max_node_gpu_count,
+        editor_mode=editor_mode,
+        require_image_whitelist=require_image_whitelist,
+        locked_image_name=locked_image_name,
+    )
+    submitted_full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
+    saved_spec_obj = clone_json_value(saved_spec) if isinstance(saved_spec, dict) else {}
+    merged_spec = clone_json_value(saved_spec_obj)
+    resolved_protected_env_keys = set(protected_env_keys or RESERVED_ENV_KEYS)
 
-    if normalized_override_spec["max_model_len"] is not None:
-        full_spec["commands"] = upsert_named_command_arg(
-            full_spec.get("commands", []),
-            "--max-model-len",
-            normalized_override_spec["max_model_len"],
-        )
+    merged_spec["image"] = submitted_full_spec["image"]
+    merged_spec["commands"] = clone_json_value(submitted_full_spec["commands"])
 
-    full_spec["envs"] = merge_catalog_envs(
-        full_spec.get("envs", []),
-        normalized_override_spec["envs"],
+    saved_resources = merged_spec.get("resources")
+    if not isinstance(saved_resources, dict):
+        saved_resources = {}
+    submitted_resources = submitted_full_spec.get("resources")
+    if isinstance(submitted_resources, dict):
+        submitted_gpu = submitted_resources.get("GPU")
+        saved_gpu = saved_resources.get("GPU")
+        if not isinstance(saved_gpu, dict):
+            saved_gpu = {}
+        if isinstance(submitted_gpu, dict):
+            for key, value in submitted_gpu.items():
+                if key in ("Count", "Type", "vRam") or key not in saved_gpu:
+                    saved_gpu[key] = value
+        if saved_gpu:
+            saved_resources["GPU"] = saved_gpu
+        for key in ("CPU", "Mem"):
+            if key not in saved_resources and key in submitted_resources:
+                saved_resources[key] = clone_json_value(submitted_resources[key])
+    merged_spec["resources"] = saved_resources
+
+    merged_spec["envs"] = merge_protected_envs(
+        saved_spec_obj.get("envs", []),
+        submitted_full_spec.get("envs", []),
+        resolved_protected_env_keys,
     )
 
-    if catalog_source is not None:
-        full_spec["catalog_source"] = dict(catalog_source)
+    submitted_sample_query = partial_spec.get("sample_query")
+    saved_sample_query = saved_spec_obj.get("sample_query")
+    if isinstance(submitted_sample_query, dict):
+        resolved_sample_query = clone_json_value(submitted_sample_query)
+    elif isinstance(saved_sample_query, dict):
+        resolved_sample_query = clone_json_value(saved_sample_query)
+    else:
+        resolved_sample_query = build_sample_query(hf_model)
+    body = resolved_sample_query.get("body")
+    if not isinstance(body, dict):
+        body = {}
+        resolved_sample_query["body"] = body
+    body["model"] = hf_model
+    merged_spec["sample_query"] = resolved_sample_query
 
-    return full_spec
+    saved_policy = saved_spec_obj.get("policy")
+    submitted_policy = partial_spec.get("policy")
+    submitted_full_policy = submitted_full_spec.get("policy")
+    if submitted_policy and submitted_policy.get("Obj"):
+        if (
+            isinstance(saved_policy, dict)
+            and isinstance(saved_policy.get("Obj"), dict)
+            and isinstance(submitted_full_policy, dict)
+            and isinstance(submitted_full_policy.get("Obj"), dict)
+        ):
+            resolved_policy = clone_json_value(saved_policy)
+            resolved_policy["Obj"] = clone_json_value(saved_policy["Obj"])
+            resolved_policy["Obj"].update(clone_json_value(submitted_full_policy["Obj"]))
+            merged_spec["policy"] = resolved_policy
+        elif isinstance(submitted_full_policy, dict):
+            merged_spec["policy"] = clone_json_value(submitted_full_policy)
+    elif editor_mode == "basic" and isinstance(saved_policy, dict) and isinstance(saved_policy.get("Obj"), dict):
+        merged_spec.pop("policy", None)
+    elif isinstance(saved_policy, dict):
+        merged_spec["policy"] = clone_json_value(saved_policy)
+    else:
+        merged_spec.pop("policy", None)
+
+    return merged_spec
+
+
+def build_catalog_customized_full_spec(
+    hf_model: str,
+    spec,
+    base_spec,
+    *,
+    max_node_vram,
+    max_node_gpu_count=0,
+    editor_mode="basic",
+    catalog_source=None,
+):
+    base_spec_obj = clone_json_value(base_spec) if isinstance(base_spec, dict) else {}
+    locked_image_name, _ = split_image_name_and_tag(base_spec_obj.get("image"))
+    if locked_image_name == "":
+        raise ValueError("catalog `default_func_spec.image` must be a tagged image reference")
+    partial_spec = validate_partial_spec(
+        spec,
+        max_node_vram,
+        max_node_gpu_count=max_node_gpu_count,
+        editor_mode=editor_mode,
+        require_image_whitelist=False,
+        locked_image_name=locked_image_name,
+    )
+    customized_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
+    merged_spec = clone_json_value(customized_spec)
+
+    base_resources = base_spec_obj.get("resources")
+    customized_resources = merged_spec.get("resources")
+    if isinstance(base_resources, dict) and isinstance(customized_resources, dict):
+        merged_resources = clone_json_value(base_resources)
+        customized_gpu = customized_resources.get("GPU")
+        base_gpu = merged_resources.get("GPU")
+        if isinstance(customized_gpu, dict):
+            if not isinstance(base_gpu, dict):
+                base_gpu = {}
+            for key, value in customized_gpu.items():
+                if key in ("Count", "Type", "vRam") or key not in base_gpu:
+                    base_gpu[key] = value
+            merged_resources["GPU"] = base_gpu
+        for key in ("CPU", "Mem"):
+            if key not in merged_resources and key in customized_resources:
+                merged_resources[key] = customized_resources[key]
+        merged_spec["resources"] = merged_resources
+
+    merged_spec["envs"] = merge_protected_envs(
+        base_spec_obj.get("envs", []),
+        merged_spec.get("envs", []),
+        CATALOG_PLATFORM_ENV_KEYS,
+    )
+
+    base_endpoint = base_spec_obj.get("endpoint")
+    if isinstance(base_endpoint, dict):
+        merged_spec["endpoint"] = clone_json_value(base_endpoint)
+
+    base_standby = base_spec_obj.get("standby")
+    if isinstance(base_standby, dict):
+        merged_spec["standby"] = clone_json_value(base_standby)
+
+    base_mounts = base_spec_obj.get("mounts")
+    if isinstance(base_mounts, list):
+        merged_spec["mounts"] = clone_json_value(base_mounts)
+
+    base_entrypoint = base_spec_obj.get("entrypoint")
+    if isinstance(base_entrypoint, list):
+        merged_spec["entrypoint"] = clone_json_value(base_entrypoint)
+
+    base_policy = base_spec_obj.get("policy")
+    merged_policy = merged_spec.get("policy")
+    if isinstance(base_policy, dict):
+        if "policy" not in merged_spec:
+            merged_spec["policy"] = clone_json_value(base_policy)
+        elif isinstance(merged_policy, dict):
+            base_policy_obj = base_policy.get("Obj")
+            merged_policy_obj = merged_policy.get("Obj")
+            if isinstance(base_policy_obj, dict) and isinstance(merged_policy_obj, dict):
+                resolved_policy = clone_json_value(base_policy)
+                resolved_policy["Obj"] = clone_json_value(base_policy_obj)
+                resolved_policy["Obj"].update(clone_json_value(merged_policy_obj))
+                merged_spec["policy"] = resolved_policy
+
+    if catalog_source is not None:
+        merged_spec["catalog_source"] = dict(catalog_source)
+
+    return merged_spec
 
 
 def project_spec_for_editor(
@@ -2110,10 +3243,11 @@ def project_catalog_entry_for_create(catalog_entry):
         "catalog_version": int(catalog_entry["catalog_version"]),
     }
     spec = validate_catalog_template_spec(catalog_entry.get("default_func_spec"))
+    default_name = build_catalog_default_func_name(catalog_entry)
 
     return project_spec_for_editor(
         spec,
-        name=slug,
+        name=default_name,
         editable_env_exclusions=CATALOG_PLATFORM_ENV_KEYS,
         extra_fields={
             "catalog_source": catalog_source,
@@ -2513,6 +3647,134 @@ def generate_namespaceuser():
     users = list_namespaceusers(role, tenant, namespace)
     return users
 
+
+@prefix_bp.route("/catalog", methods=["GET"])
+@require_login
+def CatalogList():
+    try:
+        is_inferx_admin = is_inferx_admin_user()
+        entries = list_catalog_entries(active_only=not is_inferx_admin)
+        filter_options = collect_catalog_filter_options(entries)
+        deploy_target = resolve_catalog_deploy_target_context()
+        published_entry_count = sum(1 for entry in entries if bool(entry.get("is_active")))
+        unpublished_entry_count = max(0, len(entries) - published_entry_count)
+    except RuntimeError as e:
+        return json_error(str(e), 502)
+    except Exception as e:
+        return json_error(f"failed to load catalog: {e}", 500)
+
+    return render_template(
+        "catalog_list.html",
+        catalog_entries=entries,
+        provider_options=filter_options["providers"],
+        modality_options=filter_options["modalities"],
+        api_type_options=filter_options["api_types"],
+        tag_options=filter_options["tags"],
+        deploy_target=deploy_target,
+        is_inferx_admin=is_inferx_admin,
+        published_entry_count=published_entry_count,
+        unpublished_entry_count=unpublished_entry_count,
+    )
+
+
+@prefix_bp.route("/catalog/<slug>", methods=["GET"])
+@require_login
+def CatalogDetail(slug):
+    try:
+        is_inferx_admin = is_inferx_admin_user()
+        entry = fetch_catalog_entry_by_slug_for_current_user(slug)
+        deploy_target = resolve_catalog_deploy_target_context()
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except LookupError:
+        return render_resource_unavailable_page(
+            resource_kind="Catalog Model",
+            resource_name=slug,
+            message="This catalog model is no longer available.",
+            suggestion="It may be unpublished or the URL may be outdated.",
+            primary_href=dashboard_href("prefix.CatalogList"),
+            primary_label="Back to Catalog",
+            secondary_href=dashboard_href("prefix.ListFunc"),
+            secondary_label="My Models",
+            status=404,
+        )
+    except RuntimeError as e:
+        return json_error(str(e), 502)
+    except Exception as e:
+        return json_error(f"failed to load catalog model: {e}", 500)
+
+    return render_template(
+        "catalog_detail.html",
+        catalog_entry=entry,
+        deploy_target=deploy_target,
+        is_inferx_admin=is_inferx_admin,
+    )
+
+
+@prefix_bp.route("/catalog/deploy/<int:catalog_id>", methods=["POST"])
+@require_login
+def CatalogDeployNow(catalog_id: int):
+    try:
+        entry = fetch_catalog_entry_for_current_user(catalog_id)
+        deploy_target = resolve_catalog_deploy_target_context()
+        if not deploy_target.get("available"):
+            return json_error(deploy_target.get("message") or "Deploy Now is unavailable. Use Customize & Deploy instead.", 400)
+
+        catalog_source = {
+            "catalog_id": int(entry["id"]),
+            "catalog_version": int(entry["catalog_version"]),
+        }
+        full_spec = validate_catalog_template_spec(entry.get("default_func_spec"))
+        full_spec["catalog_source"] = dict(catalog_source)
+
+        tenant = deploy_target["tenant"]
+        namespace = deploy_target["namespace"]
+        name = build_catalog_default_func_name(entry)
+
+        gateway_req = {
+            "type": "function",
+            "tenant": tenant,
+            "namespace": namespace,
+            "name": name,
+            "object": {
+                "spec": full_spec
+            }
+        }
+
+        try:
+            resp = requests.request(
+                "PUT",
+                f"{apihostaddr}/object/",
+                headers=gateway_headers(include_json=True),
+                json=gateway_req,
+                timeout=60,
+            )
+        except requests.exceptions.RequestException as e:
+            return json_error(f"Error connecting to gateway: {e}", 502)
+
+        if resp.status_code == 409:
+            return json_error(
+                f"A model named `{name}` already exists in your namespace. Use Customize & Deploy to choose a different name.",
+                409,
+            )
+        if not resp.ok:
+            body = (resp.text or "").strip()
+            if body == "":
+                body = f"gateway returned HTTP {resp.status_code}"
+            return json_error(body, resp.status_code)
+
+        return jsonify({
+            "redirect_url": dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name)
+        })
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except RuntimeError as e:
+        return json_error(str(e), 502)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except Exception as e:
+        return json_error(f"failed to deploy catalog model: {e}", 500)
+
 @prefix_bp.route('/generate', methods=['POST'])
 @not_require_login
 def generate():
@@ -2767,7 +4029,7 @@ def FuncCreate():
     if catalog_id_raw != "":
         try:
             catalog_id = parse_catalog_id(catalog_id_raw)
-            catalog_entry = fetch_active_catalog_entry(catalog_id)
+            catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
             initial_model_data = project_catalog_entry_for_create(catalog_entry)
         except ValueError as e:
             return json_error(str(e), 400)
@@ -2896,8 +4158,31 @@ def func_save():
             return json_error(f"failed to load existing model: {e}", 502)
 
     try:
-        if catalog_id is not None:
-            catalog_entry = fetch_active_catalog_entry(catalog_id)
+        if mode == "update":
+            if hf_model == "":
+                hf_model = extract_model_arg_from_commands((existing_spec or {}).get("commands", [])).strip()
+            if hf_model == "":
+                raise ValueError("existing function spec is missing `--model`")
+            locked_image_name = None
+            require_image_whitelist = True
+            if existing_catalog_source is not None:
+                locked_image_name, _ = split_image_name_and_tag((existing_spec or {}).get("image"))
+                if locked_image_name == "":
+                    raise ValueError("existing catalog-backed model is missing a tagged image")
+                require_image_whitelist = False
+            full_spec = build_updated_full_spec_from_saved_spec(
+                hf_model,
+                spec,
+                existing_spec,
+                max_node_vram=max_node_vram,
+                max_node_gpu_count=max_node_gpu_count,
+                editor_mode=editor_mode,
+                protected_env_keys=CATALOG_PLATFORM_ENV_KEYS if existing_catalog_source is not None else RESERVED_ENV_KEYS,
+                require_image_whitelist=require_image_whitelist,
+                locked_image_name=locked_image_name,
+            )
+        elif catalog_id is not None:
+            catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
             catalog_template_spec = validate_catalog_template_spec(catalog_entry.get("default_func_spec"))
             catalog_source = {
                 "catalog_id": int(catalog_entry["id"]),
@@ -2905,28 +4190,14 @@ def func_save():
             }
             if hf_model == "":
                 hf_model = extract_model_arg_from_commands(catalog_template_spec.get("commands", [])).strip()
-            normalized_override_spec = normalize_catalog_override_spec(
+            full_spec = build_catalog_customized_full_spec(
+                hf_model,
                 spec,
-                max_node_vram,
-                max_node_gpu_count=max_node_gpu_count,
-            )
-            full_spec = build_catalog_full_spec(
                 catalog_template_spec,
-                normalized_override_spec,
-                catalog_source=catalog_source,
-            )
-        elif existing_catalog_source is not None:
-            if hf_model == "":
-                hf_model = extract_model_arg_from_commands((existing_spec or {}).get("commands", [])).strip()
-            normalized_override_spec = normalize_catalog_override_spec(
-                spec,
-                max_node_vram,
+                max_node_vram=max_node_vram,
                 max_node_gpu_count=max_node_gpu_count,
-            )
-            full_spec = build_catalog_full_spec(
-                existing_spec,
-                normalized_override_spec,
-                catalog_source=existing_catalog_source,
+                editor_mode=editor_mode,
+                catalog_source=catalog_source,
             )
         else:
             if hf_model == "":
@@ -2953,6 +4224,8 @@ def func_save():
             ),
             normalize_catalog_source(full_spec.get("catalog_source")),
         )
+    except LookupError as e:
+        return json_error(str(e), 404)
     except ValueError as e:
         return json_error(str(e), 400)
     except Exception as e:
@@ -3044,6 +4317,13 @@ def ListFunc():
         include_public=can_access_public_tenant_in_dashboard(roles),
     )
 
+    catalog_entries_by_id = {}
+    try:
+        for catalog_entry in list_catalog_entries(active_only=False):
+            catalog_entries_by_id[int(catalog_entry["id"])] = catalog_entry
+    except Exception:
+        catalog_entries_by_id = {}
+
     count = 0
     gpucount = 0
     vram = 0
@@ -3054,11 +4334,33 @@ def ListFunc():
             row_func = func.get('func', {}) if isinstance(func, dict) else {}
             row_tenant = str(row_func.get('tenant', '') or '')
             row_namespace = str(row_func.get('namespace', '') or '')
+            row_spec = ((row_func.get('object') or {}).get('spec')) if isinstance(row_func.get('object'), dict) else {}
             if isinstance(func, dict):
                 func['can_edit_delete'] = has_admin_role_for_model(roles, row_tenant, row_namespace)
+                catalog_source = normalize_catalog_source(row_spec.get("catalog_source")) if isinstance(row_spec, dict) else None
+                func['catalog_ui'] = None
+                if catalog_source is not None:
+                    catalog_entry = catalog_entries_by_id.get(catalog_source["catalog_id"])
+                    current_catalog_version = 0
+                    if isinstance(catalog_entry, dict):
+                        try:
+                            current_catalog_version = int(catalog_entry.get("catalog_version") or 0)
+                        except Exception:
+                            current_catalog_version = 0
+                    func['catalog_ui'] = {
+                        "created_from_catalog": True,
+                        "catalog_id": catalog_source["catalog_id"],
+                        "catalog_version": catalog_source["catalog_version"],
+                        "display_name": str((catalog_entry or {}).get("display_name", "")).strip(),
+                        "slug": str((catalog_entry or {}).get("slug", "")).strip(),
+                        "is_active": bool((catalog_entry or {}).get("is_active", False)) if catalog_entry is not None else None,
+                        "has_newer_version": current_catalog_version > catalog_source["catalog_version"],
+                        "current_catalog_version": current_catalog_version,
+                    }
         except Exception:
             if isinstance(func, dict):
                 func['can_edit_delete'] = False
+                func['catalog_ui'] = None
         count += 1
         gpucount += func['func']['object']["spec"]["resources"]["GPU"]["Count"]
         vram += func['func']['object']["spec"]["resources"]["GPU"]["Count"] * func['func']['object']["spec"]["resources"]["GPU"]["vRam"]

@@ -1,0 +1,413 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .catalog-detail-shell {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+    }
+
+    .catalog-hero,
+    .catalog-section,
+    .catalog-status-banner {
+        background: #fff;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+    }
+
+    .catalog-hero {
+        padding: 20px;
+        margin-bottom: 14px;
+    }
+
+    .catalog-hero-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    .catalog-title {
+        margin: 0 0 6px 0;
+    }
+
+    .catalog-title-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .catalog-subtitle {
+        color: #64748b;
+        margin-bottom: 12px;
+    }
+
+    .catalog-tags {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .catalog-tag {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .catalog-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .catalog-status-banner {
+        padding: 12px 14px;
+        margin-bottom: 14px;
+        color: #334155;
+    }
+
+    .catalog-status-banner.unpublished {
+        border-color: #fcd34d;
+        background: #fffbeb;
+        color: #92400e;
+    }
+
+    .catalog-visibility-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+
+    .catalog-visibility-badge.published {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .catalog-visibility-badge.unpublished {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .catalog-publish-btn {
+        border-color: #bbf7d0;
+        color: #166534;
+    }
+
+    .catalog-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 14px;
+    }
+
+    .catalog-section {
+        padding: 16px 18px;
+    }
+
+    .catalog-section h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+    }
+
+    .catalog-kv {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        gap: 10px 12px;
+    }
+
+    .catalog-kv-label {
+        color: #64748b;
+        font-weight: 600;
+    }
+
+    .catalog-use-cases {
+        margin: 0;
+        padding-left: 18px;
+    }
+
+    .catalog-code {
+        width: 100%;
+        min-height: 360px;
+        margin: 0;
+        padding: 14px;
+        box-sizing: border-box;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 13px;
+        line-height: 1.5;
+        overflow: auto;
+        resize: vertical;
+        white-space: pre;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .catalog-error {
+        display: none;
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+        border-radius: 4px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+    }
+
+    @media (max-width: 900px) {
+        .catalog-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .catalog-kv {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="catalog-detail-shell">
+    <div id="catalog-detail-error" class="catalog-error" role="alert"></div>
+
+    <div class="catalog-hero">
+        <div class="catalog-hero-top">
+            <div>
+                <div class="catalog-title-row">
+                    <h2 class="catalog-title">{{ catalog_entry.display_name }}</h2>
+                    {% if is_inferx_admin %}
+                    <span class="catalog-visibility-badge {{ 'published' if catalog_entry.is_active else 'unpublished' }}">
+                        {{ 'Published' if catalog_entry.is_active else 'Unpublished' }}
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="catalog-subtitle">{{ catalog_entry.brief_intro }}</div>
+                <div class="catalog-tags">
+                    <span class="catalog-tag">{{ catalog_entry.provider }}</span>
+                    {% if catalog_entry.modality %}
+                    <span class="catalog-tag">{{ catalog_entry.modality }}</span>
+                    {% endif %}
+                    {% if catalog_entry.default_api_type %}
+                    <span class="catalog-tag">{{ catalog_entry.default_api_type }}</span>
+                    {% endif %}
+                    {% for tag in catalog_entry.tags %}
+                    <span class="catalog-tag">{{ tag }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="catalog-actions">
+                <a class="ix-btn secondary" href="{{ url_for('prefix.FuncCreate') }}?catalog_id={{ catalog_entry.id }}">Customize &amp; Deploy</a>
+                <button
+                    id="catalog-detail-deploy-now"
+                    type="button"
+                    class="ix-btn"
+                    data-deploy-url="{{ url_for('prefix.CatalogDeployNow', catalog_id=catalog_entry.id) }}"
+                    {% if not deploy_target.available %}disabled{% endif %}
+                >
+                    Deploy Now
+                </button>
+                {% if is_inferx_admin %}
+                <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminEdit', catalog_id=catalog_entry.id) }}">Edit Entry</a>
+                <button
+                    id="catalog-detail-visibility"
+                    type="button"
+                    class="ix-btn secondary {{ '' if catalog_entry.is_active else 'catalog-publish-btn' }}"
+                    data-visibility-url="{{ url_for('prefix.AdminCatalogUnpublish', catalog_id=catalog_entry.id) if catalog_entry.is_active else url_for('prefix.AdminCatalogPublish', catalog_id=catalog_entry.id) }}"
+                    data-visibility-action="{{ 'unpublish' if catalog_entry.is_active else 'publish' }}"
+                >
+                    {{ 'Unpublish' if catalog_entry.is_active else 'Publish to Catalog' }}
+                </button>
+                {% endif %}
+            </div>
+        </div>
+        {% if catalog_entry.detailed_intro %}
+        <p style="margin-bottom: 0;">{{ catalog_entry.detailed_intro }}</p>
+        {% endif %}
+    </div>
+
+    {% if not catalog_entry.is_active and is_inferx_admin %}
+    <div class="catalog-status-banner unpublished">
+        <strong>Unpublished:</strong> this catalog entry is visible only to InferX admins. You can deploy it to verify the template, then publish it for regular users.
+    </div>
+    {% endif %}
+
+    <div class="catalog-status-banner">
+        {% if deploy_target.available %}
+        <strong>Deploy Now target:</strong> {{ deploy_target.tenant }} / {{ deploy_target.namespace }}
+        {% else %}
+        <strong>Deploy Now unavailable:</strong> {{ deploy_target.message }}
+        {% endif %}
+    </div>
+
+    <div class="catalog-grid">
+        <div class="catalog-section">
+            <h3>Metadata</h3>
+            <div class="catalog-kv">
+                <div class="catalog-kv-label">Provider</div>
+                <div>{{ catalog_entry.provider }}</div>
+                <div class="catalog-kv-label">Modality</div>
+                <div>{{ catalog_entry.modality or '—' }}</div>
+                <div class="catalog-kv-label">API type</div>
+                <div>{{ catalog_entry.default_api_type or '—' }}</div>
+                <div class="catalog-kv-label">Source</div>
+                <div>{{ catalog_entry.source_kind }} / {{ catalog_entry.source_model_id }}</div>
+                <div class="catalog-kv-label">Created</div>
+                <div>{{ catalog_entry.createtime_display or '—' }}</div>
+                <div class="catalog-kv-label">Updated</div>
+                <div>{{ catalog_entry.updatetime_display or '—' }}</div>
+                <div class="catalog-kv-label">Catalog version</div>
+                <div>{{ catalog_entry.catalog_version }}</div>
+                <div class="catalog-kv-label">Visibility</div>
+                <div>{{ 'Published' if catalog_entry.is_active else 'Unpublished (admin-only)' }}</div>
+            </div>
+        </div>
+
+        <div class="catalog-section">
+            <h3>Specifications</h3>
+            <div class="catalog-kv">
+                <div class="catalog-kv-label">Parameters</div>
+                <div>{% if catalog_entry.parameter_count_b is not none %}{{ '%.2f'|format(catalog_entry.parameter_count_b) }}B{% else %}—{% endif %}</div>
+                <div class="catalog-kv-label">MoE</div>
+                <div>{{ 'Yes' if catalog_entry.is_moe else 'No' }}</div>
+                <div class="catalog-kv-label">Max model length</div>
+                <div>{{ catalog_entry.default_max_model_len or '—' }}</div>
+                <div class="catalog-kv-label">Image</div>
+                <div>{{ catalog_entry.default_image or '—' }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="catalog-grid">
+        <div class="catalog-section">
+            <h3>Default Deploy Config</h3>
+            <div class="catalog-kv">
+                <div class="catalog-kv-label">GPU count</div>
+                <div>{{ catalog_entry.default_gpu_count or '—' }}</div>
+                <div class="catalog-kv-label">vRAM</div>
+                <div>{% if catalog_entry.default_gpu_vram %}{{ catalog_entry.default_gpu_vram }} MB{% else %}—{% endif %}</div>
+                <div class="catalog-kv-label">Summary</div>
+                <div>{{ catalog_entry.default_summary or '—' }}</div>
+            </div>
+        </div>
+
+        <div class="catalog-section">
+            <h3>Recommended Use Cases</h3>
+            {% if catalog_entry.recommended_use_cases %}
+            <ul class="catalog-use-cases">
+                {% for use_case in catalog_entry.recommended_use_cases %}
+                <li>{{ use_case }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div>—</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="catalog-section">
+        <h3>Default Func Spec</h3>
+        <div class="copyable-area">
+            <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('catalog-default-func-spec')">Copy</button>
+            <textarea id="catalog-default-func-spec" class="catalog-code" readonly spellcheck="false">{{ catalog_entry.default_func_spec | tojson(indent=2) }}</textarea>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const errorBanner = document.getElementById('catalog-detail-error');
+        const deployBtn = document.getElementById('catalog-detail-deploy-now');
+        const visibilityBtn = document.getElementById('catalog-detail-visibility');
+
+        function showError(message) {
+            if (!errorBanner) {
+                return;
+            }
+            errorBanner.textContent = message || '';
+            errorBanner.style.display = message ? 'block' : 'none';
+        }
+
+        deployBtn?.addEventListener('click', async () => {
+            const url = deployBtn.dataset.deployUrl;
+            if (!url || deployBtn.disabled) {
+                return;
+            }
+
+            showError('');
+            deployBtn.disabled = true;
+            const originalText = deployBtn.textContent;
+            deployBtn.textContent = 'Deploying...';
+
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    throw new Error(payload.error || `Deploy failed (HTTP ${resp.status})`);
+                }
+                if (payload.redirect_url) {
+                    window.location.href = payload.redirect_url;
+                    return;
+                }
+                window.location.reload();
+            } catch (err) {
+                showError(err.message || String(err));
+                deployBtn.disabled = false;
+                deployBtn.textContent = originalText;
+            }
+        });
+
+        visibilityBtn?.addEventListener('click', async () => {
+            const url = visibilityBtn.dataset.visibilityUrl;
+            const action = String(visibilityBtn.dataset.visibilityAction || '').trim().toLowerCase();
+            if (!url || visibilityBtn.disabled) {
+                return;
+            }
+
+            showError('');
+            if (!window.confirm(action === 'publish'
+                ? 'Publish this catalog entry so regular users can see and deploy it?'
+                : 'Unpublish this catalog entry? It will disappear from the customer catalog but existing deployed models will keep their provenance.')) {
+                return;
+            }
+
+            visibilityBtn.disabled = true;
+            const originalText = visibilityBtn.textContent;
+            visibilityBtn.textContent = action === 'publish' ? 'Publishing...' : 'Unpublishing...';
+
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    throw new Error(payload.error || `${action === 'publish' ? 'Publish' : 'Unpublish'} failed (HTTP ${resp.status})`);
+                }
+                window.location.reload();
+            } catch (err) {
+                showError(err.message || String(err));
+                visibilityBtn.disabled = false;
+                visibilityBtn.textContent = originalText;
+            }
+        });
+    })();
+</script>
+{% endblock %}

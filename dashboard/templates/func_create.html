@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 
 {% block content %}
+{% set is_catalog_mode = initial_model_data and initial_model_data.catalog_mode %}
+{% set is_catalog_create = page_mode == "create" and is_catalog_mode %}
 <style>
     .model-editor {
         max-width: 1100px;
@@ -363,18 +365,33 @@
 <div class="model-editor">
     <div class="editor-header">
         <div>
-            <h2>{{ "Edit Model" if page_mode == "update" else "Create Model" }}</h2>
+            <h2>{{ "Edit Model" if page_mode == "update" else ("Customize & Deploy" if is_catalog_create else "Create Model") }}</h2>
             <div class="editor-subtitle">
-                {{ "Editing existing model" if page_mode == "update" else "Creating a new model" }}
+                {% if page_mode == "update" %}
+                Editing existing model
+                {% elif is_catalog_create %}
+                Creating a model from the catalog template
+                {% else %}
+                Creating a new model
+                {% endif %}
             </div>
         </div>
-        <a class="btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
+        <a
+            class="btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if is_catalog_create else (hosturl ~ 'listfunc') }}"
+        >
+            {{ "Back to Catalog" if is_catalog_create else "Back to Models" }}
+        </a>
     </div>
 
     <div id="error-banner" class="error-banner" role="alert"></div>
     <div id="success-banner" class="success-banner" aria-live="polite"></div>
     <div id="catalog-mode-banner" class="warning-banner" aria-live="polite" style="display:none;">
-        Catalog-backed save preserves the stored runtime template. Only GPU count, vRAM, max model length, and non-platform env vars are applied as customer overrides.
+        {% if is_catalog_create %}
+        Customizing <strong>{{ initial_model_data.catalog_display_name or initial_model_data.name }}</strong> from the catalog. Platform-managed fields such as mounts, endpoint, standby, and the image repository/name stay aligned with the catalog template. You may still change the image tag/version, GPU count, vRAM, max model length, and non-platform env vars.
+        {% else %}
+        This model was created from the catalog. Save keeps the stored runtime template for hidden platform-managed fields and applies only the customer-editable overrides.
+        {% endif %}
     </div>
     <div id="advanced-warning-banner" class="warning-banner" aria-live="polite">
         Changes made in Advanced are not reflected back in Basic fields.
@@ -417,8 +434,8 @@
 
             <div class="field-row">
                 <label for="function-name-input" class="label-with-help">
-                    <span>Function Name<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="Function name help" data-tooltip="Model/function name shown in the dashboard and used in the function object path." title="Model/function name shown in the dashboard and used in the function object path.">i</span>
+                    <span>Model Name<span class="req-mark">*</span></span>
+                    <span class="field-help" tabindex="0" aria-label="Model name help" data-tooltip="Model name shown in the dashboard and used in the function object path." title="Model name shown in the dashboard and used in the function object path.">i</span>
                 </label>
                 <div>
                     {% if page_mode == "update" %}
@@ -457,10 +474,12 @@
             <h3>
                 <span class="label-with-help">
                     <span>Image<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="Image help" data-tooltip="Container image for the model runtime. Only whitelisted vLLM image tags are allowed when saving (Basic and Advanced modes)." title="Container image for the model runtime. Only whitelisted vLLM image tags are allowed when saving (Basic and Advanced modes).">i</span>
+                    <span class="field-help" tabindex="0" aria-label="Image help" data-tooltip="Manual models use the whitelisted vLLM image tags. Catalog-backed models keep the image repository/name fixed and allow only tag/version changes." title="Manual models use the whitelisted vLLM image tags. Catalog-backed models keep the image repository/name fixed and allow only tag/version changes.">i</span>
                 </span>
             </h3>
             <select id="image-select"></select>
+            <input id="image-input" type="text" style="display:none;" autocomplete="off">
+            <div id="image-field-hint" class="hint"></div>
         </div>
 
         <div class="panel">
@@ -551,7 +570,12 @@
     </div>
 
     <div class="actions-footer">
-        <a class="btn secondary" href="{{ hosturl }}listfunc">Cancel</a>
+        <a
+            class="btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if is_catalog_create else (hosturl ~ 'listfunc') }}"
+        >
+            {{ "Back to Catalog" if is_catalog_create else "Cancel" }}
+        </a>
         <button id="save-model-btn" type="button" class="btn">Save Model</button>
     </div>
 </div>
@@ -599,6 +623,8 @@
         const hfModelInput = document.getElementById('hf-model-input');
         const hfModelDisplay = document.getElementById('hf-model-display');
         const imageSelect = document.getElementById('image-select');
+        const imageInput = document.getElementById('image-input');
+        const imageFieldHint = document.getElementById('image-field-hint');
         const commandsJson = document.getElementById('commands-json');
         const gpuCountSelect = document.getElementById('gpu-count-select');
         const gpuVramInput = document.getElementById('gpu-vram-input');
@@ -709,6 +735,38 @@
 
         function cloneJsonValue(value) {
             return JSON.parse(JSON.stringify(value));
+        }
+
+        function getCurrentImageValue() {
+            if (IS_CATALOG_MODE) {
+                return String((imageInput && imageInput.value) || '').trim();
+            }
+            return String((imageSelect && imageSelect.value) || '').trim();
+        }
+
+        function setCurrentImageValue(image) {
+            const normalizedImage = String(image || '').trim();
+            if (normalizedImage !== '') {
+                ensureSelectOption(imageSelect, normalizedImage, normalizedImage);
+                imageSelect.value = normalizedImage;
+            }
+            if (imageInput) {
+                imageInput.value = normalizedImage;
+            }
+        }
+
+        function updateImageControlMode() {
+            if (imageSelect) {
+                imageSelect.style.display = IS_CATALOG_MODE ? 'none' : '';
+            }
+            if (imageInput) {
+                imageInput.style.display = IS_CATALOG_MODE ? '' : 'none';
+            }
+            if (imageFieldHint) {
+                imageFieldHint.textContent = IS_CATALOG_MODE
+                    ? 'Catalog-backed models keep the image repository/name fixed. You may change only the tag/version here.'
+                    : 'Manual models use the dashboard whitelist of supported vLLM images.';
+            }
         }
 
         function numbersEqual(a, b, epsilon = 1e-9) {
@@ -864,7 +922,7 @@
             }
 
             const spec = {
-                image: imageSelect.value,
+                image: getCurrentImageValue(),
                 commands: parseCommandsArrayFromBasic(),
                 resources: {
                     GPU: {
@@ -873,6 +931,10 @@
                     }
                 }
             };
+
+            if (spec.image === '') {
+                throw new Error('Image is required');
+            }
 
             if (policyEnabledCheckbox.checked) {
                 const obj = {};
@@ -913,8 +975,7 @@
         function populateBasicUiFromSpec(spec) {
             const partial = spec && typeof spec === 'object' ? spec : {};
             if (typeof partial.image === 'string' && partial.image !== '') {
-                ensureSelectOption(imageSelect, partial.image, partial.image);
-                imageSelect.value = partial.image;
+                setCurrentImageValue(partial.image);
             }
 
             const commands = Array.isArray(partial.commands) ? partial.commands : [];
@@ -1269,7 +1330,7 @@
                 throw new Error('Namespace is required');
             }
             if (!name) {
-                throw new Error('Function Name is required');
+                throw new Error('Model Name is required');
             }
             if (!hfModel) {
                 throw new Error('HuggingFace Model is required');
@@ -1427,6 +1488,10 @@
             if (IMAGE_OPTIONS.length > 0) {
                 imageSelect.value = IMAGE_OPTIONS[0];
             }
+            if (imageInput && IMAGE_OPTIONS.length > 0 && !imageInput.value) {
+                imageInput.value = IMAGE_OPTIONS[0];
+            }
+            updateImageControlMode();
         }
 
         function applyInitialModelIfPresent() {

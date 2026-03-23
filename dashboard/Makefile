@@ -4,6 +4,9 @@ all: protoc
 run:
 	KEYCLOAK_URL=http://192.168.0.51:1260/authn python3 ./app.py
 
+catalog-import:
+	python3 ./import_model_catalog.py $(IMPORT_ARGS)
+
 protoc:
 	python3 -m grpc_tools.protoc -I ../qshare/proto --python_out=. --grpc_python_out=. qobjs.proto
 	python3 -m grpc_tools.protoc -I ../qshare/proto --python_out=. --grpc_python_out=. na.proto
