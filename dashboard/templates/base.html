@@ -428,8 +428,8 @@
     </table>
     {% if show_public_nav %}
     <nav>
+        <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
-        <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Model Catalog </a>
         <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
         <a href="{{ hosturl }}listsnapshot" class="{% if nav_snapshots_active %}active{% endif %}"> Snapshots </a>
         <a href="{{ hosturl }}listnode" id="nav-nodes-link" class="{% if nav_nodes_active %}active{% endif %}"{% if not dashboard_gateway_aligned_anonymous_access %} style="display: none;"{% endif %}> Nodes </a>
