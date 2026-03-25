@@ -107,6 +107,11 @@
         color: #166534;
     }
 
+    .catalog-delete-btn {
+        border-color: #fecaca;
+        color: #991b1b;
+    }
+
     .catalog-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -228,6 +233,15 @@
                 >
                     {{ 'Unpublish' if catalog_entry.is_active else 'Publish to Catalog' }}
                 </button>
+                <button
+                    id="catalog-detail-delete"
+                    type="button"
+                    class="ix-btn secondary catalog-delete-btn"
+                    data-delete-url="{{ url_for('prefix.AdminCatalogDelete', catalog_id=catalog_entry.id) }}"
+                    data-entry-name="{{ catalog_entry.display_name }}"
+                >
+                    Delete Entry
+                </button>
                 {% endif %}
             </div>
         </div>
@@ -329,6 +343,7 @@
         const errorBanner = document.getElementById('catalog-detail-error');
         const deployBtn = document.getElementById('catalog-detail-deploy-now');
         const visibilityBtn = document.getElementById('catalog-detail-visibility');
+        const deleteBtn = document.getElementById('catalog-detail-delete');
 
         function showError(message) {
             if (!errorBanner) {
@@ -406,6 +421,43 @@
                 showError(err.message || String(err));
                 visibilityBtn.disabled = false;
                 visibilityBtn.textContent = originalText;
+            }
+        });
+
+        deleteBtn?.addEventListener('click', async () => {
+            const url = deleteBtn.dataset.deleteUrl;
+            const entryName = String(deleteBtn.dataset.entryName || 'this catalog entry').trim();
+            if (!url || deleteBtn.disabled) {
+                return;
+            }
+
+            showError('');
+            if (!window.confirm(
+                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this entry will stop resolving.`
+            )) {
+                return;
+            }
+
+            deleteBtn.disabled = true;
+            const originalText = deleteBtn.textContent;
+            deleteBtn.textContent = 'Deleting...';
+
+            try {
+                const resp = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    throw new Error(payload.error || `Delete failed (HTTP ${resp.status})`);
+                }
+                window.location.href = '{{ url_for("prefix.CatalogList") }}';
+            } catch (err) {
+                showError(err.message || String(err));
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = originalText;
             }
         });
     })();

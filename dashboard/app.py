@@ -334,10 +334,16 @@ CATALOG_ENTRY_SELECT_COLUMNS = """
 
 FIXED_ENDPOINT = {"port": 8000, "schema": "Http", "probe": "/health"}
 FIXED_STANDBY = {"gpu": "File", "pageable": "File", "pinned": "File"}
-EMBEDDED_POLICY_REQUIRED_DEFAULTS = {
+EMBEDDED_POLICY_DEFAULTS = {
     "min_replica": 0,
     "max_replica": 1,
     "standby_per_node": 1,
+    "parallel": 50,
+    "queue_len": 100,
+    "queue_timeout": 30.0,
+    "scaleout_policy": {"WaitQueueRatio": {"wait_ratio": 0.1}},
+    "scalein_timeout": 1.0,
+    "runtime_config": {"graph_sync": False},
 }
 DEFAULT_SAMPLE_QUERY_PROMPTS = [
     "Write a Python function that computes Fibonacci numbers. Explain time complexity.",
@@ -1028,18 +1034,53 @@ def apikeys():
     )
 
 
-def catalog_admin_error_response(message):
+def build_catalog_slug_conflict_message(entry_payload=None):
+    payload = entry_payload if isinstance(entry_payload, dict) else {}
+    slug = str(payload.get("slug", "") or "").strip()
+    provider = str(payload.get("provider", "") or "").strip()
+    display_name = str(payload.get("display_name", "") or "").strip()
+
+    if slug == "":
+        return "A catalog entry with this slug already exists."
+
+    generation_detail = "Slug is generated as `<provider-slug>--<display-name-slug>` from Provider and Display Name."
+    if provider != "" and display_name != "":
+        try:
+            provider_slug = normalize_catalog_slug_component(provider, "provider")
+            display_name_slug = normalize_catalog_slug_component(display_name, "display_name")
+            generation_detail = (
+                f"Slug is generated as `{provider_slug}--{display_name_slug}` "
+                f"from provider `{provider}` and display_name `{display_name}`."
+            )
+        except ValueError:
+            generation_detail = (
+                f"Slug is generated from provider `{provider}` and display_name `{display_name}` "
+                "after slug normalization."
+            )
+
+    return (
+        f"A catalog entry with slug `{slug}` already exists. "
+        f"{generation_detail} Change Provider or Display Name to generate a different slug."
+    )
+
+
+def catalog_admin_error_response(message, *, entry_payload=None):
     normalized = str(message or "")
     if "duplicate key value violates unique constraint" in normalized:
         if "source_model_id" in normalized:
             return json_error("The database still enforces a unique source_model_id constraint. Run the catalog migration before creating multiple variants for the same upstream model.", 409)
         if "slug" in normalized:
-            return json_error("A catalog entry with this slug already exists.", 409)
+            return json_error(build_catalog_slug_conflict_message(entry_payload), 409)
         return json_error("A catalog entry with the same unique key already exists.", 409)
     return json_error(normalized, 500)
 
 
-def render_catalog_admin_page(*, initial_edit_entry_id=None):
+def render_catalog_admin_page(
+    *,
+    initial_edit_entry_id=None,
+    initial_prefill_entry=None,
+    initial_prefill_error="",
+):
     try:
         entries = list_catalog_entries(active_only=False)
     except Exception as e:
@@ -1072,6 +1113,8 @@ def render_catalog_admin_page(*, initial_edit_entry_id=None):
         catalog_entries=entries,
         initial_edit_entry_id=initial_edit_entry_id,
         initial_edit_entry=selected_entry,
+        initial_prefill_entry=initial_prefill_entry,
+        initial_prefill_error=str(initial_prefill_error or ""),
         catalog_back_href=catalog_back_href,
         catalog_back_label=catalog_back_label,
         catalog_admin_page_title=page_title,
@@ -1097,7 +1140,43 @@ def AdminCatalog():
 @require_login
 @require_admin
 def CatalogAdminNew():
-    return render_catalog_admin_page(initial_edit_entry_id=None)
+    from_func_raw = str(request.args.get("from_func", "") or "").strip()
+    if from_func_raw == "":
+        return render_catalog_admin_page(
+            initial_edit_entry_id=None,
+            initial_prefill_entry=None,
+            initial_prefill_error="",
+        )
+
+    prefill_error = ""
+    prefill_entry = None
+    try:
+        try:
+            tenant, namespace, name = parse_edit_key(from_func_raw)
+        except ValueError:
+            raise ValueError("`from_func` must be `<tenant>/<namespace>/<name>`")
+        full_func = getfunc(tenant, namespace, name)
+        func_obj = (full_func.get("func") or {}) if isinstance(full_func, dict) else {}
+        func_name = str(func_obj.get("name", "")).strip() or name
+        full_spec = (((func_obj.get("object") or {}).get("spec")) or {})
+        if not isinstance(full_spec, dict):
+            raise ValueError("live function spec is missing")
+        hf_model = resolve_effective_model_target_from_spec(
+            full_spec,
+            commands_label="live function commands",
+            sample_query_label="live function sample_query.body.model",
+        ).strip()
+        if hf_model == "":
+            raise ValueError("live function does not expose a resolvable model target")
+        prefill_entry = build_catalog_prefill_from_func(hf_model, full_spec, func_name)
+    except Exception as e:
+        prefill_error = f"Save2Catalog prefill failed: {e}"
+
+    return render_catalog_admin_page(
+        initial_edit_entry_id=None,
+        initial_prefill_entry=prefill_entry,
+        initial_prefill_error=prefill_error,
+    )
 
 
 @prefix_bp.route('/catalog/<int:catalog_id>/edit')
@@ -1123,13 +1202,14 @@ def AdminCatalogEntries():
 @require_admin
 def AdminCatalogCreate():
     req = request.get_json(silent=True)
+    payload = None
     try:
         payload = normalize_catalog_admin_payload(req or {})
         entry = insert_catalog_entry(payload)
     except ValueError as e:
         return json_error(str(e), 400)
     except RuntimeError as e:
-        return catalog_admin_error_response(str(e))
+        return catalog_admin_error_response(str(e), entry_payload=payload)
     return jsonify({"entry": entry}), 201
 
 
@@ -1138,6 +1218,7 @@ def AdminCatalogCreate():
 @require_admin
 def AdminCatalogUpdate(catalog_id: int):
     req = request.get_json(silent=True)
+    payload = None
     try:
         existing_entry = query_catalog_entry_by_id(catalog_id, active_only=False)
         payload = normalize_catalog_admin_payload(req or {}, existing_entry=existing_entry)
@@ -1147,16 +1228,33 @@ def AdminCatalogUpdate(catalog_id: int):
     except ValueError as e:
         return json_error(str(e), 400)
     except RuntimeError as e:
-        return catalog_admin_error_response(str(e))
+        return catalog_admin_error_response(str(e), entry_payload=payload)
     return jsonify({"entry": entry})
+
+
+@prefix_bp.route('/admin/catalog/entries/<int:catalog_id>', methods=['DELETE'])
+@require_login
+@require_admin
+def AdminCatalogDelete(catalog_id: int):
+    try:
+        entry = delete_catalog_entry(catalog_id)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except RuntimeError as e:
+        return catalog_admin_error_response(str(e))
+    return jsonify({"entry": entry, "deleted": True})
 
 
 @prefix_bp.route('/admin/catalog/entries/<int:catalog_id>/publish', methods=['POST'])
 @require_login
 @require_admin
 def AdminCatalogPublish(catalog_id: int):
+    return catalog_admin_set_active_response(catalog_id, is_active=True)
+
+
+def catalog_admin_set_active_response(catalog_id: int, *, is_active: bool):
     try:
-        entry = set_catalog_entry_active(catalog_id, is_active=True)
+        entry = set_catalog_entry_active(catalog_id, is_active=is_active)
     except LookupError as e:
         return json_error(str(e), 404)
     except RuntimeError as e:
@@ -1168,26 +1266,14 @@ def AdminCatalogPublish(catalog_id: int):
 @require_login
 @require_admin
 def AdminCatalogUnpublish(catalog_id: int):
-    try:
-        entry = set_catalog_entry_active(catalog_id, is_active=False)
-    except LookupError as e:
-        return json_error(str(e), 404)
-    except RuntimeError as e:
-        return catalog_admin_error_response(str(e))
-    return jsonify({"entry": entry})
+    return catalog_admin_set_active_response(catalog_id, is_active=False)
 
 
 @prefix_bp.route('/admin/catalog/entries/<int:catalog_id>/deactivate', methods=['POST'])
 @require_login
 @require_admin
 def AdminCatalogDeactivate(catalog_id: int):
-    try:
-        entry = set_catalog_entry_active(catalog_id, is_active=False)
-    except LookupError as e:
-        return json_error(str(e), 404)
-    except RuntimeError as e:
-        return catalog_admin_error_response(str(e))
-    return jsonify({"entry": entry})
+    return catalog_admin_set_active_response(catalog_id, is_active=False)
 
 @prefix_bp.route('/generate_apikeys', methods=['GET'])
 @require_login
@@ -1629,6 +1715,22 @@ def strip_reserved_command_args(commands):
     return filtered
 
 
+def strip_model_command_args(commands):
+    filtered = []
+    i = 0
+    while i < len(commands):
+        token = commands[i]
+        if token == "--model":
+            i += 2
+            continue
+        if isinstance(token, str) and token.startswith("--model="):
+            i += 1
+            continue
+        filtered.append(token)
+        i += 1
+    return filtered
+
+
 def is_vllm_omni_image(image):
     return isinstance(image, str) and image.startswith("vllm/vllm-omni:")
 
@@ -1674,6 +1776,79 @@ def extract_model_arg_from_commands(commands):
             return token.split("=", 1)[1]
         i += 1
     return ""
+
+
+def find_effective_model_targets_in_commands(commands, *, label="commands"):
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    values = []
+    seen = set()
+
+    def _add_target(value):
+        normalized = str(value).strip()
+        if normalized == "":
+            return
+        if normalized not in seen:
+            values.append(normalized)
+            seen.add(normalized)
+
+    if len(normalized_commands) >= 2 and normalized_commands[0] == "vllm" and normalized_commands[1] == "serve":
+        if len(normalized_commands) < 3:
+            raise ValueError(f"{label} contains `vllm serve` without a model value")
+        omni_model = normalized_commands[2].strip()
+        if omni_model == "" or omni_model.startswith("-"):
+            raise ValueError(f"{label} contains `vllm serve` without a valid model value")
+        _add_target(omni_model)
+
+    i = 0
+    while i < len(normalized_commands):
+        token = normalized_commands[i]
+        if token == "--model":
+            if i + 1 >= len(normalized_commands):
+                raise ValueError(f"{label} contains `--model` without a value")
+            model_value = normalized_commands[i + 1].strip()
+            if model_value == "":
+                raise ValueError(f"{label} contains `--model` without a value")
+            _add_target(model_value)
+            i += 2
+            continue
+        if token.startswith("--model="):
+            model_value = token.split("=", 1)[1].strip()
+            if model_value == "":
+                raise ValueError(f"{label} contains `--model=` without a value")
+            _add_target(model_value)
+        i += 1
+
+    return values
+
+
+def extract_sample_query_model_target(sample_query):
+    if not isinstance(sample_query, dict):
+        return ""
+    body = sample_query.get("body")
+    if not isinstance(body, dict):
+        return ""
+    model_value = body.get("model")
+    if not isinstance(model_value, str):
+        return ""
+    return model_value.strip()
+
+
+def resolve_effective_model_target_from_spec(
+    spec,
+    *,
+    commands_label="commands",
+    sample_query_label="sample_query.body.model",
+):
+    spec_obj = spec if isinstance(spec, dict) else {}
+    command_targets = find_effective_model_targets_in_commands(
+        spec_obj.get("commands", []),
+        label=commands_label,
+    )
+    if len(command_targets) > 1:
+        raise ValueError(f"{commands_label} encodes multiple conflicting model targets")
+    if len(command_targets) == 1:
+        return command_targets[0]
+    return extract_sample_query_model_target(spec_obj.get("sample_query"))
 
 
 def strip_reserved_envs(envs):
@@ -1723,6 +1898,96 @@ def validate_image_value(
     if require_whitelist and normalized not in VLLM_IMAGE_WHITELIST:
         raise ValueError(f"{label} must be one of the whitelisted vllm image tags")
     return normalized
+
+
+def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`"):
+    if not isinstance(policy_obj, dict):
+        raise ValueError(f"{label} must be an object")
+
+    allowed_policy_obj_keys = {
+        "min_replica",
+        "max_replica",
+        "standby_per_node",
+        "parallel",
+        "queue_len",
+        "queue_timeout",
+        "scaleout_policy",
+        "scalein_timeout",
+        "runtime_config",
+    }
+    unknown_policy_keys = set(policy_obj.keys()) - allowed_policy_obj_keys
+    if unknown_policy_keys:
+        raise ValueError(f"Unknown key in {label}: {sorted(unknown_policy_keys)[0]}")
+
+    normalized_obj = {}
+    integer_fields = {
+        "min_replica": 0,
+        "max_replica": 1,
+        "standby_per_node": 0,
+        "parallel": 1,
+        "queue_len": 1,
+    }
+    for field_name, minimum in integer_fields.items():
+        if field_name not in policy_obj:
+            continue
+        value = policy_obj[field_name]
+        if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+            raise ValueError(f"{label}.{field_name} must be an integer >= {minimum}")
+        normalized_obj[field_name] = value
+
+    for field_name in ("queue_timeout", "scalein_timeout"):
+        if field_name not in policy_obj:
+            continue
+        value = policy_obj[field_name]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0:
+            raise ValueError(f"{label}.{field_name} must be a number >= 0")
+        normalized_obj[field_name] = float(value)
+
+    if "scaleout_policy" in policy_obj:
+        scaleout_policy = policy_obj["scaleout_policy"]
+        if not isinstance(scaleout_policy, dict) or set(scaleout_policy.keys()) != {"WaitQueueRatio"}:
+            raise ValueError(f"{label}.scaleout_policy must be `{{ \"WaitQueueRatio\": {{ ... }} }}`")
+        wait_queue_ratio = scaleout_policy.get("WaitQueueRatio")
+        if not isinstance(wait_queue_ratio, dict):
+            raise ValueError(f"{label}.scaleout_policy.WaitQueueRatio must be an object")
+        wait_ratio = wait_queue_ratio.get("wait_ratio")
+        if not isinstance(wait_ratio, (int, float)) or isinstance(wait_ratio, bool) or float(wait_ratio) < 0:
+            raise ValueError(f"{label}.scaleout_policy.WaitQueueRatio.wait_ratio must be a number >= 0")
+        normalized_obj["scaleout_policy"] = {"WaitQueueRatio": {"wait_ratio": float(wait_ratio)}}
+
+    if "runtime_config" in policy_obj:
+        runtime_config = policy_obj["runtime_config"]
+        if not isinstance(runtime_config, dict):
+            raise ValueError(f"{label}.runtime_config must be an object")
+        unknown_runtime_keys = set(runtime_config.keys()) - {"graph_sync"}
+        if unknown_runtime_keys:
+            raise ValueError(f"Unknown key in {label}.runtime_config: {sorted(unknown_runtime_keys)[0]}")
+        normalized_runtime_config = {}
+        if "graph_sync" in runtime_config:
+            graph_sync = runtime_config["graph_sync"]
+            if not isinstance(graph_sync, bool):
+                raise ValueError(f"{label}.runtime_config.graph_sync must be a boolean")
+            normalized_runtime_config["graph_sync"] = graph_sync
+        normalized_obj["runtime_config"] = normalized_runtime_config
+
+    min_replica = normalized_obj.get("min_replica")
+    max_replica = normalized_obj.get("max_replica")
+    if (
+        isinstance(min_replica, int)
+        and isinstance(max_replica, int)
+        and max_replica < min_replica
+    ):
+        raise ValueError(f"{label}.max_replica must be >= min_replica")
+
+    return normalized_obj
+
+
+def build_full_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`"):
+    merged_policy_obj = clone_json_value(EMBEDDED_POLICY_DEFAULTS)
+    normalized_partial = normalize_partial_embedded_policy_obj(policy_obj or {}, label=label)
+    for key, value in normalized_partial.items():
+        merged_policy_obj[key] = clone_json_value(value)
+    return normalize_partial_embedded_policy_obj(merged_policy_obj, label=label)
 
 
 def validate_partial_spec(
@@ -1806,6 +2071,13 @@ def validate_partial_spec(
             raise ValueError(f"`spec.envs[{idx}]` key/value must be strings")
         normalized_envs.append([key, value])
 
+    normalized_sample_query = None
+    if "sample_query" in spec:
+        sample_query = spec.get("sample_query")
+        if not isinstance(sample_query, dict):
+            raise ValueError("`spec.sample_query` must be an object")
+        normalized_sample_query = clone_json_value(sample_query)
+
     normalized_policy = None
     if "policy" in spec:
         policy = spec.get("policy")
@@ -1817,45 +2089,21 @@ def validate_partial_spec(
                 raise ValueError(f"Forbidden field in `spec.policy`: {forbidden[0]}")
             raise ValueError("`spec.policy.Obj` is required")
         obj = policy.get("Obj")
-        if not isinstance(obj, dict):
-            raise ValueError("`spec.policy.Obj` must be an object")
-        allowed_policy_obj_keys = {"queue_timeout", "scalein_timeout"}
-        unknown_policy_keys = set(obj.keys()) - allowed_policy_obj_keys
-        if unknown_policy_keys:
-            raise ValueError(f"Unknown key in `spec.policy.Obj`: {sorted(unknown_policy_keys)[0]}")
-
-        policy_obj = {}
-        if "queue_timeout" in obj:
-            value = obj["queue_timeout"]
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise ValueError("`spec.policy.Obj.queue_timeout` must be a number")
-            policy_obj["queue_timeout"] = float(value)
-        if "scalein_timeout" in obj:
-            value = obj["scalein_timeout"]
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise ValueError("`spec.policy.Obj.scalein_timeout` must be a number")
-            policy_obj["scalein_timeout"] = float(value)
-
+        policy_obj = normalize_partial_embedded_policy_obj(obj, label="`spec.policy.Obj`")
         normalized_policy = {"Obj": policy_obj} if policy_obj else None
-
-    normalized_sample_query = None
-    if "sample_query" in spec:
-        sample_query = spec.get("sample_query")
-        if not isinstance(sample_query, dict):
-            raise ValueError("`spec.sample_query` must be an object")
-        # Deep-copy through JSON to keep only JSON-compatible values.
-        normalized_sample_query = json.loads(json.dumps(sample_query))
 
     normalized_commands = [str(item) for item in commands] if editor_mode == "advanced" else strip_reserved_command_args(commands)
 
-    return {
+    normalized_spec = {
         "image": image,
         "commands": normalized_commands,
         "resources": {"GPU": {"Count": gpu_count, "vRam": vram}},
         "envs": strip_reserved_envs(normalized_envs),
         "policy": normalized_policy,
-        "sample_query": normalized_sample_query,
     }
+    if normalized_sample_query is not None:
+        normalized_spec["sample_query"] = normalized_sample_query
+    return normalized_spec
 
 
 def build_sample_query(hf_model: str):
@@ -1873,6 +2121,17 @@ def build_sample_query(hf_model: str):
     }
 
 
+def build_resolved_sample_query(hf_model: str, sample_query):
+    if not isinstance(sample_query, dict):
+        return build_sample_query(hf_model)
+
+    resolved_sample_query = clone_json_value(sample_query)
+    if not isinstance(resolved_sample_query.get("body"), dict):
+        resolved_sample_query["body"] = {}
+    resolved_sample_query["body"]["model"] = hf_model
+    return resolved_sample_query
+
+
 def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
     gpu_count = partial_spec["resources"]["GPU"]["Count"]
     gpu_vram = partial_spec["resources"]["GPU"]["vRam"]
@@ -1887,17 +2146,12 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
             gpu_count=gpu_count,
             partial_commands=partial_spec["commands"],
         )
+    full_commands = sync_tensor_parallel_size(full_commands, gpu_count)
 
-    sample_query = partial_spec.get("sample_query")
-    if isinstance(sample_query, dict):
-        resolved_sample_query = json.loads(json.dumps(sample_query))
-        body = resolved_sample_query.get("body")
-        if not isinstance(body, dict):
-            body = {}
-            resolved_sample_query["body"] = body
-        body["model"] = hf_model
-    else:
-        resolved_sample_query = build_sample_query(hf_model)
+    resolved_sample_query = build_resolved_sample_query(
+        hf_model,
+        partial_spec.get("sample_query"),
+    )
 
     spec = {
         "image": partial_spec["image"],
@@ -1919,11 +2173,10 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
 
     policy = partial_spec.get("policy")
     if policy and policy.get("Obj"):
-        full_policy_obj = dict(EMBEDDED_POLICY_REQUIRED_DEFAULTS)
-        full_policy_obj.update(policy["Obj"])
-        # runtime_config is no longer used by the dashboard create/edit flow.
-        # Strip it defensively even if future UI changes accidentally include it.
-        full_policy_obj.pop("runtime_config", None)
+        full_policy_obj = build_full_embedded_policy_obj(
+            policy["Obj"],
+            label="`spec.policy.Obj`",
+        )
         spec["policy"] = {"Obj": full_policy_obj}
 
     return spec
@@ -1981,6 +2234,100 @@ def upsert_named_command_arg(commands, flag_name, value):
     return merged_commands
 
 
+def sync_tensor_parallel_size(commands, gpu_count):
+    if not isinstance(gpu_count, int) or isinstance(gpu_count, bool) or gpu_count <= 0:
+        raise ValueError("gpu_count must be a positive integer when syncing `--tensor-parallel-size`")
+    return upsert_named_command_arg(commands, "--tensor-parallel-size", str(gpu_count))
+
+
+def extract_locked_command_prefix_tokens(commands):
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    if len(normalized_commands) >= 3 and normalized_commands[0] == "vllm" and normalized_commands[1] == "serve":
+        return normalized_commands[:3]
+
+    prefix_tokens = []
+    for token in normalized_commands:
+        if token == "--model" or (isinstance(token, str) and token.startswith("--model=")):
+            break
+        if isinstance(token, str) and token.startswith("-"):
+            break
+        prefix_tokens.append(token)
+    return prefix_tokens
+
+
+def strip_matching_command_prefix_tokens(commands, prefix_tokens):
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    normalized_prefix = [str(item) for item in prefix_tokens] if isinstance(prefix_tokens, list) else []
+    if normalized_prefix and normalized_commands[:len(normalized_prefix)] == normalized_prefix:
+        return normalized_commands[len(normalized_prefix):]
+    return normalized_commands
+
+
+def extract_locked_model_command_tokens(commands):
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    i = 0
+    while i < len(normalized_commands):
+        token = normalized_commands[i]
+        if token == "--model":
+            if i + 1 < len(normalized_commands):
+                return [token, normalized_commands[i + 1]]
+            return [token]
+        if token.startswith("--model="):
+            return [token]
+        i += 1
+    return []
+
+
+def extract_named_command_arg_tokens(commands, flag_name):
+    normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    matched_tokens = []
+    i = 0
+    while i < len(normalized_commands):
+        token = normalized_commands[i]
+        if token == flag_name:
+            matched_tokens.append(token)
+            if i + 1 < len(normalized_commands):
+                matched_tokens.append(normalized_commands[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if token.startswith(f"{flag_name}="):
+            matched_tokens.append(token)
+        i += 1
+    return matched_tokens
+
+
+def merge_catalog_runtime_commands(base_commands, submitted_commands, *, image, gpu_count, editor_mode="basic"):
+    normalized_base = [str(item) for item in base_commands] if isinstance(base_commands, list) else []
+    normalized_submitted = [str(item) for item in submitted_commands] if isinstance(submitted_commands, list) else []
+    prefix_tokens = extract_locked_command_prefix_tokens(normalized_base)
+    editable_tokens = strip_matching_command_prefix_tokens(normalized_submitted, prefix_tokens)
+
+    if is_vllm_omni_image(image):
+        editable_tokens = strip_omni_generated_command_args(editable_tokens)
+
+    if editor_mode == "basic":
+        editable_tokens = strip_reserved_command_args(editable_tokens)
+    else:
+        editable_tokens = strip_model_command_args(editable_tokens)
+
+    merged_commands = []
+    merged_commands.extend(prefix_tokens)
+
+    locked_model_tokens = extract_locked_model_command_tokens(normalized_base)
+    if locked_model_tokens:
+        merged_commands.extend(locked_model_tokens)
+
+    if is_vllm_omni_image(image):
+        for token in normalized_base:
+            if token in ("--trust-remote-code", "--omni"):
+                merged_commands.append(token)
+
+    merged_commands.extend(editable_tokens)
+    return sync_tensor_parallel_size(merged_commands, gpu_count)
+
+
 def parse_catalog_id(value):
     if value is None or value == "":
         return None
@@ -2026,6 +2373,26 @@ def normalize_catalog_source(catalog_source):
     }
 
 
+def maybe_get_catalog_entry_metadata(catalog_source):
+    normalized_source = normalize_catalog_source(catalog_source)
+    if normalized_source is None:
+        return {}
+
+    try:
+        entry = query_catalog_entry_by_id(normalized_source["catalog_id"], active_only=False)
+    except Exception:
+        return {}
+
+    metadata = {}
+    slug = str(entry.get("slug", "")).strip()
+    if slug != "":
+        metadata["catalog_slug"] = slug
+    display_name = str(entry.get("display_name", "")).strip()
+    if display_name != "":
+        metadata["catalog_display_name"] = display_name
+    return metadata
+
+
 def ensure_catalog_db_available():
     if psycopg2 is None or RealDictCursor is None:
         raise RuntimeError("catalog support requires `psycopg2-binary` in the dashboard environment")
@@ -2069,6 +2436,45 @@ def normalize_catalog_api_type(api_type):
     if normalized.lower() == "openai":
         return "text2text"
     return normalized
+
+
+def build_catalog_default_spec_from_func(full_spec):
+    spec = clone_json_value(full_spec if isinstance(full_spec, dict) else {})
+    spec.pop("catalog_source", None)
+    spec.pop("version", None)
+    spec.pop("status", None)
+    return spec
+
+
+def build_catalog_prefill_from_func(hf_model: str, full_spec, func_name: str):
+    catalog_spec = build_catalog_default_spec_from_func(full_spec)
+    api_type = normalize_catalog_api_type(((full_spec.get("sample_query") or {}).get("apiType")) if isinstance(full_spec, dict) else "")
+    modality_map = {
+        "text2text": "text",
+        "openai": "text",
+        "image2text": "multimodal",
+        "audio2text": "multimodal",
+        "text2img": "image",
+        "text2audio": "audio",
+    }
+    normalized_hf_model = str(hf_model or "").strip()
+    normalized_func_name = str(func_name or "").strip()
+    provider = normalized_hf_model.split("/", 1)[0] if "/" in normalized_hf_model else ""
+    display_name = normalized_hf_model.split("/")[-1] if normalized_hf_model != "" else normalized_func_name
+    return {
+        "source_model_id": normalized_hf_model,
+        "source_kind": "huggingface",
+        "display_name": display_name,
+        "provider": provider,
+        "modality": modality_map.get(api_type, "text"),
+        "default_func_spec": catalog_spec,
+        "parameter_count_b": None,
+        "brief_intro": "",
+        "detailed_intro": "",
+        "tags": [],
+        "recommended_use_cases": [],
+        "is_moe": False,
+    }
 
 
 def build_catalog_default_summary(default_func_spec):
@@ -2441,6 +2847,26 @@ def update_catalog_entry(catalog_id: int, entry_payload):
     return normalize_catalog_entry_row(dict(row))
 
 
+def delete_catalog_entry(catalog_id: int):
+    ensure_catalog_db_available()
+    query = """
+        DELETE FROM CatalogModel
+        WHERE id = %s
+        RETURNING *
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (catalog_id,))
+                row = cursor.fetchone()
+            conn.commit()
+    except Exception as e:
+        raise RuntimeError(f"failed to delete catalog entry {catalog_id}: {e}")
+    if row is None:
+        raise LookupError(f"catalog entry {catalog_id} not found")
+    return normalize_catalog_entry_row(dict(row))
+
+
 def deactivate_catalog_entry(catalog_id: int):
     return set_catalog_entry_active(catalog_id, is_active=False)
 
@@ -2587,17 +3013,11 @@ def build_catalog_default_func_name(catalog_entry):
     source_model_id = str(catalog_entry.get("source_model_id", "")).strip()
     source_model_parts = [part.strip() for part in source_model_id.split("/") if part.strip() != ""]
     if source_model_parts:
-        try:
-            return normalize_catalog_slug_component(source_model_parts[-1], "source_model_id")
-        except ValueError:
-            pass
+        return source_model_parts[-1]
 
     display_name = str(catalog_entry.get("display_name", "")).strip()
     if display_name != "":
-        try:
-            return normalize_catalog_slug_component(display_name, "display_name")
-        except ValueError:
-            pass
+        return display_name
 
     slug = str(catalog_entry.get("slug", "")).strip()
     if slug != "":
@@ -2800,12 +3220,15 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
         raise ValueError("catalog `default_func_spec.commands` must be an array of strings")
     commands = [str(item) for item in commands]
     validate_catalog_command_tokens(commands)
-    model_values = find_model_command_values(commands)
-    if len(model_values) != 1 or model_values[0] == "":
-        raise ValueError("catalog `default_func_spec.commands` must contain exactly one valid `--model`")
-    hf_model = model_values[0]
+    hf_model = resolve_effective_model_target_from_spec(
+        normalized_spec,
+        commands_label="catalog `default_func_spec.commands`",
+        sample_query_label="catalog `default_func_spec.sample_query.body.model`",
+    ).strip()
+    if hf_model == "":
+        raise ValueError("catalog `default_func_spec` must resolve exactly one effective model target from commands or `sample_query.body.model`")
     if source_model_id != "" and hf_model != str(source_model_id).strip():
-        raise ValueError("catalog `default_func_spec.commands` `--model` must match `source_model_id`")
+        raise ValueError("catalog `default_func_spec` effective model target must match `source_model_id`")
     normalized_spec["commands"] = commands
 
     resources = normalized_spec.get("resources")
@@ -2884,8 +3307,9 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
     if not isinstance(body, dict) or len(body) == 0:
         raise ValueError("catalog `default_func_spec.sample_query.body` must be a non-empty object")
     if "model" in body:
-        if not isinstance(body.get("model"), str) or body.get("model", "").strip() != hf_model:
-            raise ValueError("catalog `default_func_spec.sample_query.body.model` must match `--model` when present")
+        sample_query_model = body.get("model")
+        if not isinstance(sample_query_model, str) or sample_query_model.strip() != hf_model:
+            raise ValueError("catalog `default_func_spec.sample_query.body.model` must match the effective model target when present")
     normalized_spec["sample_query"]["apiType"] = api_type
 
     standby = normalized_spec.get("standby")
@@ -2994,7 +3418,7 @@ def build_updated_full_spec_from_saved_spec(
         if saved_gpu:
             saved_resources["GPU"] = saved_gpu
         for key in ("CPU", "Mem"):
-            if key not in saved_resources and key in submitted_resources:
+            if key in submitted_resources:
                 saved_resources[key] = clone_json_value(submitted_resources[key])
     merged_spec["resources"] = saved_resources
 
@@ -3004,19 +3428,13 @@ def build_updated_full_spec_from_saved_spec(
         resolved_protected_env_keys,
     )
 
-    submitted_sample_query = partial_spec.get("sample_query")
     saved_sample_query = saved_spec_obj.get("sample_query")
-    if isinstance(submitted_sample_query, dict):
-        resolved_sample_query = clone_json_value(submitted_sample_query)
+    if "sample_query" in partial_spec:
+        resolved_sample_query = clone_json_value(submitted_full_spec["sample_query"])
     elif isinstance(saved_sample_query, dict):
         resolved_sample_query = clone_json_value(saved_sample_query)
     else:
         resolved_sample_query = build_sample_query(hf_model)
-    body = resolved_sample_query.get("body")
-    if not isinstance(body, dict):
-        body = {}
-        resolved_sample_query["body"] = body
-    body["model"] = hf_model
     merged_spec["sample_query"] = resolved_sample_query
 
     saved_policy = saved_spec_obj.get("policy")
@@ -3029,12 +3447,21 @@ def build_updated_full_spec_from_saved_spec(
             and isinstance(submitted_full_policy, dict)
             and isinstance(submitted_full_policy.get("Obj"), dict)
         ):
-            resolved_policy = clone_json_value(saved_policy)
-            resolved_policy["Obj"] = clone_json_value(saved_policy["Obj"])
-            resolved_policy["Obj"].update(clone_json_value(submitted_full_policy["Obj"]))
-            merged_spec["policy"] = resolved_policy
+            resolved_policy_obj = clone_json_value(saved_policy["Obj"])
+            resolved_policy_obj.update(clone_json_value(submitted_policy["Obj"]))
+            merged_spec["policy"] = {
+                "Obj": build_full_embedded_policy_obj(
+                    resolved_policy_obj,
+                    label="merged `spec.policy.Obj`",
+                )
+            }
         elif isinstance(submitted_full_policy, dict):
-            merged_spec["policy"] = clone_json_value(submitted_full_policy)
+            merged_spec["policy"] = {
+                "Obj": build_full_embedded_policy_obj(
+                    submitted_full_policy.get("Obj", {}),
+                    label="merged `spec.policy.Obj`",
+                )
+            }
     elif editor_mode == "basic" and isinstance(saved_policy, dict) and isinstance(saved_policy.get("Obj"), dict):
         merged_spec.pop("policy", None)
     elif isinstance(saved_policy, dict):
@@ -3056,9 +3483,11 @@ def build_catalog_customized_full_spec(
     catalog_source=None,
 ):
     base_spec_obj = clone_json_value(base_spec) if isinstance(base_spec, dict) else {}
-    locked_image_name, _ = split_image_name_and_tag(base_spec_obj.get("image"))
+    locked_image_name, locked_image_tag = split_image_name_and_tag(base_spec_obj.get("image"))
     if locked_image_name == "":
-        raise ValueError("catalog `default_func_spec.image` must be a tagged image reference")
+        raise ValueError("catalog `default_func_spec.image` must be a non-empty tagged image reference")
+    if locked_image_tag == "":
+        raise ValueError("catalog `default_func_spec.image` must include a tag/version")
     partial_spec = validate_partial_spec(
         spec,
         max_node_vram,
@@ -3067,62 +3496,73 @@ def build_catalog_customized_full_spec(
         require_image_whitelist=False,
         locked_image_name=locked_image_name,
     )
-    customized_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
-    merged_spec = clone_json_value(customized_spec)
+    merged_spec = clone_json_value(base_spec_obj)
+    merged_spec["image"] = partial_spec["image"]
+    merged_spec["commands"] = merge_catalog_runtime_commands(
+        base_spec_obj.get("commands", []),
+        partial_spec.get("commands", []),
+        image=merged_spec["image"],
+        gpu_count=partial_spec["resources"]["GPU"]["Count"],
+        editor_mode=editor_mode,
+    )
 
-    base_resources = base_spec_obj.get("resources")
-    customized_resources = merged_spec.get("resources")
-    if isinstance(base_resources, dict) and isinstance(customized_resources, dict):
-        merged_resources = clone_json_value(base_resources)
-        customized_gpu = customized_resources.get("GPU")
-        base_gpu = merged_resources.get("GPU")
-        if isinstance(customized_gpu, dict):
-            if not isinstance(base_gpu, dict):
-                base_gpu = {}
-            for key, value in customized_gpu.items():
-                if key in ("Count", "Type", "vRam") or key not in base_gpu:
-                    base_gpu[key] = value
-            merged_resources["GPU"] = base_gpu
-        for key in ("CPU", "Mem"):
-            if key not in merged_resources and key in customized_resources:
-                merged_resources[key] = customized_resources[key]
-        merged_spec["resources"] = merged_resources
+    merged_resources = merged_spec.get("resources")
+    if not isinstance(merged_resources, dict):
+        merged_resources = {}
+    merged_gpu = merged_resources.get("GPU")
+    if not isinstance(merged_gpu, dict):
+        merged_gpu = {}
+    submitted_gpu = (((partial_spec.get("resources") or {}).get("GPU")) or {})
+    if isinstance(submitted_gpu, dict):
+        for key, value in submitted_gpu.items():
+            if key in ("Count", "Type", "vRam") or key not in merged_gpu:
+                merged_gpu[key] = clone_json_value(value)
+    if merged_gpu:
+        merged_resources["GPU"] = merged_gpu
+    merged_spec["resources"] = merged_resources
 
     merged_spec["envs"] = merge_protected_envs(
         base_spec_obj.get("envs", []),
-        merged_spec.get("envs", []),
+        partial_spec.get("envs", []),
         CATALOG_PLATFORM_ENV_KEYS,
     )
 
-    base_endpoint = base_spec_obj.get("endpoint")
-    if isinstance(base_endpoint, dict):
-        merged_spec["endpoint"] = clone_json_value(base_endpoint)
-
-    base_standby = base_spec_obj.get("standby")
-    if isinstance(base_standby, dict):
-        merged_spec["standby"] = clone_json_value(base_standby)
-
-    base_mounts = base_spec_obj.get("mounts")
-    if isinstance(base_mounts, list):
-        merged_spec["mounts"] = clone_json_value(base_mounts)
-
-    base_entrypoint = base_spec_obj.get("entrypoint")
-    if isinstance(base_entrypoint, list):
-        merged_spec["entrypoint"] = clone_json_value(base_entrypoint)
+    base_sample_query = base_spec_obj.get("sample_query")
+    if "sample_query" in partial_spec:
+        merged_spec["sample_query"] = build_resolved_sample_query(
+            hf_model,
+            partial_spec.get("sample_query"),
+        )
+    elif isinstance(base_sample_query, dict):
+        merged_spec["sample_query"] = clone_json_value(base_sample_query)
+    else:
+        merged_spec["sample_query"] = build_sample_query(hf_model)
 
     base_policy = base_spec_obj.get("policy")
-    merged_policy = merged_spec.get("policy")
-    if isinstance(base_policy, dict):
-        if "policy" not in merged_spec:
-            merged_spec["policy"] = clone_json_value(base_policy)
-        elif isinstance(merged_policy, dict):
-            base_policy_obj = base_policy.get("Obj")
-            merged_policy_obj = merged_policy.get("Obj")
-            if isinstance(base_policy_obj, dict) and isinstance(merged_policy_obj, dict):
-                resolved_policy = clone_json_value(base_policy)
-                resolved_policy["Obj"] = clone_json_value(base_policy_obj)
-                resolved_policy["Obj"].update(clone_json_value(merged_policy_obj))
-                merged_spec["policy"] = resolved_policy
+    submitted_policy = partial_spec.get("policy")
+    if submitted_policy and submitted_policy.get("Obj"):
+        if isinstance(base_policy, dict) and isinstance(base_policy.get("Obj"), dict):
+            resolved_policy_obj = clone_json_value(base_policy["Obj"])
+            resolved_policy_obj.update(clone_json_value(submitted_policy["Obj"]))
+            merged_spec["policy"] = {
+                "Obj": build_full_embedded_policy_obj(
+                    resolved_policy_obj,
+                    label="merged catalog `spec.policy.Obj`",
+                )
+            }
+        else:
+            merged_spec["policy"] = {
+                "Obj": build_full_embedded_policy_obj(
+                    submitted_policy["Obj"],
+                    label="merged catalog `spec.policy.Obj`",
+                )
+            }
+    elif editor_mode == "basic" and isinstance(base_policy, dict) and isinstance(base_policy.get("Obj"), dict):
+        merged_spec.pop("policy", None)
+    elif isinstance(base_policy, dict):
+        merged_spec["policy"] = clone_json_value(base_policy)
+    else:
+        merged_spec.pop("policy", None)
 
     if catalog_source is not None:
         merged_spec["catalog_source"] = dict(catalog_source)
@@ -3183,34 +3623,30 @@ def project_spec_for_editor(
 
     policy_obj = ((((spec.get("policy") or {}).get("Obj")) or {}))
     projected_policy_obj = {}
-    if isinstance(policy_obj, dict):
-        if "queue_timeout" in policy_obj and isinstance(policy_obj["queue_timeout"], (int, float)) and not isinstance(policy_obj["queue_timeout"], bool):
-            projected_policy_obj["queue_timeout"] = float(policy_obj["queue_timeout"])
-        if "scalein_timeout" in policy_obj and isinstance(policy_obj["scalein_timeout"], (int, float)) and not isinstance(policy_obj["scalein_timeout"], bool):
-            projected_policy_obj["scalein_timeout"] = float(policy_obj["scalein_timeout"])
+    if isinstance(policy_obj, dict) and policy_obj:
+        projected_policy_obj = build_full_embedded_policy_obj(
+            policy_obj,
+            label="function `policy.Obj`",
+        )
 
-    sample_query = spec.get("sample_query", {})
     resolved_hf_model = hf_model.strip() if isinstance(hf_model, str) else ""
-    if isinstance(sample_query, dict):
-        body = sample_query.get("body", {})
-        if isinstance(body, dict):
-            model_value = body.get("model", "")
-            if isinstance(model_value, str):
-                resolved_hf_model = model_value.strip()
     if resolved_hf_model == "":
-        resolved_hf_model = extract_model_arg_from_commands(commands).strip()
+        resolved_hf_model = resolve_effective_model_target_from_spec(
+            spec,
+            commands_label="function commands",
+            sample_query_label="function sample_query.body.model",
+        ).strip()
 
-    projected_sample_query = None
-    if isinstance(sample_query, dict):
-        projected_sample_query = json.loads(json.dumps(sample_query))
+    sample_query = spec.get("sample_query")
+    projected_sample_query = clone_json_value(sample_query) if isinstance(sample_query, dict) else None
 
     basic_spec = {
         "image": image,
         "commands": clean_commands,
         "resources": {"GPU": {"Count": gpu_count, "vRam": gpu_vram}},
         "envs": clean_envs,
-        **({"sample_query": projected_sample_query} if projected_sample_query is not None else {}),
         **({"policy": {"Obj": projected_policy_obj}} if projected_policy_obj else {}),
+        **({"sample_query": projected_sample_query} if projected_sample_query is not None else {}),
     }
     projected_spec = json.loads(json.dumps(basic_spec))
     projected_spec["commands"] = full_commands_for_advanced
@@ -3278,6 +3714,7 @@ def project_func_for_edit(full_func):
     if catalog_source is not None:
         extra_fields["catalog_source"] = catalog_source
         extra_fields["catalog_mode"] = True
+        extra_fields.update(maybe_get_catalog_entry_metadata(catalog_source))
         editable_env_exclusions = CATALOG_PLATFORM_ENV_KEYS
 
     return project_spec_for_editor(
@@ -3599,7 +4036,6 @@ def generate_tenants():
         tenants,
         include_public=can_access_public_tenant_in_dashboard(),
     )
-    print("tenants ", tenants)
     return tenants
 
 @prefix_bp.route('/generate_namespaces', methods=['GET'])
@@ -4066,7 +4502,7 @@ def FuncCreate():
         initial_model_data=initial_model_data,
         image_options=VLLM_IMAGE_WHITELIST,
         gpu_count_options=SUPPORTED_GPU_COUNTS,
-        default_advanced_sample_query_template=build_sample_query("Qwen/Qwen2.5-72B-Instruct"),
+        default_sample_query_template=build_sample_query(""),
     )
 
 
@@ -4159,28 +4595,43 @@ def func_save():
 
     try:
         if mode == "update":
-            if hf_model == "":
-                hf_model = extract_model_arg_from_commands((existing_spec or {}).get("commands", [])).strip()
-            if hf_model == "":
-                raise ValueError("existing function spec is missing `--model`")
-            locked_image_name = None
-            require_image_whitelist = True
             if existing_catalog_source is not None:
-                locked_image_name, _ = split_image_name_and_tag((existing_spec or {}).get("image"))
-                if locked_image_name == "":
-                    raise ValueError("existing catalog-backed model is missing a tagged image")
-                require_image_whitelist = False
-            full_spec = build_updated_full_spec_from_saved_spec(
-                hf_model,
-                spec,
-                existing_spec,
-                max_node_vram=max_node_vram,
-                max_node_gpu_count=max_node_gpu_count,
-                editor_mode=editor_mode,
-                protected_env_keys=CATALOG_PLATFORM_ENV_KEYS if existing_catalog_source is not None else RESERVED_ENV_KEYS,
-                require_image_whitelist=require_image_whitelist,
-                locked_image_name=locked_image_name,
-            )
+                hf_model = resolve_effective_model_target_from_spec(
+                    existing_spec,
+                    commands_label="existing catalog-backed function commands",
+                    sample_query_label="existing catalog-backed function sample_query.body.model",
+                ).strip()
+                if hf_model == "":
+                    raise ValueError("existing catalog-backed model is missing an effective model target")
+                full_spec = build_catalog_customized_full_spec(
+                    hf_model,
+                    spec,
+                    existing_spec,
+                    max_node_vram=max_node_vram,
+                    max_node_gpu_count=max_node_gpu_count,
+                    editor_mode=editor_mode,
+                    catalog_source=existing_catalog_source,
+                )
+            else:
+                if hf_model == "":
+                    hf_model = resolve_effective_model_target_from_spec(
+                        existing_spec,
+                        commands_label="existing function commands",
+                        sample_query_label="existing function sample_query.body.model",
+                    ).strip()
+                if hf_model == "":
+                    raise ValueError("existing function spec is missing an effective model target")
+                full_spec = build_updated_full_spec_from_saved_spec(
+                    hf_model,
+                    spec,
+                    existing_spec,
+                    max_node_vram=max_node_vram,
+                    max_node_gpu_count=max_node_gpu_count,
+                    editor_mode=editor_mode,
+                    protected_env_keys=RESERVED_ENV_KEYS,
+                    require_image_whitelist=True,
+                    locked_image_name=None,
+                )
         elif catalog_id is not None:
             catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
             catalog_template_spec = validate_catalog_template_spec(catalog_entry.get("default_func_spec"))
@@ -4188,8 +4639,13 @@ def func_save():
                 "catalog_id": int(catalog_entry["id"]),
                 "catalog_version": int(catalog_entry["catalog_version"]),
             }
+            hf_model = resolve_effective_model_target_from_spec(
+                catalog_template_spec,
+                commands_label="catalog `default_func_spec.commands`",
+                sample_query_label="catalog `default_func_spec.sample_query.body.model`",
+            ).strip()
             if hf_model == "":
-                hf_model = extract_model_arg_from_commands(catalog_template_spec.get("commands", [])).strip()
+                raise ValueError("catalog `default_func_spec` is missing an effective model target")
             full_spec = build_catalog_customized_full_spec(
                 hf_model,
                 spec,

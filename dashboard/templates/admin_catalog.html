@@ -147,6 +147,11 @@
         flex-wrap: wrap;
     }
 
+    .catalog-editor-danger-btn {
+        border-color: #fecaca;
+        color: #991b1b;
+    }
+
     @media (max-width: 900px) {
         .catalog-editor-grid {
             grid-template-columns: 1fr;
@@ -173,6 +178,7 @@
             <div class="catalog-editor-hint">New entries are created unpublished. Verify deployment from the catalog detail page, then publish when ready for regular users.</div>
         </div>
         <div class="editor-actions">
+            <button id="admin-catalog-delete-btn" class="ix-btn secondary catalog-editor-danger-btn" type="button" style="display: none;">Delete Entry</button>
             <a class="ix-btn secondary" href="{{ catalog_back_href or url_for('prefix.CatalogList') }}">{{ catalog_back_label or 'Back to Catalog' }}</a>
         </div>
     </div>
@@ -312,9 +318,12 @@
 <script>
     (() => {
         const initialEditEntry = {{ initial_edit_entry | tojson }};
+        const initialPrefillEntry = {{ initial_prefill_entry | tojson }};
+        const initialPrefillError = {{ initial_prefill_error | tojson }};
 
         const errorBanner = document.getElementById('admin-catalog-error');
         const successBanner = document.getElementById('admin-catalog-success');
+        const deleteBtn = document.getElementById('admin-catalog-delete-btn');
         const resetBtn = document.getElementById('admin-catalog-reset-btn');
         const form = document.getElementById('admin-catalog-form');
         const formTitle = document.getElementById('admin-catalog-form-title');
@@ -383,11 +392,20 @@
             savePublishBtn.textContent = label || 'Save & Publish';
         }
 
+        function setDeleteButtonState(visible, label) {
+            if (!deleteBtn) {
+                return;
+            }
+            deleteBtn.style.display = visible ? '' : 'none';
+            deleteBtn.textContent = label || 'Delete Entry';
+        }
+
         function setCreateMode() {
             idInput.value = '';
             formTitle.textContent = 'Create Unpublished Catalog Entry';
             saveBtn.textContent = 'Create Unpublished Entry';
             setPublishButtonState(true, 'Save & Publish');
+            setDeleteButtonState(false, 'Delete Entry');
             resetBtn.textContent = 'Clear Form';
             sourceKindInput.disabled = false;
             sourceModelIdInput.disabled = false;
@@ -404,6 +422,29 @@
             isMoeInput.checked = false;
         }
 
+        function populatePrefillForm(entry) {
+            if (!entry || typeof entry !== 'object') {
+                showMessage(errorBanner, 'Save2Catalog prefill data is unavailable.');
+                return;
+            }
+
+            clearMessages();
+            setCreateMode();
+            displayNameInput.value = entry.display_name || '';
+            providerInput.value = entry.provider || '';
+            modalitySelect.value = entry.modality || 'text';
+            parameterCountInput.value = entry.parameter_count_b != null ? String(entry.parameter_count_b) : '';
+            sourceKindInput.value = entry.source_kind || 'huggingface';
+            sourceModelIdInput.value = entry.source_model_id || '';
+            briefIntroInput.value = entry.brief_intro || '';
+            detailedIntroInput.value = entry.detailed_intro || '';
+            tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
+            useCasesInput.value = Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases.join(', ') : '';
+            defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
+            isMoeInput.checked = !!entry.is_moe;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
         function populateEditForm(entry) {
             if (!entry || typeof entry !== 'object') {
                 showMessage(errorBanner, 'Catalog entry data is unavailable for edit mode.');
@@ -415,6 +456,7 @@
             formTitle.textContent = `Edit Catalog Entry #${entry.id}`;
             saveBtn.textContent = 'Update Entry';
             setPublishButtonState(!entry.is_active, 'Update & Publish');
+            setDeleteButtonState(true, 'Delete Entry');
             resetBtn.textContent = 'Discard Changes';
             sourceKindInput.disabled = true;
             sourceModelIdInput.disabled = true;
@@ -476,6 +518,60 @@
                 data = {};
             }
             return { text, data };
+        }
+
+        async function handleDelete() {
+            const entryId = String(idInput.value || '').trim();
+            if (entryId === '' || !deleteBtn) {
+                return;
+            }
+
+            const entryName = String(displayNameInput.value || '').trim() || `catalog entry #${entryId}`;
+            if (!window.confirm(
+                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this entry will stop resolving.`
+            )) {
+                return;
+            }
+
+            clearMessages();
+            const originalDeleteText = deleteBtn.textContent;
+            const originalResetText = resetBtn.textContent;
+            const originalSaveText = saveBtn.textContent;
+            const originalSavePublishText = savePublishBtn ? savePublishBtn.textContent : '';
+
+            deleteBtn.disabled = true;
+            resetBtn.disabled = true;
+            saveBtn.disabled = true;
+            if (savePublishBtn) {
+                savePublishBtn.disabled = true;
+            }
+            deleteBtn.textContent = 'Deleting...';
+
+            try {
+                const resp = await fetch(`{{ hosturl }}admin/catalog/entries/${encodeURIComponent(entryId)}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                const { text, data } = await parseResponsePayload(resp);
+                if (!resp.ok) {
+                    throw new Error((data && data.error) || text || `Delete failed (HTTP ${resp.status})`);
+                }
+                window.location.href = '{{ url_for("prefix.CatalogList") }}';
+            } catch (err) {
+                showMessage(errorBanner, err.message || String(err));
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = originalDeleteText;
+                resetBtn.disabled = false;
+                resetBtn.textContent = originalResetText;
+                saveBtn.disabled = false;
+                saveBtn.textContent = originalSaveText;
+                if (savePublishBtn) {
+                    savePublishBtn.disabled = false;
+                    savePublishBtn.textContent = originalSavePublishText;
+                }
+            }
         }
 
         async function submitForm(event) {
@@ -559,6 +655,7 @@
         }
 
         form?.addEventListener('submit', submitForm);
+        deleteBtn?.addEventListener('click', handleDelete);
         defaultSpecInput?.addEventListener('blur', () => {
             formatDefaultSpecInput();
         });
@@ -568,13 +665,22 @@
                 populateEditForm(initialEditEntry);
                 return;
             }
+            if (initialPrefillEntry && typeof initialPrefillEntry === 'object') {
+                populatePrefillForm(initialPrefillEntry);
+                return;
+            }
             setCreateMode();
         });
 
         if (initialEditEntry && initialEditId != null && String(initialEditId).trim() !== '') {
             populateEditForm(initialEditEntry);
+        } else if (initialPrefillEntry && typeof initialPrefillEntry === 'object') {
+            populatePrefillForm(initialPrefillEntry);
         } else {
             setCreateMode();
+        }
+        if (typeof initialPrefillError === 'string' && initialPrefillError.trim() !== '') {
+            showMessage(errorBanner, initialPrefillError.trim());
         }
         formatDefaultSpecInput();
     })();

@@ -244,6 +244,9 @@
                     {% if row_can_manage %}
                     <a class="ix-btn secondary" href="{{ hosturl }}func_create?edit={{ tenant }}/{{ namespace }}/{{ name }}">Edit</a>
                     {% endif %}
+                    {% if is_inferx_admin %}
+                    <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew', from_func=tenant ~ '/' ~ namespace ~ '/' ~ name) }}">Save2Catalog</a>
+                    {% endif %}
                 </span>
             </td>
         </tr>

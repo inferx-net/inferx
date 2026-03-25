@@ -450,10 +450,10 @@
             <div class="field-row">
                 <label for="hf-model-input" class="label-with-help">
                     <span>HuggingFace Model<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Used to build --model and sample_query.body.model." title="Hugging Face model ID (for example namespace/model). Used to build --model and sample_query.body.model.">i</span>
+                    <span class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Used to build the runtime model target." title="Hugging Face model ID (for example namespace/model). Used to build the runtime model target.">i</span>
                 </label>
                 <div>
-                    {% if page_mode == "update" %}
+                    {% if page_mode == "update" or is_catalog_mode %}
                     <div id="hf-model-display" class="readonly-value"></div>
                     <input id="hf-model-input" type="text" hidden autocomplete="off">
                     {% else %}
@@ -478,7 +478,11 @@
                 </span>
             </h3>
             <select id="image-select"></select>
-            <input id="image-input" type="text" style="display:none;" autocomplete="off">
+            <input id="image-input" type="hidden" autocomplete="off">
+            <div id="catalog-image-editor" style="display:none; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span id="catalog-image-name" class="readonly-value"></span>
+                <input id="catalog-image-tag-input" type="text" placeholder="v0.16.0" autocomplete="off" aria-label="Image tag or version">
+            </div>
             <div id="image-field-hint" class="hint"></div>
         </div>
 
@@ -535,6 +539,51 @@
             <div id="policy-fields" style="display:none; margin-top: 10px;">
                 <div class="form-grid">
                     <div class="field-row">
+                        <label for="min-replica-input" class="label-with-help">
+                            <span>Min Replica</span>
+                            <span class="field-help" tabindex="0" aria-label="Min replica help" data-tooltip="Minimum number of ready replicas to keep available." title="Minimum number of ready replicas to keep available.">i</span>
+                        </label>
+                        <div>
+                            <input id="min-replica-input" type="number" min="0" step="1" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="max-replica-input" class="label-with-help">
+                            <span>Max Replica</span>
+                            <span class="field-help" tabindex="0" aria-label="Max replica help" data-tooltip="Upper bound on ready replicas for this model." title="Upper bound on ready replicas for this model.">i</span>
+                        </label>
+                        <div>
+                            <input id="max-replica-input" type="number" min="1" step="1" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="standby-per-node-input" class="label-with-help">
+                            <span>Standby Per Node</span>
+                            <span class="field-help" tabindex="0" aria-label="Standby per node help" data-tooltip="Target number of standby workers to keep per eligible node." title="Target number of standby workers to keep per eligible node.">i</span>
+                        </label>
+                        <div>
+                            <input id="standby-per-node-input" type="number" min="0" step="1" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="parallel-input" class="label-with-help">
+                            <span>Parallel</span>
+                            <span class="field-help" tabindex="0" aria-label="Parallel help" data-tooltip="Maximum in-flight work handled per ready worker." title="Maximum in-flight work handled per ready worker.">i</span>
+                        </label>
+                        <div>
+                            <input id="parallel-input" type="number" min="1" step="1" placeholder="50">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="queue-len-input" class="label-with-help">
+                            <span>Queue Length</span>
+                            <span class="field-help" tabindex="0" aria-label="Queue length help" data-tooltip="Maximum queued requests before new requests are rejected." title="Maximum queued requests before new requests are rejected.">i</span>
+                        </label>
+                        <div>
+                            <input id="queue-len-input" type="number" min="1" step="1" placeholder="100">
+                        </div>
+                    </div>
+                    <div class="field-row">
                         <label for="queue-timeout-input" class="label-with-help">
                             <span>Queue Timeout (s)</span>
                             <span class="field-help" tabindex="0" aria-label="Queue timeout help" data-tooltip="How long a request may wait in queue before timing out." title="How long a request may wait in queue before timing out.">i</span>
@@ -544,12 +593,30 @@
                         </div>
                     </div>
                     <div class="field-row">
+                        <label for="scaleout-wait-ratio-input" class="label-with-help">
+                            <span>Wait Queue Ratio</span>
+                            <span class="field-help" tabindex="0" aria-label="Wait queue ratio help" data-tooltip="Scale-out trigger ratio used by the WaitQueueRatio policy." title="Scale-out trigger ratio used by the WaitQueueRatio policy.">i</span>
+                        </label>
+                        <div>
+                            <input id="scaleout-wait-ratio-input" type="number" min="0" step="any" placeholder="0.1">
+                        </div>
+                    </div>
+                    <div class="field-row">
                         <label for="scalein-timeout-input" class="label-with-help">
                             <span>Scale-in Timeout (s)</span>
                             <span class="field-help" tabindex="0" aria-label="Scale-in timeout help" data-tooltip="Idle time before scaling in. If left empty, Basic mode uses default 1.0." title="Idle time before scaling in. If left empty, Basic mode uses default 1.0.">i</span>
                         </label>
                         <div>
                             <input id="scalein-timeout-input" type="number" step="any" placeholder="1.0">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="graph-sync-checkbox" class="label-with-help">
+                            <span>Graph Sync</span>
+                            <span class="field-help" tabindex="0" aria-label="Graph sync help" data-tooltip="Enable runtime graph synchronization when supported by the backend." title="Enable runtime graph synchronization when supported by the backend.">i</span>
+                        </label>
+                        <div>
+                            <input id="graph-sync-checkbox" type="checkbox">
                         </div>
                     </div>
                 </div>
@@ -602,10 +669,17 @@
         const INITIAL_MODEL = {{ initial_model_data | tojson }};
         const IMAGE_OPTIONS = {{ image_options | tojson }};
         const SUPPORTED_GPU_COUNTS = {{ gpu_count_options | tojson }};
-        const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_advanced_sample_query_template | tojson }};
+        const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_sample_query_template | tojson }};
         // Keep in sync with backend/runtime func policy defaults.
+        const DEFAULT_POLICY_MIN_REPLICA = 0;
+        const DEFAULT_POLICY_MAX_REPLICA = 1;
+        const DEFAULT_POLICY_STANDBY_PER_NODE = 1;
+        const DEFAULT_POLICY_PARALLEL = 50;
+        const DEFAULT_POLICY_QUEUE_LEN = 100;
         const DEFAULT_POLICY_QUEUE_TIMEOUT_SEC = 30.0;
+        const DEFAULT_POLICY_WAIT_QUEUE_RATIO = 0.1;
         const DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC = 1.0;
+        const DEFAULT_POLICY_GRAPH_SYNC = false;
         const VRAM_STEP_MB = 256;
         const IS_CATALOG_MODE = !!(
             INITIAL_MODEL
@@ -624,6 +698,9 @@
         const hfModelDisplay = document.getElementById('hf-model-display');
         const imageSelect = document.getElementById('image-select');
         const imageInput = document.getElementById('image-input');
+        const catalogImageEditor = document.getElementById('catalog-image-editor');
+        const catalogImageName = document.getElementById('catalog-image-name');
+        const catalogImageTagInput = document.getElementById('catalog-image-tag-input');
         const imageFieldHint = document.getElementById('image-field-hint');
         const commandsJson = document.getElementById('commands-json');
         const gpuCountSelect = document.getElementById('gpu-count-select');
@@ -631,8 +708,15 @@
         const vramHint = document.getElementById('vram-hint');
         const policyEnabledCheckbox = document.getElementById('policy-enabled-checkbox');
         const policyFields = document.getElementById('policy-fields');
+        const minReplicaInput = document.getElementById('min-replica-input');
+        const maxReplicaInput = document.getElementById('max-replica-input');
+        const standbyPerNodeInput = document.getElementById('standby-per-node-input');
+        const parallelInput = document.getElementById('parallel-input');
+        const queueLenInput = document.getElementById('queue-len-input');
         const queueTimeoutInput = document.getElementById('queue-timeout-input');
+        const scaleoutWaitRatioInput = document.getElementById('scaleout-wait-ratio-input');
         const scaleinTimeoutInput = document.getElementById('scalein-timeout-input');
+        const graphSyncCheckbox = document.getElementById('graph-sync-checkbox');
         const tabBasic = document.getElementById('tab-basic');
         const tabAdvanced = document.getElementById('tab-advanced');
         const panelBasic = document.getElementById('panel-basic');
@@ -657,6 +741,7 @@
         let nodeMaxVram = 0;
         let nodeMaxGpuCount = 0;
         let _advancedInitializedFromModel = false;
+        let _basicSpecDirty = false;
         let _preservedEnvs = [];
         let _preservedSampleQuery = null;
         let _advancedSpecUserEdited = false;
@@ -712,9 +797,82 @@
             showSuccess('');
         }
 
+        function markBasicSpecDirty() {
+            _basicSpecDirty = true;
+        }
+
         function setPolicyEnabled(enabled) {
             policyEnabledCheckbox.checked = !!enabled;
             policyFields.style.display = enabled ? 'block' : 'none';
+        }
+
+        function clearPolicyFields() {
+            minReplicaInput.value = '';
+            maxReplicaInput.value = '';
+            standbyPerNodeInput.value = '';
+            parallelInput.value = '';
+            queueLenInput.value = '';
+            queueTimeoutInput.value = '';
+            scaleoutWaitRatioInput.value = '';
+            scaleinTimeoutInput.value = '';
+            graphSyncCheckbox.checked = DEFAULT_POLICY_GRAPH_SYNC;
+        }
+
+        function parseIntegerPolicyInput(inputEl, label, minimum, defaultValue) {
+            const raw = String((inputEl && inputEl.value) || '').trim();
+            if (raw === '') {
+                return defaultValue;
+            }
+            if (!/^-?\d+$/.test(raw)) {
+                throw new Error(`${label} must be an integer`);
+            }
+            const value = Number(raw);
+            if (!Number.isInteger(value) || value < minimum) {
+                throw new Error(`${label} must be an integer >= ${minimum}`);
+            }
+            return value;
+        }
+
+        function parseNumberPolicyInput(inputEl, label, minimum, defaultValue) {
+            const raw = String((inputEl && inputEl.value) || '').trim();
+            if (raw === '') {
+                return defaultValue;
+            }
+            const value = Number(raw);
+            if (!Number.isFinite(value) || value < minimum) {
+                throw new Error(`${label} must be a number >= ${minimum}`);
+            }
+            return value;
+        }
+
+        function buildPolicyObjectFromUi() {
+            if (!policyEnabledCheckbox.checked) {
+                return null;
+            }
+
+            const obj = {
+                min_replica: parseIntegerPolicyInput(minReplicaInput, 'Min Replica', 0, DEFAULT_POLICY_MIN_REPLICA),
+                max_replica: parseIntegerPolicyInput(maxReplicaInput, 'Max Replica', 1, DEFAULT_POLICY_MAX_REPLICA),
+                standby_per_node: parseIntegerPolicyInput(standbyPerNodeInput, 'Standby Per Node', 0, DEFAULT_POLICY_STANDBY_PER_NODE),
+                parallel: parseIntegerPolicyInput(parallelInput, 'Parallel', 1, DEFAULT_POLICY_PARALLEL),
+                queue_len: parseIntegerPolicyInput(queueLenInput, 'Queue Length', 1, DEFAULT_POLICY_QUEUE_LEN),
+                queue_timeout: parseNumberPolicyInput(queueTimeoutInput, 'Queue Timeout', 0, DEFAULT_POLICY_QUEUE_TIMEOUT_SEC),
+                scaleout_policy: {
+                    WaitQueueRatio: {
+                        wait_ratio: parseNumberPolicyInput(scaleoutWaitRatioInput, 'Wait Queue Ratio', 0, DEFAULT_POLICY_WAIT_QUEUE_RATIO)
+                    }
+                },
+                scalein_timeout: parseNumberPolicyInput(scaleinTimeoutInput, 'Scale-in Timeout', 0, DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC),
+                runtime_config: {
+                    graph_sync: !!graphSyncCheckbox.checked
+                }
+            };
+
+            if (obj.max_replica < obj.min_replica) {
+                throw new Error('Max Replica must be >= Min Replica');
+            }
+
+            return obj;
         }
 
         function parseCommandsArrayFromBasic() {
@@ -737,18 +895,54 @@
             return JSON.parse(JSON.stringify(value));
         }
 
+        function splitImageNameAndTagForUi(image) {
+            const normalizedImage = String(image || '').trim();
+            if (!normalizedImage) {
+                return { imageName: '', imageTag: '' };
+            }
+            const lastSlash = normalizedImage.lastIndexOf('/');
+            const lastColon = normalizedImage.lastIndexOf(':');
+            if (lastColon > lastSlash) {
+                return {
+                    imageName: normalizedImage.slice(0, lastColon),
+                    imageTag: normalizedImage.slice(lastColon + 1)
+                };
+            }
+            return { imageName: normalizedImage, imageTag: '' };
+        }
+
+        function syncCatalogImageHiddenValue() {
+            const imageName = String((catalogImageEditor && catalogImageEditor.dataset.imageName) || '').trim();
+            const imageTag = String((catalogImageTagInput && catalogImageTagInput.value) || '').trim();
+            const normalizedImage = imageName && imageTag ? `${imageName}:${imageTag}` : imageName;
+            if (imageInput) {
+                imageInput.value = normalizedImage;
+            }
+            return normalizedImage;
+        }
+
         function getCurrentImageValue() {
             if (IS_CATALOG_MODE) {
-                return String((imageInput && imageInput.value) || '').trim();
+                return syncCatalogImageHiddenValue();
             }
             return String((imageSelect && imageSelect.value) || '').trim();
         }
 
         function setCurrentImageValue(image) {
             const normalizedImage = String(image || '').trim();
-            if (normalizedImage !== '') {
+            const { imageName, imageTag } = splitImageNameAndTagForUi(normalizedImage);
+            if (normalizedImage !== '' && !IS_CATALOG_MODE) {
                 ensureSelectOption(imageSelect, normalizedImage, normalizedImage);
                 imageSelect.value = normalizedImage;
+            }
+            if (catalogImageEditor) {
+                catalogImageEditor.dataset.imageName = imageName;
+            }
+            if (catalogImageName) {
+                catalogImageName.textContent = imageName ? `${imageName}:` : '';
+            }
+            if (catalogImageTagInput) {
+                catalogImageTagInput.value = imageTag;
             }
             if (imageInput) {
                 imageInput.value = normalizedImage;
@@ -759,8 +953,8 @@
             if (imageSelect) {
                 imageSelect.style.display = IS_CATALOG_MODE ? 'none' : '';
             }
-            if (imageInput) {
-                imageInput.style.display = IS_CATALOG_MODE ? '' : 'none';
+            if (catalogImageEditor) {
+                catalogImageEditor.style.display = IS_CATALOG_MODE ? 'flex' : 'none';
             }
             if (imageFieldHint) {
                 imageFieldHint.textContent = IS_CATALOG_MODE
@@ -884,7 +1078,7 @@
             let extraCommands = stripReservedCommandArgsForUi(partialCommands);
             if (isVllmOmniImageForUi(image)) {
                 extraCommands = stripOmniGeneratedCommandArgsForUi(extraCommands);
-                return [
+                const fullCommands = [
                     'vllm',
                     'serve',
                     hfModel,
@@ -892,6 +1086,10 @@
                     '--omni',
                     ...extraCommands
                 ];
+                if (Number.isInteger(gpuCount)) {
+                    fullCommands.push(`--tensor-parallel-size=${gpuCount}`);
+                }
+                return fullCommands;
             }
 
             const fullCommands = ['--model', hfModel, ...extraCommands];
@@ -936,34 +1134,13 @@
                 throw new Error('Image is required');
             }
 
-            if (policyEnabledCheckbox.checked) {
-                const obj = {};
-                const queueTimeout = (queueTimeoutInput.value || '').trim();
-                const scaleinTimeout = (scaleinTimeoutInput.value || '').trim();
-                if (queueTimeout !== '') {
-                    const val = Number(queueTimeout);
-                    if (Number.isNaN(val)) {
-                        throw new Error('Queue Timeout must be a number');
-                    }
-                    obj.queue_timeout = val;
-                }
-                if (scaleinTimeout !== '') {
-                    const val = Number(scaleinTimeout);
-                    if (Number.isNaN(val)) {
-                        throw new Error('Scale-in Timeout must be a number');
-                    }
-                    obj.scalein_timeout = val;
-                } else {
-                    // Default scale-in timeout when policy is enabled but field is left empty.
-                    obj.scalein_timeout = 1.0;
-                }
-                if (Object.keys(obj).length > 0) {
-                    spec.policy = { Obj: obj };
-                }
+            const policyObj = buildPolicyObjectFromUi();
+            if (policyObj) {
+                spec.policy = { Obj: policyObj };
             }
 
-            // Basic mode has no editors for envs/sample_query, so preserve and pass
-            // them through from the initial model state.
+            // Basic mode has no env or sample_query editor, so preserve those
+            // values from the initial model state.
             spec.envs = cloneJsonValue(Array.isArray(_preservedEnvs) ? _preservedEnvs : []);
             if (_preservedSampleQuery !== null) {
                 spec.sample_query = cloneJsonValue(_preservedSampleQuery);
@@ -991,31 +1168,45 @@
             }
 
             const policyObj = (((partial.policy || {}).Obj) || {});
-            const hasQueueTimeout = policyObj && typeof policyObj === 'object'
-                && Object.prototype.hasOwnProperty.call(policyObj, 'queue_timeout');
-            const hasScaleinTimeout = policyObj && typeof policyObj === 'object'
-                && Object.prototype.hasOwnProperty.call(policyObj, 'scalein_timeout');
+            const hasPolicyObj = policyObj && typeof policyObj === 'object' && !Array.isArray(policyObj) && Object.keys(policyObj).length > 0;
 
-            const queueTimeoutValue = hasQueueTimeout ? Number(policyObj.queue_timeout) : null;
-            const scaleinTimeoutValue = hasScaleinTimeout ? Number(policyObj.scalein_timeout) : null;
+            setPolicyEnabled(hasPolicyObj);
+            if (!hasPolicyObj) {
+                clearPolicyFields();
+                return;
+            }
 
-            const queueTimeoutIsDefault = hasQueueTimeout
-                && Number.isFinite(queueTimeoutValue)
-                && numbersEqual(queueTimeoutValue, DEFAULT_POLICY_QUEUE_TIMEOUT_SEC);
-            const scaleinTimeoutIsDefault = hasScaleinTimeout
-                && Number.isFinite(scaleinTimeoutValue)
-                && numbersEqual(scaleinTimeoutValue, DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC);
-
-            const hasCustomPolicy = (hasQueueTimeout && !queueTimeoutIsDefault)
-                || (hasScaleinTimeout && !scaleinTimeoutIsDefault);
-
-            setPolicyEnabled(hasCustomPolicy);
-            queueTimeoutInput.value = hasCustomPolicy && hasQueueTimeout && policyObj.queue_timeout != null
-                ? String(policyObj.queue_timeout)
-                : '';
-            scaleinTimeoutInput.value = hasCustomPolicy && hasScaleinTimeout && policyObj.scalein_timeout != null
-                ? String(policyObj.scalein_timeout)
-                : '';
+            minReplicaInput.value = String(
+                policyObj.min_replica != null ? policyObj.min_replica : DEFAULT_POLICY_MIN_REPLICA
+            );
+            maxReplicaInput.value = String(
+                policyObj.max_replica != null ? policyObj.max_replica : DEFAULT_POLICY_MAX_REPLICA
+            );
+            standbyPerNodeInput.value = String(
+                policyObj.standby_per_node != null ? policyObj.standby_per_node : DEFAULT_POLICY_STANDBY_PER_NODE
+            );
+            parallelInput.value = String(
+                policyObj.parallel != null ? policyObj.parallel : DEFAULT_POLICY_PARALLEL
+            );
+            queueLenInput.value = String(
+                policyObj.queue_len != null ? policyObj.queue_len : DEFAULT_POLICY_QUEUE_LEN
+            );
+            queueTimeoutInput.value = String(
+                policyObj.queue_timeout != null ? policyObj.queue_timeout : DEFAULT_POLICY_QUEUE_TIMEOUT_SEC
+            );
+            scaleoutWaitRatioInput.value = String(
+                (((policyObj.scaleout_policy || {}).WaitQueueRatio || {}).wait_ratio) != null
+                    ? (((policyObj.scaleout_policy || {}).WaitQueueRatio || {}).wait_ratio)
+                    : DEFAULT_POLICY_WAIT_QUEUE_RATIO
+            );
+            scaleinTimeoutInput.value = String(
+                policyObj.scalein_timeout != null ? policyObj.scalein_timeout : DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC
+            );
+            graphSyncCheckbox.checked = !!(
+                (((policyObj.runtime_config || {}).graph_sync) != null)
+                    ? ((policyObj.runtime_config || {}).graph_sync)
+                    : DEFAULT_POLICY_GRAPH_SYNC
+            );
         }
 
         function setTopLevelFields(model) {
@@ -1255,7 +1446,7 @@
                 showAdvancedWarning(false);
                 try {
                     const initialAdvancedSpec = (
-                        PAGE_MODE === 'update'
+                        (PAGE_MODE === 'update' || IS_CATALOG_MODE)
                         && INITIAL_MODEL
                         && typeof INITIAL_MODEL === 'object'
                         && !Array.isArray(INITIAL_MODEL)
@@ -1267,14 +1458,17 @@
                         && initialAdvancedSpec
                         && typeof initialAdvancedSpec === 'object'
                         && !Array.isArray(initialAdvancedSpec)
+                        && !_basicSpecDirty
                     ) {
-                        // First Advanced open in edit mode should show the real saved
-                        // advanced spec, not a regenerated one from Basic fields.
+                        // First Advanced open in edit mode or catalog create mode
+                        // should show the real saved/catalog baseline spec, not a
+                        // regenerated one from Basic fields, as long as Basic has
+                        // not been edited yet in this session.
                         setAdvancedSpecObjectFromSystem(initialAdvancedSpec);
-                        _advancedInitializedFromModel = true;
                     } else {
                         syncAdvancedFromBasic();
                     }
+                    _advancedInitializedFromModel = true;
                 } catch (err) {
                     showError(err.message || String(err));
                     return;
@@ -1321,7 +1515,9 @@
             const tenant = PAGE_MODE === 'update' ? initialTenant : (tenantSelect.value || '').trim();
             const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || '').trim();
             const name = PAGE_MODE === 'update' ? initialName : (functionNameInput.value || '').trim();
-            const hfModel = PAGE_MODE === 'update' ? (initialHfModel || (hfModelInput.value || '').trim()) : (hfModelInput.value || '').trim();
+            const hfModel = (PAGE_MODE === 'update' || IS_CATALOG_MODE)
+                ? (initialHfModel || (hfModelInput.value || '').trim())
+                : (hfModelInput.value || '').trim();
 
             if (!tenant) {
                 throw new Error('Tenant is required');
@@ -1496,6 +1692,7 @@
 
         function applyInitialModelIfPresent() {
             _advancedInitializedFromModel = false;
+            _basicSpecDirty = false;
             _preservedEnvs = [];
             _preservedSampleQuery = null;
             _advancedSpecUserEdited = false;
@@ -1505,6 +1702,7 @@
                 commandsJson.value = JSON.stringify(["--trust-remote-code", "--gpu-memory-utilization", "0.95", "--max-model-len", "2000"], null, 2);
                 setPolicyEnabled(false);
                 setAdvancedSpecTextFromSystem('');
+                _basicSpecDirty = false;
                 return;
             }
 
@@ -1518,13 +1716,16 @@
                         : {}
                 );
             _preservedEnvs = cloneJsonValue(Array.isArray(basicSpec.envs) ? basicSpec.envs : []);
-            _preservedSampleQuery = cloneJsonValue(
-                basicSpec.sample_query != null ? basicSpec.sample_query : null
-            );
+            _preservedSampleQuery = (
+                basicSpec.sample_query && typeof basicSpec.sample_query === 'object' && !Array.isArray(basicSpec.sample_query)
+            )
+                ? cloneJsonValue(basicSpec.sample_query)
+                : null;
 
             setTopLevelFields(INITIAL_MODEL);
             populateBasicUiFromSpec(INITIAL_MODEL.basic_spec || INITIAL_MODEL.spec || {});
             setAdvancedSpecObjectFromSystem(INITIAL_MODEL.advanced_spec || INITIAL_MODEL.spec || {});
+            _basicSpecDirty = false;
         }
 
         async function init() {
@@ -1533,7 +1734,10 @@
             if (catalogModeBanner) {
                 catalogModeBanner.style.display = IS_CATALOG_MODE ? 'block' : 'none';
             }
-            policyEnabledCheckbox.addEventListener('change', () => setPolicyEnabled(policyEnabledCheckbox.checked));
+            policyEnabledCheckbox.addEventListener('change', () => {
+                markBasicSpecDirty();
+                setPolicyEnabled(policyEnabledCheckbox.checked);
+            });
             tenantSelect.addEventListener('change', () => rebuildNamespaceOptions({ preserveCurrent: false }));
             tabBasic.addEventListener('click', () => setActiveTab('basic'));
             tabAdvanced.addEventListener('click', () => setActiveTab('advanced'));
@@ -1555,6 +1759,28 @@
                 }
                 _advancedSpecUserEdited = true;
             });
+            imageSelect?.addEventListener('change', markBasicSpecDirty);
+            commandsJson.addEventListener('input', markBasicSpecDirty);
+            gpuCountSelect.addEventListener('change', markBasicSpecDirty);
+            gpuVramInput.addEventListener('input', markBasicSpecDirty);
+            gpuVramInput.addEventListener('change', markBasicSpecDirty);
+            catalogImageTagInput?.addEventListener('input', () => {
+                markBasicSpecDirty();
+                syncCatalogImageHiddenValue();
+            });
+            catalogImageTagInput?.addEventListener('change', () => {
+                markBasicSpecDirty();
+                syncCatalogImageHiddenValue();
+            });
+            minReplicaInput.addEventListener('input', markBasicSpecDirty);
+            maxReplicaInput.addEventListener('input', markBasicSpecDirty);
+            standbyPerNodeInput.addEventListener('input', markBasicSpecDirty);
+            parallelInput.addEventListener('input', markBasicSpecDirty);
+            queueLenInput.addEventListener('input', markBasicSpecDirty);
+            queueTimeoutInput.addEventListener('input', markBasicSpecDirty);
+            scaleoutWaitRatioInput.addEventListener('input', markBasicSpecDirty);
+            scaleinTimeoutInput.addEventListener('input', markBasicSpecDirty);
+            graphSyncCheckbox.addEventListener('change', markBasicSpecDirty);
             hfModelInput.addEventListener('input', maybeAutoRefreshAdvancedFromBasicForHfModelChange);
             hfModelInput.addEventListener('change', maybeAutoRefreshAdvancedFromBasicForHfModelChange);
 
