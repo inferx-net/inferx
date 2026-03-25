@@ -241,7 +241,10 @@ impl GatewayConfig {
             Ok(s) => match s.parse::<bool>() {
                 Ok(v) => v,
                 Err(_) => {
-                    warn!("invalid ENFORCE_BILLING value '{}', defaulting to false", &s);
+                    warn!(
+                        "invalid ENFORCE_BILLING value '{}', defaulting to false",
+                        &s
+                    );
                     false
                 }
             },
@@ -751,6 +754,20 @@ impl NodeAgentConfig {
             Ok(s) => {
                 info!(
                     "get reserveMemPercentage from env RESERVE_MEM_PERCENTAGE: {}",
+                    &s
+                );
+                match s.parse::<u64>() {
+                    Err(_) => 0,
+                    Ok(c) => c,
+                }
+            }
+            Err(_) => 0,
+        };
+
+        resources.flexMemPercentage = match std::env::var("FLEXIBLE_MEM_PERCENTAGE") {
+            Ok(s) => {
+                info!(
+                    "get flexibleMemPercentage from env FLEXIBLE_MEM_PERCENTAGE: {}",
                     &s
                 );
                 match s.parse::<u64>() {

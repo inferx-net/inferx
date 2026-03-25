@@ -31,7 +31,7 @@ spec:
           - name: INIT_CUDAHOSTALLOC
             value: "-1"
           - name: RUN_SERVICE
-            value: "NodeAgent"
+            value: "NodeAgentAll"
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -40,15 +40,40 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.memory                
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.hugepages-2Mi   
+          - name: CACHE_MEMORY
+            value: "10Gi"
+          - name: ENABLE_2MB_PAGE
+            value: "true"  
+          - name: RESERVE_MEM_PERCENTAGE
+            value: "10"
+          - name: CONTEXT_COUNT
+            value: "1"      
+          - name: ALLOC_CPU
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.cpu
+          - name: ENALBE_BLOB
+            value: "true"
           resources:
             requests:
               cpu: "15"               
               memory: "60Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "1Gi"       # HugePages request
+              hugepages-2Mi: "30Gi"       # HugePages request
             limits:
               cpu: "20"               
               memory: "100Gi"              # Regular memory request (RAM)
-              hugepages-2Mi: "1Gi" 
+              hugepages-2Mi: "30Gi" 
               # nvidia.com/gpu: 1
           volumeMounts:
             - mountPath: /run/udev

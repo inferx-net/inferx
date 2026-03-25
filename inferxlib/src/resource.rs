@@ -181,6 +181,9 @@ pub struct ResourceConfig {
     #[serde(rename = "ReserveMemPerentage", default)]
     pub reserveMemPercentage: u64,
 
+    #[serde(rename = "FlexibleMemPerentage", default)]
+    pub flexMemPercentage: u64,
+
     #[serde(rename = "MaxContextPerGPU")]
     pub maxContextPerGPU: u64, // max
 }
@@ -231,9 +234,21 @@ impl GPUResourceMap {
 
         for (pGpuId, resource) in &free.map {
             // Resources being freed must be non-negative (allocated amounts are always positive)
-            assert!(resource.slotCnt >= 0, "Cannot free negative slotCnt: {}", resource.slotCnt);
-            assert!(resource.contextCnt >= 0, "Cannot free negative contextCnt: {}", resource.contextCnt);
-            assert!(resource.ncclCnt >= 0, "Cannot free negative ncclCnt: {}", resource.ncclCnt);
+            assert!(
+                resource.slotCnt >= 0,
+                "Cannot free negative slotCnt: {}",
+                resource.slotCnt
+            );
+            assert!(
+                resource.contextCnt >= 0,
+                "Cannot free negative contextCnt: {}",
+                resource.contextCnt
+            );
+            assert!(
+                resource.ncclCnt >= 0,
+                "Cannot free negative ncclCnt: {}",
+                resource.ncclCnt
+            );
 
             match self.map.get_mut(pGpuId) {
                 None => {
@@ -264,9 +279,21 @@ impl GPUResourceMap {
 
         for (pGpuId, resource) in &alloc.map {
             // Resources being reserved/subtracted must be non-negative (allocated amounts are always positive)
-            assert!(resource.slotCnt >= 0, "Cannot subtract negative slotCnt: {}", resource.slotCnt);
-            assert!(resource.contextCnt >= 0, "Cannot subtract negative contextCnt: {}", resource.contextCnt);
-            assert!(resource.ncclCnt >= 0, "Cannot subtract negative ncclCnt: {}", resource.ncclCnt);
+            assert!(
+                resource.slotCnt >= 0,
+                "Cannot subtract negative slotCnt: {}",
+                resource.slotCnt
+            );
+            assert!(
+                resource.contextCnt >= 0,
+                "Cannot subtract negative contextCnt: {}",
+                resource.contextCnt
+            );
+            assert!(
+                resource.ncclCnt >= 0,
+                "Cannot subtract negative ncclCnt: {}",
+                resource.ncclCnt
+            );
 
             match self.map.get_mut(pGpuId) {
                 None => unreachable!(),
