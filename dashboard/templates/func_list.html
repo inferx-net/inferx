@@ -213,11 +213,6 @@
                 {% if catalog_ui %}
                 <div class="model-catalog-badges">
                     <span class="model-catalog-badge">Created from catalog</span>
-                    {% if catalog_ui.get('has_newer_version') and catalog_ui.get('is_active') and catalog_ui.get('slug') %}
-                    <a class="model-catalog-badge newer" href="{{ url_for('prefix.CatalogDetail', slug=catalog_ui.get('slug')) }}">
-                        Newer version available
-                    </a>
-                    {% endif %}
                 </div>
                 {% endif %}
             </td>

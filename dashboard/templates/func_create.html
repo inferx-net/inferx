@@ -36,12 +36,31 @@
         font-size: 14px;
         cursor: pointer;
         text-decoration: none;
+        transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
     }
 
     .btn.secondary {
         background: white;
         color: #1e3a8a;
         border-color: #93c5fd;
+    }
+
+    .btn:hover:not(:disabled),
+    .btn:focus-visible:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+    }
+
+    .btn:hover:not(:disabled) {
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+    }
+
+    .btn.secondary:hover:not(:disabled),
+    .btn.secondary:focus-visible:not(:disabled) {
+        background: #eff6ff;
+        border-color: #60a5fa;
+        box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
     }
 
     .btn:disabled {
@@ -189,6 +208,11 @@
         background: #ffffff;
         border-color: #cbd5e1;
         color: #1d4ed8;
+    }
+
+    .tab-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
     }
 
     .tab-panel {
@@ -393,6 +417,7 @@
         This model was created from the catalog. Save keeps the stored runtime template for hidden platform-managed fields and applies only the customer-editable overrides.
         {% endif %}
     </div>
+    <div id="basic-compatibility-banner" class="warning-banner" aria-live="polite" style="display:none;"></div>
     <div id="advanced-warning-banner" class="warning-banner" aria-live="polite">
         Changes made in Advanced are not reflected back in Basic fields.
     </div>
@@ -643,13 +668,13 @@
         >
             {{ "Back to Catalog" if is_catalog_create else "Cancel" }}
         </a>
-        <button id="save-model-btn" type="button" class="btn">Save Model</button>
+        <button id="save-model-btn" type="button" class="btn">{{ "Update" if page_mode == "update" else "Deploy" }}</button>
     </div>
 </div>
 
 <div id="model-save-modal" class="model-save-modal" hidden>
     <div class="model-save-modal-card" role="dialog" aria-modal="true" aria-labelledby="model-save-modal-title">
-        <h3 id="model-save-modal-title">Model Saved Successfully</h3>
+        <h3 id="model-save-modal-title">Model Deployed Successfully</h3>
         <div id="model-save-modal-body" class="model-save-modal-body">
             <div id="model-save-modal-summary"></div>
             <div class="model-save-modal-note">
@@ -670,6 +695,13 @@
         const IMAGE_OPTIONS = {{ image_options | tojson }};
         const SUPPORTED_GPU_COUNTS = {{ gpu_count_options | tojson }};
         const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_sample_query_template | tojson }};
+        const BASIC_MODE_SUPPORTED = !(INITIAL_MODEL && INITIAL_MODEL.basic_mode_supported === false);
+        const BASIC_MODE_INCOMPATIBILITY_REASON = (
+            INITIAL_MODEL && typeof INITIAL_MODEL.basic_mode_incompatibility_reason === 'string'
+        ) ? INITIAL_MODEL.basic_mode_incompatibility_reason : '';
+        const INITIAL_TAB = (
+            INITIAL_MODEL && typeof INITIAL_MODEL.initial_tab === 'string'
+        ) ? INITIAL_MODEL.initial_tab : 'basic';
         // Keep in sync with backend/runtime func policy defaults.
         const DEFAULT_POLICY_MIN_REPLICA = 0;
         const DEFAULT_POLICY_MAX_REPLICA = 1;
@@ -724,6 +756,7 @@
         const advancedSpecJson = document.getElementById('advanced-spec-json');
         const warningBanner = document.getElementById('advanced-warning-banner');
         const catalogModeBanner = document.getElementById('catalog-mode-banner');
+        const basicCompatibilityBanner = document.getElementById('basic-compatibility-banner');
         const errorBanner = document.getElementById('error-banner');
         const successBanner = document.getElementById('success-banner');
         const saveBtn = document.getElementById('save-model-btn');
@@ -761,6 +794,23 @@
             warningBanner.style.display = show ? 'block' : 'none';
         }
 
+        function applyBasicCompatibilityState() {
+            const basicUnsupported = PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED;
+            if (tabBasic) {
+                tabBasic.disabled = basicUnsupported;
+                tabBasic.setAttribute('aria-disabled', basicUnsupported ? 'true' : 'false');
+                tabBasic.title = basicUnsupported
+                    ? 'Basic mode is unavailable for this model because a no-op Basic save would rewrite the saved spec.'
+                    : '';
+            }
+            if (basicCompatibilityBanner) {
+                const message = BASIC_MODE_INCOMPATIBILITY_REASON
+                    || 'Basic mode is unavailable for this model because a no-op Basic save would rewrite the saved spec.';
+                basicCompatibilityBanner.textContent = basicUnsupported ? message : '';
+                basicCompatibilityBanner.style.display = basicUnsupported ? 'block' : 'none';
+            }
+        }
+
         function closeModelSaveModal() {
             if (!modelSaveModal) {
                 return;
@@ -773,7 +823,7 @@
                 return;
             }
 
-            const modeLabel = payload && payload.mode === 'update' ? 'Updated' : 'Created';
+            const modeLabel = payload && payload.mode === 'update' ? 'Updated' : 'Deployed';
             const modelDisplayName = (payload && payload.name) ? String(payload.name) : 'Model';
             if (modelSaveModalTitle) {
                 modelSaveModalTitle.textContent = `Model ${modeLabel} Successfully`;
@@ -1358,18 +1408,85 @@
             return nonPublicTenants.length === 1;
         }
 
+        function getAccessibleTenantNamesFromRoles(rolesData) {
+            if (!Array.isArray(rolesData) || isInferxAdmin(rolesData)) {
+                return [];
+            }
+
+            const orderedTenantNames = [];
+            const seen = new Set();
+            rolesData.forEach((rb) => {
+                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
+                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
+                const rbTenant = String(rb && rb.tenant || '').trim();
+                if ((rbObjType !== 'tenant' && rbObjType !== 'namespace') || (rbRole !== 'admin' && rbRole !== 'user')) {
+                    return;
+                }
+                if (!rbTenant || rbTenant.toLowerCase() === 'system') {
+                    return;
+                }
+                if (!seen.has(rbTenant)) {
+                    seen.add(rbTenant);
+                    orderedTenantNames.push(rbTenant);
+                }
+            });
+            return orderedTenantNames;
+        }
+
+        function getAccessibleNamespaceNamesFromRoles(rolesData, tenantName) {
+            const normalizedTenant = String(tenantName || '').trim();
+            if (!Array.isArray(rolesData) || normalizedTenant === '' || isInferxAdmin(rolesData)) {
+                return [];
+            }
+
+            const orderedNamespaceNames = [];
+            const seen = new Set();
+            rolesData.forEach((rb) => {
+                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
+                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
+                const rbTenant = String(rb && rb.tenant || '').trim();
+                const rbNamespace = String(rb && rb.namespace || '').trim();
+                if (rbObjType !== 'namespace' || (rbRole !== 'admin' && rbRole !== 'user')) {
+                    return;
+                }
+                if (rbTenant !== normalizedTenant || rbNamespace === '') {
+                    return;
+                }
+                if (!seen.has(rbNamespace)) {
+                    seen.add(rbNamespace);
+                    orderedNamespaceNames.push(rbNamespace);
+                }
+            });
+            return orderedNamespaceNames;
+        }
+
         function rebuildTenantOptions() {
             const hidePublic = shouldHidePublicTenantInCreate(roles);
-            const tenantOptions = (Array.isArray(tenants) ? tenants : [])
+            const accessibleTenantNames = getAccessibleTenantNamesFromRoles(roles);
+            const accessibleTenantSet = new Set(accessibleTenantNames.map((tenantName) => tenantName.toLowerCase()));
+
+            let tenantOptions = (Array.isArray(tenants) ? tenants : [])
                 .filter((tenantObj) => {
                     const tenantName = String(tenantObj && tenantObj.name || '').trim().toLowerCase();
                     return !(hidePublic && tenantName === 'public');
                 })
                 .map((tenantObj) => ({
-                value: String(tenantObj.name || '').trim(),
-                label: tenantDisplayLabel(tenantObj)
-            }))
+                    value: String(tenantObj.name || '').trim(),
+                    label: tenantDisplayLabel(tenantObj)
+                }))
                 .filter((opt) => opt.value !== '');
+
+            if (PAGE_MODE === 'create' && accessibleTenantSet.size > 0) {
+                tenantOptions = tenantOptions.filter((opt) => accessibleTenantSet.has(opt.value.toLowerCase()));
+                if (tenantOptions.length === 0) {
+                    tenantOptions = accessibleTenantNames
+                        .map((tenantName) => ({
+                            value: tenantName,
+                            label: tenantName,
+                        }))
+                        .filter((opt) => !(hidePublic && opt.value.toLowerCase() === 'public'));
+                }
+            }
 
             const current = tenantSelect.value;
             setSelectOptions(tenantSelect, tenantOptions, current || (INITIAL_MODEL && INITIAL_MODEL.tenant) || '');
@@ -1393,13 +1510,25 @@
             const selectedTenant = tenantSelect.value;
             const currentNamespace = preserveCurrent ? namespaceSelect.value : '';
 
-            const namespaceOptions = (Array.isArray(namespaces) ? namespaces : [])
+            let namespaceOptions = (Array.isArray(namespaces) ? namespaces : [])
                 .filter((ns) => String(ns.tenant || '').trim() === selectedTenant)
                 .map((ns) => {
                     const value = String(ns.name || '').trim();
                     return { value, label: value };
                 })
                 .filter((opt) => opt.value !== '');
+
+            const accessibleNamespaceNames = getAccessibleNamespaceNamesFromRoles(roles, selectedTenant);
+            const accessibleNamespaceSet = new Set(accessibleNamespaceNames);
+            if (PAGE_MODE === 'create' && accessibleNamespaceSet.size > 0) {
+                namespaceOptions = namespaceOptions.filter((opt) => accessibleNamespaceSet.has(opt.value));
+                if (namespaceOptions.length === 0) {
+                    namespaceOptions = accessibleNamespaceNames.map((namespaceName) => ({
+                        value: namespaceName,
+                        label: namespaceName,
+                    }));
+                }
+            }
 
             const targetValue = preferredValue || currentNamespace;
             setSelectOptions(namespaceSelect, namespaceOptions, targetValue);
@@ -1437,6 +1566,10 @@
         }
 
         function setActiveTab(nextTab) {
+            if (nextTab === 'basic' && PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED) {
+                return;
+            }
+
             if (nextTab === activeTab) {
                 return;
             }
@@ -1512,8 +1645,13 @@
                 && typeof INITIAL_MODEL.catalog_source === 'object'
                 && !Array.isArray(INITIAL_MODEL.catalog_source)
             ) ? INITIAL_MODEL.catalog_source : null;
-            const tenant = PAGE_MODE === 'update' ? initialTenant : (tenantSelect.value || '').trim();
-            const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || '').trim();
+            const fallbackTenant = PAGE_MODE === 'create' ? (getAccessibleTenantNamesFromRoles(roles)[0] || '') : '';
+            const resolvedTenant = (tenantSelect.value || fallbackTenant || '').trim();
+            const fallbackNamespace = PAGE_MODE === 'create'
+                ? (getAccessibleNamespaceNamesFromRoles(roles, resolvedTenant)[0] || '')
+                : '';
+            const tenant = PAGE_MODE === 'update' ? initialTenant : resolvedTenant;
+            const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || fallbackNamespace || '').trim();
             const name = PAGE_MODE === 'update' ? initialName : (functionNameInput.value || '').trim();
             const hfModel = (PAGE_MODE === 'update' || IS_CATALOG_MODE)
                 ? (initialHfModel || (hfModelInput.value || '').trim())
@@ -1560,7 +1698,7 @@
             }
 
             saveBtn.disabled = true;
-            showSuccess('Saving model...');
+            showSuccess(payload.mode === 'update' ? 'Updating model...' : 'Deploying model...');
 
             try {
                 console.log('[func_create] submit payload', {
@@ -1584,7 +1722,7 @@
 
                 const text = await resp.text();
                 if (!resp.ok) {
-                    let errorMessage = `Save failed (HTTP ${resp.status})`;
+                    let errorMessage = `${payload.mode === 'update' ? 'Update' : 'Deploy'} failed (HTTP ${resp.status})`;
                     try {
                         const parsed = JSON.parse(text);
                         if (parsed && parsed.error) {
@@ -1600,7 +1738,7 @@
                     throw new Error(errorMessage);
                 }
 
-                showSuccess(payload.mode === 'update' ? 'Model updated successfully.' : 'Model created successfully.');
+                showSuccess(payload.mode === 'update' ? 'Model updated successfully.' : 'Model deployed successfully.');
                 showModelSaveModal(payload);
             } catch (err) {
                 showSuccess('');
@@ -1793,8 +1931,18 @@
             }
 
             applyInitialModelIfPresent();
+            applyBasicCompatibilityState();
 
-            if (!INITIAL_MODEL) {
+            const resolvedInitialTab = (PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED)
+                ? 'advanced'
+                : (INITIAL_TAB === 'advanced' ? 'advanced' : 'basic');
+            if (resolvedInitialTab === 'advanced') {
+                try {
+                    setActiveTab('advanced');
+                } catch (_e) {
+                    // Leave Basic active and surface validation only on explicit interaction.
+                }
+            } else if (!INITIAL_MODEL) {
                 try {
                     syncAdvancedFromBasic();
                 } catch (_e) {

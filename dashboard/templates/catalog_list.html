@@ -19,7 +19,7 @@
 
     .catalog-toolbar {
         display: grid;
-        grid-template-columns: minmax(220px, 1.5fr) repeat(4, minmax(120px, 1fr));
+        grid-template-columns: minmax(220px, 1.5fr) repeat(5, minmax(120px, 1fr));
         gap: 12px;
         padding: 14px;
         margin-bottom: 14px;
@@ -182,6 +182,60 @@
         margin-bottom: 14px;
     }
 
+    .model-save-modal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.45);
+        z-index: 1200;
+        padding: 16px;
+        box-sizing: border-box;
+    }
+
+    .model-save-modal[hidden] {
+        display: none !important;
+    }
+
+    .model-save-modal-card {
+        width: min(680px, 100%);
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+        padding: 18px;
+    }
+
+    .model-save-modal-card h3 {
+        margin: 0 0 10px 0;
+        color: #1f2937;
+        font-size: 18px;
+    }
+
+    .model-save-modal-body {
+        color: #334155;
+        font-size: 14px;
+        line-height: 1.45;
+        margin-bottom: 14px;
+    }
+
+    .model-save-modal-note {
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 4px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1e3a8a;
+    }
+
+    .model-save-modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
     @media (max-width: 900px) {
         .catalog-toolbar {
             grid-template-columns: 1fr;
@@ -216,12 +270,12 @@
             <strong>Customize &amp; Deploy</strong> opens the create form with catalog defaults prefilled so you can review and adjust them before saving.
             <strong>Deploy Now</strong> creates the model immediately using the stored catalog template.
             {% if is_inferx_admin %}
-            Unpublished entries remain visible only to InferX admins until you publish them.
+            Unpublished models remain visible only to InferX admins until you publish them.
             {% endif %}
         </div>
         {% if is_inferx_admin %}
         <div class="catalog-admin-actions">
-            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew') }}">New Entry</a>
+            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew') }}">New Model</a>
         </div>
         {% endif %}
     </div>
@@ -267,6 +321,15 @@
                 {% endfor %}
             </select>
         </div>
+        <div>
+            <label for="catalog-use-case-filter">Use Case</label>
+            <select id="catalog-use-case-filter">
+                <option value="">All use cases</option>
+                {% for use_case in use_case_options %}
+                <option value="{{ use_case }}">{{ use_case }}</option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
 
     <div class="catalog-table-wrap">
@@ -295,6 +358,7 @@
                     data-modality="{{ entry.modality }}"
                     data-api-type="{{ entry.default_api_type }}"
                     data-tags="{{ ' '.join(entry.tags) }}"
+                    data-use-cases="{{ entry.recommended_use_cases | join('||') }}"
                     data-search="{{ (entry.display_name ~ ' ' ~ entry.provider ~ ' ' ~ entry.modality ~ ' ' ~ entry.default_api_type ~ ' ' ~ entry.brief_intro ~ ' ' ~ ' '.join(entry.tags) ~ ' ' ~ ' '.join(entry.recommended_use_cases)) | lower }}"
                 >
                     <td>
@@ -327,7 +391,7 @@
                                 Deploy Now
                             </button>
                             {% if is_inferx_admin %}
-                            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminEdit', catalog_id=entry.id) }}">Edit Entry</a>
+                            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminEdit', catalog_id=entry.id) }}">Edit Model</a>
                             <button
                                 type="button"
                                 class="ix-btn secondary {{ 'catalog-deactivate-btn catalog-visibility-btn' if entry.is_active else 'catalog-publish-btn catalog-visibility-btn' }}"
@@ -355,12 +419,28 @@
         {% else %}
         <div class="catalog-empty">
             {% if is_inferx_admin %}
-            No catalog entries are available yet.
+            No catalog models are available yet.
             {% else %}
-            No published catalog entries are available yet.
+            No published catalog models are available yet.
             {% endif %}
         </div>
         {% endif %}
+    </div>
+</div>
+
+<div id="model-save-modal" class="model-save-modal" hidden>
+    <div class="model-save-modal-card" role="dialog" aria-modal="true" aria-labelledby="model-save-modal-title">
+        <h3 id="model-save-modal-title">Model Saved Successfully</h3>
+        <div id="model-save-modal-body" class="model-save-modal-body">
+            <div id="model-save-modal-summary"></div>
+            <div class="model-save-modal-note">
+                Snapshot creation will be scheduled before the model can serve inference requests. You can go to the Pods page to check status.
+            </div>
+        </div>
+        <div class="model-save-modal-actions">
+            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Pods</a>
+            <a id="model-save-modal-models-link" class="ix-btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
+        </div>
     </div>
 </div>
 
@@ -371,8 +451,14 @@
         const modalityFilter = document.getElementById('catalog-modality-filter');
         const apiTypeFilter = document.getElementById('catalog-api-type-filter');
         const tagFilter = document.getElementById('catalog-tag-filter');
+        const useCaseFilter = document.getElementById('catalog-use-case-filter');
         const tableBody = document.getElementById('catalog-table-body');
         const errorBanner = document.getElementById('catalog-error');
+        const modelSaveModal = document.getElementById('model-save-modal');
+        const modelSaveModalTitle = document.getElementById('model-save-modal-title');
+        const modelSaveModalSummary = document.getElementById('model-save-modal-summary');
+        const modelSaveModalPodsLink = document.getElementById('model-save-modal-pods-link');
+        const modelSaveModalModelsLink = document.getElementById('model-save-modal-models-link');
 
         function showError(message) {
             if (!errorBanner) {
@@ -380,6 +466,36 @@
             }
             errorBanner.textContent = message || '';
             errorBanner.style.display = message ? 'block' : 'none';
+        }
+
+        function closeModelSaveModal() {
+            if (!modelSaveModal) {
+                return;
+            }
+            modelSaveModal.hidden = true;
+        }
+
+        function showModelSaveModal(payload) {
+            if (!modelSaveModal) {
+                return;
+            }
+
+            const modelDisplayName = (payload && payload.name) ? String(payload.name) : 'Model';
+            if (modelSaveModalTitle) {
+                modelSaveModalTitle.textContent = 'Model Created Successfully';
+            }
+            if (modelSaveModalSummary) {
+                modelSaveModalSummary.textContent = `${modelDisplayName} has been created successfully.`;
+            }
+            if (modelSaveModalPodsLink) {
+                modelSaveModalPodsLink.href = '{{ hosturl }}listpod';
+            }
+            if (modelSaveModalModelsLink) {
+                modelSaveModalModelsLink.href = '{{ hosturl }}listfunc';
+            }
+
+            modelSaveModal.hidden = false;
+            modelSaveModalPodsLink?.focus();
         }
 
         function visibleRows() {
@@ -395,12 +511,14 @@
             const modalityValue = String(modalityFilter?.value || '').trim().toLowerCase();
             const apiTypeValue = String(apiTypeFilter?.value || '').trim().toLowerCase();
             const tagValue = String(tagFilter?.value || '').trim().toLowerCase();
+            const useCaseValue = String(useCaseFilter?.value || '').trim().toLowerCase();
 
             visibleRows().forEach((row) => {
                 const rowProvider = String(row.dataset.provider || '').trim().toLowerCase();
                 const rowModality = String(row.dataset.modality || '').trim().toLowerCase();
                 const rowApiType = String(row.dataset.apiType || '').trim().toLowerCase();
                 const rowTags = String(row.dataset.tags || '').trim().toLowerCase();
+                const rowUseCases = String(row.dataset.useCases || '').trim().toLowerCase();
                 const rowSearch = String(row.dataset.search || '').trim().toLowerCase();
 
                 const matchesSearch = searchValue === '' || rowSearch.includes(searchValue);
@@ -408,8 +526,10 @@
                 const matchesModality = modalityValue === '' || rowModality === modalityValue;
                 const matchesApiType = apiTypeValue === '' || rowApiType === apiTypeValue;
                 const matchesTag = tagValue === '' || rowTags.split(/\s+/).includes(tagValue);
+                const matchesUseCase = useCaseValue === ''
+                    || rowUseCases.split('||').map((value) => value.trim()).includes(useCaseValue);
 
-                row.style.display = matchesSearch && matchesProvider && matchesModality && matchesApiType && matchesTag ? '' : 'none';
+                row.style.display = matchesSearch && matchesProvider && matchesModality && matchesApiType && matchesTag && matchesUseCase ? '' : 'none';
             });
         }
 
@@ -436,11 +556,9 @@
                 if (!resp.ok) {
                     throw new Error(payload.error || `Deploy failed (HTTP ${resp.status})`);
                 }
-                if (payload.redirect_url) {
-                    window.location.href = payload.redirect_url;
-                    return;
-                }
-                window.location.reload();
+                button.disabled = false;
+                button.textContent = originalText;
+                showModelSaveModal(payload);
             } catch (err) {
                 showError(err.message || String(err));
                 button.disabled = false;
@@ -452,7 +570,7 @@
             const button = event.currentTarget;
             const url = button.dataset.visibilityUrl;
             const action = String(button.dataset.visibilityAction || '').trim().toLowerCase();
-            const entryName = String(button.dataset.entryName || 'this catalog entry').trim();
+            const entryName = String(button.dataset.entryName || 'this catalog model').trim();
             if (!url || button.disabled) {
                 return;
             }
@@ -487,12 +605,12 @@
         async function handleDeleteEntry(event) {
             const button = event.currentTarget;
             const url = button.dataset.deleteUrl;
-            const entryName = String(button.dataset.entryName || 'this catalog entry').trim();
+            const entryName = String(button.dataset.entryName || 'this catalog model').trim();
             if (!url || button.disabled) {
                 return;
             }
             if (!window.confirm(
-                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this entry will stop resolving.`
+                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this model will stop resolving.`
             )) {
                 return;
             }
@@ -548,6 +666,19 @@
         modalityFilter?.addEventListener('change', applyFilters);
         apiTypeFilter?.addEventListener('change', applyFilters);
         tagFilter?.addEventListener('change', applyFilters);
+        useCaseFilter?.addEventListener('change', applyFilters);
+
+        modelSaveModal?.addEventListener('click', (event) => {
+            if (event.target === modelSaveModal) {
+                closeModelSaveModal();
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeModelSaveModal();
+            }
+        });
 
     })();
 </script>

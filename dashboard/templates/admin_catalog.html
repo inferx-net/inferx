@@ -171,20 +171,20 @@
 
     <div class="editor-header">
         <div>
-            <h2>{{ catalog_admin_page_title or 'Catalog Entry Editor' }}</h2>
+            <h2>{{ catalog_admin_page_title or 'Catalog Model Editor' }}</h2>
             <div class="editor-subtitle">
-                {{ catalog_admin_page_subtitle or 'Create or update catalog entries. This page is restricted to InferX administrators.' }}
+                {{ catalog_admin_page_subtitle or 'Create or update catalog models. This page is restricted to InferX administrators.' }}
             </div>
-            <div class="catalog-editor-hint">New entries are created unpublished. Verify deployment from the catalog detail page, then publish when ready for regular users.</div>
+            <div class="catalog-editor-hint">New models are created unpublished. Verify deployment from the catalog detail page, then publish when ready for regular users.</div>
         </div>
         <div class="editor-actions">
-            <button id="admin-catalog-delete-btn" class="ix-btn secondary catalog-editor-danger-btn" type="button" style="display: none;">Delete Entry</button>
+            <button id="admin-catalog-delete-btn" class="ix-btn secondary catalog-editor-danger-btn" type="button" style="display: none;">Delete</button>
             <a class="ix-btn secondary" href="{{ catalog_back_href or url_for('prefix.CatalogList') }}">{{ catalog_back_label or 'Back to Catalog' }}</a>
         </div>
     </div>
 
     <div class="panel">
-        <h3 id="admin-catalog-form-title">Create Catalog Entry</h3>
+        <h3 id="admin-catalog-form-title">Create Catalog Model</h3>
         <form id="admin-catalog-form">
             <input id="admin-catalog-id" type="hidden" value="">
             <div class="catalog-editor-grid">
@@ -308,7 +308,7 @@
             </div>
             <div class="catalog-editor-form-actions">
                 <button id="admin-catalog-reset-btn" class="ix-btn secondary" type="button">Reset</button>
-                <button id="admin-catalog-save-btn" class="ix-btn" type="submit">Create Entry</button>
+                <button id="admin-catalog-save-btn" class="ix-btn" type="submit">Create</button>
                 <button id="admin-catalog-save-publish-btn" class="ix-btn secondary" type="submit" data-submit-action="publish">Save &amp; Publish</button>
             </div>
         </form>
@@ -397,15 +397,15 @@
                 return;
             }
             deleteBtn.style.display = visible ? '' : 'none';
-            deleteBtn.textContent = label || 'Delete Entry';
+            deleteBtn.textContent = label || 'Delete';
         }
 
         function setCreateMode() {
             idInput.value = '';
-            formTitle.textContent = 'Create Unpublished Catalog Entry';
-            saveBtn.textContent = 'Create Unpublished Entry';
+            formTitle.textContent = 'Create Unpublished Catalog Model';
+            saveBtn.textContent = 'Create Unpublished Model';
             setPublishButtonState(true, 'Save & Publish');
-            setDeleteButtonState(false, 'Delete Entry');
+            setDeleteButtonState(false, 'Delete');
             resetBtn.textContent = 'Clear Form';
             sourceKindInput.disabled = false;
             sourceModelIdInput.disabled = false;
@@ -447,16 +447,16 @@
 
         function populateEditForm(entry) {
             if (!entry || typeof entry !== 'object') {
-                showMessage(errorBanner, 'Catalog entry data is unavailable for edit mode.');
+                showMessage(errorBanner, 'Catalog model data is unavailable for edit mode.');
                 return;
             }
 
             clearMessages();
             idInput.value = String(entry.id);
-            formTitle.textContent = `Edit Catalog Entry #${entry.id}`;
-            saveBtn.textContent = 'Update Entry';
+            formTitle.textContent = `Edit Catalog Model #${entry.id}`;
+            saveBtn.textContent = 'Update';
             setPublishButtonState(!entry.is_active, 'Update & Publish');
-            setDeleteButtonState(true, 'Delete Entry');
+            setDeleteButtonState(true, 'Delete');
             resetBtn.textContent = 'Discard Changes';
             sourceKindInput.disabled = true;
             sourceModelIdInput.disabled = true;
@@ -526,9 +526,9 @@
                 return;
             }
 
-            const entryName = String(displayNameInput.value || '').trim() || `catalog entry #${entryId}`;
+            const entryName = String(displayNameInput.value || '').trim() || `catalog model #${entryId}`;
             if (!window.confirm(
-                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this entry will stop resolving.`
+                `Delete ${entryName}?\n\nThis permanently removes the catalog row. Existing deployed models keep their saved spec, but catalog provenance links to this model will stop resolving.`
             )) {
                 return;
             }
@@ -627,7 +627,7 @@
                             populateEditForm(entry);
                             showMessage(
                                 successBanner,
-                                isUpdate ? 'Catalog entry updated but is still unpublished.' : 'Catalog entry created but is still unpublished.'
+                                isUpdate ? 'Catalog model updated but is still unpublished.' : 'Catalog model created but is still unpublished.'
                             );
                         }
                         throw new Error(
@@ -641,7 +641,7 @@
                     window.location.href = `{{ hosturl }}catalog/${encodeURIComponent(entry.slug)}`;
                     return;
                 }
-                showMessage(successBanner, isUpdate ? 'Catalog entry updated.' : 'Catalog entry created.');
+                showMessage(successBanner, isUpdate ? 'Catalog model updated.' : 'Catalog model created.');
             } catch (err) {
                 showMessage(errorBanner, err.message || String(err));
             } finally {

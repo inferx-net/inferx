@@ -1041,7 +1041,7 @@ def build_catalog_slug_conflict_message(entry_payload=None):
     display_name = str(payload.get("display_name", "") or "").strip()
 
     if slug == "":
-        return "A catalog entry with this slug already exists."
+        return "A catalog model with this slug already exists."
 
     generation_detail = "Slug is generated as `<provider-slug>--<display-name-slug>` from Provider and Display Name."
     if provider != "" and display_name != "":
@@ -1059,7 +1059,7 @@ def build_catalog_slug_conflict_message(entry_payload=None):
             )
 
     return (
-        f"A catalog entry with slug `{slug}` already exists. "
+        f"A catalog model with slug `{slug}` already exists. "
         f"{generation_detail} Change Provider or Display Name to generate a different slug."
     )
 
@@ -1071,7 +1071,7 @@ def catalog_admin_error_response(message, *, entry_payload=None):
             return json_error("The database still enforces a unique source_model_id constraint. Run the catalog migration before creating multiple variants for the same upstream model.", 409)
         if "slug" in normalized:
             return json_error(build_catalog_slug_conflict_message(entry_payload), 409)
-        return json_error("A catalog entry with the same unique key already exists.", 409)
+        return json_error("A catalog model with the same unique key already exists.", 409)
     return json_error(normalized, 500)
 
 
@@ -1093,14 +1093,14 @@ def render_catalog_admin_page(
         except LookupError as e:
             return json_error(str(e), 404)
         except Exception as e:
-            return json_error(f"failed to load catalog entry {initial_edit_entry_id}: {e}", 500)
+            return json_error(f"failed to load catalog model {initial_edit_entry_id}: {e}", 500)
 
     catalog_back_href = dashboard_href("prefix.CatalogList")
     catalog_back_label = "Back to Catalog"
-    page_title = "New Catalog Entry"
-    page_subtitle = "Admin-only editor for model catalog entries. New entries start unpublished until you publish them from the catalog detail page."
+    page_title = "New Catalog Model"
+    page_subtitle = "Admin-only editor for catalog models. New models start unpublished until you publish them from the catalog detail page."
     if selected_entry is not None:
-        page_title = "Edit Catalog Entry"
+        page_title = "Edit Catalog Model"
         display_name = str(selected_entry.get("display_name", "")).strip()
         if display_name != "":
             page_subtitle = f"Editing {display_name}."
@@ -2517,7 +2517,7 @@ def build_catalog_default_summary(default_func_spec):
 
 def normalize_catalog_entry_row(row):
     if not isinstance(row, dict):
-        raise ValueError("Invalid catalog entry row")
+        raise ValueError("Invalid catalog model row")
 
     entry = dict(row)
     for key in ("tags", "recommended_use_cases", "default_func_spec"):
@@ -2559,10 +2559,10 @@ def query_catalog_entry_by_id(catalog_id: int, *, active_only=False):
                 cursor.execute(query, (catalog_id,))
                 row = cursor.fetchone()
     except Exception as e:
-        raise RuntimeError(f"failed to query catalog entry {catalog_id}: {e}")
+        raise RuntimeError(f"failed to query catalog model {catalog_id}: {e}")
 
     if row is None:
-        raise LookupError(f"catalog entry {catalog_id} not found")
+        raise LookupError(f"catalog model {catalog_id} not found")
 
     return normalize_catalog_entry_row(dict(row))
 
@@ -2588,10 +2588,10 @@ def query_catalog_entry_by_slug(slug: str, *, active_only=False):
                 cursor.execute(query, (normalized_slug,))
                 row = cursor.fetchone()
     except Exception as e:
-        raise RuntimeError(f"failed to query catalog entry `{normalized_slug}`: {e}")
+        raise RuntimeError(f"failed to query catalog model `{normalized_slug}`: {e}")
 
     if row is None:
-        raise LookupError(f"catalog entry `{normalized_slug}` not found")
+        raise LookupError(f"catalog model `{normalized_slug}` not found")
 
     return normalize_catalog_entry_row(dict(row))
 
@@ -2607,8 +2607,8 @@ def require_catalog_entry_visible_to_current_user(entry):
     entry_slug = str((entry or {}).get("slug", "")).strip()
     entry_id = (entry or {}).get("id")
     if entry_slug != "":
-        raise LookupError(f"catalog entry `{entry_slug}` not found")
-    raise LookupError(f"catalog entry {entry_id} not found")
+        raise LookupError(f"catalog model `{entry_slug}` not found")
+    raise LookupError(f"catalog model {entry_id} not found")
 
 
 def fetch_catalog_entry_for_current_user(catalog_id: int):
@@ -2651,10 +2651,10 @@ def query_catalog_entry_by_source_model_id(source_model_id: str, *, active_only=
     entries = list_catalog_entries_by_source_model_id(source_model_id, active_only=active_only)
     if not entries:
         normalized_source_model_id = str(source_model_id or "").strip()
-        raise LookupError(f"catalog entry for `{normalized_source_model_id}` not found")
+        raise LookupError(f"catalog model for `{normalized_source_model_id}` not found")
     if len(entries) > 1:
         normalized_source_model_id = str(source_model_id or "").strip()
-        raise LookupError(f"multiple catalog entries exist for `{normalized_source_model_id}`; query by id or slug instead")
+        raise LookupError(f"multiple catalog models exist for `{normalized_source_model_id}`; query by id or slug instead")
     return entries[0]
 
 
@@ -2796,7 +2796,7 @@ def insert_catalog_entry(entry_payload):
                 row = cursor.fetchone()
             conn.commit()
     except Exception as e:
-        raise RuntimeError(f"failed to create catalog entry: {e}")
+        raise RuntimeError(f"failed to create catalog model: {e}")
     return normalize_catalog_entry_row(dict(row))
 
 
@@ -2841,9 +2841,9 @@ def update_catalog_entry(catalog_id: int, entry_payload):
                 row = cursor.fetchone()
             conn.commit()
     except Exception as e:
-        raise RuntimeError(f"failed to update catalog entry {catalog_id}: {e}")
+        raise RuntimeError(f"failed to update catalog model {catalog_id}: {e}")
     if row is None:
-        raise LookupError(f"catalog entry {catalog_id} not found")
+        raise LookupError(f"catalog model {catalog_id} not found")
     return normalize_catalog_entry_row(dict(row))
 
 
@@ -2861,9 +2861,9 @@ def delete_catalog_entry(catalog_id: int):
                 row = cursor.fetchone()
             conn.commit()
     except Exception as e:
-        raise RuntimeError(f"failed to delete catalog entry {catalog_id}: {e}")
+        raise RuntimeError(f"failed to delete catalog model {catalog_id}: {e}")
     if row is None:
-        raise LookupError(f"catalog entry {catalog_id} not found")
+        raise LookupError(f"catalog model {catalog_id} not found")
     return normalize_catalog_entry_row(dict(row))
 
 
@@ -2893,9 +2893,9 @@ def set_catalog_entry_active(catalog_id: int, *, is_active: bool):
             conn.commit()
     except Exception as e:
         action = "publish" if desired_active else "unpublish"
-        raise RuntimeError(f"failed to {action} catalog entry {catalog_id}: {e}")
+        raise RuntimeError(f"failed to {action} catalog model {catalog_id}: {e}")
     if row is None:
-        raise LookupError(f"catalog entry {catalog_id} not found")
+        raise LookupError(f"catalog model {catalog_id} not found")
     return normalize_catalog_entry_row(dict(row))
 
 
@@ -2909,11 +2909,18 @@ def collect_catalog_filter_options(entries):
         for tag in (entry.get("tags") if isinstance(entry.get("tags"), list) else [])
         if str(tag).strip() != ""
     })
+    use_cases = sorted({
+        str(use_case).strip()
+        for entry in entries
+        for use_case in (entry.get("recommended_use_cases") if isinstance(entry.get("recommended_use_cases"), list) else [])
+        if str(use_case).strip() != ""
+    })
     return {
         "providers": providers,
         "modalities": modalities,
         "api_types": api_types,
         "tags": tags,
+        "use_cases": use_cases,
     }
 
 
@@ -3008,7 +3015,7 @@ def build_catalog_slug(provider, display_name):
 
 def build_catalog_default_func_name(catalog_entry):
     if not isinstance(catalog_entry, dict):
-        raise ValueError("Invalid catalog entry")
+        raise ValueError("Invalid catalog model")
 
     source_model_id = str(catalog_entry.get("source_model_id", "")).strip()
     source_model_parts = [part.strip() for part in source_model_id.split("/") if part.strip() != ""]
@@ -3023,7 +3030,7 @@ def build_catalog_default_func_name(catalog_entry):
     if slug != "":
         return slug
 
-    raise ValueError("Catalog entry is missing source_model_id, display_name, and slug")
+        raise ValueError("Catalog model is missing source_model_id, display_name, and slug")
 
 
 def normalize_catalog_string_field(value, field_name, *, allow_empty=False):
@@ -3666,13 +3673,130 @@ def project_spec_for_editor(
     return payload
 
 
+def json_values_equal_for_basic_compatibility(lhs, rhs):
+    if isinstance(lhs, bool) or isinstance(rhs, bool):
+        return isinstance(lhs, bool) and isinstance(rhs, bool) and lhs == rhs
+
+    lhs_is_number = isinstance(lhs, (int, float)) and not isinstance(lhs, bool)
+    rhs_is_number = isinstance(rhs, (int, float)) and not isinstance(rhs, bool)
+    if lhs_is_number or rhs_is_number:
+        return lhs_is_number and rhs_is_number and float(lhs) == float(rhs)
+
+    if isinstance(lhs, str) or isinstance(rhs, str):
+        return isinstance(lhs, str) and isinstance(rhs, str) and lhs == rhs
+
+    if lhs is None or rhs is None:
+        return lhs is None and rhs is None
+
+    return type(lhs) is type(rhs) and lhs == rhs
+
+
+def find_first_basic_compatibility_difference(lhs, rhs, path="spec"):
+    if isinstance(lhs, dict) and isinstance(rhs, dict):
+        lhs_keys = set(lhs.keys())
+        rhs_keys = set(rhs.keys())
+        for key in sorted(lhs_keys - rhs_keys):
+            return f"{path}.{key}"
+        for key in sorted(rhs_keys - lhs_keys):
+            return f"{path}.{key}"
+        for key in sorted(lhs_keys):
+            diff_path = find_first_basic_compatibility_difference(lhs[key], rhs[key], f"{path}.{key}")
+            if diff_path is not None:
+                return diff_path
+        return None
+
+    if isinstance(lhs, list) and isinstance(rhs, list):
+        if len(lhs) != len(rhs):
+            return f"{path}.length"
+        for idx, (lhs_item, rhs_item) in enumerate(zip(lhs, rhs)):
+            diff_path = find_first_basic_compatibility_difference(lhs_item, rhs_item, f"{path}[{idx}]")
+            if diff_path is not None:
+                return diff_path
+        return None
+
+    if json_values_equal_for_basic_compatibility(lhs, rhs):
+        return None
+    return path
+
+
+def assess_basic_mode_compatibility_for_edit(
+    saved_spec,
+    projected_payload,
+    *,
+    catalog_source=None,
+):
+    saved_spec_obj = clone_json_value(saved_spec) if isinstance(saved_spec, dict) else {}
+    projected_obj = projected_payload if isinstance(projected_payload, dict) else {}
+    basic_spec = clone_json_value(projected_obj.get("basic_spec") if isinstance(projected_obj.get("basic_spec"), dict) else {})
+
+    try:
+        if catalog_source is not None:
+            hf_model = resolve_effective_model_target_from_spec(
+                saved_spec_obj,
+                commands_label="existing catalog-backed function commands",
+                sample_query_label="existing catalog-backed function sample_query.body.model",
+            ).strip()
+            if hf_model == "":
+                raise ValueError("existing catalog-backed model is missing an effective model target")
+            rebuilt_spec = build_catalog_customized_full_spec(
+                hf_model,
+                basic_spec,
+                saved_spec_obj,
+                max_node_vram=0,
+                max_node_gpu_count=0,
+                editor_mode="basic",
+                catalog_source=catalog_source,
+            )
+        else:
+            hf_model = str(projected_obj.get("hf_model", "")).strip()
+            if hf_model == "":
+                hf_model = resolve_effective_model_target_from_spec(
+                    saved_spec_obj,
+                    commands_label="existing function commands",
+                    sample_query_label="existing function sample_query.body.model",
+                ).strip()
+            if hf_model == "":
+                raise ValueError("existing function spec is missing an effective model target")
+            rebuilt_spec = build_updated_full_spec_from_saved_spec(
+                hf_model,
+                basic_spec,
+                saved_spec_obj,
+                max_node_vram=0,
+                max_node_gpu_count=0,
+                editor_mode="basic",
+                protected_env_keys=RESERVED_ENV_KEYS,
+                require_image_whitelist=True,
+                locked_image_name=None,
+            )
+    except Exception as e:
+        return {
+            "basic_mode_supported": False,
+            "initial_tab": "advanced",
+            "basic_mode_incompatibility_reason": f"Basic mode is unavailable because the no-op Basic compatibility simulation failed: {e}",
+        }
+
+    diff_path = find_first_basic_compatibility_difference(saved_spec_obj, rebuilt_spec, path="spec")
+    if diff_path is None:
+        return {
+            "basic_mode_supported": True,
+            "initial_tab": "basic",
+            "basic_mode_incompatibility_reason": "",
+        }
+
+    return {
+        "basic_mode_supported": False,
+        "initial_tab": "advanced",
+        "basic_mode_incompatibility_reason": f"Basic mode is unavailable because a no-op Basic save would rewrite `{diff_path}`.",
+    }
+
+
 def project_catalog_entry_for_create(catalog_entry):
     if not isinstance(catalog_entry, dict):
-        raise ValueError("Invalid catalog entry")
+        raise ValueError("Invalid catalog model")
 
     slug = str(catalog_entry.get("slug", "")).strip()
     if slug == "":
-        raise ValueError("Catalog entry slug is missing")
+        raise ValueError("Catalog model slug is missing")
 
     catalog_source = {
         "catalog_id": int(catalog_entry["id"]),
@@ -3717,7 +3841,7 @@ def project_func_for_edit(full_func):
         extra_fields.update(maybe_get_catalog_entry_metadata(catalog_source))
         editable_env_exclusions = CATALOG_PLATFORM_ENV_KEYS
 
-    return project_spec_for_editor(
+    projected_payload = project_spec_for_editor(
         spec,
         tenant=tenant,
         namespace=namespace,
@@ -3725,6 +3849,14 @@ def project_func_for_edit(full_func):
         editable_env_exclusions=editable_env_exclusions,
         extra_fields=extra_fields,
     )
+    projected_payload.update(
+        assess_basic_mode_compatibility_for_edit(
+            spec,
+            projected_payload,
+            catalog_source=catalog_source,
+        )
+    )
+    return projected_payload
 
 
 def parse_edit_key(edit_key: str):
@@ -4106,6 +4238,7 @@ def CatalogList():
         modality_options=filter_options["modalities"],
         api_type_options=filter_options["api_types"],
         tag_options=filter_options["tags"],
+        use_case_options=filter_options["use_cases"],
         deploy_target=deploy_target,
         is_inferx_admin=is_inferx_admin,
         published_entry_count=published_entry_count,
@@ -4139,9 +4272,29 @@ def CatalogDetail(slug):
     except Exception as e:
         return json_error(f"failed to load catalog model: {e}", 500)
 
+    catalog_funcspec = "{}"
+    catalog_full_funcspec = "{}"
+    try:
+        full_catalog_spec = validate_catalog_template_spec(entry.get("default_func_spec"))
+        catalog_edit_data = project_spec_for_editor(
+            full_catalog_spec,
+            editable_env_exclusions=CATALOG_PLATFORM_ENV_KEYS,
+        )
+        catalog_funcspec = json.dumps(catalog_edit_data["spec"], indent=4)
+        catalog_full_funcspec = json.dumps(full_catalog_spec, indent=4)
+    except Exception:
+        if isinstance(entry, dict) and isinstance(entry.get("default_func_spec"), dict):
+            catalog_full_funcspec = json.dumps(entry["default_func_spec"], indent=4)
+
+    entry_for_view = clone_json_value(entry) if isinstance(entry, dict) else {}
+    if not is_inferx_admin and isinstance(entry_for_view, dict):
+        entry_for_view.pop("default_func_spec", None)
+
     return render_template(
         "catalog_detail.html",
-        catalog_entry=entry,
+        catalog_entry=entry_for_view,
+        catalog_funcspec=catalog_funcspec,
+        catalog_full_funcspec=catalog_full_funcspec,
         deploy_target=deploy_target,
         is_inferx_admin=is_inferx_admin,
     )
@@ -4200,6 +4353,9 @@ def CatalogDeployNow(catalog_id: int):
             return json_error(body, resp.status_code)
 
         return jsonify({
+            "name": name,
+            "tenant": tenant,
+            "namespace": namespace,
             "redirect_url": dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name)
         })
     except LookupError as e:
@@ -4467,6 +4623,17 @@ def FuncCreate():
             catalog_id = parse_catalog_id(catalog_id_raw)
             catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
             initial_model_data = project_catalog_entry_for_create(catalog_entry)
+            try:
+                deploy_target = resolve_catalog_deploy_target_context()
+            except Exception:
+                deploy_target = None
+            if isinstance(initial_model_data, dict):
+                default_tenant = str(((deploy_target or {}).get("tenant")) or "").strip()
+                default_namespace = str(((deploy_target or {}).get("namespace")) or "").strip()
+                if default_tenant != "" and str(initial_model_data.get("tenant", "") or "").strip() == "":
+                    initial_model_data["tenant"] = default_tenant
+                if default_namespace != "" and str(initial_model_data.get("namespace", "") or "").strip() == "":
+                    initial_model_data["namespace"] = default_namespace
         except ValueError as e:
             return json_error(str(e), 400)
         except LookupError as e:
@@ -4474,7 +4641,7 @@ def FuncCreate():
         except RuntimeError as e:
             return json_error(str(e), 502)
         except Exception as e:
-            return json_error(f"failed to load catalog entry: {e}", 500)
+            return json_error(f"failed to load catalog model: {e}", 500)
     elif edit_key != "":
         try:
             tenant, namespace, name = parse_edit_key(edit_key)
@@ -4773,13 +4940,6 @@ def ListFunc():
         include_public=can_access_public_tenant_in_dashboard(roles),
     )
 
-    catalog_entries_by_id = {}
-    try:
-        for catalog_entry in list_catalog_entries(active_only=False):
-            catalog_entries_by_id[int(catalog_entry["id"])] = catalog_entry
-    except Exception:
-        catalog_entries_by_id = {}
-
     count = 0
     gpucount = 0
     vram = 0
@@ -4796,22 +4956,8 @@ def ListFunc():
                 catalog_source = normalize_catalog_source(row_spec.get("catalog_source")) if isinstance(row_spec, dict) else None
                 func['catalog_ui'] = None
                 if catalog_source is not None:
-                    catalog_entry = catalog_entries_by_id.get(catalog_source["catalog_id"])
-                    current_catalog_version = 0
-                    if isinstance(catalog_entry, dict):
-                        try:
-                            current_catalog_version = int(catalog_entry.get("catalog_version") or 0)
-                        except Exception:
-                            current_catalog_version = 0
                     func['catalog_ui'] = {
                         "created_from_catalog": True,
-                        "catalog_id": catalog_source["catalog_id"],
-                        "catalog_version": catalog_source["catalog_version"],
-                        "display_name": str((catalog_entry or {}).get("display_name", "")).strip(),
-                        "slug": str((catalog_entry or {}).get("slug", "")).strip(),
-                        "is_active": bool((catalog_entry or {}).get("is_active", False)) if catalog_entry is not None else None,
-                        "has_newer_version": current_catalog_version > catalog_source["catalog_version"],
-                        "current_catalog_version": current_catalog_version,
                     }
         except Exception:
             if isinstance(func, dict):

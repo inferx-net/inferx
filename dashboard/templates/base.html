@@ -174,6 +174,7 @@
             text-decoration: none;
             cursor: pointer;
             box-sizing: border-box;
+            transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
         }
 
         .ix-btn.secondary {
@@ -185,6 +186,31 @@
         .ix-btn.danger {
             background: #b91c1c;
             border-color: #b91c1c;
+        }
+
+        .ix-btn:hover:not(:disabled),
+        .ix-btn:focus-visible:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+        }
+
+        .ix-btn:hover:not(:disabled) {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+
+        .ix-btn.secondary:hover:not(:disabled),
+        .ix-btn.secondary:focus-visible:not(:disabled) {
+            background: #eff6ff;
+            border-color: #60a5fa;
+            box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
+        }
+
+        .ix-btn.danger:hover:not(:disabled),
+        .ix-btn.danger:focus-visible:not(:disabled) {
+            background: #991b1b;
+            border-color: #991b1b;
+            box-shadow: 0 8px 18px rgba(185, 28, 28, 0.18);
         }
 
         .ix-btn:disabled {
