@@ -184,7 +184,7 @@
     </div>
 
     <div class="panel">
-        <h3 id="admin-catalog-form-title">Create Catalog Model</h3>
+        <h3 id="admin-catalog-form-title">New Catalog Model</h3>
         <form id="admin-catalog-form">
             <input id="admin-catalog-id" type="hidden" value="">
             <div class="catalog-editor-grid">
@@ -453,7 +453,7 @@
 
             clearMessages();
             idInput.value = String(entry.id);
-            formTitle.textContent = `Edit Catalog Model #${entry.id}`;
+            formTitle.textContent = `Edit #${entry.id}`;
             saveBtn.textContent = 'Update';
             setPublishButtonState(!entry.is_active, 'Update & Publish');
             setDeleteButtonState(true, 'Delete');

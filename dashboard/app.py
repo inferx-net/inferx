@@ -1100,7 +1100,7 @@ def render_catalog_admin_page(
     page_title = "New Catalog Model"
     page_subtitle = "Admin-only editor for catalog models. New models start unpublished until you publish them from the catalog detail page."
     if selected_entry is not None:
-        page_title = "Edit Catalog Model"
+        page_title = "Edit"
         display_name = str(selected_entry.get("display_name", "")).strip()
         if display_name != "":
             page_subtitle = f"Editing {display_name}."
@@ -2814,8 +2814,8 @@ def update_catalog_entry(catalog_id: int, entry_payload):
             is_moe = %s,
             tags = %s::jsonb,
             recommended_use_cases = %s::jsonb,
-            default_func_spec = %s::jsonb,
-            catalog_version = catalog_version + 1
+            catalog_version = CASE WHEN default_func_spec IS NOT DISTINCT FROM %s::jsonb THEN catalog_version ELSE catalog_version + 1 END,
+            default_func_spec = %s::jsonb
         WHERE id = %s
         RETURNING *
     """
@@ -2834,6 +2834,7 @@ def update_catalog_entry(catalog_id: int, entry_payload):
                         entry_payload["is_moe"],
                         json.dumps(entry_payload["tags"]),
                         json.dumps(entry_payload["recommended_use_cases"]),
+                        json.dumps(entry_payload["default_func_spec"]),
                         json.dumps(entry_payload["default_func_spec"]),
                         catalog_id,
                     ),
@@ -2880,8 +2881,7 @@ def set_catalog_entry_active(catalog_id: int, *, is_active: bool):
 
     query = """
         UPDATE CatalogModel
-        SET is_active = %s,
-            catalog_version = catalog_version + 1
+        SET is_active = %s
         WHERE id = %s
         RETURNING *
     """

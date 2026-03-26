@@ -81,6 +81,20 @@
         vertical-align: middle;
     }
 
+    .catalog-version-cell {
+        white-space: nowrap;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        width: 72px;
+        min-width: 72px;
+    }
+
+    .catalog-version-header {
+        white-space: nowrap;
+        width: 72px;
+        min-width: 72px;
+    }
+
     .catalog-table tbody tr {
         cursor: pointer;
     }
@@ -339,6 +353,9 @@
                 <col style="width: 22%;">
                 <col style="width: 40%;">
                 <col style="width: 14%;">
+                {% if is_inferx_admin %}
+                <col style="width: 72px;">
+                {% endif %}
                 <col style="width: 480px;">
             </colgroup>
             <thead>
@@ -346,6 +363,9 @@
                     <th>Model</th>
                     <th>Intro</th>
                     <th>Tags</th>
+                    {% if is_inferx_admin %}
+                    <th class="catalog-version-header">Version</th>
+                    {% endif %}
                     <th>Action</th>
                 </tr>
             </thead>
@@ -379,6 +399,9 @@
                             {% endfor %}
                         </div>
                     </td>
+                    {% if is_inferx_admin %}
+                    <td class="catalog-version-cell">{{ entry.catalog_version }}</td>
+                    {% endif %}
                     <td>
                         <div class="ix-row-actions catalog-actions">
                             <a class="ix-btn secondary" href="{{ url_for('prefix.FuncCreate') }}?catalog_id={{ entry.id }}">Customize &amp; Deploy</a>
@@ -391,7 +414,7 @@
                                 Deploy Now
                             </button>
                             {% if is_inferx_admin %}
-                            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminEdit', catalog_id=entry.id) }}">Edit Model</a>
+                            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminEdit', catalog_id=entry.id) }}">Edit</a>
                             <button
                                 type="button"
                                 class="ix-btn secondary {{ 'catalog-deactivate-btn catalog-visibility-btn' if entry.is_active else 'catalog-publish-btn catalog-visibility-btn' }}"
