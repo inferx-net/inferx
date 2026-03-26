@@ -156,6 +156,8 @@ pub fn DefaultLoadingTimeout() -> u64 {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum ApiType {
+    #[serde(rename = "unknown")]
+    Unknown,
     #[serde(rename = "text2text")]
     Text2Text,
     #[serde(rename = "image2text")]
@@ -189,6 +191,16 @@ pub struct CatalogSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MountFile {
+    #[serde(rename = "src_path")]
+    pub srcpath: String,
+    #[serde(rename = "target_path")]
+    pub targetpath: String,
+    #[serde(default)]
+    pub data: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncSpec {
     pub image: String,
     pub commands: Vec<String>,
@@ -218,6 +230,9 @@ pub struct FuncSpec {
 
     #[serde(rename = "catalog_source", default, skip_serializing_if = "Option::is_none")]
     pub catalogSource: Option<CatalogSource>,
+
+    #[serde(default)]
+    pub mountfiles: Vec<MountFile>,
 }
 
 fn PromptDefault() -> String {
@@ -280,6 +295,7 @@ impl Default for FuncSpec {
             sampleCall: SampleCall::default(),
             policy: Default::default(),
             catalogSource: None,
+            mountfiles: Default::default(),
         };
     }
 }

@@ -280,10 +280,50 @@
         }
 
         .brand-header h1 {
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            column-gap: 8px;
+            row-gap: 4px;
             margin: 0;
             color: #f8fafc;
             font-size: clamp(16px, 1.9vw, 25px);
             line-height: 1.1;
+        }
+
+        .brand-title-lockup {
+            display: inline-flex;
+            align-items: flex-start;
+            gap: 4px;
+            white-space: nowrap;
+        }
+
+        .brand-title-name {
+            font-weight: 700;
+        }
+
+        .brand-title-separator {
+            font-weight: 500;
+        }
+
+        .brand-title-tagline {
+            font-weight: 500;
+        }
+
+        .brand-beta-badge {
+            display: inline-block;
+            padding: 0 3px;
+            border-radius: 999px;
+            background: #fbbf24;
+            color: #1f2937;
+            font-size: 0.3em;
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            position: relative;
+            top: -0.55em;
         }
 
         .brand-actions-cell {
@@ -444,7 +484,15 @@
         <tr>
             <td class="brand-logo-cell"><img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="48" height="48"></td>
             <td class="brand-title-cell">
-                <h1>InferX — Serverless GPU Inference Platform, Built for Agent-Native Workloads</h1>
+
+                <h1>
+                    <span class="brand-title-lockup">
+                        <span class="brand-title-name">InferX</span>
+                        <span class="brand-beta-badge">Beta</span>
+                    </span>
+                    <span class="brand-title-separator">&mdash;</span>
+                    <span class="brand-title-tagline">Serverless GPU Inference Platform, Built for Agent-Native Workloads</span>
+                </h1>
             </td>
             <td class="brand-actions-cell">
                 <div id="brand-auth-menu" class="brand-auth-menu">

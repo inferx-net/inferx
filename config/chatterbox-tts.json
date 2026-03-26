@@ -1,0 +1,59 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "chatterbox-tts",
+    "object": {
+        "spec": {
+            "image": "bhimrazy/chatterbox-tts:v0.1.0",
+            "commands": [],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 13000
+                }
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ]
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2audio",
+                "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?",
+                "path": "speech",
+                "body": {
+                    "text": "This is a test of the Infer X serverless infrastructure. That is great!",
+                    "exaggeration": 0.5,
+                    "cfg": 0.5,
+                    "temperature": 0.8
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}
