@@ -152,6 +152,180 @@
         color: #991b1b;
     }
 
+    .catalog-selected-use-cases {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        min-height: 38px;
+        padding: 8px 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #f8fafc;
+    }
+
+    .catalog-selected-use-cases.is-empty {
+        color: #64748b;
+        font-size: 13px;
+    }
+
+    .catalog-selected-use-case {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .catalog-selected-use-case-remove {
+        border: none;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        padding: 0;
+        cursor: pointer;
+        line-height: 1;
+    }
+
+    .catalog-use-case-custom-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .catalog-use-case-input-wrap {
+        position: relative;
+    }
+
+    .catalog-use-case-suggestions {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        z-index: 20;
+        display: grid;
+        gap: 2px;
+        max-height: 220px;
+        overflow-y: auto;
+        padding: 6px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #ffffff;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+    }
+
+    .catalog-use-case-suggestions[hidden] {
+        display: none !important;
+    }
+
+    .catalog-use-case-suggestion {
+        text-align: left;
+        border: none;
+        background: transparent;
+        color: #1f2937;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: 13px;
+        cursor: pointer;
+    }
+
+    .catalog-use-case-suggestion:hover,
+    .catalog-use-case-suggestion.is-active {
+        background: #eff6ff;
+        color: #1d4ed8;
+    }
+
+    .catalog-use-case-groups {
+        display: grid;
+        gap: 12px;
+    }
+
+    .catalog-use-case-library {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #ffffff;
+        padding: 0;
+    }
+
+    .catalog-use-case-library > summary {
+        list-style: none;
+    }
+
+    .catalog-use-case-library > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .catalog-use-case-library-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        color: #2563eb;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 10px 12px;
+        cursor: pointer;
+        user-select: none;
+        box-sizing: border-box;
+    }
+
+    .catalog-use-case-library-toggle::after {
+        content: "Show curated list";
+    }
+
+    .catalog-use-case-library[open] .catalog-use-case-library-toggle::after {
+        content: "Hide curated list";
+    }
+
+    .catalog-use-case-library-content {
+        padding: 0 12px 12px 12px;
+    }
+
+    .catalog-use-case-group {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        padding: 10px 12px;
+        background: #f8fafc;
+    }
+
+    .catalog-use-case-group-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #475569;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+    }
+
+    .catalog-use-case-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .catalog-use-case-option {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #334155;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .catalog-use-case-option.is-selected {
+        border-color: #2563eb;
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
     @media (max-width: 900px) {
         .catalog-editor-grid {
             grid-template-columns: 1fr;
@@ -252,8 +426,43 @@
                 <div class="catalog-editor-field full">
                     <label for="admin-catalog-use-cases">Recommended Use Cases</label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-use-cases" type="text" placeholder="Code generation, Code assistant, Chat">
-                        <div class="catalog-editor-hint">Comma-separated list. Stored as a JSON string array.</div>
+                        <div id="admin-catalog-selected-use-cases" class="catalog-selected-use-cases is-empty" aria-live="polite"></div>
+                        <div class="catalog-use-case-custom-row">
+                            <div class="catalog-use-case-input-wrap">
+                                <input
+                                    id="admin-catalog-use-cases"
+                                    type="text"
+                                    autocomplete="off"
+                                    placeholder="Type to search or add a use case"
+                                >
+                                <div id="admin-catalog-use-case-suggestions" class="catalog-use-case-suggestions" hidden></div>
+                            </div>
+                            <button id="admin-catalog-use-case-add-btn" class="ix-btn secondary" type="button">Add</button>
+                        </div>
+                        <div class="catalog-editor-hint">Choose from the curated list below. You may also add a custom label when needed. Stored as a JSON string array.</div>
+                        <details class="catalog-use-case-library">
+                            <summary class="catalog-use-case-library-toggle">Curated use-case library</summary>
+                            <div class="catalog-use-case-library-content">
+                                <div class="catalog-use-case-groups">
+                                    {% for group in catalog_use_case_groups %}
+                                    <div class="catalog-use-case-group">
+                                        <div class="catalog-use-case-group-title">{{ group["label"] }}</div>
+                                        <div class="catalog-use-case-options">
+                                            {% for use_case in group["items"] %}
+                                            <button
+                                                type="button"
+                                                class="catalog-use-case-option"
+                                                data-use-case="{{ use_case }}"
+                                            >
+                                                {{ use_case }}
+                                            </button>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </details>
                     </div>
                 </div>
                 <div class="catalog-editor-field full">
@@ -341,9 +550,16 @@
         const detailedIntroInput = document.getElementById('admin-catalog-detailed-intro');
         const tagsInput = document.getElementById('admin-catalog-tags');
         const useCasesInput = document.getElementById('admin-catalog-use-cases');
+        const useCaseAddBtn = document.getElementById('admin-catalog-use-case-add-btn');
+        const selectedUseCasesNode = document.getElementById('admin-catalog-selected-use-cases');
+        const useCaseSuggestionsNode = document.getElementById('admin-catalog-use-case-suggestions');
         const defaultSpecInput = document.getElementById('admin-catalog-default-spec');
         const isMoeInput = document.getElementById('admin-catalog-is-moe');
         const initialEditId = {{ initial_edit_entry_id | tojson }};
+        const useCaseOptionButtons = Array.from(document.querySelectorAll('.catalog-use-case-option'));
+        const curatedUseCaseOptions = uniqueUseCaseList(useCaseOptionButtons.map((button) => button.dataset.useCase || ''));
+        let selectedUseCases = [];
+        let activeUseCaseSuggestionIndex = -1;
 
         function formatDefaultSpecInput() {
             const rawValue = defaultSpecInput.value.trim();
@@ -384,6 +600,168 @@
                 .filter((item) => item !== '');
         }
 
+        function normalizeUseCaseLabel(value) {
+            return String(value || '').trim().replace(/\s+/g, ' ');
+        }
+
+        function uniqueUseCaseList(values) {
+            const deduped = [];
+            const seen = new Set();
+            (Array.isArray(values) ? values : []).forEach((value) => {
+                const normalized = normalizeUseCaseLabel(value);
+                if (normalized === '') {
+                    return;
+                }
+                const key = normalized.toLowerCase();
+                if (seen.has(key)) {
+                    return;
+                }
+                seen.add(key);
+                deduped.push(normalized);
+            });
+            return deduped;
+        }
+
+        function setSelectedUseCases(values) {
+            selectedUseCases = uniqueUseCaseList(values);
+            renderSelectedUseCases();
+        }
+
+        function addSelectedUseCase(value) {
+            setSelectedUseCases(selectedUseCases.concat([value]));
+        }
+
+        function removeSelectedUseCase(value) {
+            const normalizedTarget = normalizeUseCaseLabel(value).toLowerCase();
+            setSelectedUseCases(selectedUseCases.filter((item) => item.toLowerCase() !== normalizedTarget));
+        }
+
+        function renderSelectedUseCases() {
+            if (!selectedUseCasesNode) {
+                return;
+            }
+
+            selectedUseCasesNode.innerHTML = '';
+            if (selectedUseCases.length === 0) {
+                selectedUseCasesNode.classList.add('is-empty');
+                selectedUseCasesNode.textContent = 'No use cases selected.';
+            } else {
+                selectedUseCasesNode.classList.remove('is-empty');
+                selectedUseCases.forEach((value) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'catalog-selected-use-case';
+
+                    const text = document.createElement('span');
+                    text.textContent = value;
+                    chip.appendChild(text);
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.className = 'catalog-selected-use-case-remove';
+                    removeBtn.textContent = 'x';
+                    removeBtn.setAttribute('aria-label', `Remove ${value}`);
+                    removeBtn.addEventListener('click', () => {
+                        removeSelectedUseCase(value);
+                    });
+                    chip.appendChild(removeBtn);
+
+                    selectedUseCasesNode.appendChild(chip);
+                });
+            }
+
+            const selectedKeys = new Set(selectedUseCases.map((item) => item.toLowerCase()));
+            useCaseOptionButtons.forEach((button) => {
+                const label = normalizeUseCaseLabel(button.dataset.useCase || '');
+                button.classList.toggle('is-selected', selectedKeys.has(label.toLowerCase()));
+            });
+
+            renderUseCaseSuggestions();
+        }
+
+        function getFilteredUseCaseSuggestions() {
+            const query = normalizeUseCaseLabel(useCasesInput?.value || '').toLowerCase();
+            const selectedKeys = new Set(selectedUseCases.map((item) => item.toLowerCase()));
+            const filtered = curatedUseCaseOptions.filter((value) => {
+                const key = value.toLowerCase();
+                if (selectedKeys.has(key)) {
+                    return false;
+                }
+                if (query === '') {
+                    return false;
+                }
+                return key.includes(query);
+            });
+            return filtered.slice(0, 8);
+        }
+
+        function closeUseCaseSuggestions() {
+            activeUseCaseSuggestionIndex = -1;
+            if (useCaseSuggestionsNode) {
+                useCaseSuggestionsNode.hidden = true;
+                useCaseSuggestionsNode.innerHTML = '';
+            }
+        }
+
+        function commitUseCaseSuggestion(value) {
+            const normalized = normalizeUseCaseLabel(value);
+            if (normalized === '') {
+                return;
+            }
+            addSelectedUseCase(normalized);
+            useCasesInput.value = '';
+            closeUseCaseSuggestions();
+            useCasesInput.focus();
+        }
+
+        function renderUseCaseSuggestions() {
+            if (!useCaseSuggestionsNode) {
+                return;
+            }
+
+            const suggestions = getFilteredUseCaseSuggestions();
+            useCaseSuggestionsNode.innerHTML = '';
+            if (suggestions.length === 0) {
+                closeUseCaseSuggestions();
+                return;
+            }
+
+            if (activeUseCaseSuggestionIndex >= suggestions.length) {
+                activeUseCaseSuggestionIndex = 0;
+            }
+            if (activeUseCaseSuggestionIndex < 0) {
+                activeUseCaseSuggestionIndex = 0;
+            }
+
+            suggestions.forEach((value, index) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'catalog-use-case-suggestion';
+                if (index === activeUseCaseSuggestionIndex) {
+                    button.classList.add('is-active');
+                }
+                button.textContent = value;
+                button.addEventListener('mousedown', (event) => {
+                    event.preventDefault();
+                });
+                button.addEventListener('click', () => {
+                    commitUseCaseSuggestion(value);
+                });
+                useCaseSuggestionsNode.appendChild(button);
+            });
+            useCaseSuggestionsNode.hidden = false;
+        }
+
+        function addCustomUseCaseFromInput() {
+            const value = normalizeUseCaseLabel(useCasesInput?.value || '');
+            if (value === '') {
+                return;
+            }
+            addSelectedUseCase(value);
+            useCasesInput.value = '';
+            closeUseCaseSuggestions();
+            useCasesInput.focus();
+        }
+
         function setPublishButtonState(visible, label) {
             if (!savePublishBtn) {
                 return;
@@ -418,6 +796,7 @@
             detailedIntroInput.value = '';
             tagsInput.value = '';
             useCasesInput.value = '';
+            setSelectedUseCases([]);
             defaultSpecInput.value = '';
             isMoeInput.checked = false;
         }
@@ -439,7 +818,8 @@
             briefIntroInput.value = entry.brief_intro || '';
             detailedIntroInput.value = entry.detailed_intro || '';
             tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
-            useCasesInput.value = Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases.join(', ') : '';
+            useCasesInput.value = '';
+            setSelectedUseCases(Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases : []);
             defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
             isMoeInput.checked = !!entry.is_moe;
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -469,7 +849,8 @@
             briefIntroInput.value = entry.brief_intro || '';
             detailedIntroInput.value = entry.detailed_intro || '';
             tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
-            useCasesInput.value = Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases.join(', ') : '';
+            useCasesInput.value = '';
+            setSelectedUseCases(Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases : []);
             defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
             isMoeInput.checked = !!entry.is_moe;
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -498,7 +879,7 @@
                 parameter_count_b: parameterCountInput.value.trim() === '' ? null : Number(parameterCountInput.value),
                 is_moe: isMoeInput.checked,
                 tags: parseCommaSeparatedList(tagsInput.value),
-                recommended_use_cases: parseCommaSeparatedList(useCasesInput.value),
+                recommended_use_cases: selectedUseCases.slice(),
                 default_func_spec: defaultFuncSpec
             };
 
@@ -656,6 +1037,59 @@
 
         form?.addEventListener('submit', submitForm);
         deleteBtn?.addEventListener('click', handleDelete);
+        useCaseOptionButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const value = normalizeUseCaseLabel(button.dataset.useCase || '');
+                if (value === '') {
+                    return;
+                }
+                if (selectedUseCases.some((item) => item.toLowerCase() === value.toLowerCase())) {
+                    removeSelectedUseCase(value);
+                } else {
+                    addSelectedUseCase(value);
+                }
+            });
+        });
+        useCaseAddBtn?.addEventListener('click', addCustomUseCaseFromInput);
+        useCasesInput?.addEventListener('input', () => {
+            activeUseCaseSuggestionIndex = -1;
+            renderUseCaseSuggestions();
+        });
+        useCasesInput?.addEventListener('focus', () => {
+            renderUseCaseSuggestions();
+        });
+        useCasesInput?.addEventListener('keydown', (event) => {
+            const suggestions = getFilteredUseCaseSuggestions();
+            if (event.key === 'ArrowDown' && suggestions.length > 0) {
+                event.preventDefault();
+                activeUseCaseSuggestionIndex = (activeUseCaseSuggestionIndex + 1 + suggestions.length) % suggestions.length;
+                renderUseCaseSuggestions();
+                return;
+            }
+            if (event.key === 'ArrowUp' && suggestions.length > 0) {
+                event.preventDefault();
+                activeUseCaseSuggestionIndex = (activeUseCaseSuggestionIndex - 1 + suggestions.length) % suggestions.length;
+                renderUseCaseSuggestions();
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                if (suggestions.length > 0 && activeUseCaseSuggestionIndex >= 0 && activeUseCaseSuggestionIndex < suggestions.length) {
+                    commitUseCaseSuggestion(suggestions[activeUseCaseSuggestionIndex]);
+                    return;
+                }
+                addCustomUseCaseFromInput();
+                return;
+            }
+            if (event.key === 'Escape') {
+                closeUseCaseSuggestions();
+            }
+        });
+        useCasesInput?.addEventListener('blur', () => {
+            window.setTimeout(() => {
+                closeUseCaseSuggestions();
+            }, 120);
+        });
         defaultSpecInput?.addEventListener('blur', () => {
             formatDefaultSpecInput();
         });
@@ -683,6 +1117,7 @@
             showMessage(errorBanner, initialPrefillError.trim());
         }
         formatDefaultSpecInput();
+        renderSelectedUseCases();
     })();
 </script>
 {% endblock %}
