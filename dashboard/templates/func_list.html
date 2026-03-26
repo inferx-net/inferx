@@ -59,7 +59,7 @@
 
     .func-list-toolbar {
         display: flex;
-        justify-content: flex-end;
+        justify-content: flex-start;
         align-items: center;
         gap: 12px;
         margin-bottom: 12px;
@@ -106,6 +106,22 @@
         flex-wrap: wrap;
     }
 
+    .empty-model-guide {
+        margin-top: 14px;
+        font-size: 14px;
+        color: #475569;
+    }
+
+    .empty-model-guide a {
+        color: #1d4ed8;
+        font-weight: 600;
+        text-decoration: underline;
+    }
+
+    .empty-model-guide a:hover {
+        color: #1e40af;
+    }
+
     #delete-status {
         margin-top: 8px;
         font-size: 13px;
@@ -126,7 +142,8 @@
 {% if has_models and can_manage_models %}
 <div class="func-list-toolbar">
     <div class="func-list-actions">
-        <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
+        <a class="ix-btn" href="{{ url_for('prefix.CatalogList') }}">Deploy From Catalog</a>
+        <a class="ix-btn secondary" href="{{ hosturl }}func_create">Build From Scratch</a>
     </div>
 </div>
 {% endif %}
@@ -261,10 +278,14 @@
 <section class="empty-model-state" aria-live="polite">
     <h2>No models yet</h2>
     {% if can_manage_models %}
-    <p>Create your first model to start serving inference with a few clicks, or browse the catalog for a curated starting point.</p>
+    <p>Deploy a model from the catalog, or build your own from scratch.</p>
     <div class="empty-model-actions">
-        <a class="ix-btn" href="{{ hosturl }}func_create">+ Create Model</a>
-        <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogList') }}">Browse Catalog</a>
+        <a class="ix-btn" href="{{ url_for('prefix.CatalogList') }}">Deploy From Catalog</a>
+        <a class="ix-btn secondary" href="{{ hosturl }}func_create">Build From Scratch</a>
+    </div>
+    <div class="empty-model-guide">
+        Not sure where to start?
+        <a href="https://inferx.net/#/blog/inferx-console-guide" target="_blank" rel="noopener noreferrer">Read the model creation guide</a>.
     </div>
     {% elif session.get('access_token', '') == '' %}
     <p>No public models are available right now. Log in or use ixctl with IFERX_APIKEY to create one.</p>

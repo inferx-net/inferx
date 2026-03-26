@@ -65,6 +65,7 @@
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
+        justify-content: flex-end;
     }
 
     .catalog-table-wrap {
@@ -289,7 +290,7 @@
         </div>
         {% if is_inferx_admin %}
         <div class="catalog-admin-actions">
-            <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew') }}">New Model</a>
+            <a class="ix-btn" href="{{ url_for('prefix.CatalogAdminNew') }}">+New Catalog Model</a>
         </div>
         {% endif %}
     </div>

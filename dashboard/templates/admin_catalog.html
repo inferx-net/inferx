@@ -152,7 +152,8 @@
         color: #991b1b;
     }
 
-    .catalog-selected-use-cases {
+    .catalog-selected-use-cases,
+    .catalog-selected-tags {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
@@ -163,12 +164,14 @@
         background: #f8fafc;
     }
 
-    .catalog-selected-use-cases.is-empty {
+    .catalog-selected-use-cases.is-empty,
+    .catalog-selected-tags.is-empty {
         color: #64748b;
         font-size: 13px;
     }
 
-    .catalog-selected-use-case {
+    .catalog-selected-use-case,
+    .catalog-selected-tag {
         display: inline-flex;
         align-items: center;
         gap: 6px;
@@ -181,7 +184,8 @@
         font-weight: 600;
     }
 
-    .catalog-selected-use-case-remove {
+    .catalog-selected-use-case-remove,
+    .catalog-selected-tag-remove {
         border: none;
         background: transparent;
         color: inherit;
@@ -191,18 +195,21 @@
         line-height: 1;
     }
 
-    .catalog-use-case-custom-row {
+    .catalog-use-case-custom-row,
+    .catalog-tag-custom-row {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 8px;
         align-items: center;
     }
 
-    .catalog-use-case-input-wrap {
+    .catalog-use-case-input-wrap,
+    .catalog-tag-input-wrap {
         position: relative;
     }
 
-    .catalog-use-case-suggestions {
+    .catalog-use-case-suggestions,
+    .catalog-tag-suggestions {
         position: absolute;
         top: calc(100% + 4px);
         left: 0;
@@ -219,11 +226,13 @@
         box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
     }
 
-    .catalog-use-case-suggestions[hidden] {
+    .catalog-use-case-suggestions[hidden],
+    .catalog-tag-suggestions[hidden] {
         display: none !important;
     }
 
-    .catalog-use-case-suggestion {
+    .catalog-use-case-suggestion,
+    .catalog-tag-suggestion {
         text-align: left;
         border: none;
         background: transparent;
@@ -235,32 +244,39 @@
     }
 
     .catalog-use-case-suggestion:hover,
-    .catalog-use-case-suggestion.is-active {
+    .catalog-use-case-suggestion.is-active,
+    .catalog-tag-suggestion:hover,
+    .catalog-tag-suggestion.is-active {
         background: #eff6ff;
         color: #1d4ed8;
     }
 
-    .catalog-use-case-groups {
+    .catalog-use-case-groups,
+    .catalog-tag-groups {
         display: grid;
         gap: 12px;
     }
 
-    .catalog-use-case-library {
+    .catalog-use-case-library,
+    .catalog-tag-library {
         border: 1px solid #dbe3ef;
         border-radius: 4px;
         background: #ffffff;
         padding: 0;
     }
 
-    .catalog-use-case-library > summary {
+    .catalog-use-case-library > summary,
+    .catalog-tag-library > summary {
         list-style: none;
     }
 
-    .catalog-use-case-library > summary::-webkit-details-marker {
+    .catalog-use-case-library > summary::-webkit-details-marker,
+    .catalog-tag-library > summary::-webkit-details-marker {
         display: none;
     }
 
-    .catalog-use-case-library-toggle {
+    .catalog-use-case-library-toggle,
+    .catalog-tag-library-toggle {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -283,18 +299,29 @@
         content: "Hide curated list";
     }
 
-    .catalog-use-case-library-content {
+    .catalog-tag-library-toggle::after {
+        content: "Show curated list";
+    }
+
+    .catalog-tag-library[open] .catalog-tag-library-toggle::after {
+        content: "Hide curated list";
+    }
+
+    .catalog-use-case-library-content,
+    .catalog-tag-library-content {
         padding: 0 12px 12px 12px;
     }
 
-    .catalog-use-case-group {
+    .catalog-use-case-group,
+    .catalog-tag-group {
         border: 1px solid #dbe3ef;
         border-radius: 4px;
         padding: 10px 12px;
         background: #f8fafc;
     }
 
-    .catalog-use-case-group-title {
+    .catalog-use-case-group-title,
+    .catalog-tag-group-title {
         font-size: 12px;
         font-weight: 700;
         color: #475569;
@@ -303,13 +330,15 @@
         letter-spacing: 0.02em;
     }
 
-    .catalog-use-case-options {
+    .catalog-use-case-options,
+    .catalog-tag-options {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
     }
 
-    .catalog-use-case-option {
+    .catalog-use-case-option,
+    .catalog-tag-option {
         border: 1px solid #cbd5e1;
         background: #ffffff;
         color: #334155;
@@ -320,7 +349,8 @@
         cursor: pointer;
     }
 
-    .catalog-use-case-option.is-selected {
+    .catalog-use-case-option.is-selected,
+    .catalog-tag-option.is-selected {
         border-color: #2563eb;
         background: #dbeafe;
         color: #1d4ed8;
@@ -419,8 +449,43 @@
                 <div class="catalog-editor-field full">
                     <label for="admin-catalog-tags">Tags</label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-tags" type="text" placeholder="LLM, Code, Multilingual">
-                        <div class="catalog-editor-hint">Comma-separated list. Stored as a JSON string array.</div>
+                        <div id="admin-catalog-selected-tags" class="catalog-selected-tags is-empty" aria-live="polite"></div>
+                        <div class="catalog-tag-custom-row">
+                            <div class="catalog-tag-input-wrap">
+                                <input
+                                    id="admin-catalog-tags"
+                                    type="text"
+                                    autocomplete="off"
+                                    placeholder="Type to search or add a custom tag"
+                                >
+                                <div id="admin-catalog-tag-suggestions" class="catalog-tag-suggestions" hidden></div>
+                            </div>
+                            <button id="admin-catalog-tag-add-btn" class="ix-btn secondary" type="button">Add</button>
+                        </div>
+                        <div class="catalog-editor-hint">Choose from the curated list below. You may also add a custom tag when needed. Stored as a JSON string array.</div>
+                        <details class="catalog-tag-library">
+                            <summary class="catalog-tag-library-toggle">Curated tag library</summary>
+                            <div class="catalog-tag-library-content">
+                                <div class="catalog-tag-groups">
+                                    {% for group in catalog_tag_groups %}
+                                    <div class="catalog-tag-group">
+                                        <div class="catalog-tag-group-title">{{ group["label"] }}</div>
+                                        <div class="catalog-tag-options">
+                                            {% for tag in group["items"] %}
+                                            <button
+                                                type="button"
+                                                class="catalog-tag-option"
+                                                data-tag="{{ tag }}"
+                                            >
+                                                {{ tag }}
+                                            </button>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </details>
                     </div>
                 </div>
                 <div class="catalog-editor-field full">
@@ -433,7 +498,7 @@
                                     id="admin-catalog-use-cases"
                                     type="text"
                                     autocomplete="off"
-                                    placeholder="Type to search or add a use case"
+                                    placeholder="Type to search or add a custom use case"
                                 >
                                 <div id="admin-catalog-use-case-suggestions" class="catalog-use-case-suggestions" hidden></div>
                             </div>
@@ -549,6 +614,9 @@
         const briefIntroInput = document.getElementById('admin-catalog-brief-intro');
         const detailedIntroInput = document.getElementById('admin-catalog-detailed-intro');
         const tagsInput = document.getElementById('admin-catalog-tags');
+        const tagAddBtn = document.getElementById('admin-catalog-tag-add-btn');
+        const selectedTagsNode = document.getElementById('admin-catalog-selected-tags');
+        const tagSuggestionsNode = document.getElementById('admin-catalog-tag-suggestions');
         const useCasesInput = document.getElementById('admin-catalog-use-cases');
         const useCaseAddBtn = document.getElementById('admin-catalog-use-case-add-btn');
         const selectedUseCasesNode = document.getElementById('admin-catalog-selected-use-cases');
@@ -556,8 +624,12 @@
         const defaultSpecInput = document.getElementById('admin-catalog-default-spec');
         const isMoeInput = document.getElementById('admin-catalog-is-moe');
         const initialEditId = {{ initial_edit_entry_id | tojson }};
+        const tagOptionButtons = Array.from(document.querySelectorAll('.catalog-tag-option'));
+        const curatedTagOptions = uniqueUseCaseList(tagOptionButtons.map((button) => button.dataset.tag || ''));
         const useCaseOptionButtons = Array.from(document.querySelectorAll('.catalog-use-case-option'));
         const curatedUseCaseOptions = uniqueUseCaseList(useCaseOptionButtons.map((button) => button.dataset.useCase || ''));
+        let selectedTags = [];
+        let activeTagSuggestionIndex = -1;
         let selectedUseCases = [];
         let activeUseCaseSuggestionIndex = -1;
 
@@ -620,6 +692,146 @@
                 deduped.push(normalized);
             });
             return deduped;
+        }
+
+        function setSelectedTags(values) {
+            selectedTags = uniqueUseCaseList(values);
+            renderSelectedTags();
+        }
+
+        function addSelectedTag(value) {
+            setSelectedTags(selectedTags.concat([value]));
+        }
+
+        function removeSelectedTag(value) {
+            const normalizedTarget = normalizeUseCaseLabel(value).toLowerCase();
+            setSelectedTags(selectedTags.filter((item) => item.toLowerCase() !== normalizedTarget));
+        }
+
+        function renderSelectedTags() {
+            if (!selectedTagsNode) {
+                return;
+            }
+
+            selectedTagsNode.innerHTML = '';
+            if (selectedTags.length === 0) {
+                selectedTagsNode.classList.add('is-empty');
+                selectedTagsNode.textContent = 'No tags selected.';
+            } else {
+                selectedTagsNode.classList.remove('is-empty');
+                selectedTags.forEach((value) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'catalog-selected-tag';
+
+                    const text = document.createElement('span');
+                    text.textContent = value;
+                    chip.appendChild(text);
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.className = 'catalog-selected-tag-remove';
+                    removeBtn.textContent = 'x';
+                    removeBtn.setAttribute('aria-label', `Remove ${value}`);
+                    removeBtn.addEventListener('click', () => {
+                        removeSelectedTag(value);
+                    });
+                    chip.appendChild(removeBtn);
+
+                    selectedTagsNode.appendChild(chip);
+                });
+            }
+
+            const selectedKeys = new Set(selectedTags.map((item) => item.toLowerCase()));
+            tagOptionButtons.forEach((button) => {
+                const label = normalizeUseCaseLabel(button.dataset.tag || '');
+                button.classList.toggle('is-selected', selectedKeys.has(label.toLowerCase()));
+            });
+
+            renderTagSuggestions();
+        }
+
+        function getFilteredTagSuggestions() {
+            const query = normalizeUseCaseLabel(tagsInput?.value || '').toLowerCase();
+            const selectedKeys = new Set(selectedTags.map((item) => item.toLowerCase()));
+            const filtered = curatedTagOptions.filter((value) => {
+                const key = value.toLowerCase();
+                if (selectedKeys.has(key)) {
+                    return false;
+                }
+                if (query === '') {
+                    return false;
+                }
+                return key.includes(query);
+            });
+            return filtered.slice(0, 8);
+        }
+
+        function closeTagSuggestions() {
+            activeTagSuggestionIndex = -1;
+            if (tagSuggestionsNode) {
+                tagSuggestionsNode.hidden = true;
+                tagSuggestionsNode.innerHTML = '';
+            }
+        }
+
+        function commitTagSuggestion(value) {
+            const normalized = normalizeUseCaseLabel(value);
+            if (normalized === '') {
+                return;
+            }
+            addSelectedTag(normalized);
+            tagsInput.value = '';
+            closeTagSuggestions();
+            tagsInput.focus();
+        }
+
+        function renderTagSuggestions() {
+            if (!tagSuggestionsNode) {
+                return;
+            }
+
+            const suggestions = getFilteredTagSuggestions();
+            tagSuggestionsNode.innerHTML = '';
+            if (suggestions.length === 0) {
+                closeTagSuggestions();
+                return;
+            }
+
+            if (activeTagSuggestionIndex >= suggestions.length) {
+                activeTagSuggestionIndex = 0;
+            }
+            if (activeTagSuggestionIndex < 0) {
+                activeTagSuggestionIndex = 0;
+            }
+
+            suggestions.forEach((value, index) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'catalog-tag-suggestion';
+                if (index === activeTagSuggestionIndex) {
+                    button.classList.add('is-active');
+                }
+                button.textContent = value;
+                button.addEventListener('mousedown', (event) => {
+                    event.preventDefault();
+                });
+                button.addEventListener('click', () => {
+                    commitTagSuggestion(value);
+                });
+                tagSuggestionsNode.appendChild(button);
+            });
+            tagSuggestionsNode.hidden = false;
+        }
+
+        function addCustomTagFromInput() {
+            const value = normalizeUseCaseLabel(tagsInput?.value || '');
+            if (value === '') {
+                return;
+            }
+            addSelectedTag(value);
+            tagsInput.value = '';
+            closeTagSuggestions();
+            tagsInput.focus();
         }
 
         function setSelectedUseCases(values) {
@@ -780,7 +992,7 @@
 
         function setCreateMode() {
             idInput.value = '';
-            formTitle.textContent = 'Create Unpublished Catalog Model';
+            formTitle.textContent = 'New Catalog Model';
             saveBtn.textContent = 'Create Unpublished Model';
             setPublishButtonState(true, 'Save & Publish');
             setDeleteButtonState(false, 'Delete');
@@ -795,6 +1007,7 @@
             briefIntroInput.value = '';
             detailedIntroInput.value = '';
             tagsInput.value = '';
+            setSelectedTags([]);
             useCasesInput.value = '';
             setSelectedUseCases([]);
             defaultSpecInput.value = '';
@@ -817,7 +1030,8 @@
             sourceModelIdInput.value = entry.source_model_id || '';
             briefIntroInput.value = entry.brief_intro || '';
             detailedIntroInput.value = entry.detailed_intro || '';
-            tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
+            tagsInput.value = '';
+            setSelectedTags(Array.isArray(entry.tags) ? entry.tags : []);
             useCasesInput.value = '';
             setSelectedUseCases(Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases : []);
             defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
@@ -848,7 +1062,8 @@
             sourceModelIdInput.value = entry.source_model_id || '';
             briefIntroInput.value = entry.brief_intro || '';
             detailedIntroInput.value = entry.detailed_intro || '';
-            tagsInput.value = Array.isArray(entry.tags) ? entry.tags.join(', ') : '';
+            tagsInput.value = '';
+            setSelectedTags(Array.isArray(entry.tags) ? entry.tags : []);
             useCasesInput.value = '';
             setSelectedUseCases(Array.isArray(entry.recommended_use_cases) ? entry.recommended_use_cases : []);
             defaultSpecInput.value = JSON.stringify(entry.default_func_spec || {}, null, 2);
@@ -878,7 +1093,7 @@
                 detailed_intro: detailedIntroInput.value.trim(),
                 parameter_count_b: parameterCountInput.value.trim() === '' ? null : Number(parameterCountInput.value),
                 is_moe: isMoeInput.checked,
-                tags: parseCommaSeparatedList(tagsInput.value),
+                tags: selectedTags.slice(),
                 recommended_use_cases: selectedUseCases.slice(),
                 default_func_spec: defaultFuncSpec
             };
@@ -1037,6 +1252,59 @@
 
         form?.addEventListener('submit', submitForm);
         deleteBtn?.addEventListener('click', handleDelete);
+        tagOptionButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const value = normalizeUseCaseLabel(button.dataset.tag || '');
+                if (value === '') {
+                    return;
+                }
+                if (selectedTags.some((item) => item.toLowerCase() === value.toLowerCase())) {
+                    removeSelectedTag(value);
+                } else {
+                    addSelectedTag(value);
+                }
+            });
+        });
+        tagAddBtn?.addEventListener('click', addCustomTagFromInput);
+        tagsInput?.addEventListener('input', () => {
+            activeTagSuggestionIndex = -1;
+            renderTagSuggestions();
+        });
+        tagsInput?.addEventListener('focus', () => {
+            renderTagSuggestions();
+        });
+        tagsInput?.addEventListener('keydown', (event) => {
+            const suggestions = getFilteredTagSuggestions();
+            if (event.key === 'ArrowDown' && suggestions.length > 0) {
+                event.preventDefault();
+                activeTagSuggestionIndex = (activeTagSuggestionIndex + 1 + suggestions.length) % suggestions.length;
+                renderTagSuggestions();
+                return;
+            }
+            if (event.key === 'ArrowUp' && suggestions.length > 0) {
+                event.preventDefault();
+                activeTagSuggestionIndex = (activeTagSuggestionIndex - 1 + suggestions.length) % suggestions.length;
+                renderTagSuggestions();
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                if (suggestions.length > 0 && activeTagSuggestionIndex >= 0 && activeTagSuggestionIndex < suggestions.length) {
+                    commitTagSuggestion(suggestions[activeTagSuggestionIndex]);
+                    return;
+                }
+                addCustomTagFromInput();
+                return;
+            }
+            if (event.key === 'Escape') {
+                closeTagSuggestions();
+            }
+        });
+        tagsInput?.addEventListener('blur', () => {
+            window.setTimeout(() => {
+                closeTagSuggestions();
+            }, 120);
+        });
         useCaseOptionButtons.forEach((button) => {
             button.addEventListener('click', () => {
                 const value = normalizeUseCaseLabel(button.dataset.useCase || '');
@@ -1117,6 +1385,7 @@
             showMessage(errorBanner, initialPrefillError.trim());
         }
         formatDefaultSpecInput();
+        renderSelectedTags();
         renderSelectedUseCases();
     })();
 </script>

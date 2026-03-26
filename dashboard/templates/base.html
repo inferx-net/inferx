@@ -49,12 +49,12 @@
 
         nav a.nav-support-link {
             margin-left: auto;
-            min-height: 34px;
-            padding: 6px 10px;
-            border: none;
+            min-height: 28px;
+            padding: 4px 12px;
+            border: 1px solid #cbd5e1;
             border-radius: 4px;
-            background: transparent;
-            color: #1e40af;
+            background: #f1f5f9;
+            color: #1e3a8a;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -62,11 +62,20 @@
             font-weight: 600;
             line-height: 1.1;
             position: relative;
+            gap: 6px;
         }
 
         nav a.nav-support-link:hover {
-            background: #f1f5f9;
+            background: #e2e8f0;
+            border-color: #94a3b8;
             color: #1e40af;
+        }
+
+        nav a.nav-support-link .nav-support-icon {
+            width: 14px;
+            height: 14px;
+            display: inline-block;
+            flex: 0 0 auto;
         }
 
         nav a.nav-support-link:focus-visible {
@@ -76,12 +85,6 @@
 
         nav a.nav-support-link .nav-support-text {
             display: inline-block;
-        }
-
-        nav a.nav-support-link .nav-support-icon {
-            width: 18px;
-            height: 18px;
-            display: none;
         }
 
         nav a.nav-support-link::after {
@@ -106,6 +109,7 @@
 
         nav a.nav-support-link:hover::after,
         nav a.nav-support-link:focus-visible::after {
+            content: attr(data-tooltip);
             opacity: 1;
             transform: translateY(0);
         }
@@ -440,7 +444,7 @@
         <tr>
             <td class="brand-logo-cell"><img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="48" height="48"></td>
             <td class="brand-title-cell">
-                <h1>InferX — Serverless GPU Inference Platform for Production Workloads</h1>
+                <h1>InferX — Serverless GPU Inference Platform, Built for Agent-Native Workloads</h1>
             </td>
             <td class="brand-actions-cell">
                 <div id="brand-auth-menu" class="brand-auth-menu">
@@ -462,9 +466,12 @@
         {% if is_logged_in %}
         <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>
         {% endif %}
-        <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack" aria-label="Support on Slack" target="_blank" rel="noopener noreferrer">
-            <span class="nav-support-text">Support</span>
-            <img class="nav-support-icon" src="https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png" alt="" aria-hidden="true" loading="lazy">
+        <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack support" aria-label="Get support on Slack" target="_blank" rel="noopener noreferrer">
+            <svg class="nav-support-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                <path d="M5.5 6.5h5M5.5 8.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="nav-support-text">Get Support</span>
         </a>
     </nav>
     {% endif %}

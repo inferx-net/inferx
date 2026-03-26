@@ -27,45 +27,19 @@
         margin-top: 4px;
     }
 
-    .btn {
-        border: 1px solid #2563eb;
-        background: #2563eb;
-        color: white;
-        border-radius: 4px;
-        padding: 8px 12px;
-        font-size: 14px;
-        cursor: pointer;
-        text-decoration: none;
-        transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    .editor-guide-link {
+        margin-top: 8px;
+        font-size: 13px;
     }
 
-    .btn.secondary {
-        background: white;
-        color: #1e3a8a;
-        border-color: #93c5fd;
+    .editor-guide-link a {
+        color: #1d4ed8;
+        font-weight: 600;
+        text-decoration: underline;
     }
 
-    .btn:hover:not(:disabled),
-    .btn:focus-visible:not(:disabled) {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
-    }
-
-    .btn:hover:not(:disabled) {
-        background: #1d4ed8;
-        border-color: #1d4ed8;
-    }
-
-    .btn.secondary:hover:not(:disabled),
-    .btn.secondary:focus-visible:not(:disabled) {
-        background: #eff6ff;
-        border-color: #60a5fa;
-        box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
-    }
-
-    .btn:disabled {
-        opacity: 0.65;
-        cursor: not-allowed;
+    .editor-guide-link a:hover {
+        color: #1e40af;
     }
 
     .panel {
@@ -213,6 +187,12 @@
     .tab-btn:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+    }
+
+    .tab-btn:disabled:hover,
+    .tab-btn:disabled:focus-visible {
+        transform: none;
+        box-shadow: none;
     }
 
     .tab-panel {
@@ -387,6 +367,7 @@
 </style>
 
 <div class="model-editor">
+    {% set has_catalog_back_link = is_catalog_create and initial_model_data and initial_model_data.catalog_slug %}
     <div class="editor-header">
         <div>
             <h2>{{ "Edit Model" if page_mode == "update" else ("Customize & Deploy" if is_catalog_create else "Create Model") }}</h2>
@@ -399,12 +380,17 @@
                 Creating a new model
                 {% endif %}
             </div>
+            {% if page_mode != "update" %}
+            <div class="editor-guide-link">
+                <a href="https://inferx.net/#/blog/inferx-console-guide" target="_blank" rel="noopener noreferrer">Model creation guide</a>
+            </div>
+            {% endif %}
         </div>
         <a
-            class="btn secondary"
-            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if is_catalog_create else (hosturl ~ 'listfunc') }}"
+            class="ix-btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if has_catalog_back_link else (hosturl ~ 'listfunc') }}"
         >
-            {{ "Back to Catalog" if is_catalog_create else "Back to Models" }}
+            {{ "Back to Catalog" if has_catalog_back_link else "Back to Models" }}
         </a>
     </div>
 
@@ -460,7 +446,7 @@
             <div class="field-row">
                 <label for="function-name-input" class="label-with-help">
                     <span>Model Name<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="Model name help" data-tooltip="Model name shown in the dashboard and used in the function object path." title="Model name shown in the dashboard and used in the function object path.">i</span>
+                    <span class="field-help" tabindex="0" aria-label="Model name help" data-tooltip="Model name shown in the dashboard and used in the model object path." title="Model name shown in the dashboard and used in the model object path.">i</span>
                 </label>
                 <div>
                     {% if page_mode == "update" %}
@@ -663,12 +649,12 @@
 
     <div class="actions-footer">
         <a
-            class="btn secondary"
-            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if is_catalog_create else (hosturl ~ 'listfunc') }}"
+            class="ix-btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if has_catalog_back_link else (hosturl ~ 'listfunc') }}"
         >
-            {{ "Back to Catalog" if is_catalog_create else "Cancel" }}
+            {{ "Back to Catalog" if has_catalog_back_link else "Cancel" }}
         </a>
-        <button id="save-model-btn" type="button" class="btn">{{ "Update" if page_mode == "update" else "Deploy" }}</button>
+        <button id="save-model-btn" type="button" class="ix-btn">{{ "Update" if page_mode == "update" else "Deploy" }}</button>
     </div>
 </div>
 
@@ -682,8 +668,8 @@
             </div>
         </div>
         <div class="model-save-modal-actions">
-            <a id="model-save-modal-pods-link" class="btn" href="{{ hosturl }}listpod">Go to Pods</a>
-            <a id="model-save-modal-models-link" class="btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
+            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Pods</a>
+            <a id="model-save-modal-models-link" class="ix-btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
         </div>
     </div>
 </div>
