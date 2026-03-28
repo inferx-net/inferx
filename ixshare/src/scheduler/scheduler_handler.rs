@@ -5668,11 +5668,14 @@ impl SchedulerHandler {
                                     error!("RemovePod the funcstate is {:?}", status);
 
                                     status.object.snapshotingFailureCnt += 1;
-
-                                    self.AddSnapshotTask(&nodeName, &pod.FuncKey());
                                     if status.object.snapshotingFailureCnt >= 3 {
                                         status.object.state = FuncState::Fail;
                                     }
+
+                                    // TODO: This queues the retry before persisting the updated
+                                    // snapshotingFailureCnt. If the funcstatus update fails, the
+                                    // model may get one extra retry before reaching terminal fail.
+                                    self.AddSnapshotTask(&nodeName, &pod.FuncKey());
 
                                     let client = GetClient().await.unwrap();
 

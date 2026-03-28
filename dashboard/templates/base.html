@@ -49,12 +49,12 @@
 
         nav a.nav-support-link {
             margin-left: auto;
-            min-height: 34px;
-            padding: 6px 10px;
-            border: none;
+            min-height: 28px;
+            padding: 4px 12px;
+            border: 1px solid #cbd5e1;
             border-radius: 4px;
-            background: transparent;
-            color: #1e40af;
+            background: #f1f5f9;
+            color: #1e3a8a;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -62,11 +62,20 @@
             font-weight: 600;
             line-height: 1.1;
             position: relative;
+            gap: 6px;
         }
 
         nav a.nav-support-link:hover {
-            background: #f1f5f9;
+            background: #e2e8f0;
+            border-color: #94a3b8;
             color: #1e40af;
+        }
+
+        nav a.nav-support-link .nav-support-icon {
+            width: 14px;
+            height: 14px;
+            display: inline-block;
+            flex: 0 0 auto;
         }
 
         nav a.nav-support-link:focus-visible {
@@ -76,12 +85,6 @@
 
         nav a.nav-support-link .nav-support-text {
             display: inline-block;
-        }
-
-        nav a.nav-support-link .nav-support-icon {
-            width: 18px;
-            height: 18px;
-            display: none;
         }
 
         nav a.nav-support-link::after {
@@ -106,6 +109,7 @@
 
         nav a.nav-support-link:hover::after,
         nav a.nav-support-link:focus-visible::after {
+            content: attr(data-tooltip);
             opacity: 1;
             transform: translateY(0);
         }
@@ -159,6 +163,77 @@
         .content table.ix-table.ix-table-compact th,
         .content table.ix-table.ix-table-compact td {
             padding: 4px 6px;
+        }
+
+        .ix-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #2563eb;
+            background: #2563eb;
+            color: #fff;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 14px;
+            text-decoration: none;
+            cursor: pointer;
+            box-sizing: border-box;
+            transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+        }
+
+        .ix-btn.secondary {
+            background: #fff;
+            color: #1e3a8a;
+            border-color: #93c5fd;
+        }
+
+        .ix-btn.danger {
+            background: #b91c1c;
+            border-color: #b91c1c;
+        }
+
+        .ix-btn:hover:not(:disabled),
+        .ix-btn:focus-visible:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+        }
+
+        .ix-btn:hover:not(:disabled) {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+
+        .ix-btn.secondary:hover:not(:disabled),
+        .ix-btn.secondary:focus-visible:not(:disabled) {
+            background: #eff6ff;
+            border-color: #60a5fa;
+            box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
+        }
+
+        .ix-btn.danger:hover:not(:disabled),
+        .ix-btn.danger:focus-visible:not(:disabled) {
+            background: #991b1b;
+            border-color: #991b1b;
+            box-shadow: 0 8px 18px rgba(185, 28, 28, 0.18);
+        }
+
+        .ix-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .ix-row-actions {
+            display: inline-flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .ix-row-actions .ix-btn {
+            padding: 4px 8px;
+            font-size: 12px;
+            white-space: nowrap;
         }
 
         .audit {
@@ -338,6 +413,27 @@
             color: #1d4ed8;
         }
 
+        .copyable-area {
+            position: relative;
+            display: block;
+        }
+
+        .copyable-area-copy {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 1;
+        }
+
+        .copyable-area:hover .copyable-area-copy,
+        .copyable-area:focus-within .copyable-area-copy {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
         @media (max-width: 900px) {
             .brand-actions-cell {
                 width: 220px;
@@ -379,6 +475,7 @@
     {% set request_path = request.path if request is defined and request.path is defined else '' %}
     {% set request_path_no_slash = request_path.rstrip('/') %}
     {% set nav_models_active = request_path_no_slash in ('',) or '/listfunc' in request_path or '/func_create' in request_path or '/func' in request_path or '/funclog' in request_path %}
+    {% set nav_catalog_active = '/catalog' in request_path %}
     {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}
     {% set nav_snapshots_active = '/listsnapshot' in request_path or '/snapshot' in request_path %}
     {% set nav_nodes_active = '/listnode' in request_path or '/node' in request_path %}
@@ -387,13 +484,14 @@
         <tr>
             <td class="brand-logo-cell"><img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="48" height="48"></td>
             <td class="brand-title-cell">
+
                 <h1>
                     <span class="brand-title-lockup">
                         <span class="brand-title-name">InferX</span>
                         <span class="brand-beta-badge">Beta</span>
                     </span>
                     <span class="brand-title-separator">&mdash;</span>
-                    <span class="brand-title-tagline">Serverless GPU Inference Platform for Production Workloads</span>
+                    <span class="brand-title-tagline">Serverless GPU Inference Platform, Built for Agent-Native Workloads</span>
                 </h1>
             </td>
             <td class="brand-actions-cell">
@@ -408,6 +506,7 @@
     </table>
     {% if show_public_nav %}
     <nav>
+        <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
         <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
         <a href="{{ hosturl }}listsnapshot" class="{% if nav_snapshots_active %}active{% endif %}"> Snapshots </a>
@@ -415,9 +514,12 @@
         {% if is_logged_in %}
         <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>
         {% endif %}
-        <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack" aria-label="Support on Slack" target="_blank" rel="noopener noreferrer">
-            <span class="nav-support-text">Support</span>
-            <img class="nav-support-icon" src="https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png" alt="" aria-hidden="true" loading="lazy">
+        <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack support" aria-label="Get support on Slack" target="_blank" rel="noopener noreferrer">
+            <svg class="nav-support-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                <path d="M5.5 6.5h5M5.5 8.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="nav-support-text">Get Support</span>
         </a>
     </nav>
     {% endif %}
@@ -543,6 +645,57 @@
             document.dispatchEvent(new CustomEvent('tenant-display-map-updated'));
         }
 
+        function getCopyableAreaText(target) {
+            if (!target) {
+                return '';
+            }
+
+            if (typeof target.value === 'string') {
+                return target.value;
+            }
+
+            return String(target.innerText || target.textContent || '');
+        }
+
+        async function copyTextFromElement(targetOrId) {
+            const target = typeof targetOrId === 'string'
+                ? document.getElementById(targetOrId)
+                : targetOrId;
+            if (!target) {
+                return false;
+            }
+
+            const text = getCopyableAreaText(target);
+            if (text === '') {
+                return false;
+            }
+
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_err) {
+            }
+
+            const helper = document.createElement('textarea');
+            helper.value = text;
+            helper.setAttribute('readonly', '');
+            helper.style.position = 'fixed';
+            helper.style.top = '0';
+            helper.style.left = '0';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.focus();
+            helper.select();
+
+            try {
+                return document.execCommand('copy');
+            } finally {
+                document.body.removeChild(helper);
+            }
+        }
+
         async function loadTenantDisplayMap() {
             if (!isLoggedIn && !isGatewayAlignedAnonymousActive) {
                 refreshTenantBadge();
@@ -612,6 +765,7 @@
         window.applyTenantDisplayNames = applyTenantDisplayNames;
         window.updateTenantDisplayMap = updateTenantDisplayMap;
         window.tenantDisplayNameFromTenantObject = tenantDisplayNameFromTenantObject;
+        window.copyTextFromElement = copyTextFromElement;
 
         if (!isLoggedIn) {
             link.href = loginUrl;

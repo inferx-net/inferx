@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 
 {% block content %}
+{% set is_catalog_mode = initial_model_data and initial_model_data.catalog_mode %}
+{% set is_catalog_create = page_mode == "create" and is_catalog_mode %}
 <style>
     .model-editor {
         max-width: 1100px;
@@ -25,26 +27,19 @@
         margin-top: 4px;
     }
 
-    .btn {
-        border: 1px solid #2563eb;
-        background: #2563eb;
-        color: white;
-        border-radius: 4px;
-        padding: 8px 12px;
-        font-size: 14px;
-        cursor: pointer;
-        text-decoration: none;
+    .editor-guide-link {
+        margin-top: 8px;
+        font-size: 13px;
     }
 
-    .btn.secondary {
-        background: white;
-        color: #1e3a8a;
-        border-color: #93c5fd;
+    .editor-guide-link a {
+        color: #1d4ed8;
+        font-weight: 600;
+        text-decoration: underline;
     }
 
-    .btn:disabled {
-        opacity: 0.65;
-        cursor: not-allowed;
+    .editor-guide-link a:hover {
+        color: #1e40af;
     }
 
     .panel {
@@ -187,6 +182,17 @@
         background: #ffffff;
         border-color: #cbd5e1;
         color: #1d4ed8;
+    }
+
+    .tab-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .tab-btn:disabled:hover,
+    .tab-btn:disabled:focus-visible {
+        transform: none;
+        box-shadow: none;
     }
 
     .tab-panel {
@@ -361,18 +367,43 @@
 </style>
 
 <div class="model-editor">
+    {% set has_catalog_back_link = is_catalog_create and initial_model_data and initial_model_data.catalog_slug %}
     <div class="editor-header">
         <div>
-            <h2>{{ "Edit Model" if page_mode == "update" else "Create Model" }}</h2>
+            <h2>{{ "Edit Model" if page_mode == "update" else ("Customize & Deploy" if is_catalog_create else "Create Model") }}</h2>
             <div class="editor-subtitle">
-                {{ "Editing existing model" if page_mode == "update" else "Creating a new model" }}
+                {% if page_mode == "update" %}
+                Editing existing model
+                {% elif is_catalog_create %}
+                Creating a model from the catalog template
+                {% else %}
+                Creating a new model
+                {% endif %}
             </div>
+            {% if page_mode != "update" %}
+            <div class="editor-guide-link">
+                <a href="https://inferx.net/#/blog/inferx-console-guide" target="_blank" rel="noopener noreferrer">Model creation guide</a>
+            </div>
+            {% endif %}
         </div>
-        <a class="btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
+        <a
+            class="ix-btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if has_catalog_back_link else (hosturl ~ 'listfunc') }}"
+        >
+            {{ "Back to Catalog" if has_catalog_back_link else "Back to Models" }}
+        </a>
     </div>
 
     <div id="error-banner" class="error-banner" role="alert"></div>
     <div id="success-banner" class="success-banner" aria-live="polite"></div>
+    <div id="catalog-mode-banner" class="warning-banner" aria-live="polite" style="display:none;">
+        {% if is_catalog_create %}
+        Customizing <strong>{{ initial_model_data.catalog_display_name or initial_model_data.name }}</strong> from the catalog. Platform-managed fields such as mounts, endpoint, standby, and the image repository/name stay aligned with the catalog template. You may still change the image tag/version, GPU count, vRAM, max model length, and non-platform env vars.
+        {% else %}
+        This model was created from the catalog. Save keeps the stored runtime template for hidden platform-managed fields and applies only the customer-editable overrides.
+        {% endif %}
+    </div>
+    <div id="basic-compatibility-banner" class="warning-banner" aria-live="polite" style="display:none;"></div>
     <div id="advanced-warning-banner" class="warning-banner" aria-live="polite">
         Changes made in Advanced are not reflected back in Basic fields.
     </div>
@@ -414,8 +445,8 @@
 
             <div class="field-row">
                 <label for="function-name-input" class="label-with-help">
-                    <span>Function Name<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="Function name help" data-tooltip="Model/function name shown in the dashboard and used in the function object path." title="Model/function name shown in the dashboard and used in the function object path.">i</span>
+                    <span>Model Name<span class="req-mark">*</span></span>
+                    <span class="field-help" tabindex="0" aria-label="Model name help" data-tooltip="Model name shown in the dashboard and used in the model object path." title="Model name shown in the dashboard and used in the model object path.">i</span>
                 </label>
                 <div>
                     {% if page_mode == "update" %}
@@ -430,10 +461,10 @@
             <div class="field-row">
                 <label for="hf-model-input" class="label-with-help">
                     <span>HuggingFace Model<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Used to build --model and sample_query.body.model." title="Hugging Face model ID (for example namespace/model). Used to build --model and sample_query.body.model.">i</span>
+                    <span class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Used to build the runtime model target." title="Hugging Face model ID (for example namespace/model). Used to build the runtime model target.">i</span>
                 </label>
                 <div>
-                    {% if page_mode == "update" %}
+                    {% if page_mode == "update" or is_catalog_mode %}
                     <div id="hf-model-display" class="readonly-value"></div>
                     <input id="hf-model-input" type="text" hidden autocomplete="off">
                     {% else %}
@@ -454,10 +485,16 @@
             <h3>
                 <span class="label-with-help">
                     <span>Image<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="Image help" data-tooltip="Container image for the model runtime. Only whitelisted vLLM image tags are allowed when saving (Basic and Advanced modes)." title="Container image for the model runtime. Only whitelisted vLLM image tags are allowed when saving (Basic and Advanced modes).">i</span>
+                    <span class="field-help" tabindex="0" aria-label="Image help" data-tooltip="Manual models use the whitelisted vLLM image tags. Catalog-backed models keep the image repository/name fixed and allow only tag/version changes." title="Manual models use the whitelisted vLLM image tags. Catalog-backed models keep the image repository/name fixed and allow only tag/version changes.">i</span>
                 </span>
             </h3>
             <select id="image-select"></select>
+            <input id="image-input" type="hidden" autocomplete="off">
+            <div id="catalog-image-editor" style="display:none; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span id="catalog-image-name" class="readonly-value"></span>
+                <input id="catalog-image-tag-input" type="text" placeholder="v0.16.0" autocomplete="off" aria-label="Image tag or version">
+            </div>
+            <div id="image-field-hint" class="hint"></div>
         </div>
 
         <div class="panel">
@@ -513,6 +550,51 @@
             <div id="policy-fields" style="display:none; margin-top: 10px;">
                 <div class="form-grid">
                     <div class="field-row">
+                        <label for="min-replica-input" class="label-with-help">
+                            <span>Min Replica</span>
+                            <span class="field-help" tabindex="0" aria-label="Min replica help" data-tooltip="Minimum number of ready replicas to keep available." title="Minimum number of ready replicas to keep available.">i</span>
+                        </label>
+                        <div>
+                            <input id="min-replica-input" type="number" min="0" step="1" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="max-replica-input" class="label-with-help">
+                            <span>Max Replica</span>
+                            <span class="field-help" tabindex="0" aria-label="Max replica help" data-tooltip="Upper bound on ready replicas for this model." title="Upper bound on ready replicas for this model.">i</span>
+                        </label>
+                        <div>
+                            <input id="max-replica-input" type="number" min="1" step="1" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="standby-per-node-input" class="label-with-help">
+                            <span>Standby Per Node</span>
+                            <span class="field-help" tabindex="0" aria-label="Standby per node help" data-tooltip="Target number of standby workers to keep per eligible node." title="Target number of standby workers to keep per eligible node.">i</span>
+                        </label>
+                        <div>
+                            <input id="standby-per-node-input" type="number" min="0" step="1" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="parallel-input" class="label-with-help">
+                            <span>Parallel</span>
+                            <span class="field-help" tabindex="0" aria-label="Parallel help" data-tooltip="Maximum in-flight work handled per ready worker." title="Maximum in-flight work handled per ready worker.">i</span>
+                        </label>
+                        <div>
+                            <input id="parallel-input" type="number" min="1" step="1" placeholder="50">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="queue-len-input" class="label-with-help">
+                            <span>Queue Length</span>
+                            <span class="field-help" tabindex="0" aria-label="Queue length help" data-tooltip="Maximum queued requests before new requests are rejected." title="Maximum queued requests before new requests are rejected.">i</span>
+                        </label>
+                        <div>
+                            <input id="queue-len-input" type="number" min="1" step="1" placeholder="100">
+                        </div>
+                    </div>
+                    <div class="field-row">
                         <label for="queue-timeout-input" class="label-with-help">
                             <span>Queue Timeout (s)</span>
                             <span class="field-help" tabindex="0" aria-label="Queue timeout help" data-tooltip="How long a request may wait in queue before timing out." title="How long a request may wait in queue before timing out.">i</span>
@@ -522,12 +604,30 @@
                         </div>
                     </div>
                     <div class="field-row">
+                        <label for="scaleout-wait-ratio-input" class="label-with-help">
+                            <span>Wait Queue Ratio</span>
+                            <span class="field-help" tabindex="0" aria-label="Wait queue ratio help" data-tooltip="Scale-out trigger ratio used by the WaitQueueRatio policy." title="Scale-out trigger ratio used by the WaitQueueRatio policy.">i</span>
+                        </label>
+                        <div>
+                            <input id="scaleout-wait-ratio-input" type="number" min="0" step="any" placeholder="0.1">
+                        </div>
+                    </div>
+                    <div class="field-row">
                         <label for="scalein-timeout-input" class="label-with-help">
                             <span>Scale-in Timeout (s)</span>
                             <span class="field-help" tabindex="0" aria-label="Scale-in timeout help" data-tooltip="Idle time before scaling in. If left empty, Basic mode uses default 1.0." title="Idle time before scaling in. If left empty, Basic mode uses default 1.0.">i</span>
                         </label>
                         <div>
                             <input id="scalein-timeout-input" type="number" step="any" placeholder="1.0">
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <label for="graph-sync-checkbox" class="label-with-help">
+                            <span>Graph Sync</span>
+                            <span class="field-help" tabindex="0" aria-label="Graph sync help" data-tooltip="Enable runtime graph synchronization when supported by the backend." title="Enable runtime graph synchronization when supported by the backend.">i</span>
+                        </label>
+                        <div>
+                            <input id="graph-sync-checkbox" type="checkbox">
                         </div>
                     </div>
                 </div>
@@ -548,14 +648,19 @@
     </div>
 
     <div class="actions-footer">
-        <a class="btn secondary" href="{{ hosturl }}listfunc">Cancel</a>
-        <button id="save-model-btn" type="button" class="btn">Save Model</button>
+        <a
+            class="ix-btn secondary"
+            href="{{ url_for('prefix.CatalogDetail', slug=initial_model_data.catalog_slug) if has_catalog_back_link else (hosturl ~ 'listfunc') }}"
+        >
+            {{ "Back to Catalog" if has_catalog_back_link else "Cancel" }}
+        </a>
+        <button id="save-model-btn" type="button" class="ix-btn">{{ "Update" if page_mode == "update" else "Deploy" }}</button>
     </div>
 </div>
 
 <div id="model-save-modal" class="model-save-modal" hidden>
     <div class="model-save-modal-card" role="dialog" aria-modal="true" aria-labelledby="model-save-modal-title">
-        <h3 id="model-save-modal-title">Model Saved Successfully</h3>
+        <h3 id="model-save-modal-title">Model Deployed Successfully</h3>
         <div id="model-save-modal-body" class="model-save-modal-body">
             <div id="model-save-modal-summary"></div>
             <div class="model-save-modal-note">
@@ -563,8 +668,8 @@
             </div>
         </div>
         <div class="model-save-modal-actions">
-            <a id="model-save-modal-pods-link" class="btn" href="{{ hosturl }}listpod">Go to Pods</a>
-            <a id="model-save-modal-models-link" class="btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
+            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Pods</a>
+            <a id="model-save-modal-models-link" class="ix-btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
         </div>
     </div>
 </div>
@@ -573,13 +678,32 @@
     (function () {
         const PAGE_MODE = {{ page_mode | tojson }};
         const INITIAL_MODEL = {{ initial_model_data | tojson }};
+        const CREATE_TARGET_CONTEXT = {{ create_target_context | tojson }};
         const IMAGE_OPTIONS = {{ image_options | tojson }};
         const SUPPORTED_GPU_COUNTS = {{ gpu_count_options | tojson }};
-        const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_advanced_sample_query_template | tojson }};
+        const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_sample_query_template | tojson }};
+        const BASIC_MODE_SUPPORTED = !(INITIAL_MODEL && INITIAL_MODEL.basic_mode_supported === false);
+        const BASIC_MODE_INCOMPATIBILITY_REASON = (
+            INITIAL_MODEL && typeof INITIAL_MODEL.basic_mode_incompatibility_reason === 'string'
+        ) ? INITIAL_MODEL.basic_mode_incompatibility_reason : '';
+        const INITIAL_TAB = (
+            INITIAL_MODEL && typeof INITIAL_MODEL.initial_tab === 'string'
+        ) ? INITIAL_MODEL.initial_tab : 'basic';
         // Keep in sync with backend/runtime func policy defaults.
+        const DEFAULT_POLICY_MIN_REPLICA = 0;
+        const DEFAULT_POLICY_MAX_REPLICA = 1;
+        const DEFAULT_POLICY_STANDBY_PER_NODE = 1;
+        const DEFAULT_POLICY_PARALLEL = 50;
+        const DEFAULT_POLICY_QUEUE_LEN = 100;
         const DEFAULT_POLICY_QUEUE_TIMEOUT_SEC = 30.0;
+        const DEFAULT_POLICY_WAIT_QUEUE_RATIO = 0.1;
         const DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC = 1.0;
+        const DEFAULT_POLICY_GRAPH_SYNC = false;
         const VRAM_STEP_MB = 256;
+        const IS_CATALOG_MODE = !!(
+            INITIAL_MODEL
+            && INITIAL_MODEL.catalog_mode
+        );
 
         const tenantSelect = document.getElementById('tenant-select');
         const namespaceSelect = document.getElementById('namespace-select');
@@ -592,20 +716,34 @@
         const hfModelInput = document.getElementById('hf-model-input');
         const hfModelDisplay = document.getElementById('hf-model-display');
         const imageSelect = document.getElementById('image-select');
+        const imageInput = document.getElementById('image-input');
+        const catalogImageEditor = document.getElementById('catalog-image-editor');
+        const catalogImageName = document.getElementById('catalog-image-name');
+        const catalogImageTagInput = document.getElementById('catalog-image-tag-input');
+        const imageFieldHint = document.getElementById('image-field-hint');
         const commandsJson = document.getElementById('commands-json');
         const gpuCountSelect = document.getElementById('gpu-count-select');
         const gpuVramInput = document.getElementById('gpu-vram-input');
         const vramHint = document.getElementById('vram-hint');
         const policyEnabledCheckbox = document.getElementById('policy-enabled-checkbox');
         const policyFields = document.getElementById('policy-fields');
+        const minReplicaInput = document.getElementById('min-replica-input');
+        const maxReplicaInput = document.getElementById('max-replica-input');
+        const standbyPerNodeInput = document.getElementById('standby-per-node-input');
+        const parallelInput = document.getElementById('parallel-input');
+        const queueLenInput = document.getElementById('queue-len-input');
         const queueTimeoutInput = document.getElementById('queue-timeout-input');
+        const scaleoutWaitRatioInput = document.getElementById('scaleout-wait-ratio-input');
         const scaleinTimeoutInput = document.getElementById('scalein-timeout-input');
+        const graphSyncCheckbox = document.getElementById('graph-sync-checkbox');
         const tabBasic = document.getElementById('tab-basic');
         const tabAdvanced = document.getElementById('tab-advanced');
         const panelBasic = document.getElementById('panel-basic');
         const panelAdvanced = document.getElementById('panel-advanced');
         const advancedSpecJson = document.getElementById('advanced-spec-json');
         const warningBanner = document.getElementById('advanced-warning-banner');
+        const catalogModeBanner = document.getElementById('catalog-mode-banner');
+        const basicCompatibilityBanner = document.getElementById('basic-compatibility-banner');
         const errorBanner = document.getElementById('error-banner');
         const successBanner = document.getElementById('success-banner');
         const saveBtn = document.getElementById('save-model-btn');
@@ -617,12 +755,15 @@
         const modelSaveModalModelsLink = document.getElementById('model-save-modal-models-link');
 
         let activeTab = 'basic';
-        let tenants = [];
-        let namespaces = [];
-        let roles = [];
+        let targetTenantOptions = [];
+        let targetNamespaceOptionsByTenant = {};
+        let targetSelectedTenant = '';
+        let targetSelectedNamespace = '';
+        let targetMessage = '';
         let nodeMaxVram = 0;
         let nodeMaxGpuCount = 0;
         let _advancedInitializedFromModel = false;
+        let _basicSpecDirty = false;
         let _preservedEnvs = [];
         let _preservedSampleQuery = null;
         let _advancedSpecUserEdited = false;
@@ -642,6 +783,23 @@
             warningBanner.style.display = show ? 'block' : 'none';
         }
 
+        function applyBasicCompatibilityState() {
+            const basicUnsupported = PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED;
+            if (tabBasic) {
+                tabBasic.disabled = basicUnsupported;
+                tabBasic.setAttribute('aria-disabled', basicUnsupported ? 'true' : 'false');
+                tabBasic.title = basicUnsupported
+                    ? 'Basic mode is unavailable for this model because a no-op Basic save would rewrite the saved spec.'
+                    : '';
+            }
+            if (basicCompatibilityBanner) {
+                const message = BASIC_MODE_INCOMPATIBILITY_REASON
+                    || 'Basic mode is unavailable for this model because a no-op Basic save would rewrite the saved spec.';
+                basicCompatibilityBanner.textContent = basicUnsupported ? message : '';
+                basicCompatibilityBanner.style.display = basicUnsupported ? 'block' : 'none';
+            }
+        }
+
         function closeModelSaveModal() {
             if (!modelSaveModal) {
                 return;
@@ -654,7 +812,7 @@
                 return;
             }
 
-            const modeLabel = payload && payload.mode === 'update' ? 'Updated' : 'Created';
+            const modeLabel = payload && payload.mode === 'update' ? 'Updated' : 'Deployed';
             const modelDisplayName = (payload && payload.name) ? String(payload.name) : 'Model';
             if (modelSaveModalTitle) {
                 modelSaveModalTitle.textContent = `Model ${modeLabel} Successfully`;
@@ -678,9 +836,82 @@
             showSuccess('');
         }
 
+        function markBasicSpecDirty() {
+            _basicSpecDirty = true;
+        }
+
         function setPolicyEnabled(enabled) {
             policyEnabledCheckbox.checked = !!enabled;
             policyFields.style.display = enabled ? 'block' : 'none';
+        }
+
+        function clearPolicyFields() {
+            minReplicaInput.value = '';
+            maxReplicaInput.value = '';
+            standbyPerNodeInput.value = '';
+            parallelInput.value = '';
+            queueLenInput.value = '';
+            queueTimeoutInput.value = '';
+            scaleoutWaitRatioInput.value = '';
+            scaleinTimeoutInput.value = '';
+            graphSyncCheckbox.checked = DEFAULT_POLICY_GRAPH_SYNC;
+        }
+
+        function parseIntegerPolicyInput(inputEl, label, minimum, defaultValue) {
+            const raw = String((inputEl && inputEl.value) || '').trim();
+            if (raw === '') {
+                return defaultValue;
+            }
+            if (!/^-?\d+$/.test(raw)) {
+                throw new Error(`${label} must be an integer`);
+            }
+            const value = Number(raw);
+            if (!Number.isInteger(value) || value < minimum) {
+                throw new Error(`${label} must be an integer >= ${minimum}`);
+            }
+            return value;
+        }
+
+        function parseNumberPolicyInput(inputEl, label, minimum, defaultValue) {
+            const raw = String((inputEl && inputEl.value) || '').trim();
+            if (raw === '') {
+                return defaultValue;
+            }
+            const value = Number(raw);
+            if (!Number.isFinite(value) || value < minimum) {
+                throw new Error(`${label} must be a number >= ${minimum}`);
+            }
+            return value;
+        }
+
+        function buildPolicyObjectFromUi() {
+            if (!policyEnabledCheckbox.checked) {
+                return null;
+            }
+
+            const obj = {
+                min_replica: parseIntegerPolicyInput(minReplicaInput, 'Min Replica', 0, DEFAULT_POLICY_MIN_REPLICA),
+                max_replica: parseIntegerPolicyInput(maxReplicaInput, 'Max Replica', 1, DEFAULT_POLICY_MAX_REPLICA),
+                standby_per_node: parseIntegerPolicyInput(standbyPerNodeInput, 'Standby Per Node', 0, DEFAULT_POLICY_STANDBY_PER_NODE),
+                parallel: parseIntegerPolicyInput(parallelInput, 'Parallel', 1, DEFAULT_POLICY_PARALLEL),
+                queue_len: parseIntegerPolicyInput(queueLenInput, 'Queue Length', 1, DEFAULT_POLICY_QUEUE_LEN),
+                queue_timeout: parseNumberPolicyInput(queueTimeoutInput, 'Queue Timeout', 0, DEFAULT_POLICY_QUEUE_TIMEOUT_SEC),
+                scaleout_policy: {
+                    WaitQueueRatio: {
+                        wait_ratio: parseNumberPolicyInput(scaleoutWaitRatioInput, 'Wait Queue Ratio', 0, DEFAULT_POLICY_WAIT_QUEUE_RATIO)
+                    }
+                },
+                scalein_timeout: parseNumberPolicyInput(scaleinTimeoutInput, 'Scale-in Timeout', 0, DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC),
+                runtime_config: {
+                    graph_sync: !!graphSyncCheckbox.checked
+                }
+            };
+
+            if (obj.max_replica < obj.min_replica) {
+                throw new Error('Max Replica must be >= Min Replica');
+            }
+
+            return obj;
         }
 
         function parseCommandsArrayFromBasic() {
@@ -701,6 +932,74 @@
 
         function cloneJsonValue(value) {
             return JSON.parse(JSON.stringify(value));
+        }
+
+        function splitImageNameAndTagForUi(image) {
+            const normalizedImage = String(image || '').trim();
+            if (!normalizedImage) {
+                return { imageName: '', imageTag: '' };
+            }
+            const lastSlash = normalizedImage.lastIndexOf('/');
+            const lastColon = normalizedImage.lastIndexOf(':');
+            if (lastColon > lastSlash) {
+                return {
+                    imageName: normalizedImage.slice(0, lastColon),
+                    imageTag: normalizedImage.slice(lastColon + 1)
+                };
+            }
+            return { imageName: normalizedImage, imageTag: '' };
+        }
+
+        function syncCatalogImageHiddenValue() {
+            const imageName = String((catalogImageEditor && catalogImageEditor.dataset.imageName) || '').trim();
+            const imageTag = String((catalogImageTagInput && catalogImageTagInput.value) || '').trim();
+            const normalizedImage = imageName && imageTag ? `${imageName}:${imageTag}` : imageName;
+            if (imageInput) {
+                imageInput.value = normalizedImage;
+            }
+            return normalizedImage;
+        }
+
+        function getCurrentImageValue() {
+            if (IS_CATALOG_MODE) {
+                return syncCatalogImageHiddenValue();
+            }
+            return String((imageSelect && imageSelect.value) || '').trim();
+        }
+
+        function setCurrentImageValue(image) {
+            const normalizedImage = String(image || '').trim();
+            const { imageName, imageTag } = splitImageNameAndTagForUi(normalizedImage);
+            if (normalizedImage !== '' && !IS_CATALOG_MODE) {
+                ensureSelectOption(imageSelect, normalizedImage, normalizedImage);
+                imageSelect.value = normalizedImage;
+            }
+            if (catalogImageEditor) {
+                catalogImageEditor.dataset.imageName = imageName;
+            }
+            if (catalogImageName) {
+                catalogImageName.textContent = imageName ? `${imageName}:` : '';
+            }
+            if (catalogImageTagInput) {
+                catalogImageTagInput.value = imageTag;
+            }
+            if (imageInput) {
+                imageInput.value = normalizedImage;
+            }
+        }
+
+        function updateImageControlMode() {
+            if (imageSelect) {
+                imageSelect.style.display = IS_CATALOG_MODE ? 'none' : '';
+            }
+            if (catalogImageEditor) {
+                catalogImageEditor.style.display = IS_CATALOG_MODE ? 'flex' : 'none';
+            }
+            if (imageFieldHint) {
+                imageFieldHint.textContent = IS_CATALOG_MODE
+                    ? 'Catalog-backed models keep the image repository/name fixed. You may change only the tag/version here.'
+                    : 'Manual models use the dashboard whitelist of supported vLLM images.';
+            }
         }
 
         function numbersEqual(a, b, epsilon = 1e-9) {
@@ -818,7 +1117,7 @@
             let extraCommands = stripReservedCommandArgsForUi(partialCommands);
             if (isVllmOmniImageForUi(image)) {
                 extraCommands = stripOmniGeneratedCommandArgsForUi(extraCommands);
-                return [
+                const fullCommands = [
                     'vllm',
                     'serve',
                     hfModel,
@@ -826,6 +1125,10 @@
                     '--omni',
                     ...extraCommands
                 ];
+                if (Number.isInteger(gpuCount)) {
+                    fullCommands.push(`--tensor-parallel-size=${gpuCount}`);
+                }
+                return fullCommands;
             }
 
             const fullCommands = ['--model', hfModel, ...extraCommands];
@@ -856,7 +1159,7 @@
             }
 
             const spec = {
-                image: imageSelect.value,
+                image: getCurrentImageValue(),
                 commands: parseCommandsArrayFromBasic(),
                 resources: {
                     GPU: {
@@ -866,34 +1169,17 @@
                 }
             };
 
-            if (policyEnabledCheckbox.checked) {
-                const obj = {};
-                const queueTimeout = (queueTimeoutInput.value || '').trim();
-                const scaleinTimeout = (scaleinTimeoutInput.value || '').trim();
-                if (queueTimeout !== '') {
-                    const val = Number(queueTimeout);
-                    if (Number.isNaN(val)) {
-                        throw new Error('Queue Timeout must be a number');
-                    }
-                    obj.queue_timeout = val;
-                }
-                if (scaleinTimeout !== '') {
-                    const val = Number(scaleinTimeout);
-                    if (Number.isNaN(val)) {
-                        throw new Error('Scale-in Timeout must be a number');
-                    }
-                    obj.scalein_timeout = val;
-                } else {
-                    // Default scale-in timeout when policy is enabled but field is left empty.
-                    obj.scalein_timeout = 1.0;
-                }
-                if (Object.keys(obj).length > 0) {
-                    spec.policy = { Obj: obj };
-                }
+            if (spec.image === '') {
+                throw new Error('Image is required');
             }
 
-            // Basic mode has no editors for envs/sample_query, so preserve and pass
-            // them through from the initial model state.
+            const policyObj = buildPolicyObjectFromUi();
+            if (policyObj) {
+                spec.policy = { Obj: policyObj };
+            }
+
+            // Basic mode has no env or sample_query editor, so preserve those
+            // values from the initial model state.
             spec.envs = cloneJsonValue(Array.isArray(_preservedEnvs) ? _preservedEnvs : []);
             if (_preservedSampleQuery !== null) {
                 spec.sample_query = cloneJsonValue(_preservedSampleQuery);
@@ -905,8 +1191,7 @@
         function populateBasicUiFromSpec(spec) {
             const partial = spec && typeof spec === 'object' ? spec : {};
             if (typeof partial.image === 'string' && partial.image !== '') {
-                ensureSelectOption(imageSelect, partial.image, partial.image);
-                imageSelect.value = partial.image;
+                setCurrentImageValue(partial.image);
             }
 
             const commands = Array.isArray(partial.commands) ? partial.commands : [];
@@ -922,31 +1207,45 @@
             }
 
             const policyObj = (((partial.policy || {}).Obj) || {});
-            const hasQueueTimeout = policyObj && typeof policyObj === 'object'
-                && Object.prototype.hasOwnProperty.call(policyObj, 'queue_timeout');
-            const hasScaleinTimeout = policyObj && typeof policyObj === 'object'
-                && Object.prototype.hasOwnProperty.call(policyObj, 'scalein_timeout');
+            const hasPolicyObj = policyObj && typeof policyObj === 'object' && !Array.isArray(policyObj) && Object.keys(policyObj).length > 0;
 
-            const queueTimeoutValue = hasQueueTimeout ? Number(policyObj.queue_timeout) : null;
-            const scaleinTimeoutValue = hasScaleinTimeout ? Number(policyObj.scalein_timeout) : null;
+            setPolicyEnabled(hasPolicyObj);
+            if (!hasPolicyObj) {
+                clearPolicyFields();
+                return;
+            }
 
-            const queueTimeoutIsDefault = hasQueueTimeout
-                && Number.isFinite(queueTimeoutValue)
-                && numbersEqual(queueTimeoutValue, DEFAULT_POLICY_QUEUE_TIMEOUT_SEC);
-            const scaleinTimeoutIsDefault = hasScaleinTimeout
-                && Number.isFinite(scaleinTimeoutValue)
-                && numbersEqual(scaleinTimeoutValue, DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC);
-
-            const hasCustomPolicy = (hasQueueTimeout && !queueTimeoutIsDefault)
-                || (hasScaleinTimeout && !scaleinTimeoutIsDefault);
-
-            setPolicyEnabled(hasCustomPolicy);
-            queueTimeoutInput.value = hasCustomPolicy && hasQueueTimeout && policyObj.queue_timeout != null
-                ? String(policyObj.queue_timeout)
-                : '';
-            scaleinTimeoutInput.value = hasCustomPolicy && hasScaleinTimeout && policyObj.scalein_timeout != null
-                ? String(policyObj.scalein_timeout)
-                : '';
+            minReplicaInput.value = String(
+                policyObj.min_replica != null ? policyObj.min_replica : DEFAULT_POLICY_MIN_REPLICA
+            );
+            maxReplicaInput.value = String(
+                policyObj.max_replica != null ? policyObj.max_replica : DEFAULT_POLICY_MAX_REPLICA
+            );
+            standbyPerNodeInput.value = String(
+                policyObj.standby_per_node != null ? policyObj.standby_per_node : DEFAULT_POLICY_STANDBY_PER_NODE
+            );
+            parallelInput.value = String(
+                policyObj.parallel != null ? policyObj.parallel : DEFAULT_POLICY_PARALLEL
+            );
+            queueLenInput.value = String(
+                policyObj.queue_len != null ? policyObj.queue_len : DEFAULT_POLICY_QUEUE_LEN
+            );
+            queueTimeoutInput.value = String(
+                policyObj.queue_timeout != null ? policyObj.queue_timeout : DEFAULT_POLICY_QUEUE_TIMEOUT_SEC
+            );
+            scaleoutWaitRatioInput.value = String(
+                (((policyObj.scaleout_policy || {}).WaitQueueRatio || {}).wait_ratio) != null
+                    ? (((policyObj.scaleout_policy || {}).WaitQueueRatio || {}).wait_ratio)
+                    : DEFAULT_POLICY_WAIT_QUEUE_RATIO
+            );
+            scaleinTimeoutInput.value = String(
+                policyObj.scalein_timeout != null ? policyObj.scalein_timeout : DEFAULT_POLICY_SCALEIN_TIMEOUT_SEC
+            );
+            graphSyncCheckbox.checked = !!(
+                (((policyObj.runtime_config || {}).graph_sync) != null)
+                    ? ((policyObj.runtime_config || {}).graph_sync)
+                    : DEFAULT_POLICY_GRAPH_SYNC
+            );
         }
 
         function setTopLevelFields(model) {
@@ -957,7 +1256,7 @@
                 ensureSelectOption(tenantSelect, model.tenant, model.tenant);
                 tenantSelect.value = model.tenant;
                 if (tenantDisplay) {
-                    tenantDisplay.textContent = model.tenant;
+                    tenantDisplay.textContent = getTargetTenantLabel(model.tenant) || model.tenant;
                 }
             }
             rebuildNamespaceOptions({ preserveCurrent: false, preferredValue: model.namespace || '' });
@@ -1012,6 +1311,54 @@
             }
         }
 
+        function normalizeTargetOptionList(options) {
+            if (!Array.isArray(options)) {
+                return [];
+            }
+            return options
+                .map((option) => {
+                    if (!option || typeof option !== 'object') {
+                        return null;
+                    }
+                    const value = String(option.value || '').trim();
+                    const label = String(option.label || option.value || '').trim();
+                    if (value === '') {
+                        return null;
+                    }
+                    return { value, label: label || value };
+                })
+                .filter(Boolean);
+        }
+
+        function applyCreateTargetContext(nextState) {
+            const state = (nextState && typeof nextState === 'object') ? nextState : {};
+            targetTenantOptions = normalizeTargetOptionList(state.tenant_options);
+            targetNamespaceOptionsByTenant = (
+                state.namespace_options_by_tenant
+                && typeof state.namespace_options_by_tenant === 'object'
+            ) ? state.namespace_options_by_tenant : {};
+            targetSelectedTenant = String(state.selected_tenant || '').trim();
+            targetSelectedNamespace = String(state.selected_namespace || '').trim();
+            targetMessage = String(state.message || '').trim();
+        }
+
+        function getTargetTenantLabel(tenantValue) {
+            const normalizedTenant = String(tenantValue || '').trim();
+            if (normalizedTenant === '') {
+                return '';
+            }
+            const matchedOption = targetTenantOptions.find((option) => option.value === normalizedTenant);
+            return matchedOption ? (matchedOption.label || matchedOption.value) : normalizedTenant;
+        }
+
+        function getTargetNamespaceOptionsForTenant(tenantValue) {
+            const normalizedTenant = String(tenantValue || '').trim();
+            if (normalizedTenant === '') {
+                return [];
+            }
+            return normalizeTargetOptionList(targetNamespaceOptionsByTenant[normalizedTenant]);
+        }
+
         function refreshGpuCountOptionsFromNodeCapacity() {
             const currentValue = String(gpuCountSelect.value || '').trim();
             const currentCount = Number.parseInt(currentValue, 10);
@@ -1047,72 +1394,14 @@
             }
         }
 
-        function tenantDisplayLabel(tenantObj) {
-            if (!tenantObj || typeof tenantObj !== 'object') {
-                return '';
-            }
-            const spec = tenantObj.object && tenantObj.object.spec ? tenantObj.object.spec : {};
-            const displayName = String(spec.display_name || spec.displayName || '').trim();
-            const name = String(tenantObj.name || '').trim();
-            return displayName ? `${displayName} (${name})` : name;
-        }
-
-        function isInferxAdmin(rolesData) {
-            if (!Array.isArray(rolesData)) {
-                return false;
-            }
-            return rolesData.some((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').toLowerCase().trim();
-                return rbObjType === 'tenant' && rbTenant === 'system' && rbRole === 'admin';
-            });
-        }
-
-        function shouldHidePublicTenantInCreate(rolesData) {
-            if (PAGE_MODE !== 'create') {
-                return false;
-            }
-            if (isInferxAdmin(rolesData)) {
-                return false;
-            }
-            if (!Array.isArray(rolesData)) {
-                return false;
-            }
-
-            const accessibleTenants = new Set();
-            rolesData.forEach((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').trim();
-                if ((rbObjType !== 'tenant' && rbObjType !== 'namespace') || (rbRole !== 'admin' && rbRole !== 'user')) {
-                    return;
-                }
-                if (!rbTenant || rbTenant.toLowerCase() === 'system') {
-                    return;
-                }
-                accessibleTenants.add(rbTenant);
-            });
-
-            const nonPublicTenants = Array.from(accessibleTenants).filter((t) => t.toLowerCase() !== 'public');
-            return nonPublicTenants.length === 1;
-        }
-
         function rebuildTenantOptions() {
-            const hidePublic = shouldHidePublicTenantInCreate(roles);
-            const tenantOptions = (Array.isArray(tenants) ? tenants : [])
-                .filter((tenantObj) => {
-                    const tenantName = String(tenantObj && tenantObj.name || '').trim().toLowerCase();
-                    return !(hidePublic && tenantName === 'public');
-                })
-                .map((tenantObj) => ({
-                value: String(tenantObj.name || '').trim(),
-                label: tenantDisplayLabel(tenantObj)
-            }))
-                .filter((opt) => opt.value !== '');
-
+            const tenantOptions = targetTenantOptions;
             const current = tenantSelect.value;
-            setSelectOptions(tenantSelect, tenantOptions, current || (INITIAL_MODEL && INITIAL_MODEL.tenant) || '');
+            const preferredTenant = current
+                || (INITIAL_MODEL && INITIAL_MODEL.tenant)
+                || targetSelectedTenant
+                || '';
+            setSelectOptions(tenantSelect, tenantOptions, preferredTenant);
             if (PAGE_MODE !== 'update') {
                 const tenantOptionCount = tenantSelect.options.length;
                 const singleTenant = tenantOptionCount === 1;
@@ -1120,7 +1409,7 @@
                 tenantSelect.hidden = singleTenant;
                 if (tenantDisplay) {
                     tenantDisplay.style.display = singleTenant ? 'block' : 'none';
-                    tenantDisplay.textContent = singleTenant ? (tenantSelect.options[0]?.textContent || tenantSelect.value || '') : '';
+                    tenantDisplay.textContent = singleTenant ? (getTargetTenantLabel(tenantSelect.value) || tenantSelect.value || '') : '';
                 }
             } else {
                 tenantRow.classList.toggle('hidden', false);
@@ -1132,16 +1421,10 @@
             const preferredValue = typeof opts.preferredValue === 'string' ? opts.preferredValue : '';
             const selectedTenant = tenantSelect.value;
             const currentNamespace = preserveCurrent ? namespaceSelect.value : '';
-
-            const namespaceOptions = (Array.isArray(namespaces) ? namespaces : [])
-                .filter((ns) => String(ns.tenant || '').trim() === selectedTenant)
-                .map((ns) => {
-                    const value = String(ns.name || '').trim();
-                    return { value, label: value };
-                })
-                .filter((opt) => opt.value !== '');
-
-            const targetValue = preferredValue || currentNamespace;
+            const namespaceOptions = getTargetNamespaceOptionsForTenant(selectedTenant);
+            const targetValue = preferredValue
+                || currentNamespace
+                || (selectedTenant === targetSelectedTenant ? targetSelectedNamespace : '');
             setSelectOptions(namespaceSelect, namespaceOptions, targetValue);
             if (PAGE_MODE !== 'update') {
                 const namespaceOptionCount = namespaceSelect.options.length;
@@ -1177,6 +1460,10 @@
         }
 
         function setActiveTab(nextTab) {
+            if (nextTab === 'basic' && PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED) {
+                return;
+            }
+
             if (nextTab === activeTab) {
                 return;
             }
@@ -1186,7 +1473,7 @@
                 showAdvancedWarning(false);
                 try {
                     const initialAdvancedSpec = (
-                        PAGE_MODE === 'update'
+                        (PAGE_MODE === 'update' || IS_CATALOG_MODE)
                         && INITIAL_MODEL
                         && typeof INITIAL_MODEL === 'object'
                         && !Array.isArray(INITIAL_MODEL)
@@ -1198,14 +1485,17 @@
                         && initialAdvancedSpec
                         && typeof initialAdvancedSpec === 'object'
                         && !Array.isArray(initialAdvancedSpec)
+                        && !_basicSpecDirty
                     ) {
-                        // First Advanced open in edit mode should show the real saved
-                        // advanced spec, not a regenerated one from Basic fields.
+                        // First Advanced open in edit mode or catalog create mode
+                        // should show the real saved/catalog baseline spec, not a
+                        // regenerated one from Basic fields, as long as Basic has
+                        // not been edited yet in this session.
                         setAdvancedSpecObjectFromSystem(initialAdvancedSpec);
-                        _advancedInitializedFromModel = true;
                     } else {
                         syncAdvancedFromBasic();
                     }
+                    _advancedInitializedFromModel = true;
                 } catch (err) {
                     showError(err.message || String(err));
                     return;
@@ -1243,10 +1533,18 @@
             const initialNamespace = INITIAL_MODEL && typeof INITIAL_MODEL.namespace === 'string' ? INITIAL_MODEL.namespace.trim() : '';
             const initialName = INITIAL_MODEL && typeof INITIAL_MODEL.name === 'string' ? INITIAL_MODEL.name.trim() : '';
             const initialHfModel = INITIAL_MODEL && typeof INITIAL_MODEL.hf_model === 'string' ? INITIAL_MODEL.hf_model.trim() : '';
+            const initialCatalogSource = (
+                INITIAL_MODEL
+                && INITIAL_MODEL.catalog_source
+                && typeof INITIAL_MODEL.catalog_source === 'object'
+                && !Array.isArray(INITIAL_MODEL.catalog_source)
+            ) ? INITIAL_MODEL.catalog_source : null;
             const tenant = PAGE_MODE === 'update' ? initialTenant : (tenantSelect.value || '').trim();
             const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || '').trim();
             const name = PAGE_MODE === 'update' ? initialName : (functionNameInput.value || '').trim();
-            const hfModel = PAGE_MODE === 'update' ? (initialHfModel || (hfModelInput.value || '').trim()) : (hfModelInput.value || '').trim();
+            const hfModel = (PAGE_MODE === 'update' || IS_CATALOG_MODE)
+                ? (initialHfModel || (hfModelInput.value || '').trim())
+                : (hfModelInput.value || '').trim();
 
             if (!tenant) {
                 throw new Error('Tenant is required');
@@ -1255,19 +1553,23 @@
                 throw new Error('Namespace is required');
             }
             if (!name) {
-                throw new Error('Function Name is required');
+                throw new Error('Model Name is required');
             }
             if (!hfModel) {
                 throw new Error('HuggingFace Model is required');
             }
 
-            return {
+            const payload = {
                 mode: PAGE_MODE,
                 tenant: tenant,
                 namespace: namespace,
                 name: name,
                 hf_model: hfModel
             };
+            if (PAGE_MODE === 'create' && initialCatalogSource && initialCatalogSource.catalog_id != null) {
+                payload.catalog_id = initialCatalogSource.catalog_id;
+            }
+            return payload;
         }
 
         async function submitModel() {
@@ -1285,7 +1587,7 @@
             }
 
             saveBtn.disabled = true;
-            showSuccess('Saving model...');
+            showSuccess(payload.mode === 'update' ? 'Updating model...' : 'Deploying model...');
 
             try {
                 console.log('[func_create] submit payload', {
@@ -1309,7 +1611,7 @@
 
                 const text = await resp.text();
                 if (!resp.ok) {
-                    let errorMessage = `Save failed (HTTP ${resp.status})`;
+                    let errorMessage = `${payload.mode === 'update' ? 'Update' : 'Deploy'} failed (HTTP ${resp.status})`;
                     try {
                         const parsed = JSON.parse(text);
                         if (parsed && parsed.error) {
@@ -1325,7 +1627,7 @@
                     throw new Error(errorMessage);
                 }
 
-                showSuccess(payload.mode === 'update' ? 'Model updated successfully.' : 'Model created successfully.');
+                showSuccess(payload.mode === 'update' ? 'Model updated successfully.' : 'Model deployed successfully.');
                 showModelSaveModal(payload);
             } catch (err) {
                 showSuccess('');
@@ -1336,38 +1638,12 @@
         }
 
         async function loadTenantsAndNamespaces() {
-            const [tenantsResp, namespacesResp, rolesResp] = await Promise.all([
-                fetch('/generate_tenants'),
-                fetch('/generate_namespaces'),
-                fetch('/generate_roles')
-            ]);
-
-            if (!tenantsResp.ok) {
-                throw new Error(`Failed to load tenants (HTTP ${tenantsResp.status})`);
-            }
-            if (!namespacesResp.ok) {
-                throw new Error(`Failed to load namespaces (HTTP ${namespacesResp.status})`);
-            }
-            if (!rolesResp.ok) {
-                throw new Error(`Failed to load roles (HTTP ${rolesResp.status})`);
-            }
-
-            tenants = await tenantsResp.json();
-            namespaces = await namespacesResp.json();
-            roles = await rolesResp.json();
-
-            if (!Array.isArray(tenants)) {
-                tenants = [];
-            }
-            if (!Array.isArray(namespaces)) {
-                namespaces = [];
-            }
-            if (!Array.isArray(roles)) {
-                roles = [];
-            }
-
+            applyCreateTargetContext(CREATE_TARGET_CONTEXT);
             rebuildTenantOptions();
             rebuildNamespaceOptions({ preferredValue: (INITIAL_MODEL && INITIAL_MODEL.namespace) || '' });
+            if (PAGE_MODE === 'create' && targetTenantOptions.length === 0 && targetMessage) {
+                throw new Error(targetMessage);
+            }
         }
 
         async function loadNodeMaxVram() {
@@ -1409,10 +1685,15 @@
             if (IMAGE_OPTIONS.length > 0) {
                 imageSelect.value = IMAGE_OPTIONS[0];
             }
+            if (imageInput && IMAGE_OPTIONS.length > 0 && !imageInput.value) {
+                imageInput.value = IMAGE_OPTIONS[0];
+            }
+            updateImageControlMode();
         }
 
         function applyInitialModelIfPresent() {
             _advancedInitializedFromModel = false;
+            _basicSpecDirty = false;
             _preservedEnvs = [];
             _preservedSampleQuery = null;
             _advancedSpecUserEdited = false;
@@ -1422,6 +1703,7 @@
                 commandsJson.value = JSON.stringify(["--trust-remote-code", "--gpu-memory-utilization", "0.95", "--max-model-len", "2000"], null, 2);
                 setPolicyEnabled(false);
                 setAdvancedSpecTextFromSystem('');
+                _basicSpecDirty = false;
                 return;
             }
 
@@ -1435,19 +1717,28 @@
                         : {}
                 );
             _preservedEnvs = cloneJsonValue(Array.isArray(basicSpec.envs) ? basicSpec.envs : []);
-            _preservedSampleQuery = cloneJsonValue(
-                basicSpec.sample_query != null ? basicSpec.sample_query : null
-            );
+            _preservedSampleQuery = (
+                basicSpec.sample_query && typeof basicSpec.sample_query === 'object' && !Array.isArray(basicSpec.sample_query)
+            )
+                ? cloneJsonValue(basicSpec.sample_query)
+                : null;
 
             setTopLevelFields(INITIAL_MODEL);
             populateBasicUiFromSpec(INITIAL_MODEL.basic_spec || INITIAL_MODEL.spec || {});
             setAdvancedSpecObjectFromSystem(INITIAL_MODEL.advanced_spec || INITIAL_MODEL.spec || {});
+            _basicSpecDirty = false;
         }
 
         async function init() {
             initializeImageOptions();
             refreshGpuCountOptionsFromNodeCapacity();
-            policyEnabledCheckbox.addEventListener('change', () => setPolicyEnabled(policyEnabledCheckbox.checked));
+            if (catalogModeBanner) {
+                catalogModeBanner.style.display = IS_CATALOG_MODE ? 'block' : 'none';
+            }
+            policyEnabledCheckbox.addEventListener('change', () => {
+                markBasicSpecDirty();
+                setPolicyEnabled(policyEnabledCheckbox.checked);
+            });
             tenantSelect.addEventListener('change', () => rebuildNamespaceOptions({ preserveCurrent: false }));
             tabBasic.addEventListener('click', () => setActiveTab('basic'));
             tabAdvanced.addEventListener('click', () => setActiveTab('advanced'));
@@ -1469,6 +1760,28 @@
                 }
                 _advancedSpecUserEdited = true;
             });
+            imageSelect?.addEventListener('change', markBasicSpecDirty);
+            commandsJson.addEventListener('input', markBasicSpecDirty);
+            gpuCountSelect.addEventListener('change', markBasicSpecDirty);
+            gpuVramInput.addEventListener('input', markBasicSpecDirty);
+            gpuVramInput.addEventListener('change', markBasicSpecDirty);
+            catalogImageTagInput?.addEventListener('input', () => {
+                markBasicSpecDirty();
+                syncCatalogImageHiddenValue();
+            });
+            catalogImageTagInput?.addEventListener('change', () => {
+                markBasicSpecDirty();
+                syncCatalogImageHiddenValue();
+            });
+            minReplicaInput.addEventListener('input', markBasicSpecDirty);
+            maxReplicaInput.addEventListener('input', markBasicSpecDirty);
+            standbyPerNodeInput.addEventListener('input', markBasicSpecDirty);
+            parallelInput.addEventListener('input', markBasicSpecDirty);
+            queueLenInput.addEventListener('input', markBasicSpecDirty);
+            queueTimeoutInput.addEventListener('input', markBasicSpecDirty);
+            scaleoutWaitRatioInput.addEventListener('input', markBasicSpecDirty);
+            scaleinTimeoutInput.addEventListener('input', markBasicSpecDirty);
+            graphSyncCheckbox.addEventListener('change', markBasicSpecDirty);
             hfModelInput.addEventListener('input', maybeAutoRefreshAdvancedFromBasicForHfModelChange);
             hfModelInput.addEventListener('change', maybeAutoRefreshAdvancedFromBasicForHfModelChange);
 
@@ -1481,8 +1794,18 @@
             }
 
             applyInitialModelIfPresent();
+            applyBasicCompatibilityState();
 
-            if (!INITIAL_MODEL) {
+            const resolvedInitialTab = (PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED)
+                ? 'advanced'
+                : (INITIAL_TAB === 'advanced' ? 'advanced' : 'basic');
+            if (resolvedInitialTab === 'advanced') {
+                try {
+                    setActiveTab('advanced');
+                } catch (_e) {
+                    // Leave Basic active and surface validation only on explicit interaction.
+                }
+            } else if (!INITIAL_MODEL) {
                 try {
                     syncAdvancedFromBasic();
                 } catch (_e) {
