@@ -47,6 +47,26 @@
         color: #1f2937;
     }
 
+    .catalog-editor-form-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+
+    .catalog-editor-required-note {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .catalog-required-mark {
+        color: #b91c1c;
+        font-weight: 700;
+    }
+
     .catalog-editor-message {
         display: none;
         border-radius: 4px;
@@ -388,26 +408,29 @@
     </div>
 
     <div class="panel">
-        <h3 id="admin-catalog-form-title">New Catalog Model</h3>
+        <div class="catalog-editor-form-header">
+            <h3 id="admin-catalog-form-title">New Catalog Model</h3>
+            <div class="catalog-editor-required-note"><span class="catalog-required-mark">*</span> Required</div>
+        </div>
         <form id="admin-catalog-form">
             <input id="admin-catalog-id" type="hidden" value="">
             <div class="catalog-editor-grid">
                 <div class="catalog-editor-field">
-                    <label for="admin-catalog-display-name">Display Name</label>
+                    <label for="admin-catalog-display-name">Display Name <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-display-name" type="text" placeholder="Qwen2.5-Coder-1.5B-Instruct">
+                        <input id="admin-catalog-display-name" type="text" placeholder="Qwen2.5-Coder-1.5B-Instruct" required aria-required="true">
                     </div>
                 </div>
                 <div class="catalog-editor-field">
-                    <label for="admin-catalog-provider">Provider</label>
+                    <label for="admin-catalog-provider">Provider <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-provider" type="text" placeholder="Qwen">
+                        <input id="admin-catalog-provider" type="text" placeholder="Qwen" required aria-required="true">
                     </div>
                 </div>
                 <div class="catalog-editor-field">
-                    <label for="admin-catalog-modality">Modality</label>
+                    <label for="admin-catalog-modality">Modality <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <select id="admin-catalog-modality">
+                        <select id="admin-catalog-modality" required aria-required="true">
                             <option value="text">text</option>
                             <option value="image">image</option>
                             <option value="audio">audio</option>
@@ -428,16 +451,16 @@
                     </div>
                 </div>
                 <div class="catalog-editor-field">
-                    <label for="admin-catalog-source-model-id">Source Model ID</label>
+                    <label for="admin-catalog-source-model-id">Source Model ID <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-source-model-id" type="text" placeholder="Qwen/Qwen2.5-Coder-1.5B-Instruct">
+                        <input id="admin-catalog-source-model-id" type="text" placeholder="Qwen/Qwen2.5-Coder-1.5B-Instruct" required aria-required="true">
                         <div class="catalog-editor-hint">Immutable after creation. The dashboard derives `slug` from this value.</div>
                     </div>
                 </div>
                 <div class="catalog-editor-field full">
-                    <label for="admin-catalog-brief-intro">Brief Intro</label>
+                    <label for="admin-catalog-brief-intro">Brief Intro <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <input id="admin-catalog-brief-intro" type="text" placeholder="Lightweight code-focused Qwen model.">
+                        <input id="admin-catalog-brief-intro" type="text" placeholder="Lightweight code-focused Qwen model." required aria-required="true">
                     </div>
                 </div>
                 <div class="catalog-editor-field full">
@@ -531,9 +554,9 @@
                     </div>
                 </div>
                 <div class="catalog-editor-field full">
-                    <label for="admin-catalog-default-spec">Default Func Spec JSON</label>
+                    <label for="admin-catalog-default-spec">Default Func Spec JSON <span class="catalog-required-mark">*</span></label>
                     <div class="catalog-editor-control">
-                        <textarea id="admin-catalog-default-spec" rows="22" placeholder='{
+                        <textarea id="admin-catalog-default-spec" rows="22" required aria-required="true" placeholder='{
   "image": "vllm/vllm-openai:v0.16.0",
   "commands": [
     "--model",
@@ -1047,7 +1070,8 @@
 
             clearMessages();
             idInput.value = String(entry.id);
-            formTitle.textContent = `Edit #${entry.id}`;
+            const displayName = String(entry.display_name || '').trim();
+            formTitle.textContent = displayName ? `Edit ${displayName}` : 'Edit Catalog Model';
             saveBtn.textContent = 'Update';
             setPublishButtonState(!entry.is_active, 'Update & Publish');
             setDeleteButtonState(true, 'Delete');

@@ -33,6 +33,7 @@ except ImportError:
 from flask import (
     Blueprint,
     Flask,
+    g,
     jsonify,
     redirect, url_for, session, 
     render_template,
@@ -3162,75 +3163,286 @@ def collect_catalog_filter_options(entries):
     }
 
 
-def list_accessible_tenant_names():
-    tenants = filter_public_tenant_tenants(
-        listtenants(),
-        include_public=can_access_public_tenant_in_dashboard(),
-    )
-    names = []
+def tenant_display_label_for_ui(tenant_obj):
+    if not isinstance(tenant_obj, dict):
+        return ""
+
+    spec = (((tenant_obj.get("object") or {}).get("spec")) or {})
+    display_name = str(spec.get("display_name", spec.get("displayName", "")) or "").strip()
+    tenant_name = str(tenant_obj.get("name", "") or "").strip()
+    if display_name != "":
+        return f"{display_name} ({tenant_name})" if tenant_name != "" and display_name != tenant_name else display_name
+    return tenant_name
+
+
+def role_grants_dashboard_resource_access(role):
+    if not isinstance(role, dict):
+        return False
+
+    obj_type = str(role.get("objType", "") or "").strip().lower()
+    role_name = str(role.get("role", "") or "").strip().lower()
+    return obj_type in ("tenant", "namespace") and role_name in ("admin", "user")
+
+
+def get_accessible_tenant_names_from_roles_for_create(roles):
+    if not isinstance(roles, list) or has_inferx_admin_role(roles):
+        return []
+
+    tenant_names = []
     seen = set()
-    for tenant in tenants if isinstance(tenants, list) else []:
-        name = str((tenant or {}).get("name", "")).strip()
-        if name == "" or name.lower() == "system" or name in seen:
+    for role in roles:
+        if not role_grants_dashboard_resource_access(role):
             continue
-        seen.add(name)
-        names.append(name)
-    return names
+        tenant_name = str(role.get("tenant", "") or "").strip()
+        tenant_key = tenant_name.lower()
+        if tenant_name == "" or tenant_key == "system" or tenant_key in seen:
+            continue
+        seen.add(tenant_key)
+        tenant_names.append(tenant_name)
+    return tenant_names
 
 
-def list_accessible_namespace_names_for_tenant(tenant: str):
-    normalized_tenant = str(tenant or "").strip()
-    namespaces = filter_public_tenant_resource_items(
-        listnamespaces(),
-        include_public=can_access_public_tenant_in_dashboard(),
-    )
-    names = []
+def get_explicit_accessible_namespace_names_from_roles_for_create(roles, tenant_name: str):
+    normalized_tenant = str(tenant_name or "").strip()
+    if normalized_tenant == "" or not isinstance(roles, list) or has_inferx_admin_role(roles):
+        return []
+
+    namespace_names = []
     seen = set()
-    for namespace in namespaces if isinstance(namespaces, list) else []:
-        row_tenant = str((namespace or {}).get("tenant", "")).strip()
-        row_name = str((namespace or {}).get("name", "")).strip()
-        if row_tenant != normalized_tenant or row_name == "" or row_name in seen:
+    for role in roles:
+        if not isinstance(role, dict):
             continue
-        seen.add(row_name)
-        names.append(row_name)
-    return names
+        obj_type = str(role.get("objType", "") or "").strip().lower()
+        role_name = str(role.get("role", "") or "").strip().lower()
+        role_tenant = str(role.get("tenant", "") or "").strip()
+        role_namespace = str(role.get("namespace", "") or "").strip()
+        if obj_type != "namespace" or role_name not in ("admin", "user") or role_tenant != normalized_tenant:
+            continue
+        namespace_key = role_namespace.lower()
+        if role_namespace == "" or namespace_key in seen:
+            continue
+        seen.add(namespace_key)
+        namespace_names.append(role_namespace)
+    return namespace_names
 
 
-def resolve_catalog_deploy_target_context():
-    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
-    if active_tenant == "" or active_tenant.lower() == "system":
-        tenant_names = list_accessible_tenant_names()
-        if len(tenant_names) == 1:
-            active_tenant = tenant_names[0]
-        else:
-            return {
-                "available": False,
-                "tenant": "",
-                "namespace": "",
-                "message": "Deploy Now needs one active tenant. Use Customize & Deploy to choose the target explicitly.",
-            }
+def build_catalog_deploy_target_selector_message(
+    *,
+    tenant_options,
+    selected_tenant,
+    namespace_options,
+    selected_namespace,
+    show_selected_tenant_in_summary=True,
+):
+    if not tenant_options:
+        return "No accessible tenant is available for deployment."
+    if str(selected_tenant or "").strip() == "":
+        return "Select a tenant to enable Deploy Now."
+    if not namespace_options:
+        if show_selected_tenant_in_summary:
+            return f"No accessible namespace is available under tenant `{selected_tenant}`."
+        return "No accessible namespace is available for deployment."
+    if str(selected_namespace or "").strip() == "":
+        if show_selected_tenant_in_summary:
+            return f"Select a namespace under tenant `{selected_tenant}` to enable Deploy Now."
+        return "Select a namespace to enable Deploy Now."
+    return ""
 
-    namespace_names = list_accessible_namespace_names_for_tenant(active_tenant)
-    if len(namespace_names) == 1:
-        return {
-            "available": True,
-            "tenant": active_tenant,
-            "namespace": namespace_names[0],
-            "message": "",
-        }
-    if len(namespace_names) == 0:
-        return {
-            "available": False,
-            "tenant": active_tenant,
-            "namespace": "",
-            "message": f"No accessible namespace was found under tenant `{active_tenant}`. Use Customize & Deploy instead.",
-        }
+
+def build_catalog_deploy_target_unavailable_context(message: str):
     return {
-        "available": False,
-        "tenant": active_tenant,
-        "namespace": "",
-        "message": f"Deploy Now is disabled because tenant `{active_tenant}` has multiple accessible namespaces. Use Customize & Deploy to choose one.",
+        "tenant_options": [],
+        "namespace_options_by_tenant": {},
+        "namespace_names_by_tenant": {},
+        "selected_tenant": "",
+        "selected_namespace": "",
+        "show_tenant_in_summary": True,
+        "resolved": False,
+        "message": str(message or "Deploy Now is unavailable.").strip() or "Deploy Now is unavailable.",
     }
+
+
+def build_catalog_deploy_target_selector_context(*, roles=None, inferx_admin=None):
+    if roles is None:
+        try:
+            roles = listroles()
+        except Exception as e:
+            app.logger.warning("catalog deploy target roles lookup failed: %s", e)
+            return build_catalog_deploy_target_unavailable_context(
+                "Deploy Now is temporarily unavailable because tenant access could not be loaded. Use Customize & Deploy instead."
+            )
+
+    if inferx_admin is None:
+        inferx_admin = is_inferx_admin_user()
+
+    include_public = can_access_public_tenant_in_dashboard(roles if not inferx_admin else None)
+    tenant_rows = filter_public_tenant_tenants(
+        listtenants(),
+        include_public=include_public,
+    )
+    namespace_rows = filter_public_tenant_resource_items(
+        listnamespaces(),
+        include_public=include_public,
+    )
+
+    is_inferx_admin = bool(inferx_admin)
+    accessible_tenant_names = get_accessible_tenant_names_from_roles_for_create(roles)
+    accessible_tenant_name_set = {tenant_name.lower() for tenant_name in accessible_tenant_names}
+
+    tenant_options = []
+    tenant_name_set = set()
+    for tenant_obj in tenant_rows if isinstance(tenant_rows, list) else []:
+        tenant_name = str((tenant_obj or {}).get("name", "") or "").strip()
+        tenant_key = tenant_name.lower()
+        if tenant_name == "" or tenant_key == "system" or tenant_key in tenant_name_set:
+            continue
+        if not is_inferx_admin and tenant_key not in accessible_tenant_name_set:
+            continue
+        tenant_name_set.add(tenant_key)
+        tenant_options.append({
+            "value": tenant_name,
+            "label": tenant_display_label_for_ui(tenant_obj) or tenant_name,
+        })
+
+    raw_namespace_options_by_tenant = {}
+    namespace_seen_by_tenant = {}
+    for namespace_obj in namespace_rows if isinstance(namespace_rows, list) else []:
+        row_tenant = str((namespace_obj or {}).get("tenant", "") or "").strip()
+        row_namespace = str((namespace_obj or {}).get("name", "") or "").strip()
+        row_tenant_key = row_tenant.lower()
+        row_namespace_key = row_namespace.lower()
+        if row_tenant == "" or row_tenant_key == "system" or row_namespace == "":
+            continue
+        raw_namespace_options_by_tenant.setdefault(row_tenant, [])
+        namespace_seen_by_tenant.setdefault(row_tenant, set())
+        if row_namespace_key in namespace_seen_by_tenant[row_tenant]:
+            continue
+        namespace_seen_by_tenant[row_tenant].add(row_namespace_key)
+        raw_namespace_options_by_tenant[row_tenant].append({
+            "value": row_namespace,
+            "label": row_namespace,
+        })
+
+    namespace_options_by_tenant = {}
+    namespace_names_by_tenant = {}
+    for tenant_option in tenant_options:
+        tenant_name = tenant_option["value"]
+        namespace_options = list(raw_namespace_options_by_tenant.get(tenant_name, []))
+        explicit_namespace_names = get_explicit_accessible_namespace_names_from_roles_for_create(roles, tenant_name)
+        if not is_inferx_admin and explicit_namespace_names:
+            explicit_namespace_name_set = {namespace_name.lower() for namespace_name in explicit_namespace_names}
+            namespace_options = [
+                namespace_option
+                for namespace_option in namespace_options
+                if str(namespace_option.get("value", "") or "").strip().lower() in explicit_namespace_name_set
+            ]
+        namespace_options_by_tenant[tenant_name] = namespace_options
+        namespace_names_by_tenant[tenant_name] = [
+            str(namespace_option.get("value", "") or "").strip()
+            for namespace_option in namespace_options
+            if str(namespace_option.get("value", "") or "").strip() != ""
+        ]
+
+    active_tenant_name = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    selected_tenant = ""
+    if active_tenant_name != "":
+        for tenant_option in tenant_options:
+            tenant_value = str(tenant_option.get("value", "") or "").strip()
+            if tenant_value != "" and tenant_value.lower() == active_tenant_name.lower():
+                selected_tenant = tenant_value
+                break
+    if selected_tenant == "" and len(tenant_options) == 1:
+        selected_tenant = str(tenant_options[0].get("value", "") or "").strip()
+
+    namespace_options = namespace_options_by_tenant.get(selected_tenant, []) if selected_tenant != "" else []
+    selected_namespace = ""
+    if len(namespace_options) == 1:
+        selected_namespace = str(namespace_options[0].get("value", "") or "").strip()
+
+    show_tenant_in_summary = is_inferx_admin or len(tenant_options) != 1
+    resolved = selected_tenant != "" and selected_namespace != ""
+    return {
+        "tenant_options": tenant_options,
+        "namespace_options_by_tenant": namespace_options_by_tenant,
+        "namespace_names_by_tenant": namespace_names_by_tenant,
+        "selected_tenant": selected_tenant,
+        "selected_namespace": selected_namespace,
+        "show_tenant_in_summary": show_tenant_in_summary,
+        "resolved": resolved,
+        "message": build_catalog_deploy_target_selector_message(
+            tenant_options=tenant_options,
+            selected_tenant=selected_tenant,
+            namespace_options=namespace_options,
+            selected_namespace=selected_namespace,
+            show_selected_tenant_in_summary=show_tenant_in_summary,
+        ),
+    }
+
+
+def resolve_case_insensitive_catalog_target_value(valid_values, requested_value: str):
+    requested = str(requested_value or "").strip()
+    if requested == "":
+        return ""
+
+    if requested in valid_values:
+        return requested
+
+    requested_key = requested.lower()
+    matches = [
+        str(valid_value or "").strip()
+        for valid_value in valid_values
+        if str(valid_value or "").strip().lower() == requested_key
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return ""
+
+
+def resolve_catalog_deploy_target_selection(selector_context, *, requested_tenant="", requested_namespace="", allow_implicit=False):
+    tenant = str(requested_tenant or "").strip()
+    namespace = str(requested_namespace or "").strip()
+    namespace_names_by_tenant = selector_context.get("namespace_names_by_tenant", {}) if isinstance(selector_context, dict) else {}
+
+    if tenant == "" and namespace == "":
+        if allow_implicit and selector_context.get("resolved"):
+            return (
+                str(selector_context.get("selected_tenant", "") or "").strip(),
+                str(selector_context.get("selected_namespace", "") or "").strip(),
+            )
+        raise ValueError(
+            selector_context.get("message")
+            or "Deploy Now requires a tenant and namespace selection. Use Customize & Deploy instead."
+        )
+
+    if tenant == "" or namespace == "":
+        raise ValueError("Both `tenant` and `namespace` are required when selecting a Deploy Now target.")
+
+    canonical_tenant = resolve_case_insensitive_catalog_target_value(namespace_names_by_tenant.keys(), tenant)
+    if canonical_tenant == "":
+        raise ValueError(f"Selected tenant `{tenant}` is no longer available or you no longer have access to it.")
+
+    valid_namespace_names = namespace_names_by_tenant.get(canonical_tenant)
+    if valid_namespace_names is None:
+        raise ValueError(f"Selected tenant `{tenant}` is no longer available or you no longer have access to it.")
+
+    canonical_namespace = resolve_case_insensitive_catalog_target_value(valid_namespace_names, namespace)
+    if canonical_namespace == "":
+        raise ValueError(
+            f"Selected namespace `{namespace}` under tenant `{tenant}` is no longer available or you no longer have access to it."
+        )
+
+    return canonical_tenant, canonical_namespace
+
+
+@prefix_bp.route("/catalog/deploy-target-context", methods=["GET"])
+@require_login
+def CatalogDeployTargetContext():
+    try:
+        return jsonify(build_catalog_deploy_target_selector_context())
+    except RuntimeError as e:
+        return json_error(str(e), 502)
+    except Exception as e:
+        return json_error(f"failed to load catalog deploy target context: {e}", 500)
 
 
 def normalize_catalog_slug_component(value, field_name):
@@ -4104,6 +4316,9 @@ def parse_edit_key(edit_key: str):
     return parts[0], parts[1], parts[2]
 
 def listroles():
+    if hasattr(g, "_cached_dashboard_roles"):
+        return g._cached_dashboard_roles
+
     access_token = session.get('access_token', '')
     if access_token == "":
         headers = {}
@@ -4112,7 +4327,7 @@ def listroles():
     url = "{}/rbac/roles/".format(apihostaddr)
     resp = requests.get(url, headers=headers)
     roles = json.loads(resp.content)
-
+    g._cached_dashboard_roles = roles
     return roles
 
 def listtenants():
@@ -4461,7 +4676,7 @@ def CatalogList():
         is_inferx_admin = is_inferx_admin_user()
         entries = list_catalog_entries(active_only=not is_inferx_admin)
         filter_options = collect_catalog_filter_options(entries)
-        deploy_target = resolve_catalog_deploy_target_context()
+        deploy_target = build_catalog_deploy_target_selector_context()
         published_entry_count = sum(1 for entry in entries if bool(entry.get("is_active")))
         unpublished_entry_count = max(0, len(entries) - published_entry_count)
     except RuntimeError as e:
@@ -4490,7 +4705,7 @@ def CatalogDetail(slug):
     try:
         is_inferx_admin = is_inferx_admin_user()
         entry = fetch_catalog_entry_by_slug_for_current_user(slug)
-        deploy_target = resolve_catalog_deploy_target_context()
+        deploy_target = build_catalog_deploy_target_selector_context()
     except ValueError as e:
         return json_error(str(e), 400)
     except LookupError:
@@ -4543,9 +4758,12 @@ def CatalogDetail(slug):
 def CatalogDeployNow(catalog_id: int):
     try:
         entry = fetch_catalog_entry_for_current_user(catalog_id)
-        deploy_target = resolve_catalog_deploy_target_context()
-        if not deploy_target.get("available"):
-            return json_error(deploy_target.get("message") or "Deploy Now is unavailable. Use Customize & Deploy instead.", 400)
+        deploy_target = build_catalog_deploy_target_selector_context()
+        req = request.get_json(silent=True)
+        if req is None:
+            req = {}
+        if not isinstance(req, dict):
+            return json_error("Request body must be a JSON object when selecting a deploy target.", 400)
 
         catalog_source = {
             "catalog_id": int(entry["id"]),
@@ -4554,8 +4772,12 @@ def CatalogDeployNow(catalog_id: int):
         full_spec = validate_catalog_template_spec(entry.get("default_func_spec"))
         full_spec["catalog_source"] = dict(catalog_source)
 
-        tenant = deploy_target["tenant"]
-        namespace = deploy_target["namespace"]
+        tenant, namespace = resolve_catalog_deploy_target_selection(
+            deploy_target,
+            requested_tenant=req.get("tenant", ""),
+            requested_namespace=req.get("namespace", ""),
+            allow_implicit=True,
+        )
         name = build_catalog_default_func_name(entry)
 
         gateway_req = {
@@ -4852,6 +5074,7 @@ def FuncCreate():
     catalog_id_raw = request.args.get("catalog_id", "").strip()
     initial_model_data = None
     page_mode = "create"
+    create_target_context = None
 
     if edit_key != "" and catalog_id_raw != "":
         return json_error("`edit` and `catalog_id` cannot be used together", 400)
@@ -4861,17 +5084,6 @@ def FuncCreate():
             catalog_id = parse_catalog_id(catalog_id_raw)
             catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
             initial_model_data = project_catalog_entry_for_create(catalog_entry)
-            try:
-                deploy_target = resolve_catalog_deploy_target_context()
-            except Exception:
-                deploy_target = None
-            if isinstance(initial_model_data, dict):
-                default_tenant = str(((deploy_target or {}).get("tenant")) or "").strip()
-                default_namespace = str(((deploy_target or {}).get("namespace")) or "").strip()
-                if default_tenant != "" and str(initial_model_data.get("tenant", "") or "").strip() == "":
-                    initial_model_data["tenant"] = default_tenant
-                if default_namespace != "" and str(initial_model_data.get("namespace", "") or "").strip() == "":
-                    initial_model_data["namespace"] = default_namespace
         except ValueError as e:
             return json_error(str(e), 400)
         except LookupError as e:
@@ -4900,11 +5112,29 @@ def FuncCreate():
         except Exception as e:
             return json_error(f"failed to load model for edit: {e}", 502)
 
+    if page_mode == "create":
+        try:
+            create_target_context = build_catalog_deploy_target_selector_context()
+        except Exception as e:
+            app.logger.warning("func create deploy target lookup failed: %s", e)
+            create_target_context = build_catalog_deploy_target_unavailable_context(
+                "Tenant and namespace selection is temporarily unavailable because access could not be loaded."
+            )
+
+        if isinstance(initial_model_data, dict):
+            default_tenant = str((create_target_context or {}).get("selected_tenant", "") or "").strip()
+            default_namespace = str((create_target_context or {}).get("selected_namespace", "") or "").strip()
+            if default_tenant != "" and str(initial_model_data.get("tenant", "") or "").strip() == "":
+                initial_model_data["tenant"] = default_tenant
+            if default_namespace != "" and str(initial_model_data.get("namespace", "") or "").strip() == "":
+                initial_model_data["namespace"] = default_namespace
+
     return render_template(
         "func_create.html",
         page_mode=page_mode,
         edit_key=edit_key,
         initial_model_data=initial_model_data,
+        create_target_context=create_target_context,
         image_options=VLLM_IMAGE_WHITELIST,
         gpu_count_options=SUPPORTED_GPU_COUNTS,
         default_sample_query_template=build_sample_query(""),

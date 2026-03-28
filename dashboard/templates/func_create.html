@@ -678,6 +678,7 @@
     (function () {
         const PAGE_MODE = {{ page_mode | tojson }};
         const INITIAL_MODEL = {{ initial_model_data | tojson }};
+        const CREATE_TARGET_CONTEXT = {{ create_target_context | tojson }};
         const IMAGE_OPTIONS = {{ image_options | tojson }};
         const SUPPORTED_GPU_COUNTS = {{ gpu_count_options | tojson }};
         const DEFAULT_ADVANCED_SAMPLE_QUERY_TEMPLATE = {{ default_sample_query_template | tojson }};
@@ -754,9 +755,11 @@
         const modelSaveModalModelsLink = document.getElementById('model-save-modal-models-link');
 
         let activeTab = 'basic';
-        let tenants = [];
-        let namespaces = [];
-        let roles = [];
+        let targetTenantOptions = [];
+        let targetNamespaceOptionsByTenant = {};
+        let targetSelectedTenant = '';
+        let targetSelectedNamespace = '';
+        let targetMessage = '';
         let nodeMaxVram = 0;
         let nodeMaxGpuCount = 0;
         let _advancedInitializedFromModel = false;
@@ -1253,7 +1256,7 @@
                 ensureSelectOption(tenantSelect, model.tenant, model.tenant);
                 tenantSelect.value = model.tenant;
                 if (tenantDisplay) {
-                    tenantDisplay.textContent = model.tenant;
+                    tenantDisplay.textContent = getTargetTenantLabel(model.tenant) || model.tenant;
                 }
             }
             rebuildNamespaceOptions({ preserveCurrent: false, preferredValue: model.namespace || '' });
@@ -1308,6 +1311,54 @@
             }
         }
 
+        function normalizeTargetOptionList(options) {
+            if (!Array.isArray(options)) {
+                return [];
+            }
+            return options
+                .map((option) => {
+                    if (!option || typeof option !== 'object') {
+                        return null;
+                    }
+                    const value = String(option.value || '').trim();
+                    const label = String(option.label || option.value || '').trim();
+                    if (value === '') {
+                        return null;
+                    }
+                    return { value, label: label || value };
+                })
+                .filter(Boolean);
+        }
+
+        function applyCreateTargetContext(nextState) {
+            const state = (nextState && typeof nextState === 'object') ? nextState : {};
+            targetTenantOptions = normalizeTargetOptionList(state.tenant_options);
+            targetNamespaceOptionsByTenant = (
+                state.namespace_options_by_tenant
+                && typeof state.namespace_options_by_tenant === 'object'
+            ) ? state.namespace_options_by_tenant : {};
+            targetSelectedTenant = String(state.selected_tenant || '').trim();
+            targetSelectedNamespace = String(state.selected_namespace || '').trim();
+            targetMessage = String(state.message || '').trim();
+        }
+
+        function getTargetTenantLabel(tenantValue) {
+            const normalizedTenant = String(tenantValue || '').trim();
+            if (normalizedTenant === '') {
+                return '';
+            }
+            const matchedOption = targetTenantOptions.find((option) => option.value === normalizedTenant);
+            return matchedOption ? (matchedOption.label || matchedOption.value) : normalizedTenant;
+        }
+
+        function getTargetNamespaceOptionsForTenant(tenantValue) {
+            const normalizedTenant = String(tenantValue || '').trim();
+            if (normalizedTenant === '') {
+                return [];
+            }
+            return normalizeTargetOptionList(targetNamespaceOptionsByTenant[normalizedTenant]);
+        }
+
         function refreshGpuCountOptionsFromNodeCapacity() {
             const currentValue = String(gpuCountSelect.value || '').trim();
             const currentCount = Number.parseInt(currentValue, 10);
@@ -1343,139 +1394,14 @@
             }
         }
 
-        function tenantDisplayLabel(tenantObj) {
-            if (!tenantObj || typeof tenantObj !== 'object') {
-                return '';
-            }
-            const spec = tenantObj.object && tenantObj.object.spec ? tenantObj.object.spec : {};
-            const displayName = String(spec.display_name || spec.displayName || '').trim();
-            const name = String(tenantObj.name || '').trim();
-            return displayName ? `${displayName} (${name})` : name;
-        }
-
-        function isInferxAdmin(rolesData) {
-            if (!Array.isArray(rolesData)) {
-                return false;
-            }
-            return rolesData.some((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').toLowerCase().trim();
-                return rbObjType === 'tenant' && rbTenant === 'system' && rbRole === 'admin';
-            });
-        }
-
-        function shouldHidePublicTenantInCreate(rolesData) {
-            if (PAGE_MODE !== 'create') {
-                return false;
-            }
-            if (isInferxAdmin(rolesData)) {
-                return false;
-            }
-            if (!Array.isArray(rolesData)) {
-                return false;
-            }
-
-            const accessibleTenants = new Set();
-            rolesData.forEach((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').trim();
-                if ((rbObjType !== 'tenant' && rbObjType !== 'namespace') || (rbRole !== 'admin' && rbRole !== 'user')) {
-                    return;
-                }
-                if (!rbTenant || rbTenant.toLowerCase() === 'system') {
-                    return;
-                }
-                accessibleTenants.add(rbTenant);
-            });
-
-            const nonPublicTenants = Array.from(accessibleTenants).filter((t) => t.toLowerCase() !== 'public');
-            return nonPublicTenants.length === 1;
-        }
-
-        function getAccessibleTenantNamesFromRoles(rolesData) {
-            if (!Array.isArray(rolesData) || isInferxAdmin(rolesData)) {
-                return [];
-            }
-
-            const orderedTenantNames = [];
-            const seen = new Set();
-            rolesData.forEach((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').trim();
-                if ((rbObjType !== 'tenant' && rbObjType !== 'namespace') || (rbRole !== 'admin' && rbRole !== 'user')) {
-                    return;
-                }
-                if (!rbTenant || rbTenant.toLowerCase() === 'system') {
-                    return;
-                }
-                if (!seen.has(rbTenant)) {
-                    seen.add(rbTenant);
-                    orderedTenantNames.push(rbTenant);
-                }
-            });
-            return orderedTenantNames;
-        }
-
-        function getAccessibleNamespaceNamesFromRoles(rolesData, tenantName) {
-            const normalizedTenant = String(tenantName || '').trim();
-            if (!Array.isArray(rolesData) || normalizedTenant === '' || isInferxAdmin(rolesData)) {
-                return [];
-            }
-
-            const orderedNamespaceNames = [];
-            const seen = new Set();
-            rolesData.forEach((rb) => {
-                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
-                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
-                const rbTenant = String(rb && rb.tenant || '').trim();
-                const rbNamespace = String(rb && rb.namespace || '').trim();
-                if (rbObjType !== 'namespace' || (rbRole !== 'admin' && rbRole !== 'user')) {
-                    return;
-                }
-                if (rbTenant !== normalizedTenant || rbNamespace === '') {
-                    return;
-                }
-                if (!seen.has(rbNamespace)) {
-                    seen.add(rbNamespace);
-                    orderedNamespaceNames.push(rbNamespace);
-                }
-            });
-            return orderedNamespaceNames;
-        }
-
         function rebuildTenantOptions() {
-            const hidePublic = shouldHidePublicTenantInCreate(roles);
-            const accessibleTenantNames = getAccessibleTenantNamesFromRoles(roles);
-            const accessibleTenantSet = new Set(accessibleTenantNames.map((tenantName) => tenantName.toLowerCase()));
-
-            let tenantOptions = (Array.isArray(tenants) ? tenants : [])
-                .filter((tenantObj) => {
-                    const tenantName = String(tenantObj && tenantObj.name || '').trim().toLowerCase();
-                    return !(hidePublic && tenantName === 'public');
-                })
-                .map((tenantObj) => ({
-                    value: String(tenantObj.name || '').trim(),
-                    label: tenantDisplayLabel(tenantObj)
-                }))
-                .filter((opt) => opt.value !== '');
-
-            if (PAGE_MODE === 'create' && accessibleTenantSet.size > 0) {
-                tenantOptions = tenantOptions.filter((opt) => accessibleTenantSet.has(opt.value.toLowerCase()));
-                if (tenantOptions.length === 0) {
-                    tenantOptions = accessibleTenantNames
-                        .map((tenantName) => ({
-                            value: tenantName,
-                            label: tenantName,
-                        }))
-                        .filter((opt) => !(hidePublic && opt.value.toLowerCase() === 'public'));
-                }
-            }
-
+            const tenantOptions = targetTenantOptions;
             const current = tenantSelect.value;
-            setSelectOptions(tenantSelect, tenantOptions, current || (INITIAL_MODEL && INITIAL_MODEL.tenant) || '');
+            const preferredTenant = current
+                || (INITIAL_MODEL && INITIAL_MODEL.tenant)
+                || targetSelectedTenant
+                || '';
+            setSelectOptions(tenantSelect, tenantOptions, preferredTenant);
             if (PAGE_MODE !== 'update') {
                 const tenantOptionCount = tenantSelect.options.length;
                 const singleTenant = tenantOptionCount === 1;
@@ -1483,7 +1409,7 @@
                 tenantSelect.hidden = singleTenant;
                 if (tenantDisplay) {
                     tenantDisplay.style.display = singleTenant ? 'block' : 'none';
-                    tenantDisplay.textContent = singleTenant ? (tenantSelect.options[0]?.textContent || tenantSelect.value || '') : '';
+                    tenantDisplay.textContent = singleTenant ? (getTargetTenantLabel(tenantSelect.value) || tenantSelect.value || '') : '';
                 }
             } else {
                 tenantRow.classList.toggle('hidden', false);
@@ -1495,28 +1421,10 @@
             const preferredValue = typeof opts.preferredValue === 'string' ? opts.preferredValue : '';
             const selectedTenant = tenantSelect.value;
             const currentNamespace = preserveCurrent ? namespaceSelect.value : '';
-
-            let namespaceOptions = (Array.isArray(namespaces) ? namespaces : [])
-                .filter((ns) => String(ns.tenant || '').trim() === selectedTenant)
-                .map((ns) => {
-                    const value = String(ns.name || '').trim();
-                    return { value, label: value };
-                })
-                .filter((opt) => opt.value !== '');
-
-            const accessibleNamespaceNames = getAccessibleNamespaceNamesFromRoles(roles, selectedTenant);
-            const accessibleNamespaceSet = new Set(accessibleNamespaceNames);
-            if (PAGE_MODE === 'create' && accessibleNamespaceSet.size > 0) {
-                namespaceOptions = namespaceOptions.filter((opt) => accessibleNamespaceSet.has(opt.value));
-                if (namespaceOptions.length === 0) {
-                    namespaceOptions = accessibleNamespaceNames.map((namespaceName) => ({
-                        value: namespaceName,
-                        label: namespaceName,
-                    }));
-                }
-            }
-
-            const targetValue = preferredValue || currentNamespace;
+            const namespaceOptions = getTargetNamespaceOptionsForTenant(selectedTenant);
+            const targetValue = preferredValue
+                || currentNamespace
+                || (selectedTenant === targetSelectedTenant ? targetSelectedNamespace : '');
             setSelectOptions(namespaceSelect, namespaceOptions, targetValue);
             if (PAGE_MODE !== 'update') {
                 const namespaceOptionCount = namespaceSelect.options.length;
@@ -1631,13 +1539,8 @@
                 && typeof INITIAL_MODEL.catalog_source === 'object'
                 && !Array.isArray(INITIAL_MODEL.catalog_source)
             ) ? INITIAL_MODEL.catalog_source : null;
-            const fallbackTenant = PAGE_MODE === 'create' ? (getAccessibleTenantNamesFromRoles(roles)[0] || '') : '';
-            const resolvedTenant = (tenantSelect.value || fallbackTenant || '').trim();
-            const fallbackNamespace = PAGE_MODE === 'create'
-                ? (getAccessibleNamespaceNamesFromRoles(roles, resolvedTenant)[0] || '')
-                : '';
-            const tenant = PAGE_MODE === 'update' ? initialTenant : resolvedTenant;
-            const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || fallbackNamespace || '').trim();
+            const tenant = PAGE_MODE === 'update' ? initialTenant : (tenantSelect.value || '').trim();
+            const namespace = PAGE_MODE === 'update' ? initialNamespace : (namespaceSelect.value || '').trim();
             const name = PAGE_MODE === 'update' ? initialName : (functionNameInput.value || '').trim();
             const hfModel = (PAGE_MODE === 'update' || IS_CATALOG_MODE)
                 ? (initialHfModel || (hfModelInput.value || '').trim())
@@ -1735,38 +1638,12 @@
         }
 
         async function loadTenantsAndNamespaces() {
-            const [tenantsResp, namespacesResp, rolesResp] = await Promise.all([
-                fetch('/generate_tenants'),
-                fetch('/generate_namespaces'),
-                fetch('/generate_roles')
-            ]);
-
-            if (!tenantsResp.ok) {
-                throw new Error(`Failed to load tenants (HTTP ${tenantsResp.status})`);
-            }
-            if (!namespacesResp.ok) {
-                throw new Error(`Failed to load namespaces (HTTP ${namespacesResp.status})`);
-            }
-            if (!rolesResp.ok) {
-                throw new Error(`Failed to load roles (HTTP ${rolesResp.status})`);
-            }
-
-            tenants = await tenantsResp.json();
-            namespaces = await namespacesResp.json();
-            roles = await rolesResp.json();
-
-            if (!Array.isArray(tenants)) {
-                tenants = [];
-            }
-            if (!Array.isArray(namespaces)) {
-                namespaces = [];
-            }
-            if (!Array.isArray(roles)) {
-                roles = [];
-            }
-
+            applyCreateTargetContext(CREATE_TARGET_CONTEXT);
             rebuildTenantOptions();
             rebuildNamespaceOptions({ preferredValue: (INITIAL_MODEL && INITIAL_MODEL.namespace) || '' });
+            if (PAGE_MODE === 'create' && targetTenantOptions.length === 0 && targetMessage) {
+                throw new Error(targetMessage);
+            }
         }
 
         async function loadNodeMaxVram() {

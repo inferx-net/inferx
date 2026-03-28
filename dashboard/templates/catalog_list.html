@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% import '_catalog_deploy_target.html' as catalog_deploy_target %}
 
 {% block content %}
 <style>
@@ -66,6 +67,51 @@
         gap: 8px;
         flex-wrap: wrap;
         justify-content: flex-end;
+    }
+
+    .catalog-deploy-target {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid #dbe3ef;
+    }
+
+    .catalog-deploy-target-summary {
+        color: #334155;
+        margin-bottom: 10px;
+    }
+
+    .catalog-deploy-target-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(180px, 280px));
+        gap: 12px;
+        align-items: end;
+    }
+
+    .catalog-deploy-target-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #475569;
+    }
+
+    .catalog-deploy-target-field select,
+    .catalog-deploy-target-readonly {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #fff;
+        padding: 8px 10px;
+        font-size: 14px;
+        color: #0f172a;
+        min-height: 38px;
+    }
+
+    .catalog-deploy-target-readonly {
+        display: flex;
+        align-items: center;
+        background: #f8fafc;
     }
 
     .catalog-table-wrap {
@@ -256,6 +302,10 @@
             grid-template-columns: 1fr;
         }
 
+        .catalog-deploy-target-controls {
+            grid-template-columns: 1fr;
+        }
+
         .catalog-table th:nth-child(2),
         .catalog-table td:nth-child(2) {
             display: none;
@@ -272,18 +322,14 @@
     <div id="catalog-error" class="catalog-error" role="alert"></div>
 
     <div class="catalog-banner">
-        {% if deploy_target.available %}
-        <strong>Deploy Now target:</strong> {{ deploy_target.tenant }} / {{ deploy_target.namespace }}
-        {% else %}
-        <strong>Deploy Now unavailable:</strong> {{ deploy_target.message }}
-        {% endif %}
+        {{ catalog_deploy_target.render_catalog_deploy_target('catalog-list-deploy-target', deploy_target) }}
         <div class="catalog-banner-detail">
             Currently we have {{ published_entry_count }} published model{{ '' if published_entry_count == 1 else 's' }} in the catalog.
             {% if is_inferx_admin and unpublished_entry_count %}
             There {{ 'is' if unpublished_entry_count == 1 else 'are' }} also {{ unpublished_entry_count }} unpublished admin-only draft{{ '' if unpublished_entry_count == 1 else 's' }}.
             {% endif %}
             <strong>Customize &amp; Deploy</strong> opens the create form with catalog defaults prefilled so you can review and adjust them before saving.
-            <strong>Deploy Now</strong> creates the model immediately using the stored catalog template.
+            <strong>Deploy Now</strong> creates the model immediately using the stored catalog template for the currently selected tenant and namespace.
             {% if is_inferx_admin %}
             Unpublished models remain visible only to InferX admins until you publish them.
             {% endif %}
@@ -410,7 +456,7 @@
                                 type="button"
                                 class="ix-btn catalog-deploy-btn"
                                 data-deploy-url="{{ url_for('prefix.CatalogDeployNow', catalog_id=entry.id) }}"
-                                {% if not deploy_target.available %}disabled{% endif %}
+                                {% if not deploy_target.resolved %}disabled{% endif %}
                             >
                                 Deploy Now
                             </button>
@@ -468,8 +514,11 @@
     </div>
 </div>
 
+{% include '_catalog_deploy_target_script.html' %}
 <script>
     (function () {
+        const deployTargetState = {{ deploy_target | tojson }};
+        const deployTargetRefreshUrl = '{{ url_for('prefix.CatalogDeployTargetContext') }}';
         const searchInput = document.getElementById('catalog-search');
         const providerFilter = document.getElementById('catalog-provider-filter');
         const modalityFilter = document.getElementById('catalog-modality-filter');
@@ -483,6 +532,12 @@
         const modelSaveModalSummary = document.getElementById('model-save-modal-summary');
         const modelSaveModalPodsLink = document.getElementById('model-save-modal-pods-link');
         const modelSaveModalModelsLink = document.getElementById('model-save-modal-models-link');
+        const deployButtons = Array.from(document.querySelectorAll('.catalog-deploy-btn'));
+        const deployTargetController = window.createCatalogDeployTargetController({
+            root: document.getElementById('catalog-list-deploy-target'),
+            initialState: deployTargetState,
+            deployButtons: deployButtons,
+        });
 
         function showError(message) {
             if (!errorBanner) {
@@ -490,6 +545,26 @@
             }
             errorBanner.textContent = message || '';
             errorBanner.style.display = message ? 'block' : 'none';
+        }
+
+        async function refreshDeployTargetStateFromServer() {
+            if (!deployTargetController || !deployTargetRefreshUrl) {
+                return;
+            }
+            try {
+                const resp = await fetch(deployTargetRefreshUrl, {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok || !payload || typeof payload !== 'object') {
+                    return;
+                }
+                deployTargetController.replaceState(payload);
+            } catch (err) {
+                console.error('Failed to refresh catalog deploy target state:', err);
+            }
         }
 
         function closeModelSaveModal() {
@@ -566,27 +641,40 @@
 
             showError('');
             button.disabled = true;
+            button.dataset.deployLoading = 'true';
             const originalText = button.textContent;
             button.textContent = 'Deploying...';
 
             try {
+                const selection = deployTargetController ? deployTargetController.getSelection() : { tenant: '', namespace: '' };
+                if (deployTargetController && !deployTargetController.isResolved()) {
+                    throw new Error(deployTargetController.getMessage() || 'Select a tenant and namespace to enable Deploy Now.');
+                }
                 const resp = await fetch(url, {
                     method: 'POST',
                     headers: {
-                        'Accept': 'application/json'
-                    }
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(selection)
                 });
                 const payload = await resp.json().catch(() => ({}));
                 if (!resp.ok) {
                     throw new Error(payload.error || `Deploy failed (HTTP ${resp.status})`);
                 }
-                button.disabled = false;
+                delete button.dataset.deployLoading;
                 button.textContent = originalText;
+                deployTargetController?.refresh();
                 showModelSaveModal(payload);
             } catch (err) {
                 showError(err.message || String(err));
-                button.disabled = false;
+                delete button.dataset.deployLoading;
                 button.textContent = originalText;
+                await refreshDeployTargetStateFromServer();
+                deployTargetController?.refresh();
+                if (!deployTargetController) {
+                    button.disabled = false;
+                }
             }
         }
 
@@ -675,7 +763,7 @@
             });
         });
 
-        Array.from(document.querySelectorAll('.catalog-deploy-btn')).forEach((button) => {
+        deployButtons.forEach((button) => {
             button.addEventListener('click', handleDeployNow);
         });
         Array.from(document.querySelectorAll('.catalog-visibility-btn')).forEach((button) => {
