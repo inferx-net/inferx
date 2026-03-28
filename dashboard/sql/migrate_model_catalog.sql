@@ -1,15 +1,3 @@
-DO $$
-BEGIN
-    IF to_regclass('catalogmodel') IS NULL THEN
-        IF to_regclass('modelcatalog') IS NOT NULL THEN
-            EXECUTE 'ALTER TABLE ModelCatalog RENAME TO CatalogModel';
-        ELSIF to_regclass('modelcatalogentry') IS NOT NULL THEN
-            EXECUTE 'ALTER TABLE ModelCatalogEntry RENAME TO CatalogModel';
-        END IF;
-    END IF;
-END;
-$$;
-
 CREATE TABLE IF NOT EXISTS CatalogModel (
     id                    BIGSERIAL PRIMARY KEY,
     slug                  VARCHAR NOT NULL UNIQUE,
@@ -47,15 +35,6 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-ALTER TABLE CatalogModel
-DROP CONSTRAINT IF EXISTS modelcatalogentry_source_model_id_key;
-
-ALTER TABLE CatalogModel
-DROP CONSTRAINT IF EXISTS modelcatalog_source_model_id_key;
-
-ALTER TABLE CatalogModel
-DROP CONSTRAINT IF EXISTS catalogmodel_source_model_id_key;
 
 DROP TRIGGER IF EXISTS mce_updatetime ON CatalogModel;
 CREATE TRIGGER mce_updatetime BEFORE UPDATE ON CatalogModel
