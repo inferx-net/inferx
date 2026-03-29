@@ -1321,6 +1321,7 @@
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('tenant_name')">Tenant Name <span id="billing-admin-tenant-sort-tenant_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('display_name')">Owner Name <span id="billing-admin-tenant-sort-display_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('email')">Email <span id="billing-admin-tenant-sort-email"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models <span id="billing-admin-tenant-sort-models"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('used_cents')">Used (USD) <span id="billing-admin-tenant-sort-used_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('balance_cents')">Balance (USD) <span id="billing-admin-tenant-sort-balance_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('created_at')">Created At (Local) <span id="billing-admin-tenant-sort-created_at"></span></th>
@@ -1328,7 +1329,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr><td colspan="8" style="text-align: center; color: #888;">Loading tenant directory...</td></tr>
+                        <tr><td colspan="9" style="text-align: center; color: #888;">Loading tenant directory...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1737,7 +1738,7 @@
         tbody.innerHTML = '';
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 7;
+        td.colSpan = document.querySelectorAll('#billing-admin-tenant-profile-table thead th').length || 9;
         td.style.textAlign = 'center';
         td.style.color = isError ? 'red' : '#888';
         td.textContent = message;
@@ -1754,6 +1755,12 @@
         if (value === null || value === undefined) return null;
         const parsed = Date.parse(value);
         return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function billingAdminTenantResourceHref(path, tenantName) {
+        const tenant = String(tenantName || '').trim();
+        if (tenant === '') return '';
+        return `{{ hosturl }}${path}?tenant=${encodeURIComponent(tenant)}`;
     }
 
     function compareBillingAdminTenantProfileRows(a, b) {
@@ -1775,6 +1782,17 @@
             return dir * (av - bv);
         }
 
+        if (col === 'models') {
+            const avNormal = Number(a?.normal_model_count ?? 0);
+            const bvNormal = Number(b?.normal_model_count ?? 0);
+            if (avNormal !== bvNormal) return dir * (avNormal - bvNormal);
+
+            const avTotal = Number(a?.total_model_count ?? 0);
+            const bvTotal = Number(b?.total_model_count ?? 0);
+            if (avTotal === bvTotal) return 0;
+            return dir * (avTotal - bvTotal);
+        }
+
         if (col === 'created_at') {
             const av = billingAdminTenantProfileSortTime(a?.created_at);
             const bv = billingAdminTenantProfileSortTime(b?.created_at);
@@ -1789,7 +1807,7 @@
     }
 
     function updateBillingAdminTenantProfilesSortIcons() {
-        const cols = ['tenant_name', 'display_name', 'email', 'used_cents', 'balance_cents', 'created_at'];
+        const cols = ['tenant_name', 'display_name', 'email', 'models', 'used_cents', 'balance_cents', 'created_at'];
         cols.forEach((col) => {
             const el = document.getElementById(`billing-admin-tenant-sort-${col}`);
             if (!el) return;
@@ -1806,7 +1824,7 @@
         } else {
             billingAdminTenantProfilesSortColumn = column;
             billingAdminTenantProfilesSortDirection =
-                (column === 'used_cents' || column === 'balance_cents' || column === 'created_at')
+                (column === 'models' || column === 'used_cents' || column === 'balance_cents' || column === 'created_at')
                     ? 'desc'
                     : 'asc';
         }
@@ -1854,12 +1872,36 @@
             tr.appendChild(tenantTd);
 
             const ownerTd = document.createElement('td');
-            ownerTd.textContent = billingAdminTenantProfileDisplayValue(row?.display_name);
+            const ownerLabel = billingAdminTenantProfileDisplayValue(row?.display_name);
+            if (tenantName !== '' && ownerLabel !== '—') {
+                const ownerLink = document.createElement('a');
+                ownerLink.className = 'billing-admin-tenant-link';
+                ownerLink.href = billingAdminTenantResourceHref('listfunc', tenantName);
+                ownerLink.textContent = ownerLabel;
+                ownerTd.appendChild(ownerLink);
+            } else {
+                ownerTd.textContent = ownerLabel;
+            }
             tr.appendChild(ownerTd);
 
             const emailTd = document.createElement('td');
-            emailTd.textContent = billingAdminTenantProfileDisplayValue(row?.email);
+            const emailLabel = billingAdminTenantProfileDisplayValue(row?.email);
+            if (tenantName !== '' && emailLabel !== '—') {
+                const emailLink = document.createElement('a');
+                emailLink.className = 'billing-admin-tenant-link';
+                emailLink.href = billingAdminTenantResourceHref('listpod', tenantName);
+                emailLink.textContent = emailLabel;
+                emailTd.appendChild(emailLink);
+            } else {
+                emailTd.textContent = emailLabel;
+            }
             tr.appendChild(emailTd);
+
+            const modelsTd = document.createElement('td');
+            const normalModelCount = Number(row?.normal_model_count ?? 0);
+            const totalModelCount = Number(row?.total_model_count ?? 0);
+            modelsTd.textContent = `${Number.isFinite(normalModelCount) ? normalModelCount : 0} / ${Number.isFinite(totalModelCount) ? totalModelCount : 0}`;
+            tr.appendChild(modelsTd);
 
             const usedTd = document.createElement('td');
             if (row?.used_cents === null || row?.used_cents === undefined) {

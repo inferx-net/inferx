@@ -13,6 +13,7 @@
 // limitations under
 
 use core::str;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -70,7 +71,7 @@ use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use crate::peer_mgr::IxTcpClient;
 use crate::print::{set_trace_logging, trace_logging_enabled};
 use inferxlib::data_obj::DataObject;
-use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
+use inferxlib::obj_mgr::func_mgr::{ApiType, FuncState, Function};
 
 use super::auth_layer::Grant;
 use super::auth_layer::ObjectType;
@@ -1551,6 +1552,8 @@ struct AdminTenantProfileRow {
     sub: Option<String>,
     display_name: Option<String>,
     email: Option<String>,
+    normal_model_count: u64,
+    total_model_count: u64,
     used_cents: i64,
     balance_cents: i64,
     created_at: Option<chrono::NaiveDateTime>,
@@ -1633,6 +1636,36 @@ async fn GetAdminTenants(
     tenant_names.sort();
     tenant_names.dedup();
 
+    let mut model_counts: HashMap<String, (u64, u64)> = HashMap::new();
+    match gw.objRepo.funcMgr.GetObjects("", "") {
+        Ok(funcs) => {
+            for func in funcs {
+                let is_normal = match gw
+                    .objRepo
+                    .funcstatusMgr
+                    .Get(&func.tenant, &func.namespace, &func.name)
+                {
+                    Ok(funcstatus) => matches!(funcstatus.object.state, FuncState::Normal),
+                    Err(_) => matches!(func.object.status.state, FuncState::Normal),
+                };
+
+                let entry = model_counts.entry(func.tenant.clone()).or_insert((0, 0));
+                entry.1 += 1;
+                if is_normal {
+                    entry.0 += 1;
+                }
+            }
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+
     match GetTokenCache()
         .await
         .sqlstore
@@ -1658,6 +1691,11 @@ async fn GetAdminTenants(
 
             let mut rows = Vec::with_capacity(tenant_names.len());
             for tenant_name in tenant_names {
+                let (normal_model_count, total_model_count) = match model_counts.remove(&tenant_name)
+                {
+                    Some((normal, total)) => (normal, total),
+                    None => (0, 0),
+                };
                 let (used_cents, balance_cents) = match billing.remove(&tenant_name) {
                     Some(summary) => (summary.used_cents, summary.balance_cents),
                     None => (0, 0),
@@ -1668,6 +1706,8 @@ async fn GetAdminTenants(
                         sub: Some(profile.sub),
                         display_name: profile.display_name,
                         email: Some(profile.email),
+                        normal_model_count,
+                        total_model_count,
                         used_cents,
                         balance_cents,
                         created_at: profile.created_at,
@@ -1677,6 +1717,8 @@ async fn GetAdminTenants(
                         sub: None,
                         display_name: None,
                         email: None,
+                        normal_model_count,
+                        total_model_count,
                         used_cents,
                         balance_cents,
                         created_at: None,
