@@ -1321,7 +1321,7 @@
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('tenant_name')">Tenant Name <span id="billing-admin-tenant-sort-tenant_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('display_name')">Owner Name <span id="billing-admin-tenant-sort-display_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('email')">Email <span id="billing-admin-tenant-sort-email"></span></th>
-                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models <span id="billing-admin-tenant-sort-models"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models(Normal/All) <span id="billing-admin-tenant-sort-models"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('used_cents')">Used (USD) <span id="billing-admin-tenant-sort-used_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('balance_cents')">Balance (USD) <span id="billing-admin-tenant-sort-balance_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('created_at')">Created At (Local) <span id="billing-admin-tenant-sort-created_at"></span></th>
@@ -1873,7 +1873,8 @@
 
             const ownerTd = document.createElement('td');
             const ownerLabel = billingAdminTenantProfileDisplayValue(row?.display_name);
-            if (tenantName !== '' && ownerLabel !== '—') {
+            const allowPlaceholderLinks = tenantName === 'public';
+            if (tenantName !== '' && (ownerLabel !== '—' || allowPlaceholderLinks)) {
                 const ownerLink = document.createElement('a');
                 ownerLink.className = 'billing-admin-tenant-link';
                 ownerLink.href = billingAdminTenantResourceHref('listfunc', tenantName);
@@ -1886,7 +1887,7 @@
 
             const emailTd = document.createElement('td');
             const emailLabel = billingAdminTenantProfileDisplayValue(row?.email);
-            if (tenantName !== '' && emailLabel !== '—') {
+            if (tenantName !== '' && (emailLabel !== '—' || allowPlaceholderLinks)) {
                 const emailLink = document.createElement('a');
                 emailLink.className = 'billing-admin-tenant-link';
                 emailLink.href = billingAdminTenantResourceHref('listpod', tenantName);
