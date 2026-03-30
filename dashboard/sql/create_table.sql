@@ -239,6 +239,6 @@ SELECT COALESCE((
 $$;
 
 -- Initial global rates
-INSERT INTO BillingRate (usage_type, rate_cents_per_hour, effective_from)
-VALUES ('inference', 800, '2025-01-01'),
-       ('standby',   20, '2025-01-01');
+INSERT INTO BillingRate (usage_type, rate_cents_per_hour, effective_from, added_by)
+VALUES ('inference', 800, '2025-01-01', 'system'),
+       ('standby',   20, '2025-01-01', 'system');

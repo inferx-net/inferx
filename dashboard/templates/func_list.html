@@ -1,80 +1,318 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2 style="text-align: center;">Models</h2>
-
 <style>
-    table,
-    th,
-    td {
-        border: 1px solid black;
-    }
-
     .content table.ix-table {
         font-size: 14px;
     }
+
+    .empty-model-state {
+        max-width: 520px;
+        margin: 72px auto;
+        padding: 40px 32px;
+        text-align: center;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fbff;
+    }
+
+    .empty-model-state h2 {
+        margin: 0 0 10px;
+        font-size: 24px;
+        color: #0f172a;
+    }
+
+    .empty-model-state p {
+        margin: 0 0 20px;
+        font-size: 15px;
+        line-height: 1.5;
+        color: #475569;
+    }
+
+    .models-table {
+        table-layout: fixed;
+    }
+
+    .models-table th,
+    .models-table td {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    .models-table a {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    .models-table .select-col {
+        text-align: center;
+        vertical-align: middle;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    .models-table .select-col input[type="checkbox"] {
+        display: block;
+        margin: 0 auto;
+    }
+
+    .func-list-toolbar {
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+
+    .func-list-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .model-catalog-badges {
+        margin-top: 6px;
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .model-catalog-badge {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.3;
+        text-decoration: none;
+    }
+
+    .model-catalog-badge.newer {
+        border-color: #fde68a;
+        background: #fffbeb;
+        color: #b45309;
+    }
+
+    .empty-model-actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .empty-model-guide {
+        margin-top: 14px;
+        font-size: 14px;
+        color: #475569;
+    }
+
+    .empty-model-guide a {
+        color: #1d4ed8;
+        font-weight: 600;
+        text-decoration: underline;
+    }
+
+    .empty-model-guide a:hover {
+        color: #1e40af;
+    }
+
+    #delete-status {
+        margin-top: 8px;
+        font-size: 13px;
+        min-height: 18px;
+    }
+
+    #delete-status.error {
+        color: #b91c1c;
+    }
+
+    #delete-status.success {
+        color: #166534;
+    }
 </style>
 
-<table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
-    <tr>
-        <th rowspan="2">Tenant</th>
-        <th rowspan="2">Namespace</th>
-        <th rowspan="2">Model Name</th>
-        <th rowspan="2">Type</th>
-        <th rowspan="2">GPU Count</th>
-        <th rowspan="2">vRam (GB)</th>
-        <th rowspan="2">CPU</th>
-        <th rowspan="2">Memory (GB)</th>
-        <th colspan="3">Standby</th>
-        <th rowspan=" 2">State</th>
-        <th rowspan="2">Snapshot Nodes</th>
-        <th rowspan="2">Revision</th>
-    </tr>
-    <tr>
-        <th>GPU</th>
-        <th>Pageable</th>
-        <th>Pinned</th>
+{% set has_models = funcs is not none and (funcs|length) > 0 %}
 
-    </tr>
-    {% for func in funcs %}
-    <tr>
-        <td><a href="{{ hosturl }}listfunc?tenant={{ func['func']['tenant'] }}">
-                <span data-tenant-name="{{ func['func']['tenant'] }}">{{ func['func']['tenant'] }}</span>
-            </a></td>
-        <td><a
-                href="{{ hosturl }}listfunc?tenant={{ func['func']['tenant'] }}&&namespace={{ func['func']['namespace'] }}">
-                {{ func['func']['namespace'] }}
-            </a></td>
-        <td><a
-                href="{{ hosturl }}func?tenant={{ func['func']['tenant'] }}&&namespace={{ func['func']['namespace'] }}&&name={{ func['func']['name'] }}">{{
-                func['func']['name'] }}
-            </a></td>
-        <td>
-            {% if func['func']['object']["spec"]["sample_query"]["apiType"] == "openai" %}
-            text2text
-            {% else %}
-            {{ func['func']['object']["spec"]["sample_query"]["apiType"] }}
+{% if has_models and can_manage_models %}
+<div class="func-list-toolbar">
+    <div class="func-list-actions">
+        <a class="ix-btn" href="{{ url_for('prefix.CatalogList') }}">Deploy From Catalog</a>
+        <a class="ix-btn secondary" href="{{ hosturl }}func_create">Build From Scratch</a>
+    </div>
+</div>
+{% endif %}
+
+{% if has_models %}
+<table class="ix-table models-table" style="width:100%; text-align: center;">
+    <colgroup>
+        <col style="width: 34px;">
+        <col>
+        <col>
+        <col style="width: 18%;">
+        <col>
+        <col style="width: 72px;">
+        <col style="width: 78px;">
+        {% if is_inferx_admin %}
+        <col style="width: 64px;">
+        <col style="width: 82px;">
+        <col style="width: 64px;">
+        <col style="width: 96px;">
+        <col style="width: 62px;">
+        {% endif %}
+        <col style="width: 74px;">
+        {% if is_inferx_admin %}
+        <col>
+        <col style="width: 88px;">
+        {% endif %}
+        <col>
+    </colgroup>
+    <thead>
+        <tr>
+            <th rowspan="2" class="select-col" style="width: 34px;">
+                <input id="select-all-models" type="checkbox" aria-label="Select all models" {% if not can_manage_models %}disabled aria-disabled="true"{% endif %}>
+            </th>
+            <th rowspan="2">Tenant</th>
+            <th rowspan="2">Namespace</th>
+            <th rowspan="2" style="width: 18%;">Model Name</th>
+            <th rowspan="2">Type</th>
+            <th rowspan="2" style="width: 72px;">GPU Count</th>
+            <th rowspan="2" style="width: 78px;">vRam (GB)</th>
+            {% if is_inferx_admin %}
+            <th rowspan="2" style="width: 64px;">CPU</th>
+            <th rowspan="2" style="width: 82px;">Memory (GB)</th>
+            <th colspan="3">Standby</th>
             {% endif %}
-        </td>
-        <td>{{ func['func']['object']["spec"]["resources"]["GPU"]["Count"] }}</td>
-        <td>{{ func['func']['object']["spec"]["resources"]["GPU"]["vRam"]/1000 }}</td>
-        <td>{{ func['func']['object']["spec"]["resources"]["CPU"]/1000 }}</td>
-        <td>{{ func['func']['object']["spec"]["resources"]["Mem"]/1000 }}</td>
-        <td>{{ func['func']['object']["spec"]["standby"]["gpu"] }}</td>
-        <td>{{ func['func']['object']["spec"]["standby"]["pageable"] }}</td>
-        <td>{{ func['func']['object']["spec"]["standby"]["pinned"] }}</td>
-        <td>{{ func['func']['object']["status"]["state"] }}</td>
-        <td>{{ func['snapshotNodes'] }}</td>
-        <td>{{ func['func']['object']["spec"]["version"] }}</td>
-
-    </tr>
-    {% endfor %}
-
+            <th rowspan="2" style="width: 74px;">State</th>
+            {% if is_inferx_admin %}
+            <th rowspan="2">Snapshot Nodes</th>
+            <th rowspan="2" style="width: 88px; white-space: nowrap;">Revision</th>
+            {% endif %}
+            <th rowspan="2">Actions</th>
+        </tr>
+        <tr>
+            {% if is_inferx_admin %}
+            <th style="width: 64px;">GPU</th>
+            <th style="width: 96px; white-space: nowrap;">Pageable</th>
+            <th style="width: 62px;">Pinned</th>
+            {% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for func in funcs %}
+        {% set tenant = func['func']['tenant'] %}
+        {% set namespace = func['func']['namespace'] %}
+        {% set name = func['func']['name'] %}
+        {% set spec = func['func']['object']['spec'] %}
+        {% set row_can_manage = func.get('can_edit_delete', false) %}
+        <tr>
+            <td class="select-col">
+                <input
+                    class="model-select"
+                    type="checkbox"
+                    data-id="{{ tenant }}/{{ namespace }}/{{ name }}"
+                    data-tenant="{{ tenant }}"
+                    data-namespace="{{ namespace }}"
+                    data-name="{{ name }}"
+                    aria-label="Select model {{ name }}"
+                    {% if not row_can_manage %}disabled aria-disabled="true" title="No permission to edit/delete this model" style="cursor: not-allowed; opacity: 0.5;"{% endif %}>
+            </td>
+            <td>
+                <a href="{{ hosturl }}listfunc?tenant={{ tenant }}">
+                    <span class="model-list-tenant-label" data-tenant-name="{{ tenant }}">{{ tenant }}</span>
+                </a>
+            </td>
+            <td>
+                <a href="{{ hosturl }}listfunc?tenant={{ tenant }}&&namespace={{ namespace }}">
+                    {{ namespace }}
+                </a>
+            </td>
+            <td>
+                <a href="{{ hosturl }}func?tenant={{ tenant }}&&namespace={{ namespace }}&&name={{ name }}">
+                    {{ name }}
+                </a>
+                {% set catalog_ui = func.get('catalog_ui') %}
+                {% if catalog_ui %}
+                <div class="model-catalog-badges">
+                    <span class="model-catalog-badge">Created from catalog</span>
+                </div>
+                {% endif %}
+            </td>
+            <td>
+                {% if spec["sample_query"]["apiType"] == "openai" %}
+                text2text
+                {% else %}
+                {{ spec["sample_query"]["apiType"] }}
+                {% endif %}
+            </td>
+            <td>{{ spec["resources"]["GPU"]["Count"] }}</td>
+            <td>{{ spec["resources"]["GPU"]["vRam"]/1000 }}</td>
+            {% if is_inferx_admin %}
+            <td>{{ spec["resources"]["CPU"]/1000 }}</td>
+            <td>{{ spec["resources"]["Mem"]/1000 }}</td>
+            <td>{{ spec["standby"]["gpu"] }}</td>
+            <td>{{ spec["standby"]["pageable"] }}</td>
+            <td>{{ spec["standby"]["pinned"] }}</td>
+            {% endif %}
+            <td>{{ func['func']['object']["status"]["state"] }}</td>
+            {% if is_inferx_admin %}
+            <td>{{ func['snapshotNodes'] }}</td>
+            <td>{{ spec["version"] }}</td>
+            {% endif %}
+            <td>
+                <span class="ix-row-actions">
+                    <a class="ix-btn secondary" href="{{ hosturl }}func?tenant={{ tenant }}&&namespace={{ namespace }}&&name={{ name }}">Open</a>
+                    {% if row_can_manage %}
+                    <a class="ix-btn secondary" href="{{ hosturl }}func_create?edit={{ tenant }}/{{ namespace }}/{{ name }}">Edit</a>
+                    {% endif %}
+                    {% if is_inferx_admin %}
+                    <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew', from_func=tenant ~ '/' ~ namespace ~ '/' ~ name) }}">Save2Catalog</a>
+                    {% endif %}
+                </span>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
 </table>
 
+{% if can_manage_models %}
+<div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+    <button id="delete-selected-btn" type="button" class="ix-btn danger">
+        Delete Selected
+    </button>
+</div>
+<div id="delete-status" aria-live="polite"></div>
+{% endif %}
+{% else %}
+<section class="empty-model-state" aria-live="polite">
+    <h2>No models yet</h2>
+    {% if can_manage_models %}
+    <p>Deploy a model from the catalog, or build your own from scratch.</p>
+    <div class="empty-model-actions">
+        <a class="ix-btn" href="{{ url_for('prefix.CatalogList') }}">Deploy From Catalog</a>
+        <a class="ix-btn secondary" href="{{ hosturl }}func_create">Build From Scratch</a>
+    </div>
+    <div class="empty-model-guide">
+        Not sure where to start?
+        <a href="https://inferx.net/#/blog/inferx-console-guide" target="_blank" rel="noopener noreferrer">Read the model creation guide</a>.
+    </div>
+    {% elif session.get('access_token', '') == '' %}
+    <p>No public models are available right now. Log in or use ixctl with IFERX_APIKEY to create one.</p>
+    {% else %}
+    <p>No models are available for this account yet, and you do not have permission to create one.</p>
+    {% endif %}
+</section>
+{% endif %}
+
+{% if has_models and is_inferx_admin %}
 <h2 style="text-align: center;">Summary</h2>
 
-<table class="ix-table" style="width: 500px; margin: auto; text-align: center; border-collapse: collapse;">
+<table class="ix-table" style="width: 500px; margin: auto; text-align: center;">
     <tr>
         <td width="200"><h3>Model Count</h3></td>
         <td width="200"><h3>{{ summary["model_count"] }}</h3></td>
@@ -96,6 +334,169 @@
         <td><h3>{{ summary["memory"] / 1000 }} GB</h3></td>
     </tr>
 </table>
+{% endif %}
 
-{{ hosturl }}
+<script>
+    (function () {
+        const selectAll = document.getElementById('select-all-models');
+        const deleteBtn = document.getElementById('delete-selected-btn');
+        const statusEl = document.getElementById('delete-status');
+
+        function selectableBoxes() {
+            return Array.from(document.querySelectorAll('.model-select:not(:disabled)'));
+        }
+
+        function selectedRows() {
+            return Array.from(document.querySelectorAll('.model-select:not(:disabled):checked'));
+        }
+
+        function syncDeleteButtonState() {
+            if (!deleteBtn) {
+                return;
+            }
+            deleteBtn.disabled = selectedRows().length === 0;
+        }
+
+        function setStatus(message, kind) {
+            statusEl.textContent = message || '';
+            statusEl.className = kind ? kind : '';
+        }
+
+        function syncSelectAll() {
+            if (!selectAll) {
+                syncDeleteButtonState();
+                return;
+            }
+            const boxes = selectableBoxes();
+            if (boxes.length === 0) {
+                selectAll.checked = false;
+                selectAll.indeterminate = false;
+                selectAll.disabled = true;
+                syncDeleteButtonState();
+                return;
+            }
+            selectAll.disabled = false;
+            const checked = boxes.filter((box) => box.checked).length;
+            selectAll.checked = checked === boxes.length;
+            selectAll.indeterminate = checked > 0 && checked < boxes.length;
+            syncDeleteButtonState();
+        }
+
+        selectAll?.addEventListener('change', () => {
+            const boxes = selectableBoxes();
+            boxes.forEach((box) => {
+                box.checked = selectAll.checked;
+            });
+            syncSelectAll();
+        });
+
+        document.querySelectorAll('.model-select').forEach((box) => {
+            box.addEventListener('change', syncSelectAll);
+        });
+
+        deleteBtn?.addEventListener('click', async () => {
+            const rows = selectedRows();
+            if (rows.length === 0) {
+                setStatus('Select at least one model to delete.', 'error');
+                return;
+            }
+
+            const names = rows.map((row) => row.dataset.id);
+            if (!window.confirm(`Delete ${rows.length} model(s)?\n\n${names.join('\n')}`)) {
+                return;
+            }
+
+            deleteBtn.disabled = true;
+            setStatus('Deleting selected models...', '');
+
+            const failures = [];
+            for (const row of rows) {
+                const tenant = encodeURIComponent(row.dataset.tenant || '');
+                const namespace = encodeURIComponent(row.dataset.namespace || '');
+                const name = encodeURIComponent(row.dataset.name || '');
+                try {
+                    const resp = await fetch(`/proxy/object/function/${tenant}/${namespace}/${name}/`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        failures.push(`${row.dataset.id}: HTTP ${resp.status} ${text}`);
+                    }
+                } catch (err) {
+                    failures.push(`${row.dataset.id}: ${err}`);
+                }
+            }
+
+            deleteBtn.disabled = false;
+
+            if (failures.length > 0) {
+                setStatus(`Delete completed with ${failures.length} failure(s). ${failures[0]}`, 'error');
+                return;
+            }
+
+            setStatus(`Deleted ${rows.length} model(s). Reloading...`, 'success');
+            window.location.reload();
+        });
+
+        {% if is_inferx_admin %}
+        const modelListTenantOwnerNames = {};
+
+        function applyModelListTenantLabels() {
+            document.querySelectorAll('.model-list-tenant-label[data-tenant-name]').forEach((elem) => {
+                const tenantName = String(elem.dataset.tenantName || '').trim();
+                if (tenantName === '') {
+                    return;
+                }
+
+                const ownerName = String(modelListTenantOwnerNames[tenantName] || '').trim();
+                if (ownerName !== '') {
+                    elem.textContent = `${tenantName} (${ownerName})`;
+                    elem.title = tenantName;
+                    return;
+                }
+
+                if (typeof window.getTenantDisplayName === 'function') {
+                    elem.textContent = window.getTenantDisplayName(tenantName);
+                    elem.title = tenantName;
+                }
+            });
+        }
+
+        async function loadModelListTenantOwnerNames() {
+            try {
+                const resp = await fetch('/proxy1/admin/tenants');
+                if (!resp.ok) {
+                    return;
+                }
+
+                const rows = await resp.json();
+                if (!Array.isArray(rows)) {
+                    return;
+                }
+
+                rows.forEach((row) => {
+                    const tenantName = String(row?.tenant_name || '').trim();
+                    const ownerName = String(row?.display_name || '').trim();
+                    if (tenantName !== '' && ownerName !== '') {
+                        modelListTenantOwnerNames[tenantName] = ownerName;
+                    }
+                });
+
+                applyModelListTenantLabels();
+            } catch (error) {
+                console.warn('Failed to load model list tenant owner names:', error);
+            }
+        }
+
+        document.addEventListener('tenant-display-map-updated', applyModelListTenantLabels);
+        loadModelListTenantOwnerNames();
+        {% endif %}
+
+        syncSelectAll();
+        syncDeleteButtonState();
+    })();
+</script>
 {% endblock %}

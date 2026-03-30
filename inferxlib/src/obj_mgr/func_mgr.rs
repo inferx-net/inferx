@@ -61,7 +61,7 @@ pub enum ProbeType {
 }
 
 fn ProbeTypeDefault() -> ProbeType {
-    return ProbeType::HealthCheck;
+    return ProbeType::Prompt;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -87,7 +87,7 @@ impl Default for HttpEndpoint {
             schema: URIScheme::Http,
             probe: "/health".to_owned(),
             probeTimeout: 1000,
-            probetype: ProbeType::HealthCheck,
+            probetype: ProbeType::Prompt,
         };
     }
 }
@@ -125,30 +125,30 @@ impl Default for SampleCall {
         };
     }
 }
+// 
+// #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+// pub struct ScheduleConfig {
+//     #[serde(rename = "min_replica")]
+//     pub minReplica: u64,
+//     #[serde(rename = "max_replica")]
+//     pub maxReplica: u64,
+//     #[serde(rename = "standby_per_node")]
+//     pub standbyPerNode: u64,
+// }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ScheduleConfig {
-    #[serde(rename = "min_replica")]
-    pub minReplica: u64,
-    #[serde(rename = "max_replica")]
-    pub maxReplica: u64,
-    #[serde(rename = "standby_per_node")]
-    pub standbyPerNode: u64,
-}
+// impl Default for ScheduleConfig {
+//     fn default() -> Self {
+//         return Self {
+//             minReplica: 0,
+//             maxReplica: 1,
+//             standbyPerNode: 1,
+//         };
+//     }
+// }
 
-impl Default for ScheduleConfig {
-    fn default() -> Self {
-        return Self {
-            minReplica: 0,
-            maxReplica: 10,
-            standbyPerNode: 1,
-        };
-    }
-}
-
-pub fn DefaultScheduleConfig() -> ScheduleConfig {
-    return ScheduleConfig::default();
-}
+// pub fn DefaultScheduleConfig() -> ScheduleConfig {
+//     return ScheduleConfig::default();
+// }
 
 pub fn DefaultLoadingTimeout() -> u64 {
     return 90;
@@ -180,6 +180,14 @@ impl Default for ApiType {
 pub enum ModelType {
     Public,
     Private,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CatalogSource {
+    #[serde(rename = "catalog_id")]
+    pub catalogId: i64,
+    #[serde(rename = "catalog_version")]
+    pub catalogVersion: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -219,6 +227,9 @@ pub struct FuncSpec {
 
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
+
+    #[serde(rename = "catalog_source", default, skip_serializing_if = "Option::is_none")]
+    pub catalogSource: Option<CatalogSource>,
 
     #[serde(default)]
     pub mountfiles: Vec<MountFile>,
@@ -274,7 +285,7 @@ impl Default for FuncSpec {
                 probe: "/health".to_owned(),
                 schema: URIScheme::Http,
                 probeTimeout: 1000,
-                probetype: ProbeType::HealthCheck,
+                probetype: ProbeType::Prompt,
             },
             modelType: ModelType::Public,
             entrypoint: Vec::new(),
@@ -283,6 +294,7 @@ impl Default for FuncSpec {
             standby: Standby::default(),
             sampleCall: SampleCall::default(),
             policy: Default::default(),
+            catalogSource: None,
             mountfiles: Default::default(),
         };
     }

@@ -42,10 +42,14 @@ spec:
             value: "Gateway"
           - name: ENFORCE_BILLING
             value: "false"
+          - name: ONBOARD_INITIAL_CREDIT_CENTS
+            value: "3000"
           - name: INFERX_ADMIN_APIKEY
             value: 87831cdb-d07a-4dc1-9de0-fb232c9bf286
           - name: AUDITDB_ADDR
-            value: "postgresql://audit_user:123456@db:5432/auditdb"
+            value: "postgresql://audit_user:123456@auditdb:5432/auditdb"
+          - name: BILLINGDB_ADDR
+            value: "postgresql://billing_user:123456@billingdb:5432/billingdb"
           - name: STATESVC_ADDR
             value: "http://statesvc:1237"
           - name: ETCD_ADDRS

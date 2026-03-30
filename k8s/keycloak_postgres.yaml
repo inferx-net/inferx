@@ -45,9 +45,8 @@ spec:
               mountPath: /data/postgres  
       volumes:
         - name: db-data
-          hostPath:
-            path: /opt/inferx/data/postgres_keycloak
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: keycloak-db-pvc
 ---
 apiVersion: v1
 kind: Service

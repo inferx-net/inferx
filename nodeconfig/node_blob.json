@@ -18,7 +18,8 @@
     "tsotSocketPath": "/opt/inferx/sockets/tsot-socket",
     "tsotGwSocketPath": "/opt/inferx/sockets_host/tsot-socket",
     "runService": true,
-    "auditdbAddr": "postgresql://audit_user:123456@db:5432/auditdb",
+    "auditdbAddr": "postgresql://audit_user:123456@auditdb:5432/auditdb",
+    "billingdbAddr": "postgresql://billing_user:123456@billingdb:5432/billingdb",
     "resources": {
         "CPU": 30000,
         "Mem": 400000,

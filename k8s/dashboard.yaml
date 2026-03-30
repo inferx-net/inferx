@@ -31,12 +31,16 @@ spec:
               value: "8gviEC1wWF4Ncbwx4Car9PqqH5kWG17u"
             - name: INFERX_APIGW_ADDR
               value: "http://gateway:4000"
+            - name: INFERX_PUBLIC_API_BASE_URL
+              value: ""
+            - name: INFERX_GPU_RESOURCE_LOOKUP_JSON
+              value: '{"1":{"CPU":10000,"Mem":30000},"2":{"CPU":20000,"Mem":60000},"4":{"CPU":20000,"Mem":80000},"8":{"CPU":32000,"Mem":120000}}'
           volumeMounts:
             - name: cert-volume
               mountPath: /etc/letsencrypt/
           livenessProbe:
             httpGet:
-              path: /demo/intro?name=home.md
+              path: /healthz
               port: 1250
             initialDelaySeconds: 10
             periodSeconds: 10

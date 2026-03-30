@@ -1,0 +1,294 @@
+<script>
+    (function () {
+        function normalizeOptionList(options) {
+            if (!Array.isArray(options)) {
+                return [];
+            }
+            return options
+                .map((option) => {
+                    if (!option || typeof option !== 'object') {
+                        return null;
+                    }
+                    const value = String(option.value || '').trim();
+                    const label = String(option.label || option.value || '').trim();
+                    if (value === '') {
+                        return null;
+                    }
+                    return { value, label: label || value };
+                })
+                .filter(Boolean);
+        }
+
+        function setSelectOptions(selectEl, options, selectedValue, placeholderLabel) {
+            if (!selectEl) {
+                return;
+            }
+
+            const normalizedOptions = normalizeOptionList(options);
+            selectEl.innerHTML = '';
+
+            if (placeholderLabel) {
+                const placeholderOption = document.createElement('option');
+                placeholderOption.value = '';
+                placeholderOption.textContent = placeholderLabel;
+                selectEl.appendChild(placeholderOption);
+            }
+
+            normalizedOptions.forEach((optionData) => {
+                const option = document.createElement('option');
+                option.value = optionData.value;
+                option.textContent = optionData.label;
+                selectEl.appendChild(option);
+            });
+
+            if (selectedValue && normalizedOptions.some((option) => option.value === selectedValue)) {
+                selectEl.value = selectedValue;
+                return;
+            }
+
+            if (placeholderLabel) {
+                selectEl.value = '';
+            } else if (normalizedOptions.length > 0) {
+                selectEl.value = normalizedOptions[0].value;
+            }
+        }
+
+        function createCatalogDeployTargetController(config) {
+            const root = config && config.root;
+            const initialState = (config && config.initialState && typeof config.initialState === 'object')
+                ? config.initialState
+                : {};
+            const deployButtons = Array.isArray(config && config.deployButtons)
+                ? config.deployButtons.filter(Boolean)
+                : [];
+
+            if (!root) {
+                return null;
+            }
+
+            const tenantField = root.querySelector('[data-role="tenant-field"]');
+            const tenantSelect = root.querySelector('[data-role="tenant-select"]');
+            const namespaceSelectField = root.querySelector('[data-role="namespace-select-field"]');
+            const namespaceSelect = root.querySelector('[data-role="namespace-select"]');
+            const namespaceReadonlyField = root.querySelector('[data-role="namespace-readonly-field"]');
+            const namespaceReadonlyValue = root.querySelector('[data-role="namespace-readonly-value"]');
+            const summaryLabel = root.querySelector('[data-role="summary-label"]');
+            const summaryValue = root.querySelector('[data-role="summary-value"]');
+
+            let tenantOptions = [];
+            let namespaceOptionsByTenant = {};
+            let selectedTenant = '';
+            let selectedNamespace = '';
+            let stateMessage = '';
+            let showTenantInSummary = true;
+
+            function applyState(nextState) {
+                const state = (nextState && typeof nextState === 'object') ? nextState : {};
+                tenantOptions = normalizeOptionList(state.tenant_options);
+                namespaceOptionsByTenant = (
+                    state.namespace_options_by_tenant
+                    && typeof state.namespace_options_by_tenant === 'object'
+                ) ? state.namespace_options_by_tenant : {};
+                selectedTenant = String(state.selected_tenant || '').trim();
+                selectedNamespace = String(state.selected_namespace || '').trim();
+                stateMessage = String(state.message || '').trim();
+                showTenantInSummary = state.show_tenant_in_summary !== false;
+            }
+
+            function getTenantLabel(tenantValue) {
+                const normalizedTenant = String(tenantValue || '').trim();
+                if (normalizedTenant === '') {
+                    return '';
+                }
+                const matchedOption = tenantOptions.find((option) => option.value === normalizedTenant);
+                if (matchedOption && matchedOption.label) {
+                    return matchedOption.label;
+                }
+                if (typeof window.getTenantDisplayName === 'function') {
+                    return String(window.getTenantDisplayName(normalizedTenant) || '').trim() || normalizedTenant;
+                }
+                return normalizedTenant;
+            }
+
+            function getNamespaceOptionsForTenant(tenantValue) {
+                const normalizedTenant = String(tenantValue || '').trim();
+                if (normalizedTenant === '') {
+                    return [];
+                }
+                return normalizeOptionList(namespaceOptionsByTenant[normalizedTenant]);
+            }
+
+            function normalizeTenantSelection() {
+                const validTenantValues = tenantOptions.map((option) => option.value);
+                if (validTenantValues.length === 1) {
+                    selectedTenant = validTenantValues[0];
+                    return;
+                }
+                if (!validTenantValues.includes(selectedTenant)) {
+                    selectedTenant = '';
+                }
+            }
+
+            function normalizeNamespaceSelection(namespaceOptions) {
+                if (selectedTenant === '') {
+                    selectedNamespace = '';
+                    return;
+                }
+                if (namespaceOptions.length === 1) {
+                    selectedNamespace = namespaceOptions[0].value;
+                    return;
+                }
+                if (!namespaceOptions.some((option) => option.value === selectedNamespace)) {
+                    selectedNamespace = '';
+                }
+            }
+
+            function buildSummary(namespaceOptions) {
+                if (tenantOptions.length === 0) {
+                    return {
+                        resolved: false,
+                        label: 'Deploy Now unavailable:',
+                        value: stateMessage || 'No accessible tenant is available for deployment.',
+                    };
+                }
+                if (selectedTenant === '') {
+                    return {
+                        resolved: false,
+                        label: 'Deploy Now unavailable:',
+                        value: 'Select a tenant to enable Deploy Now.',
+                    };
+                }
+                if (namespaceOptions.length === 0) {
+                    return {
+                        resolved: false,
+                        label: 'Deploy Now unavailable:',
+                        value: showTenantInSummary
+                            ? `No accessible namespace is available under tenant ${selectedTenant}.`
+                            : 'No accessible namespace is available for deployment.',
+                    };
+                }
+                if (selectedNamespace === '') {
+                    return {
+                        resolved: false,
+                        label: 'Deploy Now unavailable:',
+                        value: showTenantInSummary
+                            ? `Select a namespace under tenant ${selectedTenant} to enable Deploy Now.`
+                            : 'Select a namespace to enable Deploy Now.',
+                    };
+                }
+                return {
+                    resolved: true,
+                    label: 'Deploy Now target:',
+                    value: showTenantInSummary
+                        ? `${getTenantLabel(selectedTenant)} / ${selectedNamespace}`
+                        : selectedNamespace,
+                };
+            }
+
+            function syncDeployButtons(isResolved) {
+                deployButtons.forEach((button) => {
+                    if (button.dataset.deployLoading === 'true') {
+                        button.disabled = true;
+                        return;
+                    }
+                    button.disabled = !isResolved;
+                });
+            }
+
+            function render() {
+                normalizeTenantSelection();
+                const namespaceOptions = getNamespaceOptionsForTenant(selectedTenant);
+                normalizeNamespaceSelection(namespaceOptions);
+
+                if (tenantField) {
+                    tenantField.hidden = tenantOptions.length <= 1;
+                }
+                if (tenantSelect) {
+                    setSelectOptions(tenantSelect, tenantOptions, selectedTenant, tenantOptions.length > 1 ? 'Select tenant' : '');
+                    if (tenantOptions.length <= 1) {
+                        tenantSelect.value = selectedTenant;
+                    }
+                }
+
+                const hasSingleNamespace = selectedTenant !== '' && namespaceOptions.length === 1;
+                if (namespaceReadonlyField) {
+                    namespaceReadonlyField.hidden = !hasSingleNamespace;
+                }
+                if (namespaceReadonlyValue) {
+                    namespaceReadonlyValue.textContent = hasSingleNamespace
+                        ? (namespaceOptions[0].label || namespaceOptions[0].value || '')
+                        : '';
+                }
+
+                if (namespaceSelectField) {
+                    namespaceSelectField.hidden = hasSingleNamespace;
+                }
+                if (namespaceSelect) {
+                    if (selectedTenant === '' && tenantOptions.length > 1) {
+                        setSelectOptions(namespaceSelect, [], '', 'Select a tenant first');
+                        namespaceSelect.disabled = true;
+                    } else if (selectedTenant === '' || namespaceOptions.length === 0) {
+                        setSelectOptions(namespaceSelect, [], '', 'No accessible namespaces');
+                        namespaceSelect.disabled = true;
+                    } else {
+                        setSelectOptions(namespaceSelect, namespaceOptions, selectedNamespace, 'Select namespace');
+                        namespaceSelect.disabled = false;
+                    }
+                    if (selectedNamespace && !hasSingleNamespace) {
+                        namespaceSelect.value = selectedNamespace;
+                    }
+                }
+
+                const summary = buildSummary(namespaceOptions);
+                if (summaryLabel) {
+                    summaryLabel.textContent = summary.label;
+                }
+                if (summaryValue) {
+                    summaryValue.textContent = summary.value;
+                }
+                syncDeployButtons(summary.resolved);
+                return summary;
+            }
+
+            function refresh() {
+                return render();
+            }
+
+            tenantSelect?.addEventListener('change', () => {
+                selectedTenant = String(tenantSelect.value || '').trim();
+                selectedNamespace = '';
+                render();
+            });
+
+            namespaceSelect?.addEventListener('change', () => {
+                selectedNamespace = String(namespaceSelect.value || '').trim();
+                render();
+            });
+
+            applyState(initialState);
+            render();
+
+            return {
+                getSelection() {
+                    return {
+                        tenant: selectedTenant,
+                        namespace: selectedNamespace,
+                    };
+                },
+                isResolved() {
+                    return selectedTenant !== '' && selectedNamespace !== '';
+                },
+                getMessage() {
+                    return buildSummary(getNamespaceOptionsForTenant(selectedTenant)).value;
+                },
+                replaceState(nextState) {
+                    applyState(nextState);
+                    return render();
+                },
+                refresh,
+            };
+        }
+
+        window.createCatalogDeployTargetController = createCatalogDeployTargetController;
+    })();
+</script>

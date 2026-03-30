@@ -56,13 +56,21 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
 
     let namespaceStore = NamespaceStore::New(&GATEWAY_CONFIG.etcdAddrs.to_vec()).await?;
 
-    let addr = GATEWAY_CONFIG.auditdbAddr.clone();
-    if addr.len() == 0 {
+    let auditdbAddr = GATEWAY_CONFIG.auditdbAddr.clone();
+    if auditdbAddr.len() == 0 {
         // auditdb is not enabled
         return Ok(());
     }
 
-    let sqlaudit = SqlAudit::New(&addr).await?;
+    let billingdbAddr = GATEWAY_CONFIG.billingdbAddr.clone();
+    if billingdbAddr.len() == 0 {
+        return Err(Error::CommonError(
+            "GatewaySvc: billingdb address is not configured".to_string(),
+        ));
+    }
+
+    let sqlaudit = SqlAudit::New(&auditdbAddr).await?;
+    let sqlbilling = SqlAudit::New(&billingdbAddr).await?;
     let client = GetClient().await?;
 
     let objRepo = GwObjRepo::New(GATEWAY_CONFIG.stateSvcAddrs.to_vec())
@@ -77,6 +85,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         funcAgentMgr: funcAgentMgr,
         namespaceStore: namespaceStore,
         sqlAudit: sqlaudit,
+        sqlBilling: sqlbilling,
         client: client,
     };
 

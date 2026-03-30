@@ -6,10 +6,10 @@ use crate::data_obj::*;
 use crate::resource;
 use crate::resource::*;
 
-pub const DEFAULT_PARALLEL_LEVEL: usize = 2;
-pub const DEFAULT_QUEUE_LEN: usize = 1000;
+pub const DEFAULT_PARALLEL_LEVEL: usize = 50;
+pub const DEFAULT_QUEUE_LEN: usize = 100;
 pub const DEFAULT_QUEUE_TIMEOUT: f64 = 30.0;
-pub const DEFAULT_SCALEIN_TIMEOUT: f64 = 0.01; // 10 ms
+pub const DEFAULT_SCALEIN_TIMEOUT: f64 = 1.0; // 1000 ms
 pub const DEFAULT_QUEUE_RATIO: f64 = 0.1;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -90,7 +90,7 @@ impl Default for FuncPolicySpec {
     fn default() -> Self {
         return Self {
             minReplica: 0,
-            maxReplica: 10,
+            maxReplica: 1,
             standbyPerNode: 1,
             parallel: DEFAULT_PARALLEL_LEVEL,
             queueLen: default_queue_len(),

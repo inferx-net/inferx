@@ -25,15 +25,15 @@ spec:
                 -f /scripts/hourly-aggregate-by-func-range.sql
           env:
             - name: PGHOST
-              value: db
+              value: billingdb
             - name: PGPORT
               value: "5432"
             - name: PGUSER
-              value: audit_user
+              value: billing_user
             - name: PGPASSWORD
               value: "123456"
             - name: PGDATABASE
-              value: auditdb
+              value: billingdb
             - name: BACKFILL_START
               value: "2026-02-07T00:00:00Z"
             - name: BACKFILL_END

@@ -1,0 +1,67 @@
+{% macro render_catalog_deploy_target(component_id, deploy_target) -%}
+{% set tenant_options = deploy_target.tenant_options if deploy_target and deploy_target.tenant_options is defined else [] %}
+{% set selected_tenant = deploy_target.selected_tenant if deploy_target and deploy_target.selected_tenant is defined else '' %}
+{% set selected_namespace = deploy_target.selected_namespace if deploy_target and deploy_target.selected_namespace is defined else '' %}
+{% set namespace_options_by_tenant = deploy_target.namespace_options_by_tenant if deploy_target and deploy_target.namespace_options_by_tenant is defined else {} %}
+{% set current_namespace_options = namespace_options_by_tenant.get(selected_tenant, []) if selected_tenant else [] %}
+{% set tenant_count = tenant_options | length %}
+{% set has_single_namespace = selected_tenant and (current_namespace_options | length) == 1 %}
+{% set show_tenant_in_summary = deploy_target.show_tenant_in_summary if deploy_target and deploy_target.show_tenant_in_summary is defined else true %}
+{% set selector_ns = namespace(selected_tenant_label=selected_tenant) %}
+{% for option in tenant_options %}
+    {% if option.value == selected_tenant %}
+        {% set selector_ns.selected_tenant_label = option.label %}
+    {% endif %}
+{% endfor %}
+<div id="{{ component_id }}" class="catalog-deploy-target">
+    <div class="catalog-deploy-target-summary">
+        {% if deploy_target and deploy_target.resolved %}
+        <strong data-role="summary-label">Deploy Now target:</strong>
+        <span data-role="summary-value">
+            {% if show_tenant_in_summary %}{{ selector_ns.selected_tenant_label }} / {% endif %}{{ selected_namespace }}
+        </span>
+        {% else %}
+        <strong data-role="summary-label">Deploy Now unavailable:</strong>
+        <span data-role="summary-value">{{ deploy_target.message if deploy_target and deploy_target.message is defined else 'Deploy Now is unavailable.' }}</span>
+        {% endif %}
+    </div>
+    <div class="catalog-deploy-target-controls">
+        <div class="catalog-deploy-target-field" data-role="tenant-field"{% if tenant_count <= 1 %} hidden{% endif %}>
+            <label for="{{ component_id }}-tenant">Tenant</label>
+            <select id="{{ component_id }}-tenant" data-role="tenant-select">
+                <option value="">Select tenant</option>
+                {% for option in tenant_options %}
+                <option value="{{ option.value }}"{% if option.value == selected_tenant %} selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="catalog-deploy-target-field" data-role="namespace-select-field"{% if has_single_namespace %} hidden{% endif %}>
+            <label for="{{ component_id }}-namespace">Namespace</label>
+            <select
+                id="{{ component_id }}-namespace"
+                data-role="namespace-select"
+                {% if (not selected_tenant and tenant_count > 1) or (selected_tenant and (current_namespace_options | length) == 0) %}disabled{% endif %}
+            >
+                {% if not selected_tenant and tenant_count > 1 %}
+                <option value="">Select a tenant first</option>
+                {% elif selected_tenant and (current_namespace_options | length) == 0 %}
+                <option value="">No accessible namespaces</option>
+                {% else %}
+                <option value="">Select namespace</option>
+                {% for option in current_namespace_options %}
+                <option value="{{ option.value }}"{% if option.value == selected_namespace %} selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+        </div>
+
+        <div class="catalog-deploy-target-field" data-role="namespace-readonly-field"{% if not has_single_namespace %} hidden{% endif %}>
+            <label>Namespace</label>
+            <div class="catalog-deploy-target-readonly" data-role="namespace-readonly-value">
+                {% if has_single_namespace %}{{ selected_namespace or current_namespace_options[0].value }}{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{%- endmacro %}

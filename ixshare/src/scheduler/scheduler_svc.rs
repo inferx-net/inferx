@@ -72,6 +72,22 @@ impl na::scheduler_service_server::SchedulerService for SchedulerSvc {
         let resp = SCHEDULER.RefreshGateway(msg).await.unwrap();
         return Ok(tonic::Response::new(resp));
     }
+
+    async fn kill_pod(
+        &self,
+        request: tonic::Request<na::KillPodReq>,
+    ) -> SResult<tonic::Response<na::KillPodResp>, tonic::Status> {
+        let msg = request.into_inner();
+        let resp = match SCHEDULER.KillPod(msg).await {
+            Ok(resp) => resp,
+            Err(e) => na::KillPodResp {
+                error: format!("scheduler internal error: {:?}", e),
+                status: na::KillPodStatus::Internal.into(),
+            },
+        };
+
+        Ok(tonic::Response::new(resp))
+    }
 }
 
 pub async fn SchedulerGrpcSvc() -> Result<()> {

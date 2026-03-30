@@ -174,6 +174,29 @@ impl Scheduler {
         }
     }
 
+    pub async fn KillPod(&self, req: na::KillPodReq) -> Result<na::KillPodResp> {
+        let (tx, rx) = oneshot::channel();
+
+        if let Err(e) = self
+            .msgTx
+            .send(WorkerHandlerMsg::KillPod { req, resp: tx })
+            .await
+        {
+            return Ok(na::KillPodResp {
+                error: format!("scheduler unavailable: {:?}", e),
+                status: na::KillPodStatus::Internal.into(),
+            });
+        }
+
+        match rx.await {
+            Err(e) => Ok(na::KillPodResp {
+                error: format!("handler dropped: {:?}", e),
+                status: na::KillPodStatus::Internal.into(),
+            }),
+            Ok(resp) => Ok(resp),
+        }
+    }
+
     pub async fn StartProcess(&self) -> Result<()> {
         let mut eventRx = self.eventRx.lock().unwrap().take().unwrap();
         let mut msgRx = self.msgRx.lock().unwrap().take().unwrap();
