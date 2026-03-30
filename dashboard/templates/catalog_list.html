@@ -70,9 +70,7 @@
     }
 
     .catalog-deploy-target {
-        margin-top: 10px;
-        padding-top: 10px;
-        border-top: 1px solid #dbe3ef;
+        margin-bottom: 10px;
     }
 
     .catalog-deploy-target-summary {
@@ -324,7 +322,7 @@
     <div class="catalog-banner">
         {{ catalog_deploy_target.render_catalog_deploy_target('catalog-list-deploy-target', deploy_target) }}
         <div class="catalog-banner-detail">
-            Currently we have {{ published_entry_count }} published model{{ '' if published_entry_count == 1 else 's' }} in the catalog.
+            Currently we have {{ published_entry_count }} published model{{ '' if published_entry_count == 1 else 's' }} in the catalog, and we're continuing to add more.
             {% if is_inferx_admin and unpublished_entry_count %}
             There {{ 'is' if unpublished_entry_count == 1 else 'are' }} also {{ unpublished_entry_count }} unpublished admin-only draft{{ '' if unpublished_entry_count == 1 else 's' }}.
             {% endif %}

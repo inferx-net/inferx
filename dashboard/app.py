@@ -79,10 +79,16 @@ def inject_dashboard_links():
     except Exception:
         script_root = ""
     hosturl = f"{script_root}/" if script_root != "" else "/"
+    dashboard_is_inferx_admin = False
+    try:
+        dashboard_is_inferx_admin = is_inferx_admin_user()
+    except Exception:
+        dashboard_is_inferx_admin = False
 
     return {
         "hosturl": hosturl,
         "slack_invite_url": SLACK_INVITE_URL,
+        "dashboard_is_inferx_admin": dashboard_is_inferx_admin,
         "dashboard_gateway_aligned_anonymous_access": DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS,
         "dashboard_gateway_aligned_anonymous_active": (
             DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
@@ -5460,7 +5466,8 @@ def ListFunc():
 
 
 @prefix_bp.route("/listsnapshot")
-@require_login_unless_gateway_aligned_anonymous_enabled
+@require_login
+@require_admin
 def ListSnapshot():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
@@ -5478,7 +5485,11 @@ def ListSnapshot():
         include_public=can_access_public_tenant_in_dashboard(),
     )
 
-    return render_template("snapshot_list.html", snapshots=snapshots)
+    return render_template(
+        "snapshot_list.html",
+        snapshots=snapshots,
+        is_inferx_admin=True,
+    )
 
 
 @prefix_bp.route("/func", methods=("GET", "POST"))
@@ -5665,6 +5676,12 @@ def GetPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
     podname = request.args.get("name")
+    is_inferx_admin = is_inferx_admin_user()
+    snapshot_secondary_href = ""
+    snapshot_secondary_label = ""
+    if is_inferx_admin:
+        snapshot_secondary_href = dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace)
+        snapshot_secondary_label = "View Snapshots"
 
     deny_resp = deny_public_tenant_request(tenant)
     if deny_resp is not None:
@@ -5681,8 +5698,8 @@ def GetPod():
             suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
             primary_label="Back to Pods",
-            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
-            secondary_label="View Snapshots",
+            secondary_href=snapshot_secondary_href,
+            secondary_label=snapshot_secondary_label,
             detail=extract_upstream_error_message(pod_resp, pod),
             status=404,
         )
@@ -5694,8 +5711,8 @@ def GetPod():
             namespace=namespace,
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
             primary_label="Back to Pods",
-            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
-            secondary_label="View Snapshots",
+            secondary_href=snapshot_secondary_href,
+            secondary_label=snapshot_secondary_label,
             upstream_status=pod_resp.status_code,
             detail=extract_upstream_error_message(pod_resp, pod),
         )
@@ -5718,8 +5735,8 @@ def GetPod():
             suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
             primary_label="Back to Pods",
-            secondary_href=dashboard_href("prefix.ListSnapshot", tenant=tenant, namespace=namespace),
-            secondary_label="View Snapshots",
+            secondary_href=snapshot_secondary_href,
+            secondary_label=snapshot_secondary_label,
             detail=extract_upstream_error_message(pod_resp, pod),
             status=404,
         )
