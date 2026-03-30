@@ -472,6 +472,7 @@
     {% set is_logged_in = session.get('access_token', '') != '' %}
     {% set is_gateway_aligned_anonymous_active = dashboard_gateway_aligned_anonymous_active | default(false) %}
     {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active %}
+    {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
     {% set request_path = request.path if request is defined and request.path is defined else '' %}
     {% set request_path_no_slash = request_path.rstrip('/') %}
     {% set nav_models_active = request_path_no_slash in ('',) or '/listfunc' in request_path or '/func_create' in request_path or '/func' in request_path or '/funclog' in request_path %}
@@ -509,7 +510,9 @@
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
         <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
+        {% if nav_is_inferx_admin %}
         <a href="{{ hosturl }}listsnapshot" class="{% if nav_snapshots_active %}active{% endif %}"> Snapshots </a>
+        {% endif %}
         <a href="{{ hosturl }}listnode" id="nav-nodes-link" class="{% if nav_nodes_active %}active{% endif %}"{% if not dashboard_gateway_aligned_anonymous_access %} style="display: none;"{% endif %}> Nodes </a>
         {% if is_logged_in %}
         <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>

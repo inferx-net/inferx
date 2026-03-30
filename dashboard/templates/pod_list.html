@@ -76,17 +76,23 @@
         <th rowspan="2">Req. GPU Count</th>
         <th rowspan="2">Req. GPU vRam (MB)</th>
         <th rowspan="2">Type</th>
+        {% if is_inferx_admin %}
         <th colspan="3">Standby (MB)</th>
+        {% endif %}
         <th rowspan="2">Allocated GPU vRam (MB)</th>
+        {% if is_inferx_admin %}
         <th colspan="2">Allocated GPU Slots</th>
+        {% endif %}
         <th rowspan="2">Operations</th>
     </tr>
     <tr>
+        {% if is_inferx_admin %}
         <th>GPU</th>
         <th>Pageable</th>
         <th>Pinned</th>
         <th>GPU</th>
         <th>Slot Count</th>
+        {% endif %}
     </tr>
 
     {% for pod in pods %}
@@ -107,6 +113,7 @@
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["reqResources"]["GPU"]["Count"] }}</td>
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["reqResources"]["GPU"]["vRam"] }}</td>
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["create_type"] }}</td>
+        {% if is_inferx_admin %}
         <td rowspan="{{ gpu_rows }}">
             {{ pod["object"]["spec"]["standby"]["gpu"] }} :
             {{ pod["object"]["spec"]["snapshotStandbyInfo"]["gpu"] // (1024 * 1024) }}
@@ -119,15 +126,18 @@
             {{ pod["object"]["spec"]["standby"]["pinned"] }} :
             {{ pod["object"]["spec"]["snapshotStandbyInfo"]["pinned"] // (1024 * 1024) }}
         </td>
+        {% endif %}
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["allocResources"]["GPUs"]["vRam"] }}</td>
         {% endif %}
 
+        {% if is_inferx_admin %}
         {% if gpu_map %}
         {% set gpu_id = (gpu_map|list)[idx] %}
         <td>{{ gpu_id }}</td>
         <td>{{ gpu_map[gpu_id].slotCnt }}</td>
         {% else %}
         <td colspan="2">N/A</td>
+        {% endif %}
         {% endif %}
 
         {% if idx == 0 %}
