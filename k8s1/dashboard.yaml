@@ -26,13 +26,15 @@ spec:
             - name: KEYCLOAK_REALM_NAME
               value: "inferx"
             - name: KEYCLOAK_CLIENT_ID
-              value: "inferx_client"
+              value: "infer_client"
             - name: KEYCLOAK_CLIENT_SECRET
               value: "Nv0cPI1cAedpWYeEkZNL8PYqGrzIEOE7"
             - name: INFERX_APIGW_ADDR
               value: "http://gateway:4000"
             - name: DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
-              value: "true"
+              value: "false"
+            - name: SECRDB_ADDR
+              value: "postgresql://secret:123456@secret-db:5432/secretdb"
           volumeMounts:
             - name: cert-volume
               mountPath: /etc/letsencrypt/

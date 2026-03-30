@@ -383,7 +383,7 @@ runall:
 	VERSION=$(VERSION1) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
 	VERSION=$(VERSION1) envsubst < k8s1/gateway.yaml | kubectl apply -f -
 	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
+# 	VERSION=$(VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
 	VERSION=$(VERSION) envsubst < k8s1/nodeagent.yaml | kubectl apply -f -
 	VERSION=$(DASHBOARD_VERSION) envsubst < k8s1/dashboard.yaml | kubectl apply -f -
 # 	kubectl apply -f k8s1/ingress-cwnew.yaml

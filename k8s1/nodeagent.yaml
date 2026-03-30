@@ -180,7 +180,7 @@ spec:
           - name: INIT_CUDAHOSTALLOC
             value: "-1"
           - name: RUN_SERVICE
-            value: "NodeAgent"
+            value: "NodeAgentAll"
           - name: ENABLE_COREDUMP
             value: "false"
           - name: POD_IP
@@ -201,12 +201,14 @@ spec:
               resourceFieldRef:
                 containerName: nodeagent
                 resource: limits.hugepages-2Mi   
-          # - name: CACHE_MEMORY
-          #   value: "30Gi"
-          # - name: ENABLE_2MB_PAGE
-          #   value: "false"  
-          # - name: CONTEXT_OVERHEAD
-          #   value: "800"         
+          - name: CACHE_MEMORY
+            value: "25Gi"
+          - name: RESERVE_MEM_PERCENTAGE
+            value: "10"
+          - name: FLEXIBLE_MEM_PERCENTAGE
+            value: "10"
+          - name: CONTEXT_COUNT
+            value: "1"
           - name: ALLOC_CPU
             valueFrom:
               resourceFieldRef:
