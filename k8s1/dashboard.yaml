@@ -40,6 +40,8 @@ spec:
                 vllm/vllm-openai:v0.16.0
                 vllm/vllm-openai:v0.17.1
                 vllm/vllm-omni:v0.14.0
+                inferx/vibevoice:v0.1.0
+                inferx/inferx-ocr:v0.1.0
             - name: DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
               value: "false"
             - name: SECRDB_ADDR
