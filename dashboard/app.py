@@ -2041,8 +2041,19 @@ def strip_model_command_args(commands):
     return filtered
 
 
+def is_standard_vllm_image(image):
+    return isinstance(image, str) and (
+        image.startswith("vllm/vllm-openai:")
+        or image.startswith("vllm-openai-upgraded:")
+    )
+
+
 def is_vllm_omni_image(image):
     return isinstance(image, str) and image.startswith("vllm/vllm-omni:")
+
+
+def is_vllm_runtime_image(image):
+    return is_standard_vllm_image(image) or is_vllm_omni_image(image)
 
 
 def strip_omni_generated_command_args(commands):
@@ -2088,6 +2099,29 @@ def extract_model_arg_from_commands(commands):
     return ""
 
 
+def command_contains_named_arg(commands, flag_name):
+    normalized_commands = [str(item).strip() for item in commands] if isinstance(commands, list) else []
+    for token in normalized_commands:
+        if token == flag_name:
+            return True
+        if token.startswith(f"{flag_name}="):
+            return True
+    return False
+
+
+def should_sync_tensor_parallel_size_for_advanced_commands(image, commands):
+    normalized_commands = [str(item).strip() for item in commands] if isinstance(commands, list) else []
+    if len(normalized_commands) == 0:
+        return False
+    if command_contains_named_arg(normalized_commands, "--tensor-parallel-size"):
+        return True
+    if len(normalized_commands) >= 2 and normalized_commands[0] == "vllm" and normalized_commands[1] == "serve":
+        return True
+    if not is_vllm_runtime_image(image):
+        return False
+    return extract_model_arg_from_commands(normalized_commands) != ""
+
+
 def looks_like_huggingface_model_target_token(value):
     normalized = str(value or "").strip()
     if normalized == "":
@@ -2097,6 +2131,27 @@ def looks_like_huggingface_model_target_token(value):
     if "://" in normalized:
         return False
     return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*", normalized) is not None
+
+
+def normalize_effective_model_target(value):
+    normalized = str(value or "").strip()
+    if normalized == "":
+        return ""
+
+    path_parts = [part for part in normalized.split("/") if part != ""]
+    for idx, part in enumerate(path_parts):
+        if not part.startswith("models--"):
+            continue
+        if idx + 2 >= len(path_parts) or path_parts[idx + 1] != "snapshots":
+            continue
+        repo_token = part[len("models--"):].strip()
+        if repo_token == "":
+            continue
+        repo_parts = [segment.strip() for segment in repo_token.split("--") if segment.strip() != ""]
+        if repo_parts:
+            return "/".join(repo_parts)
+
+    return normalized
 
 
 def extract_positional_model_target_from_commands(commands):
@@ -2124,7 +2179,7 @@ def find_effective_model_targets_in_commands(commands, *, label="commands"):
     seen = set()
 
     def _add_target(value):
-        normalized = str(value).strip()
+        normalized = normalize_effective_model_target(value)
         if normalized == "":
             return
         if normalized not in seen:
@@ -2174,7 +2229,7 @@ def extract_sample_query_model_target(sample_query):
     model_value = body.get("model")
     if not isinstance(model_value, str):
         return ""
-    return model_value.strip()
+    return normalize_effective_model_target(model_value)
 
 
 def resolve_effective_model_target_from_spec(
@@ -2499,6 +2554,8 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
 
     if editor_mode == "advanced":
         full_commands = [str(item) for item in partial_spec["commands"]]
+        if should_sync_tensor_parallel_size_for_advanced_commands(partial_spec["image"], full_commands):
+            full_commands = sync_tensor_parallel_size(full_commands, gpu_count)
     else:
         full_commands = build_generated_runtime_commands(
             hf_model=hf_model,
@@ -2506,7 +2563,7 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
             gpu_count=gpu_count,
             partial_commands=partial_spec["commands"],
         )
-    full_commands = sync_tensor_parallel_size(full_commands, gpu_count)
+        full_commands = sync_tensor_parallel_size(full_commands, gpu_count)
 
     resolved_sample_query = build_resolved_sample_query(
         hf_model,
@@ -3811,8 +3868,6 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
         commands_label="catalog `default_func_spec.commands`",
         sample_query_label="catalog `default_func_spec.sample_query.body.model`",
     ).strip()
-    if hf_model != "" and source_model_id != "" and hf_model != str(source_model_id).strip():
-        raise ValueError("catalog `default_func_spec` effective model target must match `source_model_id`")
     normalized_spec["commands"] = commands
 
     resources = normalized_spec.get("resources")
@@ -3892,7 +3947,7 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
         raise ValueError("catalog `default_func_spec.sample_query.body` must be a non-empty object")
     if "model" in body:
         sample_query_model = body.get("model")
-        if not isinstance(sample_query_model, str) or sample_query_model.strip() != hf_model:
+        if not isinstance(sample_query_model, str) or normalize_effective_model_target(sample_query_model) != hf_model:
             raise ValueError("catalog `default_func_spec.sample_query.body.model` must match the effective model target when present")
     normalized_spec["sample_query"]["apiType"] = api_type
 
@@ -5389,8 +5444,8 @@ def func_save():
                         commands_label="existing function commands",
                         sample_query_label="existing function sample_query.body.model",
                     ).strip()
-                if hf_model == "":
-                    raise ValueError("existing function spec is missing an effective model target")
+                if editor_mode == "basic" and hf_model == "":
+                    raise ValueError("existing function spec is missing an effective model target required for basic mode")
                 full_spec = build_updated_full_spec_from_saved_spec(
                     hf_model,
                     spec,
@@ -5424,14 +5479,20 @@ def func_save():
                 catalog_source=catalog_source,
             )
         else:
-            if hf_model == "":
-                raise ValueError("`hf_model` must be a non-empty string")
             partial_spec = validate_partial_spec(
                 spec,
                 max_node_vram,
                 max_node_gpu_count=max_node_gpu_count,
                 editor_mode=editor_mode,
             )
+            if hf_model == "":
+                hf_model = resolve_effective_model_target_from_spec(
+                    partial_spec,
+                    commands_label="submitted function commands",
+                    sample_query_label="submitted function sample_query.body.model",
+                ).strip()
+            if editor_mode == "basic" and hf_model == "":
+                raise ValueError("`hf_model` is required in basic mode when the submitted spec does not encode a model target")
             full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
         app.logger.info(
             "func_save built spec model fields editor_mode=%r command_model=%r sample_model=%r catalog_source=%r",

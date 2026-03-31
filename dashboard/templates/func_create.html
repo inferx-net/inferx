@@ -460,8 +460,8 @@
 
             <div class="field-row">
                 <label for="hf-model-input" class="label-with-help">
-                    <span>HuggingFace Model<span class="req-mark">*</span></span>
-                    <span class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Used to build the runtime model target." title="Hugging Face model ID (for example namespace/model). Used to build the runtime model target.">i</span>
+                    <span>HuggingFace Model<span id="hf-model-required-mark" class="req-mark">*</span></span>
+                    <span id="hf-model-help" class="field-help" tabindex="0" aria-label="HuggingFace model help" data-tooltip="Hugging Face model ID (for example namespace/model). Required in Basic mode. Optional in Advanced mode if the submitted spec already encodes the runtime model target." title="Hugging Face model ID (for example namespace/model). Required in Basic mode. Optional in Advanced mode if the submitted spec already encodes the runtime model target.">i</span>
                 </label>
                 <div>
                     {% if page_mode == "update" or is_catalog_mode %}
@@ -715,6 +715,8 @@
         const functionNameDisplay = document.getElementById('function-name-display');
         const hfModelInput = document.getElementById('hf-model-input');
         const hfModelDisplay = document.getElementById('hf-model-display');
+        const hfModelRequiredMark = document.getElementById('hf-model-required-mark');
+        const hfModelHelp = document.getElementById('hf-model-help');
         const imageSelect = document.getElementById('image-select');
         const imageInput = document.getElementById('image-input');
         const catalogImageEditor = document.getElementById('catalog-image-editor');
@@ -768,6 +770,30 @@
         let _preservedSampleQuery = null;
         let _advancedSpecUserEdited = false;
         let _suppressAdvancedSpecUserEditTracking = false;
+        const HF_MODEL_BASIC_TOOLTIP = 'Hugging Face model ID (for example namespace/model). Required in Basic mode. Used to build the runtime model target.';
+        const HF_MODEL_ADVANCED_TOOLTIP = 'Hugging Face model ID (for example namespace/model). Optional in Advanced mode if the submitted spec already encodes the runtime model target.';
+        const HF_MODEL_READONLY_TOOLTIP = 'Runtime model target for this existing or catalog-backed model.';
+
+        function updateHfModelFieldRequirementUi() {
+            const manualCreate = PAGE_MODE === 'create' && !IS_CATALOG_MODE;
+            const basicRequired = manualCreate && activeTab === 'basic';
+
+            if (hfModelRequiredMark) {
+                hfModelRequiredMark.style.display = basicRequired ? '' : 'none';
+            }
+
+            if (hfModelInput && hfModelInput.type !== 'hidden') {
+                hfModelInput.required = basicRequired;
+            }
+
+            if (hfModelHelp) {
+                const tooltip = manualCreate
+                    ? (basicRequired ? HF_MODEL_BASIC_TOOLTIP : HF_MODEL_ADVANCED_TOOLTIP)
+                    : HF_MODEL_READONLY_TOOLTIP;
+                hfModelHelp.setAttribute('data-tooltip', tooltip);
+                hfModelHelp.setAttribute('title', tooltip);
+            }
+        }
 
         function showError(message) {
             errorBanner.textContent = message || '';
@@ -1513,6 +1539,7 @@
             tabAdvanced.setAttribute('aria-selected', basicActive ? 'false' : 'true');
             panelBasic.classList.toggle('active', basicActive);
             panelAdvanced.classList.toggle('active', !basicActive);
+            updateHfModelFieldRequirementUi();
         }
 
         function parseAdvancedSpec() {
@@ -1555,8 +1582,8 @@
             if (!name) {
                 throw new Error('Model Name is required');
             }
-            if (!hfModel) {
-                throw new Error('HuggingFace Model is required');
+            if (PAGE_MODE === 'create' && !IS_CATALOG_MODE && activeTab === 'basic' && !hfModel) {
+                throw new Error('HuggingFace Model is required in Basic mode');
             }
 
             const payload = {
@@ -1794,6 +1821,7 @@
             }
 
             applyInitialModelIfPresent();
+            updateHfModelFieldRequirementUi();
             applyBasicCompatibilityState();
 
             const resolvedInitialTab = (PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED)
