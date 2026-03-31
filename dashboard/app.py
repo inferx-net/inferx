@@ -194,7 +194,7 @@ def load_max_gpu_count_override():
         )
         return 0
 
-VLLM_IMAGE_WHITELIST = [
+DEFAULT_VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-openai:v0.12.0",
     "vllm/vllm-openai:v0.13.0",
     "vllm/vllm-openai:v0.14.0",
@@ -203,6 +203,59 @@ VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-openai:v0.17.1",
     "vllm/vllm-omni:v0.14.0",
 ]
+VLLM_IMAGE_WHITELIST_ENV = "INFERX_VLLM_IMAGE_WHITELIST"
+
+
+def load_vllm_image_whitelist():
+    raw = str(os.getenv(VLLM_IMAGE_WHITELIST_ENV, "") or "").strip()
+    if raw == "":
+        return list(DEFAULT_VLLM_IMAGE_WHITELIST)
+
+    def _invalid(reason: str):
+        raise ValueError(f"{VLLM_IMAGE_WHITELIST_ENV} {reason}")
+
+    parsed_items = None
+    try:
+        parsed_json = json.loads(raw)
+        if parsed_json is not None and not isinstance(parsed_json, list):
+            _invalid("must be a JSON array or a newline-delimited string")
+        if isinstance(parsed_json, list):
+            parsed_items = parsed_json
+    except json.JSONDecodeError:
+        parsed_items = [line.strip() for line in raw.splitlines() if line.strip() != ""]
+
+    try:
+        if not isinstance(parsed_items, list) or len(parsed_items) == 0:
+            _invalid("must contain at least one image")
+
+        normalized = []
+        seen = set()
+        for index, item in enumerate(parsed_items):
+            if not isinstance(item, str):
+                _invalid(f"entry {index} must be a string")
+            value = item.strip()
+            if value == "":
+                _invalid(f"entry {index} must be a non-empty string")
+            if value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+
+        if len(normalized) == 0:
+            _invalid("must contain at least one non-empty image")
+
+        return normalized
+    except Exception as e:
+        app.logger.warning(
+            "failed to parse %s (%s), using default whitelist: %s",
+            VLLM_IMAGE_WHITELIST_ENV,
+            e,
+            DEFAULT_VLLM_IMAGE_WHITELIST,
+        )
+        return list(DEFAULT_VLLM_IMAGE_WHITELIST)
+
+
+VLLM_IMAGE_WHITELIST = load_vllm_image_whitelist()
 
 DEFAULT_GPU_RESOURCE_LOOKUP = {
     1: {"CPU": 10000, "Mem": 30000},
@@ -1406,13 +1459,25 @@ def CatalogAdminNew():
         full_spec = (((func_obj.get("object") or {}).get("spec")) or {})
         if not isinstance(full_spec, dict):
             raise ValueError("live function spec is missing")
-        hf_model = resolve_effective_model_target_from_spec(
-            full_spec,
-            commands_label="live function commands",
-            sample_query_label="live function sample_query.body.model",
-        ).strip()
-        if hf_model == "":
-            raise ValueError("live function does not expose a resolvable model target")
+        hf_model = ""
+        try:
+            hf_model = resolve_effective_model_target_from_spec(
+                full_spec,
+                commands_label="live function commands",
+                sample_query_label="live function sample_query.body.model",
+            ).strip()
+        except Exception as e:
+            prefill_error = (
+                "Save2Catalog could not resolve model-identifying fields automatically: "
+                f"{e}. The live runtime spec was still copied; fill in Display Name, Provider, "
+                "and Source Model ID manually."
+            )
+        if hf_model == "" and prefill_error == "":
+            prefill_error = (
+                "Save2Catalog could not resolve model-identifying fields automatically. "
+                "The live runtime spec was still copied; fill in Display Name, Provider, "
+                "and Source Model ID manually."
+            )
         prefill_entry = build_catalog_prefill_from_func(hf_model, full_spec, func_name)
     except Exception as e:
         prefill_error = f"Save2Catalog prefill failed: {e}"
@@ -2023,6 +2088,36 @@ def extract_model_arg_from_commands(commands):
     return ""
 
 
+def looks_like_huggingface_model_target_token(value):
+    normalized = str(value or "").strip()
+    if normalized == "":
+        return False
+    if normalized.startswith(("/", "./", "../")):
+        return False
+    if "://" in normalized:
+        return False
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*", normalized) is not None
+
+
+def extract_positional_model_target_from_commands(commands):
+    normalized_commands = [str(item).strip() for item in commands] if isinstance(commands, list) else []
+    if len(normalized_commands) == 0:
+        return ""
+
+    # Some custom images keep the entrypoint in the image and accept the model
+    # id as the first positional argument, followed by flags.
+    first_token = normalized_commands[0]
+    if not looks_like_huggingface_model_target_token(first_token):
+        return ""
+
+    if len(normalized_commands) >= 2:
+        second_token = normalized_commands[1].strip()
+        if second_token != "" and not second_token.startswith("-"):
+            return ""
+
+    return first_token
+
+
 def find_effective_model_targets_in_commands(commands, *, label="commands"):
     normalized_commands = [str(item) for item in commands] if isinstance(commands, list) else []
     values = []
@@ -2035,6 +2130,10 @@ def find_effective_model_targets_in_commands(commands, *, label="commands"):
         if normalized not in seen:
             values.append(normalized)
             seen.add(normalized)
+
+    positional_target = extract_positional_model_target_from_commands(normalized_commands)
+    if positional_target != "":
+        _add_target(positional_target)
 
     if len(normalized_commands) >= 2 and normalized_commands[0] == "vllm" and normalized_commands[1] == "serve":
         if len(normalized_commands) < 3:
@@ -2085,10 +2184,21 @@ def resolve_effective_model_target_from_spec(
     sample_query_label="sample_query.body.model",
 ):
     spec_obj = spec if isinstance(spec, dict) else {}
+    commands = spec_obj.get("commands", [])
     command_targets = find_effective_model_targets_in_commands(
-        spec_obj.get("commands", []),
+        commands,
         label=commands_label,
     )
+    if len(command_targets) == 0:
+        entrypoint = spec_obj.get("entrypoint")
+        if isinstance(entrypoint, list) and all(isinstance(item, str) for item in entrypoint):
+            combined_commands = [str(item) for item in entrypoint]
+            if isinstance(commands, list):
+                combined_commands.extend(str(item) for item in commands)
+            command_targets = find_effective_model_targets_in_commands(
+                combined_commands,
+                label=f"{commands_label} with entrypoint",
+            )
     if len(command_targets) > 1:
         raise ValueError(f"{commands_label} encodes multiple conflicting model targets")
     if len(command_targets) == 1:
@@ -2367,13 +2477,18 @@ def build_sample_query(hf_model: str):
 
 
 def build_resolved_sample_query(hf_model: str, sample_query):
+    normalized_hf_model = str(hf_model or "").strip()
     if not isinstance(sample_query, dict):
-        return build_sample_query(hf_model)
+        if normalized_hf_model == "":
+            return {}
+        return build_sample_query(normalized_hf_model)
 
     resolved_sample_query = clone_json_value(sample_query)
+    if normalized_hf_model == "":
+        return resolved_sample_query
     if not isinstance(resolved_sample_query.get("body"), dict):
         resolved_sample_query["body"] = {}
-    resolved_sample_query["body"]["model"] = hf_model
+    resolved_sample_query["body"]["model"] = normalized_hf_model
     return resolved_sample_query
 
 
@@ -2543,7 +2658,7 @@ def extract_named_command_arg_tokens(commands, flag_name):
     return matched_tokens
 
 
-def merge_catalog_runtime_commands(base_commands, submitted_commands, *, image, gpu_count, editor_mode="basic"):
+def merge_catalog_runtime_commands(base_commands, submitted_commands, *, image, gpu_count, editor_mode="basic", sync_tensor_parallel=True):
     normalized_base = [str(item) for item in base_commands] if isinstance(base_commands, list) else []
     normalized_submitted = [str(item) for item in submitted_commands] if isinstance(submitted_commands, list) else []
     prefix_tokens = extract_locked_command_prefix_tokens(normalized_base)
@@ -2570,6 +2685,15 @@ def merge_catalog_runtime_commands(base_commands, submitted_commands, *, image, 
                 merged_commands.append(token)
 
     merged_commands.extend(editable_tokens)
+    if not sync_tensor_parallel:
+        if editor_mode == "basic":
+            existing_tp_tokens = extract_named_command_arg_tokens(normalized_base, "--tensor-parallel-size")
+            submitted_tp_tokens = extract_named_command_arg_tokens(normalized_submitted, "--tensor-parallel-size")
+            if not extract_named_command_arg_tokens(merged_commands, "--tensor-parallel-size"):
+                preserved_tp_tokens = submitted_tp_tokens or existing_tp_tokens
+                if preserved_tp_tokens:
+                    merged_commands.extend(preserved_tp_tokens)
+        return merged_commands
     return sync_tensor_parallel_size(merged_commands, gpu_count)
 
 
@@ -2703,9 +2827,8 @@ def build_catalog_prefill_from_func(hf_model: str, full_spec, func_name: str):
         "text2audio": "audio",
     }
     normalized_hf_model = str(hf_model or "").strip()
-    normalized_func_name = str(func_name or "").strip()
     provider = normalized_hf_model.split("/", 1)[0] if "/" in normalized_hf_model else ""
-    display_name = normalized_hf_model.split("/")[-1] if normalized_hf_model != "" else normalized_func_name
+    display_name = normalized_hf_model.split("/")[-1] if normalized_hf_model != "" else ""
     return {
         "source_model_id": normalized_hf_model,
         "source_kind": "huggingface",
@@ -3688,9 +3811,7 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
         commands_label="catalog `default_func_spec.commands`",
         sample_query_label="catalog `default_func_spec.sample_query.body.model`",
     ).strip()
-    if hf_model == "":
-        raise ValueError("catalog `default_func_spec` must resolve exactly one effective model target from commands or `sample_query.body.model`")
-    if source_model_id != "" and hf_model != str(source_model_id).strip():
+    if hf_model != "" and source_model_id != "" and hf_model != str(source_model_id).strip():
         raise ValueError("catalog `default_func_spec` effective model target must match `source_model_id`")
     normalized_spec["commands"] = commands
 
@@ -3951,6 +4072,7 @@ def build_catalog_customized_full_spec(
         raise ValueError("catalog `default_func_spec.image` must be a non-empty tagged image reference")
     if locked_image_tag == "":
         raise ValueError("catalog `default_func_spec.image` must include a tag/version")
+    resolved_hf_model = str(hf_model or "").strip()
     partial_spec = validate_partial_spec(
         spec,
         max_node_vram,
@@ -3967,6 +4089,7 @@ def build_catalog_customized_full_spec(
         image=merged_spec["image"],
         gpu_count=partial_spec["resources"]["GPU"]["Count"],
         editor_mode=editor_mode,
+        sync_tensor_parallel=resolved_hf_model != "",
     )
 
     merged_resources = merged_spec.get("resources")
@@ -3992,14 +4115,24 @@ def build_catalog_customized_full_spec(
 
     base_sample_query = base_spec_obj.get("sample_query")
     if "sample_query" in partial_spec:
-        merged_spec["sample_query"] = build_resolved_sample_query(
-            hf_model,
+        resolved_sample_query = build_resolved_sample_query(
+            resolved_hf_model,
             partial_spec.get("sample_query"),
         )
+        if isinstance(resolved_sample_query, dict) and resolved_sample_query:
+            merged_spec["sample_query"] = resolved_sample_query
+        elif isinstance(base_sample_query, dict):
+            merged_spec["sample_query"] = clone_json_value(base_sample_query)
+        elif resolved_hf_model != "":
+            merged_spec["sample_query"] = build_sample_query(resolved_hf_model)
+        else:
+            merged_spec.pop("sample_query", None)
     elif isinstance(base_sample_query, dict):
         merged_spec["sample_query"] = clone_json_value(base_sample_query)
+    elif resolved_hf_model != "":
+        merged_spec["sample_query"] = build_sample_query(resolved_hf_model)
     else:
-        merged_spec["sample_query"] = build_sample_query(hf_model)
+        merged_spec.pop("sample_query", None)
 
     base_policy = base_spec_obj.get("policy")
     submitted_policy = partial_spec.get("policy")
@@ -4192,8 +4325,6 @@ def assess_basic_mode_compatibility_for_edit(
                 commands_label="existing catalog-backed function commands",
                 sample_query_label="existing catalog-backed function sample_query.body.model",
             ).strip()
-            if hf_model == "":
-                raise ValueError("existing catalog-backed model is missing an effective model target")
             rebuilt_spec = build_catalog_customized_full_spec(
                 hf_model,
                 basic_spec,
@@ -5242,8 +5373,6 @@ def func_save():
                     commands_label="existing catalog-backed function commands",
                     sample_query_label="existing catalog-backed function sample_query.body.model",
                 ).strip()
-                if hf_model == "":
-                    raise ValueError("existing catalog-backed model is missing an effective model target")
                 full_spec = build_catalog_customized_full_spec(
                     hf_model,
                     spec,
@@ -5285,8 +5414,6 @@ def func_save():
                 commands_label="catalog `default_func_spec.commands`",
                 sample_query_label="catalog `default_func_spec.sample_query.body.model`",
             ).strip()
-            if hf_model == "":
-                raise ValueError("catalog `default_func_spec` is missing an effective model target")
             full_spec = build_catalog_customized_full_spec(
                 hf_model,
                 spec,
