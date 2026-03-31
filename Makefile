@@ -1,7 +1,7 @@
 ARCH := ${shell uname -m}
 VERSION := v0.2.4
 VERSION1 := v0.2.4
-DASHBOARD_VERSION ?= v0.2.4
+DASHBOARD_VERSION ?= v0.2.4.2
 RUNTIME_VERSION ?= v0.2.4
 
 NODE_NAME=${shell hostname}
