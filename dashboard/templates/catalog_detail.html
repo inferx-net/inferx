@@ -566,6 +566,12 @@
             modelSaveModalPodsLink?.focus();
         }
 
+        function navigateToUserModelPage(redirectUrl) {
+            const url = new URL(String(redirectUrl || ''), window.location.origin);
+            url.searchParams.set('view', 'user');
+            window.location.assign(url.toString());
+        }
+
         deployBtn?.addEventListener('click', async () => {
             const url = deployBtn.dataset.deployUrl;
             if (!url || deployBtn.disabled) {
@@ -598,7 +604,11 @@
                 delete deployBtn.dataset.deployLoading;
                 deployBtn.textContent = originalText;
                 deployTargetController?.refresh();
-                showModelSaveModal(payload);
+                if (!payload.redirect_url) {
+                    showModelSaveModal(payload);
+                    return;
+                }
+                navigateToUserModelPage(payload.redirect_url);
             } catch (err) {
                 showError(err.message || String(err));
                 delete deployBtn.dataset.deployLoading;

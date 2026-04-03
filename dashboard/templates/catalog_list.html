@@ -595,6 +595,12 @@
             modelSaveModalPodsLink?.focus();
         }
 
+        function navigateToUserModelPage(redirectUrl) {
+            const url = new URL(String(redirectUrl || ''), window.location.origin);
+            url.searchParams.set('view', 'user');
+            window.location.assign(url.toString());
+        }
+
         function visibleRows() {
             if (!tableBody) {
                 return [];
@@ -663,7 +669,11 @@
                 delete button.dataset.deployLoading;
                 button.textContent = originalText;
                 deployTargetController?.refresh();
-                showModelSaveModal(payload);
+                if (!payload.redirect_url) {
+                    showModelSaveModal(payload);
+                    return;
+                }
+                navigateToUserModelPage(payload.redirect_url);
             } catch (err) {
                 showError(err.message || String(err));
                 delete button.dataset.deployLoading;

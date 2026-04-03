@@ -5,7 +5,7 @@
 {% set is_catalog_create = page_mode == "create" and is_catalog_mode %}
 <style>
     .model-editor {
-        max-width: 1100px;
+        max-width: var(--ix-page-max-width);
         margin: 0 auto 32px auto;
     }
 
@@ -23,13 +23,13 @@
 
     .editor-subtitle {
         color: #64748b;
-        font-size: 13px;
+        font-size: var(--ix-font-size-subtle);
         margin-top: 4px;
     }
 
     .editor-guide-link {
         margin-top: 8px;
-        font-size: 13px;
+        font-size: var(--ix-font-size-subtle);
     }
 
     .editor-guide-link a {
@@ -45,14 +45,14 @@
     .panel {
         border: 1px solid #cbd5e1;
         background: #ffffff;
-        border-radius: 2px;
-        padding: 14px;
+        border-radius: var(--ix-panel-radius);
+        padding: var(--ix-panel-padding);
         margin-bottom: 14px;
     }
 
     .panel h3 {
         margin: 0 0 10px 0;
-        font-size: 16px;
+        font-size: var(--ix-font-size-section);
         color: #1f2937;
     }
 
@@ -79,7 +79,7 @@
     .readonly-value {
         padding: 8px 0;
         color: #111827;
-        font-size: 14px;
+        font-size: var(--ix-font-size-body);
         word-break: break-word;
     }
 
@@ -91,7 +91,7 @@
         border: 1px solid #cbd5e1;
         border-radius: 4px;
         padding: 8px 10px;
-        font-size: 14px;
+        font-size: var(--ix-font-size-body);
         box-sizing: border-box;
         background: #fff;
     }
@@ -105,7 +105,7 @@
 
     .hint {
         color: #475569;
-        font-size: 12px;
+        font-size: var(--ix-font-size-caption);
         margin-top: 6px;
     }
 
@@ -253,7 +253,7 @@
         border-radius: 4px;
         padding: 10px 12px;
         margin-bottom: 12px;
-        font-size: 14px;
+        font-size: var(--ix-font-size-body);
     }
 
     .warning-banner {
@@ -314,12 +314,12 @@
     .model-save-modal-card h3 {
         margin: 0 0 10px 0;
         color: #1f2937;
-        font-size: 18px;
+        font-size: var(--ix-font-size-heading);
     }
 
     .model-save-modal-body {
         color: #334155;
-        font-size: 14px;
+        font-size: var(--ix-font-size-body);
         line-height: 1.45;
         margin-bottom: 14px;
     }
@@ -855,6 +855,15 @@
 
             modelSaveModal.hidden = false;
             modelSaveModalPodsLink?.focus();
+        }
+
+        function navigateToUserModelPage(tenant, namespace, name) {
+            const url = new URL('{{ url_for("prefix.GetFunc") }}', window.location.origin);
+            url.searchParams.set('tenant', tenant);
+            url.searchParams.set('namespace', namespace);
+            url.searchParams.set('name', name);
+            url.searchParams.set('view', 'user');
+            window.location.assign(url.toString());
         }
 
         function clearMessages() {
@@ -1655,7 +1664,8 @@
                 }
 
                 showSuccess(payload.mode === 'update' ? 'Model updated successfully.' : 'Model deployed successfully.');
-                showModelSaveModal(payload);
+                navigateToUserModelPage(payload.tenant, payload.namespace, payload.name);
+                return;
             } catch (err) {
                 showSuccess('');
                 showError(err.message || String(err));

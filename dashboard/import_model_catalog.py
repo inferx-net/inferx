@@ -169,11 +169,14 @@ def load_config_spec(config_path: Path):
 
 
 def infer_source_model_id(spec: dict) -> str:
-    commands = spec.get("commands")
-    model_values = dashboard_app.find_model_command_values(commands)
-    if len(model_values) != 1 or str(model_values[0] or "").strip() == "":
-        raise ValueError("config spec must contain exactly one valid `--model` command argument")
-    return str(model_values[0]).strip()
+    resolved_model = dashboard_app.resolve_effective_model_target_from_spec(
+        spec,
+        commands_label="config spec commands",
+        sample_query_label="config spec sample_query.body.model",
+    ).strip()
+    if resolved_model == "":
+        raise ValueError("config spec must resolve exactly one effective model target")
+    return resolved_model
 
 
 def infer_provider(config_data: dict, source_model_id: str) -> str:

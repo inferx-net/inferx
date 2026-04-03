@@ -1838,6 +1838,102 @@ def dashboard_href(endpoint: str, **params) -> str:
     return url_for(endpoint, **values)
 
 
+DASHBOARD_LOCAL_TZ = pytz.timezone("America/Los_Angeles")
+MODEL_STATUS_READY = {"code": "ready", "label": "Ready"}
+MODEL_STATUS_RESUMING = {"code": "resuming", "label": "Resuming..."}
+MODEL_STATUS_STANDBY = {"code": "standby", "label": "Standby"}
+MODEL_STATUS_RESTORING = {"code": "restoring", "label": "Restoring"}
+MODEL_STATUS_PENDING = {"code": "pending", "label": "Pending"}
+MODEL_STATUS_SNAPSHOTTING = {"code": "snapshotting", "label": "Creating Snapshot..."}
+MODEL_STATUS_FAILED = {"code": "failed", "label": "Failed"}
+RESTORE_ACTIVE_POD_STATES = {
+    "Init",
+    "PullingImage",
+    "Creating",
+    "Created",
+    "Loading",
+    "LoadingTimeout",
+    "Restoring",
+}
+SNAPSHOT_ACTIVE_POD_STATES = {
+    "Init",
+    "PullingImage",
+    "Creating",
+    "Created",
+    "Loading",
+    "Snapshoting",
+}
+
+
+def format_dashboard_timestamp(value):
+    if not isinstance(value, str) or value.strip() == "":
+        return value
+
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+
+    return dt.astimezone(DASHBOARD_LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_dashboard_timestamps(rows, field_name: str):
+    if not isinstance(rows, list):
+        return rows
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row[field_name] = format_dashboard_timestamp(row.get(field_name))
+
+    return rows
+
+
+def infer_model_status(pods, func_status_state, fails=None):
+    pod_list = pods if isinstance(pods, list) else []
+    fail_list = fails if isinstance(fails, list) else []
+
+    def pod_state(pod):
+        return str((((pod or {}).get("object") or {}).get("status") or {}).get("state") or "").strip()
+
+    def pod_create_type(pod):
+        return str((((pod or {}).get("object") or {}).get("spec") or {}).get("create_type") or "").strip()
+
+    if str(func_status_state or "").strip() == "Fail":
+        return MODEL_STATUS_FAILED
+
+    # Some failed revisions no longer have pods by the time the dashboard loads.
+    # Current-version fail logs are the remaining durable signal in that case.
+    if len(pod_list) == 0 and len(fail_list) > 0:
+        return MODEL_STATUS_FAILED
+
+    if any(pod_state(pod) == "Ready" for pod in pod_list):
+        return MODEL_STATUS_READY
+
+    if any(pod_state(pod) in {"Resuming", "ResumeDone"} for pod in pod_list):
+        return MODEL_STATUS_RESUMING
+
+    if any(pod_state(pod) in {"Standby", "MemHibernated"} for pod in pod_list):
+        return MODEL_STATUS_STANDBY
+
+    if any(
+        pod_create_type(pod) == "Restore" and pod_state(pod) in RESTORE_ACTIVE_POD_STATES
+        for pod in pod_list
+    ):
+        return MODEL_STATUS_RESTORING
+
+    if any(
+        pod_create_type(pod) == "Snapshot" and pod_state(pod) in SNAPSHOT_ACTIVE_POD_STATES
+        for pod in pod_list
+    ):
+        return MODEL_STATUS_SNAPSHOTTING
+
+    # `Normal` pods do not currently have a dedicated user-facing mapping. Keep
+    # the fallback conservative for early/unmapped states outside the explicit
+    # restore and snapshot transitions above.
+    return MODEL_STATUS_PENDING
+
+
 def extract_upstream_error_message(resp, payload) -> str:
     if isinstance(payload, dict):
         for key in ("error", "message", "detail"):
@@ -5686,6 +5782,7 @@ def GetFunc():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
     name = request.args.get("name")
+    view = request.args.get("view", "").strip().lower()
 
     deny_resp = deny_public_tenant_request(tenant)
     if deny_resp is not None:
@@ -5745,20 +5842,14 @@ def GetFunc():
     map = sample["body"]
     apiType = sample["apiType"]
     isAdmin = func["isAdmin"]
+    func_health_state = str((((func.get("func") or {}).get("object") or {}).get("status") or {}).get("state") or "").strip()
 
     version = func["func"]["object"]["spec"]["version"]
     funcpolicy = func["policy"]
     fails = GetFailLogs(tenant, namespace, name, version)
     snapshotaudit = GetSnapshotAudit(tenant, namespace, name, version)
-
-    local_tz = pytz.timezone("America/Los_Angeles")  # or use tzlocal.get_localzone()
-    for a in snapshotaudit:
-        dt = datetime.fromisoformat(a["updatetime"].replace("Z", "+00:00"))
-        a["updatetime"] = dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-
-    for a in fails:
-        dt = datetime.fromisoformat(a["createtime"].replace("Z", "+00:00"))
-        a["createtime"] = dt.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+    format_dashboard_timestamps(snapshotaudit, "updatetime")
+    format_dashboard_timestamps(fails, "createtime")
 
     # Show the same filtered partial spec used by the new create/edit flow.
     full_funcspec = json.dumps(func["func"]["object"]["spec"], indent=4)
@@ -5782,9 +5873,18 @@ def GetFunc():
         func["sampleRestCall"] = sample_rest_call_for_ui
 
     is_inferx_admin = is_inferx_admin_user()
+    initial_model_status = infer_model_status(func.get("pods", []), func_health_state, fails)
+    func_admin_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name)
+    func_user_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name, view="user")
+    func_edit_href = "{}?{}".format(
+        dashboard_href("prefix.FuncCreate"),
+        urlencode({"edit": f"{tenant}/{namespace}/{name}"}),
+    )
+    models_list_href = dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace)
+    template_name = "func.html" if is_inferx_admin and view != "user" else "func_user.html"
 
     return render_template(
-        "func.html",
+        template_name,
         tenant=tenant,
         namespace=namespace,
         name=name,
@@ -5799,8 +5899,39 @@ def GetFunc():
         isAdmin=isAdmin,
         is_inferx_admin=is_inferx_admin,
         funcpolicy=funcpolicy,
-        path=sample["path"]
+        path=sample["path"],
+        initial_model_status=initial_model_status,
+        func_admin_href=func_admin_href,
+        func_user_href=func_user_href,
+        func_edit_href=func_edit_href,
+        models_list_href=models_list_href,
     )
+
+
+@prefix_bp.route("/faillogs")
+@require_login_unless_gateway_aligned_anonymous_enabled
+def GetFailLogsJson():
+    tenant = request.args.get("tenant")
+    namespace = request.args.get("namespace")
+    name = request.args.get("name")
+    version = request.args.get("version")
+
+    for field_name, field_value in (
+        ("tenant", tenant),
+        ("namespace", namespace),
+        ("name", name),
+        ("version", version),
+    ):
+        if str(field_value or "").strip() == "":
+            return json_error(f"Missing required query param: `{field_name}`", 400)
+
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    fails = GetFailLogs(tenant, namespace, name, version)
+    format_dashboard_timestamps(fails, "createtime")
+    return jsonify(fails)
 
 @prefix_bp.route("/listnode")
 @require_login_unless_gateway_aligned_anonymous_enabled
@@ -5955,6 +6086,7 @@ def GetFailPod():
     tenant = request.args.get("tenant")
     namespace = request.args.get("namespace")
     name = request.args.get("name")
+    funcname = request.args.get("funcname") or name
     version = request.args.get("version")
     id = request.args.get("id")
 
@@ -5965,11 +6097,13 @@ def GetFailPod():
     log = GetFailLog(tenant, namespace, name, version, id)
 
     audits = getpodaudit(tenant, namespace, name, version, id)
+    format_dashboard_timestamps(audits, "updatetime")
     return render_template(
         "pod.html",
         tenant=tenant,
         namespace=namespace,
         podname=name,
+        funcname=funcname,
         audits=audits,
         log=log,
     )

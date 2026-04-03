@@ -9,9 +9,27 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <title> InferX | Serverless Inference Platform </title>
     <style>
+        :root {
+            --ix-font-size-micro: 11px;
+            --ix-font-size-caption: 12px;
+            --ix-font-size-subtle: 13px;
+            --ix-font-size-body: 14px;
+            --ix-font-size-section: 16px;
+            --ix-font-size-heading: 18px;
+            --ix-page-max-width: 1100px;
+            --ix-panel-radius: 2px;
+            --ix-panel-padding: 14px;
+        }
+
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             color: #334155;
+            font-size: var(--ix-font-size-body);
+            line-height: 1.5;
+        }
+
+        .content {
+            font-size: var(--ix-font-size-body);
         }
 
         nav {
@@ -58,7 +76,7 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: var(--ix-font-size-body);
             font-weight: 600;
             line-height: 1.1;
             position: relative;
@@ -96,7 +114,7 @@
             border-radius: 4px;
             background: #0f172a;
             color: #f8fafc;
-            font-size: 12px;
+            font-size: var(--ix-font-size-caption);
             font-weight: 600;
             line-height: 1.2;
             white-space: nowrap;
@@ -124,6 +142,7 @@
             border-collapse: collapse;
             background: #fff;
             table-layout: fixed;
+            font-size: var(--ix-font-size-body);
         }
 
         .content table.ix-table th,
@@ -174,7 +193,7 @@
             color: #fff;
             border-radius: 4px;
             padding: 8px 12px;
-            font-size: 14px;
+            font-size: var(--ix-font-size-body);
             text-decoration: none;
             cursor: pointer;
             box-sizing: border-box;
@@ -232,7 +251,7 @@
 
         .ix-row-actions .ix-btn {
             padding: 4px 8px;
-            font-size: 12px;
+            font-size: var(--ix-font-size-caption);
             white-space: nowrap;
         }
 
@@ -349,7 +368,7 @@
             background: rgba(255, 255, 255, 0.08);
             color: #f8fafc;
             text-decoration: none;
-            font-size: 13px;
+            font-size: var(--ix-font-size-subtle);
             font-weight: 600;
             line-height: 1;
             overflow: hidden;
@@ -365,7 +384,7 @@
 
         .brand-auth-link.has-menu::after {
             content: "▾";
-            font-size: 11px;
+            font-size: var(--ix-font-size-micro);
             opacity: 0.9;
             flex: 0 0 auto;
         }
@@ -404,7 +423,7 @@
             border-radius: 4px;
             color: #0f172a;
             text-decoration: none;
-            font-size: 13px;
+            font-size: var(--ix-font-size-subtle);
             font-weight: 500;
         }
 
@@ -416,6 +435,11 @@
         .copyable-area {
             position: relative;
             display: block;
+        }
+
+        .ix-page {
+            max-width: var(--ix-page-max-width);
+            margin: 0 auto 32px auto;
         }
 
         .copyable-area-copy {

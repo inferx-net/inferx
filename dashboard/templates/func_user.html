@@ -1,0 +1,1056 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .model-user-page {
+        display: grid;
+        max-width: var(--ix-page-max-width);
+        margin: 0 auto 32px auto;
+        gap: 14px;
+    }
+
+    .model-user-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .model-user-header h2 {
+        margin: 0;
+    }
+
+    .model-user-subtitle {
+        margin: 4px 0 0 0;
+        color: #64748b;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .model-user-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .model-user-section {
+        border: 1px solid #cbd5e1;
+        border-radius: var(--ix-panel-radius);
+        background: #ffffff;
+        padding: var(--ix-panel-padding);
+    }
+
+    .model-user-section h3 {
+        margin: 0 0 10px 0;
+        font-size: var(--ix-font-size-section);
+        color: #1f2937;
+    }
+
+    .section-heading-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+
+    .section-heading-row h3 {
+        margin: 0;
+    }
+
+    .model-summary-table {
+        width: 100%;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .model-summary-table td,
+    .model-summary-table th {
+        text-align: center;
+    }
+
+    .model-summary-name {
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    .model-user-page label {
+        font-weight: 600;
+        color: #334155;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 132px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-size: var(--ix-font-size-subtle);
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-decoration: none;
+    }
+
+    .status-badge.transient {
+        gap: 8px;
+    }
+
+    .status-badge-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 999px;
+        box-sizing: border-box;
+        animation: status-badge-spin 0.8s linear infinite;
+        flex: 0 0 auto;
+        opacity: 0.75;
+    }
+
+    @keyframes status-badge-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .status-badge.ready {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .status-badge.resuming {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .status-badge.standby {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-badge.restoring {
+        background: #e0f2fe;
+        color: #075985;
+    }
+
+    .status-badge.pending {
+        background: #e2e8f0;
+        color: #475569;
+    }
+
+    .status-badge.snapshotting {
+        background: #ede9fe;
+        color: #6d28d9;
+    }
+
+    .status-badge.failed {
+        background: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .status-badge.failed:hover {
+        background: #fecaca;
+    }
+
+    .status-badge.unavailable {
+        background: #e2e8f0;
+        color: #334155;
+    }
+
+    .status-note {
+        margin: 0 0 12px 0;
+        padding: 10px 12px;
+        border-radius: 4px;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .status-note.fail {
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+    }
+
+    .model-user-section.logs-highlight {
+        border-color: #f59e0b;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+        transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .model-state-hint {
+        color: #475569;
+        font-size: var(--ix-font-size-caption);
+        margin-top: 6px;
+    }
+
+    .playground-grid {
+        display: grid;
+        gap: 12px;
+    }
+
+    .playground-state-hint {
+        color: #475569;
+        font-size: var(--ix-font-size-caption);
+        min-height: 18px;
+        margin: 0 0 8px 0;
+    }
+
+    .playground-state-hint.standby {
+        color: #92400e;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 4px;
+        padding: 8px 10px;
+    }
+
+    .playground-grid textarea,
+    .copyable-area textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: var(--ix-font-size-body);
+        background: #ffffff;
+        line-height: 1.35;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    #prompt {
+        overflow-y: hidden;
+    }
+
+    .playground-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+    }
+
+    .metric-grid > div {
+        min-height: 44px;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .logs-table td,
+    .pods-table td {
+        text-align: left;
+    }
+
+    .logs-table td:last-child,
+    .pods-table td:last-child {
+        text-align: center;
+    }
+
+    .empty-table-row {
+        color: #64748b;
+        text-align: center;
+        font-style: italic;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .model-spec-block {
+        margin: 12px 0 0 0;
+        padding: 12px;
+        border-radius: 4px;
+        border: 1px solid #dbe3ef;
+        background: #f8fafc;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: var(--ix-font-size-subtle);
+        line-height: 1.45;
+    }
+
+    @media (max-width: 720px) {
+        .model-user-section {
+            padding: 14px;
+        }
+
+        .status-badge {
+            min-width: 0;
+        }
+    }
+</style>
+
+<div class="model-user-page">
+    <div class="model-user-header">
+        <div>
+            <h2>Model {{ name }}</h2>
+            <p class="model-user-subtitle">Namespace: {{ namespace }}</p>
+        </div>
+        {% if isAdmin or is_inferx_admin %}
+        <div class="model-user-actions">
+            {% if isAdmin %}
+            <a class="ix-btn secondary" href="{{ func_edit_href }}">Edit</a>
+            <button class="ix-btn danger" id="delete-model-btn" type="button">Delete</button>
+            {% endif %}
+            {% if is_inferx_admin %}
+            <a class="ix-btn secondary" href="{{ func_admin_href }}">Admin View</a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <section class="model-user-section">
+        <div class="section-heading-row">
+            <h3>Model Info</h3>
+        </div>
+        <table class="ix-table model-summary-table">
+            <thead>
+                <tr>
+                    <th>Model Name</th>
+                    <th>GPU Count</th>
+                    <th>vRAM (MB)</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>
+                        <span class="model-summary-name">{{ name }}</span>
+                    </td>
+                    <td>{{ func["func"]["object"]["spec"]["resources"]["GPU"]["Count"] }}</td>
+                    <td>{{ func["func"]["object"]["spec"]["resources"]["GPU"]["vRam"] }}</td>
+                    <td id="model-status-cell">
+                        {% if initial_model_status.code == "failed" %}
+                        <a class="status-badge {{ initial_model_status.code }}" href="#logs">{{ initial_model_status.label }} ↓</a>
+                        {% else %}
+                        <span class="status-badge {{ initial_model_status.code }}">{{ initial_model_status.label }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="model-state-hint" id="model-state-note"></div>
+        <p class="status-note fail" id="poll-feedback-note" hidden></p>
+    </section>
+
+    <section class="model-user-section">
+        <h3>Pods</h3>
+        <table class="ix-table pods-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Pod Name</th>
+                    <th>State</th>
+                </tr>
+            </thead>
+            <tbody id="pods-table-body">
+                {% if func["pods"] %}
+                {% for pod in func["pods"] %}
+                <tr>
+                    <td>
+                        <a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&namespace={{ pod['namespace'] }}&name={{ pod['name'] }}">{{ pod["name"] }}</a>
+                    </td>
+                    <td>{{ pod["object"]["status"]["state"] }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td class="empty-table-row" colspan="2">No pods found for this model yet.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="model-user-section" id="playground-section" {% if initial_model_status.code == "failed" %}hidden{% endif %}>
+        <h3>Inference Playground</h3>
+        <div class="playground-state-hint" id="playground-state-note"></div>
+        <div class="playground-grid">
+            {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
+            <div>
+                <label for="urlInput"><strong>Image URL</strong></label>
+                <textarea id="urlInput" rows="2">{{ func["func"]["object"]["spec"]["sample_query"]["dataUrl"] }}</textarea>
+                <div style="margin-top: 8px;">
+                    <button class="ix-btn secondary" type="button" onclick="loadImage()">Preview</button>
+                </div>
+                <img id="preview" src="" alt="Image will appear here" style="max-width: 100%; display: none; margin-top: 12px;">
+            </div>
+            {% elif func["func"]["object"]["spec"]["sample_query"]["apiType"] == "audio2text" %}
+            <div>
+                <label for="urlInput"><strong>Audio URL</strong></label>
+                <textarea id="urlInput" rows="2">{{ func["func"]["object"]["spec"]["sample_query"]["dataUrl"] }}</textarea>
+                <div style="margin-top: 8px;">
+                    <button class="ix-btn secondary" type="button" onclick="loadAudio()">Preview</button>
+                </div>
+                <audio id="audioPreview" controls style="display: none; margin-top: 12px; width: 100%;">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+            {% else %}
+            <textarea id="urlInput" rows="2" style="display:none;"></textarea>
+            {% endif %}
+
+            <div>
+                <label for="prompt"><strong>Prompt</strong></label>
+                <textarea id="prompt" rows="3">{{ func["func"]["object"]["spec"]["sample_query"]["prompt"] }}</textarea>
+            </div>
+
+            <div class="playground-actions">
+                <button class="ix-btn" id="button" type="button" onclick="streamOutput()">
+                    <img id="processing" style="display:none;" src="{{ url_for('static', filename='button.gif') }}" alt="">
+                    <div id="run-label">Run</div>
+                </button>
+                <button class="ix-btn secondary" id="cancel" type="button" onclick="cancel()" disabled>Cancel</button>
+            </div>
+
+            <div class="metric-grid">
+                <div id="startDiv"></div>
+                <div id="ttftDiv"></div>
+                <div id="tpsDiv"></div>
+            </div>
+
+            {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "text2audio" %}
+            <audio id="myAudio" controls hidden></audio>
+            {% endif %}
+
+            <img id="myImage" style="display:none; max-width: 100%;" alt="API Image">
+            <textarea id="output" rows="16"></textarea>
+            <textarea id="debug" rows="8" hidden></textarea>
+        </div>
+    </section>
+
+    <section class="model-user-section">
+        <h3>Sample REST Call</h3>
+        <div class="copyable-area">
+            <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('restcall')">Copy</button>
+            <textarea id="restcall" rows="8">{{ func["sampleRestCall"] }}</textarea>
+        </div>
+    </section>
+
+    <section class="model-user-section" id="logs">
+        <h3>Logs</h3>
+        <p class="status-note fail" id="health-fail-note" {% if initial_model_status["code"] != "failed" %}hidden{% endif %}>
+            Your model encountered an error. Check the entries below for details.
+        </p>
+        <table class="ix-table logs-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Create Time</th>
+                    <th>Exit Info</th>
+                    <th>Log</th>
+                </tr>
+            </thead>
+            <tbody id="logs-table-body">
+                {% if fails %}
+                {% for fail in fails %}
+                <tr>
+                    <td>{{ fail["createtime"] }}</td>
+                    <td>{{ fail["exit_info"] }}</td>
+                    <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&namespace={{ fail['namespace'] }}&name={{ fail['fpname'] }}&version={{ fail['fprevision'] }}&id={{ fail['id'] }}&funcname={{ name }}">log</a></td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td class="empty-table-row" colspan="3">No failure logs yet.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="model-user-section">
+        <details>
+            <summary><strong>Model Spec</strong></summary>
+            <pre class="model-spec-block">{{ funcspec }}</pre>
+        </details>
+    </section>
+</div>
+
+<script src="{{ url_for('static', filename='inference.js') }}"></script>
+<script>
+    const tenant = {{ tenant | tojson }};
+    const namespace = {{ namespace | tojson }};
+    const name = {{ name | tojson }};
+    const apiType = {{ apiType | tojson }};
+    const map = {{ map | tojson }};
+    const sampleQueryPath = {{ path | tojson }};
+    const funcData = {{ func | tojson }};
+    const currentVersion = {{ func["func"]["object"]["spec"]["version"] | tojson }};
+    const initialFails = {{ fails | tojson }};
+    const initialStatus = {{ initial_model_status | tojson }};
+    const hosturl = {{ hosturl | tojson }};
+    const modelsListHref = {{ models_list_href | tojson }};
+    const proxyBasePath = {{ (hosturl ~ 'proxy') | tojson }};
+    const proxyFunctionBasePath = {{ (hosturl ~ 'proxy/function') | tojson }};
+    const proxyObjectFunctionBasePath = {{ (hosturl ~ 'proxy/object/function') | tojson }};
+    const failLogsPath = {{ url_for('prefix.GetFailLogsJson') | tojson }};
+    const text2imgPath = {{ (hosturl ~ 'text2img') | tojson }};
+    const text2audioPath = {{ (hosturl ~ 'text2audio') | tojson }};
+
+    const SNAPSHOT_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'Snapshoting']);
+    const RESTORE_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'LoadingTimeout', 'Restoring']);
+    const READY_SETTLED_POD_STATES = new Set(['Ready', 'Standby', 'MemHibernated', 'Failed', 'Terminated', 'Deleted']);
+    const TERMINAL_POLL_STATUS_CODES = new Set(['failed', 'unavailable']);
+    const TRANSIENT_STATUS_CODES = new Set(['resuming', 'restoring', 'pending', 'snapshotting']);
+    const RESUME_POLL_GRACE_MS = 20000;
+    const POST_GO_INITIAL_POLL_DELAY_MS = 1000;
+    let currentPods = Array.isArray(funcData.pods) ? funcData.pods : [];
+    let currentHealth = String(funcData?.func?.object?.status?.state || '').trim();
+    let currentStatus = initialStatus;
+    let currentFails = Array.isArray(initialFails) ? initialFails : [];
+    let previousHealth = currentHealth;
+    let pollTimerId = null;
+    let pollInFlight = false;
+    let inferenceInFlight = false;
+    let resumePollingRequested = false;
+    let resumePollingDeadlineMs = 0;
+    let failLogsRefreshTriggered = currentHealth === 'Fail';
+    let pollFeedbackMessage = '';
+    let trackWakeStatusForCurrentRequest = false;
+    let queuedFirstOutputStatusPoll = false;
+    let logsHighlightTimerId = null;
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function buildPathUrl(basePath, segments, trailingSlash = true) {
+        const prefix = String(basePath || '').replace(/\/+$/, '');
+        const encodedPath = segments
+            .flatMap((segment) => String(segment || '').split('/'))
+            .filter((segment) => segment !== '')
+            .map((segment) => encodeURIComponent(segment))
+            .join('/');
+        const suffix = trailingSlash ? '/' : '';
+        return new URL(prefix + '/' + encodedPath + suffix, window.location.origin).toString();
+    }
+
+    function buildQueryUrl(path, params) {
+        const url = new URL(path, window.location.origin);
+        Object.entries(params).forEach(([key, value]) => {
+            url.searchParams.set(key, value);
+        });
+        return url.toString();
+    }
+
+    function autosizeTextarea(textarea) {
+        if (!textarea) {
+            return;
+        }
+        if (!textarea.dataset.minHeightPx) {
+            textarea.dataset.minHeightPx = String(textarea.offsetHeight);
+        }
+        const minHeight = Number(textarea.dataset.minHeightPx) || 0;
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.max(textarea.scrollHeight, minHeight) + 'px';
+    }
+
+    function getPodState(pod) {
+        return String(pod?.object?.status?.state || '').trim();
+    }
+
+    function getPodCreateType(pod) {
+        return String(pod?.object?.spec?.create_type || '').trim();
+    }
+
+    function buildPodsSignature(pods) {
+        if (!Array.isArray(pods) || pods.length === 0) {
+            return '__empty__';
+        }
+        return pods.map((pod) => [
+            String(pod?.tenant || ''),
+            String(pod?.namespace || ''),
+            String(pod?.name || ''),
+            getPodState(pod),
+        ].join('|')).join('\n');
+    }
+
+    function buildLogsSignature(fails) {
+        if (!Array.isArray(fails) || fails.length === 0) {
+            return '__empty__';
+        }
+        return fails.map((fail) => [
+            String(fail?.id || ''),
+            String(fail?.tenant || ''),
+            String(fail?.namespace || ''),
+            String(fail?.fpname || ''),
+            String(fail?.fprevision || ''),
+            String(fail?.createtime || ''),
+            String(fail?.exit_info || ''),
+        ].join('|')).join('\n');
+    }
+
+    function inferModelStatus(pods, funcStatusState, fails) {
+        if (funcStatusState === 'Fail') {
+            return { code: 'failed', label: 'Failed' };
+        }
+        if ((!Array.isArray(pods) || pods.length === 0) && Array.isArray(fails) && fails.length > 0) {
+            return { code: 'failed', label: 'Failed' };
+        }
+        if (pods.some((pod) => getPodState(pod) === 'Ready')) {
+            return { code: 'ready', label: 'Ready' };
+        }
+        if (pods.some((pod) => ['Resuming', 'ResumeDone'].includes(getPodState(pod)))) {
+            return { code: 'resuming', label: 'Resuming...' };
+        }
+        if (pods.some((pod) => ['Standby', 'MemHibernated'].includes(getPodState(pod)))) {
+            return { code: 'standby', label: 'Standby' };
+        }
+        if (pods.some((pod) => getPodCreateType(pod) === 'Restore' && RESTORE_ACTIVE_STATES.has(getPodState(pod)))) {
+            return { code: 'restoring', label: 'Restoring' };
+        }
+        if (pods.some((pod) => getPodCreateType(pod) === 'Snapshot' && SNAPSHOT_ACTIVE_STATES.has(getPodState(pod)))) {
+            return { code: 'snapshotting', label: 'Creating Snapshot...' };
+        }
+        return { code: 'pending', label: 'Pending' };
+    }
+
+    function hasTransientPods(pods) {
+        return Array.isArray(pods) && pods.some((pod) => !READY_SETTLED_POD_STATES.has(getPodState(pod)));
+    }
+
+    function renderStatusCell(status) {
+        const statusCell = document.getElementById('model-status-cell');
+        if (!statusCell) {
+            return;
+        }
+        const nextKey = String(status.code || '') + '|' + String(status.label || '');
+        if (statusCell.dataset.statusKey === nextKey) {
+            return;
+        }
+        statusCell.dataset.statusKey = nextKey;
+        const isTransient = TRANSIENT_STATUS_CODES.has(status.code);
+        const badgeClass = 'status-badge ' + escapeHtml(status.code) + (isTransient ? ' transient' : '');
+        const badgeContent = (isTransient ? '<span class="status-badge-spinner" aria-hidden="true"></span>' : '')
+            + '<span>' + escapeHtml(status.label) + (status.code === 'failed' ? ' ↓' : '') + '</span>';
+        if (status.code === 'failed') {
+            statusCell.innerHTML = '<a class="' + badgeClass + '" href="#logs" data-scroll-target="logs">' + badgeContent + '</a>';
+            return;
+        }
+        statusCell.innerHTML = '<span class="' + badgeClass + '">' + badgeContent + '</span>';
+    }
+
+    function scrollToLogsSection() {
+        const logsSection = document.getElementById('logs');
+        if (!logsSection) {
+            return;
+        }
+        logsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        logsSection.classList.remove('logs-highlight');
+        void logsSection.offsetWidth;
+        logsSection.classList.add('logs-highlight');
+        if (logsHighlightTimerId != null) {
+            window.clearTimeout(logsHighlightTimerId);
+        }
+        logsHighlightTimerId = window.setTimeout(() => {
+            logsSection.classList.remove('logs-highlight');
+            logsHighlightTimerId = null;
+        }, 1600);
+        if (window.location.hash !== '#logs') {
+            window.history.replaceState(null, '', '#logs');
+        }
+    }
+
+    function getModelStateNote(statusCode) {
+        switch (statusCode) {
+            case 'ready':
+                return 'Model is ready to serve inference requests.';
+            case 'resuming':
+                return 'Model is waking from standby. Inference will begin when resume completes.';
+            case 'standby':
+                return 'Model is in standby. First request will wake it up. Expect resume latency before tokens begin streaming.';
+            case 'restoring':
+                return 'Restoring the model to standby from a snapshot.';
+            case 'snapshotting':
+                return 'Creating a snapshot for faster future startup.';
+            case 'failed':
+                return 'Model failed. Check the logs below for details.';
+            case 'unavailable':
+                return 'Model details are temporarily unavailable.';
+            case 'pending':
+            default:
+                return 'Model status is pending. Waiting for pod details to settle.';
+        }
+    }
+
+    function renderModelStateNote() {
+        const note = document.getElementById('model-state-note');
+        if (!note) {
+            return;
+        }
+        const nextText = getModelStateNote(currentStatus.code);
+        if (note.textContent !== nextText) {
+            note.textContent = nextText;
+        }
+    }
+
+    function renderPollFeedback() {
+        const note = document.getElementById('poll-feedback-note');
+        if (!note) {
+            return;
+        }
+        const shouldHide = !pollFeedbackMessage;
+        if (note.hidden !== shouldHide) {
+            note.hidden = shouldHide;
+        }
+        if (note.textContent !== pollFeedbackMessage) {
+            note.textContent = pollFeedbackMessage;
+        }
+    }
+
+    function renderPodsTable(pods) {
+        const tbody = document.getElementById('pods-table-body');
+        if (!tbody) {
+            return;
+        }
+        const nextSignature = buildPodsSignature(pods);
+        if (tbody.dataset.podsSignature === nextSignature) {
+            return;
+        }
+        tbody.dataset.podsSignature = nextSignature;
+        if (!Array.isArray(pods) || pods.length === 0) {
+            tbody.innerHTML = '<tr><td class="empty-table-row" colspan="2">No pods found for this model yet.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = pods.map((pod) => {
+            const href = buildQueryUrl(hosturl + 'pod', {
+                tenant: pod.tenant,
+                namespace: pod.namespace,
+                name: pod.name,
+            });
+            return '<tr>'
+                + '<td><a href="' + escapeHtml(href) + '">' + escapeHtml(pod.name) + '</a></td>'
+                + '<td>' + escapeHtml(getPodState(pod)) + '</td>'
+                + '</tr>';
+        }).join('');
+    }
+
+    function renderLogsTable(fails) {
+        const tbody = document.getElementById('logs-table-body');
+        if (!tbody) {
+            return;
+        }
+        const nextSignature = buildLogsSignature(fails);
+        if (tbody.dataset.logsSignature === nextSignature) {
+            return;
+        }
+        tbody.dataset.logsSignature = nextSignature;
+        if (!Array.isArray(fails) || fails.length === 0) {
+            tbody.innerHTML = '<tr><td class="empty-table-row" colspan="3">No failure logs yet.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = fails.map((fail) => {
+            const href = buildQueryUrl(hosturl + 'failpod', {
+                tenant: fail.tenant,
+                namespace: fail.namespace,
+                name: fail.fpname,
+                version: fail.fprevision,
+                id: fail.id,
+                funcname: name,
+            });
+            return '<tr>'
+                + '<td>' + escapeHtml(fail.createtime) + '</td>'
+                + '<td>' + escapeHtml(fail.exit_info) + '</td>'
+                + '<td><a href="' + escapeHtml(href) + '">log</a></td>'
+                + '</tr>';
+        }).join('');
+    }
+
+    function renderPlaygroundVisibility() {
+        const playground = document.getElementById('playground-section');
+        const playgroundStateNote = document.getElementById('playground-state-note');
+        const goButton = document.getElementById('button');
+        const cancelButton = document.getElementById('cancel');
+        const failNote = document.getElementById('health-fail-note');
+        const canServeInference = currentStatus.code === 'standby' || currentStatus.code === 'ready';
+        const shouldShowPlayground = inferenceInFlight || (currentStatus.code !== 'failed' && currentStatus.code !== 'unavailable');
+
+        if (playground) {
+            const shouldHidePlayground = !shouldShowPlayground;
+            if (playground.hidden !== shouldHidePlayground) {
+                playground.hidden = shouldHidePlayground;
+            }
+        }
+        if (playgroundStateNote) {
+            let nextText = '';
+            let nextClassName = 'playground-state-hint';
+            if (!inferenceInFlight && currentStatus.code === 'standby' && shouldShowPlayground) {
+                nextText = 'Model is in standby. Click Run to wake it up. The first response may take longer than usual.';
+                nextClassName += ' standby';
+            } else if (!inferenceInFlight && !canServeInference && shouldShowPlayground) {
+                nextText = 'Model is not ready to serve requests yet.';
+            }
+            if (playgroundStateNote.className !== nextClassName) {
+                playgroundStateNote.className = nextClassName;
+            }
+            if (playgroundStateNote.textContent !== nextText) {
+                playgroundStateNote.textContent = nextText;
+            }
+        }
+        if (goButton) {
+            const shouldDisableGo = inferenceInFlight || !canServeInference;
+            if (goButton.disabled !== shouldDisableGo) {
+                goButton.disabled = shouldDisableGo;
+            }
+        }
+        if (cancelButton) {
+            const shouldDisableCancel = !inferenceInFlight;
+            if (cancelButton.disabled !== shouldDisableCancel) {
+                cancelButton.disabled = shouldDisableCancel;
+            }
+        }
+        if (failNote) {
+            const shouldHideFailNote = currentStatus.code !== 'failed';
+            if (failNote.hidden !== shouldHideFailNote) {
+                failNote.hidden = shouldHideFailNote;
+            }
+        }
+    }
+
+    function clearPollTimer() {
+        if (pollTimerId != null) {
+            window.clearTimeout(pollTimerId);
+            pollTimerId = null;
+        }
+    }
+
+    function shouldContinuePolling() {
+        if (currentHealth === 'Fail' || TERMINAL_POLL_STATUS_CODES.has(currentStatus.code)) {
+            return false;
+        }
+        if (currentStatus.code === 'ready') {
+            return hasTransientPods(currentPods);
+        }
+        if (currentStatus.code === 'standby' && !inferenceInFlight) {
+            return resumePollingRequested && Date.now() < resumePollingDeadlineMs;
+        }
+        return true;
+    }
+
+    function schedulePoll(delayMs) {
+        clearPollTimer();
+        if (!shouldContinuePolling()) {
+            return;
+        }
+        pollTimerId = window.setTimeout(() => {
+            pollModelDetail();
+        }, delayMs);
+    }
+
+    async function fetchAndRenderLogs() {
+        try {
+            const url = buildQueryUrl(failLogsPath, {
+                tenant: tenant,
+                namespace: namespace,
+                name: name,
+                version: currentVersion,
+            });
+            const response = await fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                },
+            });
+            if (!response.ok) {
+                throw new Error('Failed to refresh fail logs (HTTP ' + response.status + ')');
+            }
+            currentFails = await response.json();
+            renderLogsTable(currentFails);
+        } catch (error) {
+            console.error('Failed to refresh fail logs:', error);
+        }
+    }
+
+    function handleTerminalPollError(status, message) {
+        currentStatus = { code: 'unavailable', label: 'Unavailable' };
+        currentHealth = 'Unavailable';
+        resumePollingRequested = false;
+        resumePollingDeadlineMs = 0;
+        pollFeedbackMessage = message || ('Model detail polling stopped (HTTP ' + status + ').');
+        renderStatusCell(currentStatus);
+        renderModelStateNote();
+        renderPlaygroundVisibility();
+        renderPollFeedback();
+        clearPollTimer();
+    }
+
+    function applyModelUpdate(payload) {
+        currentPods = Array.isArray(payload?.pods) ? payload.pods : [];
+        currentHealth = String(payload?.func?.object?.status?.state || '').trim();
+        currentStatus = inferModelStatus(currentPods, currentHealth, currentFails);
+        if (currentHealth === 'Fail' || TERMINAL_POLL_STATUS_CODES.has(currentStatus.code)) {
+            resumePollingRequested = false;
+            resumePollingDeadlineMs = 0;
+        } else if (!inferenceInFlight && currentStatus.code === 'standby' && Date.now() >= resumePollingDeadlineMs) {
+            resumePollingRequested = false;
+            resumePollingDeadlineMs = 0;
+        }
+        pollFeedbackMessage = '';
+
+        renderStatusCell(currentStatus);
+        renderModelStateNote();
+        renderPodsTable(currentPods);
+        renderPlaygroundVisibility();
+        renderPollFeedback();
+
+        if (previousHealth !== 'Fail' && currentHealth === 'Fail' && !failLogsRefreshTriggered) {
+            failLogsRefreshTriggered = true;
+            fetchAndRenderLogs();
+        }
+        previousHealth = currentHealth;
+        schedulePoll(5000);
+    }
+
+    async function pollModelDetail() {
+        if (pollInFlight || !shouldContinuePolling()) {
+            return;
+        }
+
+        pollInFlight = true;
+        try {
+            const response = await fetch(buildPathUrl(proxyFunctionBasePath, [tenant, namespace, name]), {
+                headers: {
+                    'Accept': 'application/json',
+                },
+            });
+            if (!response.ok) {
+                if ([401, 403, 404, 410].includes(response.status)) {
+                    const message = response.status === 401
+                        ? 'Your session expired while polling this model. Reload the page and sign in again.'
+                        : response.status === 403
+                            ? 'You no longer have access to this model. Polling stopped.'
+                            : 'This model is no longer available in the dashboard. Polling stopped.';
+                    handleTerminalPollError(response.status, message);
+                    return;
+                }
+                throw new Error('Failed to poll model detail (HTTP ' + response.status + ')');
+            }
+            const payload = await response.json();
+            applyModelUpdate(payload);
+        } catch (error) {
+            console.error('Failed to poll model detail:', error);
+            schedulePoll(5000);
+        } finally {
+            pollInFlight = false;
+            if (queuedFirstOutputStatusPoll) {
+                queuedFirstOutputStatusPoll = false;
+                pollModelDetail();
+            }
+        }
+    }
+
+    function handleFirstOutputStatusPoll() {
+        if (!trackWakeStatusForCurrentRequest) {
+            return;
+        }
+        if (pollInFlight) {
+            queuedFirstOutputStatusPoll = true;
+            return;
+        }
+        pollModelDetail();
+    }
+
+    const inferenceController = window.createInferxInferenceController({
+        tenant: tenant,
+        namespace: namespace,
+        name: name,
+        apiType: apiType,
+        map: map,
+        sampleQueryPath: sampleQueryPath,
+        proxyBasePath: proxyBasePath,
+        text2imgPath: text2imgPath,
+        text2audioPath: text2audioPath,
+        onRequestStart: function () {
+            inferenceInFlight = true;
+            trackWakeStatusForCurrentRequest = currentStatus.code === 'standby';
+            queuedFirstOutputStatusPoll = false;
+            renderPlaygroundVisibility();
+            if (!trackWakeStatusForCurrentRequest) {
+                resumePollingRequested = false;
+                resumePollingDeadlineMs = 0;
+                clearPollTimer();
+                return;
+            }
+            resumePollingRequested = true;
+            resumePollingDeadlineMs = Date.now() + RESUME_POLL_GRACE_MS;
+            schedulePoll(POST_GO_INITIAL_POLL_DELAY_MS);
+        },
+        onFirstOutput: function () {
+            handleFirstOutputStatusPoll();
+        },
+        onRequestFinish: function () {
+            inferenceInFlight = false;
+            renderPlaygroundVisibility();
+            if (trackWakeStatusForCurrentRequest) {
+                schedulePoll(5000);
+            }
+            trackWakeStatusForCurrentRequest = false;
+        },
+    });
+
+    window.loadImage = inferenceController.loadImage;
+    window.loadAudio = inferenceController.loadAudio;
+    window.streamOutput = inferenceController.streamOutput;
+    window.cancel = inferenceController.cancel;
+
+    const promptTextarea = document.getElementById('prompt');
+    if (promptTextarea) {
+        promptTextarea.addEventListener('input', () => {
+            autosizeTextarea(promptTextarea);
+        });
+        autosizeTextarea(promptTextarea);
+    }
+
+    async function deleteFunc() {
+        if (!window.confirm('Are you sure you want to delete the model ' + namespace + '/' + name + '?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(buildPathUrl(proxyObjectFunctionBasePath, [tenant, namespace, name]), {
+                method: 'DELETE',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+            });
+            const text = await response.text();
+            if (!response.ok) {
+                throw new Error(text || ('Delete failed (HTTP ' + response.status + ')'));
+            }
+            window.location.assign(modelsListHref);
+        } catch (error) {
+            window.alert('Delete Model failed: ' + (error.message || String(error)));
+        }
+    }
+
+    document.getElementById('delete-model-btn')?.addEventListener('click', deleteFunc);
+    document.getElementById('model-status-cell')?.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target.closest('[data-scroll-target="logs"]') : null;
+        if (!target) {
+            return;
+        }
+        event.preventDefault();
+        scrollToLogsSection();
+    });
+
+    renderStatusCell(currentStatus);
+    renderModelStateNote();
+    renderPodsTable(currentPods);
+    renderLogsTable(currentFails);
+    renderPlaygroundVisibility();
+    renderPollFeedback();
+    schedulePoll(5000);
+</script>
+
+{% endblock %}
