@@ -852,7 +852,13 @@ impl GwObjRepo {
         namespace: &str,
         funcname: &str,
     ) -> Result<FuncDetail> {
-        let func = self.GetFunc(tenant, namespace, funcname)?;
+        let mut func = self.GetFunc(tenant, namespace, funcname)?;
+
+        if let Ok(funcstatus) = self.funcstatusMgr.Get(&func.tenant, &func.namespace, &func.name) {
+            func.object.status.snapshotingFailureCnt = funcstatus.object.snapshotingFailureCnt;
+            func.object.status.state = funcstatus.object.state;
+            func.object.status.resumingFailureCnt = funcstatus.object.resumingFailureCnt;
+        }
 
         let policy = match self.funcpolicyMgr.Get(tenant, namespace, funcname) {
             Ok(p) => p.object,

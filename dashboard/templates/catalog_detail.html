@@ -478,11 +478,11 @@
         <div id="model-save-modal-body" class="model-save-modal-body">
             <div id="model-save-modal-summary"></div>
             <div class="model-save-modal-note">
-                Snapshot creation will be scheduled before the model can serve inference requests. You can go to the Pods page to check status.
+                Snapshot creation will be scheduled before the model can serve inference requests. You can go to the Instances page to check status.
             </div>
         </div>
         <div class="model-save-modal-actions">
-            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Pods</a>
+            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Instances</a>
             <a id="model-save-modal-models-link" class="ix-btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
         </div>
     </div>
@@ -566,6 +566,12 @@
             modelSaveModalPodsLink?.focus();
         }
 
+        function navigateToUserModelPage(redirectUrl) {
+            const url = new URL(String(redirectUrl || ''), window.location.origin);
+            url.searchParams.set('view', 'user');
+            window.location.assign(url.toString());
+        }
+
         deployBtn?.addEventListener('click', async () => {
             const url = deployBtn.dataset.deployUrl;
             if (!url || deployBtn.disabled) {
@@ -598,7 +604,11 @@
                 delete deployBtn.dataset.deployLoading;
                 deployBtn.textContent = originalText;
                 deployTargetController?.refresh();
-                showModelSaveModal(payload);
+                if (!payload.redirect_url) {
+                    showModelSaveModal(payload);
+                    return;
+                }
+                navigateToUserModelPage(payload.redirect_url);
             } catch (err) {
                 showError(err.message || String(err));
                 delete deployBtn.dataset.deployLoading;

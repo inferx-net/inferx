@@ -1,8 +1,11 @@
 ARCH := ${shell uname -m}
-VERSION := v0.2.4
-VERSION1 := v0.2.4
-DASHBOARD_VERSION ?= v0.2.4.2
+PLATFORM_VERSION ?= v0.2.4.1
+DB_VERSION ?= v0.2.4
+DASHBOARD_VERSION ?= v0.2.4.3
 RUNTIME_VERSION ?= v0.2.4
+NA_VERSION ?= v0.2.4
+RUNMODEL_VERSION ?= v0.2.4.1
+SPDK_VERSION ?= v0.2.4
 
 NODE_NAME=${shell hostname}
 UBUNTU_VERSION :=$(shell lsb_release -sr)
@@ -27,9 +30,9 @@ svcdeploy: svc
 	cp ./deployment/svc.Dockerfile ./target/svc/Dockerfile
 	cp nodeconfig/node*.json ./target/svc/inferx/config
 	cp ./deployment/svc-entrypoint.sh ./target/svc/svc-entrypoint.sh
-	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(VERSION1) ./target/svc
+	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(PLATFORM_VERSION) ./target/svc
 	sudo docker image prune -f
-	# sudo docker push inferx/inferx_platform:$(VERSION1)
+	# sudo docker push inferx/inferx_platform:$(PLATFORM_VERSION)
 
 hf:
 	- mkdir -p ./target/hf
@@ -64,8 +67,8 @@ download:
 
 pushsvc: svcdeploy
 	# sudo docker login -u inferx
-	sudo docker tag inferx/inferx_platform:$(VERSION1) inferx/inferx_platform:$(VERSION1)
-	sudo docker push inferx/inferx_platform:$(VERSION1)
+	sudo docker tag inferx/inferx_platform:$(PLATFORM_VERSION) inferx/inferx_platform:$(PLATFORM_VERSION)
+	sudo docker push inferx/inferx_platform:$(PLATFORM_VERSION)
 
 pushall: pushsvc pushdb pushdash
 
@@ -94,30 +97,30 @@ runmodel:
 	cp ./script/run_model.py ./target/runmodel
 	cp ./script/run_stablediffusion.py ./target/runmodel
 	cp ./deployment/vllm-opai.Dockerfile ./target/runmodel/Dockerfile
-	-sudo docker image rm vllm-openai-upgraded:$(VERSION)
-	sudo docker build -t vllm-openai-upgraded:$(VERSION) ./target/runmodel
+	-sudo docker image rm vllm-openai-upgraded:$(RUNMODEL_VERSION)
+	sudo docker build -t vllm-openai-upgraded:$(RUNMODEL_VERSION) ./target/runmodel
 
 spdk:
 	mkdir -p ./target/spdk
 	-rm ./target/spdk/* -rf
 	cp ./deployment/spdk.Dockerfile ./target/spdk/Dockerfile
-	-sudo docker image rm inferx/spdk-container:$(VERSION)
-	sudo docker build -t inferx/spdk-container:$(VERSION) ./target/spdk
+	-sudo docker image rm inferx/spdk-container:$(SPDK_VERSION)
+	sudo docker build -t inferx/spdk-container:$(SPDK_VERSION) ./target/spdk
 
 spdk2:
 	mkdir -p ./target/spdk
 	-rm ./target/spdk/* -rf
 	cp ./deployment/spdk2.Dockerfile ./target/spdk/Dockerfile
 	cp ./deployment/spdk.script ./target/spdk/entrypoint.sh
-	-sudo docker image rm inferx/spdk-container2:$(VERSION)
-	sudo docker build -t inferx/spdk-container2:$(VERSION) ./target/spdk
+	-sudo docker image rm inferx/spdk-container2:$(SPDK_VERSION)
+	sudo docker build -t inferx/spdk-container2:$(SPDK_VERSION) ./target/spdk
 
 pushspdk:
 	# sudo docker login -u inferx
-	sudo docker tag inferx/spdk-container:$(VERSION) inferx/spdk-container:$(VERSION)
-	sudo docker push inferx/spdk-container:$(VERSION)
-	sudo docker tag inferx/spdk-container2:$(VERSION) inferx/spdk-container2:$(VERSION)
-	sudo docker push inferx/spdk-container2:$(VERSION)
+	sudo docker tag inferx/spdk-container:$(SPDK_VERSION) inferx/spdk-container:$(SPDK_VERSION)
+	sudo docker push inferx/spdk-container:$(SPDK_VERSION)
+	sudo docker tag inferx/spdk-container2:$(SPDK_VERSION) inferx/spdk-container2:$(SPDK_VERSION)
+	sudo docker push inferx/spdk-container2:$(SPDK_VERSION)
 
 sql:
 	sudo cp ./dashboard/sql/create_table.sql /opt/inferx/config
@@ -129,17 +132,20 @@ db:
 	cp ./dashboard/sql/*.sql ./target/postgres
 	cp ./deployment/postgres-entrypoint.sh ./target/postgres/postgres-entrypoint.sh
 	cp ./deployment/postgres.Dockerfile ./target/postgres/Dockerfile
-	sudo docker build --network=host -t inferx/inferx_postgres:$(VERSION1) ./target/postgres
+	sudo docker build --network=host -t inferx/inferx_postgres:$(DB_VERSION) ./target/postgres
 	sudo docker image prune -f
-	# sudo docker push inferx/inferx_postgres:$(VERSION1)
+	# sudo docker push inferx/inferx_postgres:$(DB_VERSION)
 
 pushdb: db
-	sudo docker push inferx/inferx_postgres:$(VERSION1)
+	sudo docker push inferx/inferx_postgres:$(DB_VERSION)
 
 run:
 	-sudo pkill -9 inferx
 	@echo "LOCAL_IP=$$(hostname -I | awk '{print $$1}' | xargs)" > .env
-	@echo "Version=$(VERSION)" >> .env
+	@echo "DashboardVersion=$(DASHBOARD_VERSION)" >> .env
+	@echo "PlatformVersion=$(PLATFORM_VERSION)" >> .env
+	@echo "DBVersion=$(DB_VERSION)" >> .env
+	@echo "NA_VERSION=$(NA_VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	- sudo rm -f /opt/inferx/log/*.log
 	# - sudo rm -f /opt/inferx/log/onenode.log
@@ -149,7 +155,10 @@ run:
 runblob:
 	-sudo pkill -9 inferx
 	@echo "LOCAL_IP=$$(hostname -I | tr ' ' '\n' | grep -v '^172\.' | head -n 1 | xargs)" > .env
-	@echo "Version=$(VERSION)" >> .env
+	@echo "DashboardVersion=$(DASHBOARD_VERSION)" >> .env
+	@echo "PlatformVersion=$(PLATFORM_VERSION)" >> .env
+	@echo "DBVersion=$(DB_VERSION)" >> .env
+	@echo "NA_VERSION=$(NA_VERSION)" >> .env
 	@echo "HOSTNAME=$(NODE_NAME)" >> .env
 	sudo docker compose -f docker-compose_blob.yml  build
 	- sudo rm -f /opt/inferx/log/*.log
@@ -172,15 +181,15 @@ runkblob:
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
-	# VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	# VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	# VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 	# sudo kubectl apply -f k8s/dashboard.yaml
 	sudo kubectl apply -f k8s/ingress.yaml
 stopall:
@@ -200,38 +209,38 @@ runkeycloak:
 
 
 runstatesvc:
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
 
 stopstatesvc:
 	sudo kubectl delete deployment statesvc
 
 rundb:
-	VERSION=$(VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
 
 runkdash:
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 
 stopkdash:
 	sudo kubectl delete deployment inferx-dashboard
 
 rungateway:
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
 
 stopgateway:
 	sudo kubectl delete deployment gateway
 
 runscheduler:
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 
 stopscheduler:
 	sudo kubectl delete deployment scheduler
 
 runsvc:
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
 
 stopsvc:
 	-sudo kubectl delete deployment scheduler
@@ -240,21 +249,21 @@ stopsvc:
 
 runna:
 	# -sudo rm /opt/inferx/log/*.log
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 stopna:
 	sudo kubectl delete DaemonSet ixproxy
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
 
 runproxy:
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
 stopproxy:
 	sudo kubectl delete DaemonSet ixproxy
 
 runnaall:
 	# -sudo rm /opt/inferx/log/*.log
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 stopnaall:
 	sudo kubectl delete DaemonSet ixproxy
 	sudo kubectl delete DaemonSet nodeagent-blob
@@ -269,17 +278,17 @@ runallcw:
 	kubectl apply -f k8s/etcd.yaml
 	kubectl apply -f k8s/keycloak_postgres.yaml
 	kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
 	kubectl apply -f k8s/ingress.yaml
 
 runallfw:
@@ -287,17 +296,17 @@ runallfw:
 	kubectl apply -f k8s/etcd.yaml
 	kubectl apply -f k8s/keycloak_postgres.yaml
 	kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
 	kubectl apply -f k8s/ingress.yaml
 
 runallnb:
@@ -305,15 +314,15 @@ runallnb:
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION1) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy-nb.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent-nb.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy-nb.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent-nb.yaml | sudo kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 	sudo kubectl apply -f k8s/ingress.yaml
 
 runallnbmg:
@@ -321,15 +330,15 @@ runallnbmg:
 	sudo kubectl apply -f k8s/etcd.yaml
 	sudo kubectl apply -f k8s/keycloak_postgres.yaml
 	sudo kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy-nbmg.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent-nbmg.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy-nbmg.yaml | sudo kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent-nbmg.yaml | sudo kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard-nb.yaml | sudo kubectl apply -f -
 	sudo kubectl apply -f k8s/ingress.yaml
 
 runallcx:
@@ -337,17 +346,17 @@ runallcx:
 	kubectl apply -f k8s/etcd.yaml
 	kubectl apply -f k8s/keycloak_postgres.yaml
 	kubectl apply -f k8s/keycloak.yaml
-	VERSION=$(VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-secret.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/statesvc.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gateway.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/scheduler.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/ixproxy.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard_lb.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s/gw_lb.yaml | kubectl apply -f -
 	kubectl apply -f k8s/ingress.yaml
 
 runallcwnew:
@@ -357,15 +366,15 @@ runallcwnew:
 	kubectl apply -f k8s1/etcd.yaml
 	kubectl apply -f k8s1/keycloak_postgres.yaml
 	kubectl apply -f k8s1/keycloak.yaml
-	VERSION=$(VERSION1) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/gateway-cwnew.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s1/ixproxy-cwnew.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s1/nodeagent-cwnew.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/dashboard-cwnew.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/gateway-cwnew.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s1/ixproxy-cwnew.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s1/nodeagent-cwnew.yaml | kubectl apply -f -
+	VERSION=$(DASHBOARD_VERSION) envsubst < k8s1/dashboard-cwnew.yaml | kubectl apply -f -
 	kubectl apply -f k8s1/ingress-cwnew.yaml
 	kubectl apply -f k8s1/billing-cronjobs.yaml
 
@@ -377,14 +386,14 @@ runall:
 	kubectl apply -f k8s1/keycloak_postgres.yaml
 	kubectl apply -f k8s1/keycloak.yaml
 	VERSION=$(RUNTIME_VERSION) envsubst < k8s1/binary-updater.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/gateway.yaml | kubectl apply -f -
-	VERSION=$(VERSION1) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
-# 	VERSION=$(VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
-	VERSION=$(VERSION) envsubst < k8s1/nodeagent.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-audit.yaml | kubectl apply -f -
+	VERSION=$(DB_VERSION) envsubst < k8s1/db-billing.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/statesvc.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/gateway.yaml | kubectl apply -f -
+	VERSION=$(PLATFORM_VERSION) envsubst < k8s1/scheduler.yaml | kubectl apply -f -
+# 	VERSION=$(NA_VERSION) envsubst < k8s1/ixproxy.yaml | kubectl apply -f -
+	VERSION=$(NA_VERSION) envsubst < k8s1/nodeagent.yaml | kubectl apply -f -
 	VERSION=$(DASHBOARD_VERSION) envsubst < k8s1/dashboard.yaml | kubectl apply -f -
 # 	kubectl apply -f k8s1/ingress-cwnew.yaml
 	kubectl apply -f k8s1/billing-cronjobs.yaml

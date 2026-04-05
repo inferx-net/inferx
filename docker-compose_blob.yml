@@ -12,7 +12,7 @@ services:
       - /opt/inferx/:/opt/inferx/
       - /run/udev:/run/udev
   secret_db:
-    image: inferx/inferx_postgres:${Version}
+    image: inferx/inferx_postgres:${DBVersion}
     restart: unless-stopped
     container_name: secret_db
     environment:
@@ -27,7 +27,7 @@ services:
       # - /opt/inferx/config/secret.sql:/docker-entrypoint-initdb.d/db.sql
       - /opt/inferx/data/postgres_secret:/data/postgres
   db:
-    image: inferx/inferx_postgres:${Version}
+    image: inferx/inferx_postgres:${DBVersion}
     restart: unless-stopped
     container_name: db
     environment:
@@ -59,7 +59,7 @@ services:
       - '2379:2379'
       - '2380:2380'
   inferx_platform:
-    image: inferx/inferx_platform:${Version}
+    image: inferx/inferx_platform:${PlatformVersion}
     restart: always
     container_name: inferx_platform
     cpus: 20
@@ -95,7 +95,7 @@ services:
     # command:
     #   - /opt/inferx/config/node1.json
   inferx_nodeagent:
-    image: inferx/inferx_na:${Version}
+    image: inferx/inferx_na:${NA_VERSION}
     restart: always
     container_name: inferx_na
     privileged: true
@@ -142,7 +142,7 @@ services:
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
   inferx_ixproxy:
-    image: inferx/inferx_na:${Version}
+    image: inferx/inferx_na:${NA_VERSION}
     restart: always
     container_name: inferx_proxy
     privileged: true
@@ -202,7 +202,7 @@ services:
               count: all # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
   dashboard:
-    image: inferx/inferx_dashboard:${Version}
+    image: inferx/inferx_dashboard:${DashboardVersion}
     restart: on-failure
     container_name: inferx_dashboard
     network_mode: "host"

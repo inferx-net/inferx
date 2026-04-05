@@ -3,6 +3,11 @@
 {% block content %}
 
 <h2>Model {{ name }}</h2>
+{% if is_inferx_admin %}
+<div style="margin: 0 0 12px 0;">
+    <a class="ix-btn secondary" href="{{ func_user_href }}">User View</a>
+</div>
+{% endif %}
 
 <style>
     /* Global border for all outer tables */
@@ -35,6 +40,19 @@
     .inner-resource-table td {
         border: 1px solid black;
         padding: 2px;
+    }
+
+    .admin-rest-call {
+        display: inline-block;
+        width: min(100%, 120ch);
+        max-width: 100%;
+    }
+
+    .admin-rest-call textarea {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
 </style>
@@ -122,24 +140,24 @@
 <textarea id="debug" rows="20" cols="120" hidden></textarea>
 
 <h2>Sample Rest Call</h2>
-<div class="copyable-area">
+<div class="copyable-area admin-rest-call">
     <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('restcall')">Copy</button>
     <textarea id="restcall" rows="8" cols="120">
 {{ func["sampleRestCall"] }}
 </textarea>
 </div>
 
-<h2>Pods</h2>
+<h2>Instances</h2>
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
     <tr>
         <th>Tenant</th>
         <th>Namespace</th>
-        <th>Pod Name</th>
+        <th>Instance Name</th>
         <th>State</th>
         <th>Required Resource</th>
         <th>Allocated Resource</th>
         <th>GPU</th>
-        <!-- <th>funcpod </th> -->
+        <!-- <th>instance </th> -->
     </tr>
     {% for pod in func["pods"] %}
     <tr>
@@ -309,7 +327,7 @@
         <td>{{ fail["createtime"] }}</td>
         <td>{{ fail["exit_info"] }}</td>
         <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&&namespace={{ fail['namespace'] }}&&name={{
-                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}">log</a></td>
+                fail['fpname'] }}&&version={{fail['fprevision'] }}&&id={{fail['id'] }}&&funcname={{ name }}">log</a></td>
     </tr>
     {% endfor %}
 </table>
@@ -356,6 +374,7 @@
 <h2>Policy</h2>
 <textarea id="FuncPolicy" rows="5" cols="120">{{ funcpolicy }}</textarea>
 
+<script src="{{ url_for('static', filename='inference.js') }}"></script>
 <script>
     const tenant = {{ tenant | tojson }};
     const namespace = {{ namespace | tojson }};
@@ -365,33 +384,22 @@
     const sampleQueryPath = {{ path | tojson }};
     const funcconfig = {{ func | tojson }};
     const funcEditData = {{ func_edit_data | tojson }};
+    const inferenceController = window.createInferxInferenceController({
+        tenant: tenant,
+        namespace: namespace,
+        name: name,
+        apiType: apiType,
+        map: map,
+        sampleQueryPath: sampleQueryPath,
+        proxyBasePath: {{ (hosturl ~ 'proxy') | tojson }},
+        text2imgPath: {{ (hosturl ~ 'text2img') | tojson }},
+        text2audioPath: {{ (hosturl ~ 'text2audio') | tojson }}
+    });
 
-    function loadImage() {
-        const url = document.getElementById("urlInput").value;
-        const img = document.getElementById("preview");
-
-        if (url.endsWith(".jpg") || url.endsWith(".jpeg")) {
-            img.src = url;
-            img.style.display = "block";
-        } else {
-            alert("Please enter a valid JPEG image URL ending with .jpg or .jpeg");
-            img.style.display = "none";
-        }
-    }
-
-    function loadAudio() {
-        const url = document.getElementById("urlInput").value;
-        const audio = document.getElementById("audioPreview");
-
-        if (url.endsWith(".wav") || url.endsWith(".mp4") || url.endsWith(".mp3")) {
-            audio.src = url;
-            audio.style.display = "block";
-            audio.load();
-        } else {
-            alert("Please enter a valid audio URL ending with .wav or .mp4 or .mp3");
-            audio.style.display = "none";
-        }
-    }
+    window.loadImage = inferenceController.loadImage;
+    window.loadAudio = inferenceController.loadAudio;
+    window.streamOutput = inferenceController.streamOutput;
+    window.cancel = inferenceController.cancel;
 
     async function updateSpec() {
         const debugDiv = document.getElementById('debug');
@@ -483,407 +491,5 @@
         }
 
     }
-
-    async function cancel() {
-        if (abortController) {
-            abortController.abort();
-        }
-    }
-
-    async function streamOutput() {
-        if (apiType == "text2img") {
-            await streamOutputImage();
-        } if (apiType == "text2audio") {
-            await streamOutputAudio();
-        } else {
-            await streamOutputText();
-        }
-    }
-
-    async function streamOutputText() {
-        const button = document.getElementById('button');
-        const cancelBtn = document.getElementById('cancel');
-        const outputDiv = document.getElementById('output');
-        const debugDiv = document.getElementById('debug');
-        const tpsDiv = document.getElementById('tpsDiv');
-        const prompt = document.getElementById('prompt').value;
-        const image = document.getElementById('urlInput').value;
-
-        cancelBtn.addEventListener('click', () => {
-            if (abortController) {
-                abortController.abort();
-            }
-        });
-
-        cancelBtn.disabled = false;
-        const llvm = true;
-        outputDiv.innerHTML = ""
-        try {
-            const processImage = document.getElementById('processing');
-            const buttonTxt = document.getElementById('go');
-            button.disabled = true;
-
-            processImage.style = "width:15px;height:15px;";
-            buttonTxt.style = "display:none;";
-
-            const hostname = window.location.hostname;
-            const port = window.location.port;
-            const schema = window.location.protocol;
-
-            abortController = new AbortController();
-            const { signal } = abortController;
-
-            url = schema + "//" + hostname + ":" + port + "/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + sampleQueryPath;
-
-            let body;
-            if (apiType == "text2text") {
-                map["prompt"] = prompt;
-                body = JSON.stringify(map);
-            } else if (apiType == "image2text") {
-                const requestData = {
-                    model: map["model"],
-                    messages: [
-                        {
-                            role: "user",
-                            content: [
-                                { type: "text", text: prompt },
-                                {
-                                    type: "image_url",
-                                    image_url: {
-                                        url: image
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens: map["max_tokens"],
-                    temperature: map["temperature"],
-                    stream: true
-                };
-                body = JSON.stringify(requestData);
-            } else {
-                const requestData = {
-                    model: map["model"],
-                    messages: [
-                        {
-                            role: "user",
-                            content: [
-                                { type: "text", text: prompt },
-                                {
-                                    type: "audio_url",
-                                    audio_url: {
-                                        url: image
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens: map["max_tokens"],
-                    temperature: map["temperature"],
-                    stream: true
-                };
-                body = JSON.stringify(requestData);
-                console.log(JSON.stringify(requestData, null, 4)); // 4 spaces for better readability
-            }
-            debugDiv.innerHTML += JSON.stringify(map, null, 2);
-
-            let options = {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '60'
-                },
-                body: body,
-                signal
-            };
-
-
-            const response = await fetch(url, options);
-            processImage.style = "display:none;"
-            buttonTxt.style = "";
-
-            const restore = response.headers.get("tcpconn_latency_header");
-            const ttft = response.headers.get("ttft_latency_header");
-            const contentType = response.headers.get("content-type");
-
-            const startDiv = document.getElementById('startDiv');
-            const ttftDiv = document.getElementById('ttftDiv');
-            startDiv.innerHTML = "Start Latency: " + restore + ' ms ' + '<br>';
-            ttftDiv.innerHTML = "Time To First Token: " + ttft + ' ms ' + '<br>';
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                outputDiv.innerHTML = errorText;
-                button.disabled = false;
-                cancelBtn.disabled = true;
-                return;
-            }
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let tokenCount = 0;
-            const startTime = Date.now();
-
-            let buffer = "";
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                let lines = buffer.split('\n');
-                buffer = lines.pop(); // retain partial line
-                for (const line of lines) {
-                    const trimmed = line.trim();
-
-                    if (trimmed === '' || !trimmed.startsWith('data:')) continue;
-
-                    const jsonPart = trimmed.replace(/^data:\s*/, '');
-
-                    if (jsonPart === '[DONE]') {
-                        button.disabled = false;
-                        cancelBtn.disabled = true;
-                        return;
-                    }
-
-                    try {
-                        const parsed = JSON.parse(jsonPart);
-                        const content = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.text ?? '';
-                        if (content) {
-                            outputDiv.innerHTML += content;
-                            tokenCount++;
-                            const elapsed = (Date.now() - startTime) / 1000;
-                            tpsDiv.innerHTML = "TPS: " + (tokenCount / elapsed).toFixed(0) + "     Tokens: " + tokenCount;
-                        }
-                    } catch (err) {
-                        console.warn('JSON parse error:', err, 'on line:', jsonPart);
-                        // optionally accumulate broken line into buffer for next round
-                        buffer = jsonPart + buffer;
-                    }
-                }
-            }
-
-        } catch (error) {
-            // outputDiv.innerHTML += error + '<br>';
-            // outputDiv.innerHTML += error.cause + '<br>';
-            // console.error('Error fetching HTML:', error);
-            button.disabled = false;
-            cancelBtn.disabled = true;
-        }
-
-        button.disabled = false;
-        cancelBtn.disabled = true;
-    }
-
-    async function streamOutputImage() {
-        const button = document.getElementById('button');
-        const outputDiv = document.getElementById('output');
-        const prompt = document.getElementById('prompt').value;
-        // const image = document.getElementById('image').value;
-
-        const startTime = performance.now();
-        const llvm = true;
-        outputDiv.innerHTML = ""
-        try {
-            const processImage = document.getElementById('processing');
-            const buttonTxt = document.getElementById('go');
-            button.disabled = true;
-
-            processImage.style = "width:15px;height:15px;";
-            buttonTxt.style = "display:none;";
-
-            const hostname = window.location.hostname;
-            const port = window.location.port;
-            const schema = window.location.protocol;
-
-            url = schema + "//" + hostname + ":" + port + "/text2img";
-
-            const body = {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '60'
-                },
-                body: JSON.stringify({
-                    "prompt": prompt,
-                    // "image": image,
-                    "tenant": tenant,
-                    "namespace": namespace,
-                    "funcname": name
-                })
-            };
-
-            const response = await fetch(url, body);
-            processImage.style = "display:none;"
-            buttonTxt.style = "";
-
-
-            const restore = response.headers.get("tcpconn_latency_header");
-            const ttft = response.headers.get("ttft_latency_header");
-            const contentType = response.headers.get("content-type");
-
-            const startDiv = document.getElementById('startDiv');
-            const ttftDiv = document.getElementById('ttftDiv');
-            startDiv.innerHTML = "Start Latency: " + restore + ' ms ' + '<br>';
-            ttftDiv.innerHTML = "Time To First Token: " + ttft + ' ms ' + '<br>';
-
-            if (response.ok == false) {
-                outputDiv.innerHTML = response.content;
-                button.disabled = false;
-                return
-            }
-
-            if (apiType == "text2img") {
-                response.json().then(data => {
-                    // This is the JS equivalent of: jq -r '.choices[0].message.content[0].image_url.url'
-                    try {
-                        const base64Data = data.choices[0].message.content[0].image_url.url;
-
-                        outputDiv.hidden = true;
-                        button.disabled = false;
-
-                        // Set the src directly to the base64 string
-                        // It already contains "data:image/png;base64,..." so browser handles it perfectly
-                        const imgElement = document.getElementById('myImage');
-                        imgElement.src = base64Data;
-                        imgElement.style.display = "block";
-                    } catch (e) {
-                        console.error("Failed to parse image data from response", e);
-                    }
-                });
-            } else {
-                // Read the response as a stream of data
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-
-                while (true) {
-                    const { done, value } = await reader.read();
-
-                    if (done) {
-                        break;
-                    }
-
-                    // Massage and parse the chunk of data
-                    const chunk = decoder.decode(value);
-                    outputDiv.innerHTML += chunk; //.replace(new RegExp('\r?\n', 'g'), '<br />');
-                    // outputDiv.style = "";
-                }
-            }
-
-        } catch (error) {
-            outputDiv.innerHTML += error + '<br>';
-            outputDiv.innerHTML += error.cause + '<br>';
-            console.error('Error fetching HTML:', error);
-            button.disabled = false;
-        }
-
-        button.disabled = false;
-    }
-
-    async function streamOutputAudio() {
-        const button = document.getElementById('button');
-        const outputDiv = document.getElementById('output');
-        const prompt = document.getElementById('prompt').value;
-
-        const startTime = performance.now();
-        const llvm = true;
-        outputDiv.innerHTML = ""
-        try {
-            const processImage = document.getElementById('processing');
-            const buttonTxt = document.getElementById('go');
-            button.disabled = true;
-
-            processImage.style = "width:15px;height:15px;";
-            buttonTxt.style = "display:none;";
-
-            const hostname = window.location.hostname;
-            const port = window.location.port;
-            const schema = window.location.protocol;
-
-            url = schema + "//" + hostname + ":" + port + "/text2audio";
-
-            const body = {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '60'
-                },
-                body: JSON.stringify({
-                    "prompt": prompt,
-                    "tenant": tenant,
-                    "namespace": namespace,
-                    "funcname": name
-                })
-            };
-
-            const response = await fetch(url, body);
-            processImage.style = "display:none;"
-            buttonTxt.style = "";
-
-            const restore = response.headers.get("tcpconn_latency_header");
-            const ttft = response.headers.get("ttft_latency_header");
-            const contentType = response.headers.get("content-type");
-
-            const startDiv = document.getElementById('startDiv');
-            const ttftDiv = document.getElementById('ttftDiv');
-            startDiv.innerHTML = "Start Latency: " + restore + ' ms ' + '<br>';
-            ttftDiv.innerHTML = "Time To First Token: " + ttft + ' ms ' + '<br>';
-
-            if (response.ok == false) {
-                outputDiv.innerHTML = response.content;
-                button.disabled = false;
-                return
-            }
-
-            if (apiType == "text2audio") {
-                try {
-                    const audioBlob = await response.blob();
-
-                    // 2. Create a local URL for that Blob
-                    const audioUrl = URL.createObjectURL(audioBlob);
-
-                    // 3. Set the audio element source and play
-                    const audioElement = document.getElementById('myAudio');
-                    audioElement.src = audioUrl;
-                    audioElement.style.display = "block";
-                    audioElement.play();
-                    outputDiv.hidden = true;
-                    button.disabled = false;
-                } catch (e) {
-                    console.error("Failed to parse image data from response", e);
-                }
-            } else {
-                // Read the response as a stream of data
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-
-                while (true) {
-                    const { done, value } = await reader.read();
-
-                    if (done) {
-                        break;
-                    }
-
-                    // Massage and parse the chunk of data
-                    const chunk = decoder.decode(value);
-                    outputDiv.innerHTML += chunk; //.replace(new RegExp('\r?\n', 'g'), '<br />');
-                    // outputDiv.style = "";
-                }
-            }
-
-        } catch (error) {
-            outputDiv.innerHTML += error + '<br>';
-            outputDiv.innerHTML += error.cause + '<br>';
-            console.error('Error fetching HTML:', error);
-            button.disabled = false;
-        }
-
-        button.disabled = false;
-    }
 </script>
-
-
-
-{{ log | safe }}
 {% endblock %}

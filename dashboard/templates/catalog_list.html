@@ -120,10 +120,15 @@
         width: 100%;
     }
 
-    .catalog-table th,
-    .catalog-table td {
+    .content table.ix-table.catalog-table th,
+    .content table.ix-table.catalog-table td {
         text-align: left;
-        vertical-align: middle;
+        vertical-align: top;
+    }
+
+    .catalog-intro-header,
+    .catalog-intro-cell {
+        text-align: left !important;
     }
 
     .catalog-version-cell {
@@ -152,7 +157,7 @@
 
     .catalog-model-heading {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
         flex-wrap: wrap;
     }
@@ -406,7 +411,7 @@
             <thead>
                 <tr>
                     <th>Model</th>
-                    <th>Intro</th>
+                    <th class="catalog-intro-header">Intro</th>
                     <th>Tags</th>
                     {% if is_inferx_admin %}
                     <th class="catalog-version-header">Version</th>
@@ -436,7 +441,7 @@
                             {% endif %}
                         </div>
                     </td>
-                    <td>{{ entry.brief_intro }}</td>
+                    <td class="catalog-intro-cell">{{ entry.brief_intro }}</td>
                     <td>
                         <div class="catalog-tags">
                             {% for tag in entry.tags %}
@@ -502,11 +507,11 @@
         <div id="model-save-modal-body" class="model-save-modal-body">
             <div id="model-save-modal-summary"></div>
             <div class="model-save-modal-note">
-                Snapshot creation will be scheduled before the model can serve inference requests. You can go to the Pods page to check status.
+                Snapshot creation will be scheduled before the model can serve inference requests. You can go to the Instances page to check status.
             </div>
         </div>
         <div class="model-save-modal-actions">
-            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Pods</a>
+            <a id="model-save-modal-pods-link" class="ix-btn" href="{{ hosturl }}listpod">Go to Instances</a>
             <a id="model-save-modal-models-link" class="ix-btn secondary" href="{{ hosturl }}listfunc">Back to Models</a>
         </div>
     </div>
@@ -595,6 +600,12 @@
             modelSaveModalPodsLink?.focus();
         }
 
+        function navigateToUserModelPage(redirectUrl) {
+            const url = new URL(String(redirectUrl || ''), window.location.origin);
+            url.searchParams.set('view', 'user');
+            window.location.assign(url.toString());
+        }
+
         function visibleRows() {
             if (!tableBody) {
                 return [];
@@ -663,7 +674,11 @@
                 delete button.dataset.deployLoading;
                 button.textContent = originalText;
                 deployTargetController?.refresh();
-                showModelSaveModal(payload);
+                if (!payload.redirect_url) {
+                    showModelSaveModal(payload);
+                    return;
+                }
+                navigateToUserModelPage(payload.redirect_url);
             } catch (err) {
                 showError(err.message || String(err));
                 delete button.dataset.deployLoading;
