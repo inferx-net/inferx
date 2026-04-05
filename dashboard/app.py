@@ -334,6 +334,8 @@ RESERVED_ENV_KEYS = {row[0] for row in DEFAULT_MODEL_ENVS}
 CATALOG_RESERVED_ENV_KEYS = {
     "HF_HUB_OFFLINE",
     "TRANSFORMERS_OFFLINE",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
 }
 CATALOG_PLATFORM_ENV_KEYS = RESERVED_ENV_KEYS | CATALOG_RESERVED_ENV_KEYS
 CATALOG_ALLOWED_API_TYPES = {"text2text", "image2text", "audio2text", "text2img", "text2audio"}
@@ -5880,6 +5882,7 @@ def GetFunc():
         dashboard_href("prefix.FuncCreate"),
         urlencode({"edit": f"{tenant}/{namespace}/{name}"}),
     )
+    tenant_models_href = dashboard_href("prefix.ListFunc", tenant=tenant)
     models_list_href = dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace)
     template_name = "func.html" if is_inferx_admin and view != "user" else "func_user.html"
 
@@ -5904,6 +5907,7 @@ def GetFunc():
         func_admin_href=func_admin_href,
         func_user_href=func_user_href,
         func_edit_href=func_edit_href,
+        tenant_models_href=tenant_models_href,
         models_list_href=models_list_href,
     )
 
@@ -6009,14 +6013,14 @@ def GetPod():
     pod_resp, pod = getpod_response(tenant, namespace, podname)
     if is_upstream_resource_unavailable(pod_resp, pod):
         return render_resource_unavailable_page(
-            resource_kind="Pod",
+            resource_kind="Instance",
             resource_name=podname,
             tenant=tenant,
             namespace=namespace,
-            message="This pod is no longer available in the dashboard.",
+            message="This instance is no longer available in the dashboard.",
             suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
-            primary_label="Back to Pods",
+            primary_label="Back to Instances",
             secondary_href=snapshot_secondary_href,
             secondary_label=snapshot_secondary_label,
             detail=extract_upstream_error_message(pod_resp, pod),
@@ -6024,12 +6028,12 @@ def GetPod():
         )
     if not pod_resp.ok:
         return render_resource_load_error_page(
-            resource_kind="Pod",
+            resource_kind="Instance",
             resource_name=podname,
             tenant=tenant,
             namespace=namespace,
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
-            primary_label="Back to Pods",
+            primary_label="Back to Instances",
             secondary_href=snapshot_secondary_href,
             secondary_label=snapshot_secondary_label,
             upstream_status=pod_resp.status_code,
@@ -6046,14 +6050,14 @@ def GetPod():
         id = pod["object"]["spec"]["id"]
     except (KeyError, TypeError):
         return render_resource_unavailable_page(
-            resource_kind="Pod",
+            resource_kind="Instance",
             resource_name=podname,
             tenant=tenant,
             namespace=namespace,
-            message="This pod is no longer available in the dashboard.",
+            message="This instance is no longer available in the dashboard.",
             suggestion="It may have completed, been garbage collected, or belonged to a snapshot that is no longer active.",
             primary_href=dashboard_href("prefix.ListPod", tenant=tenant, namespace=namespace),
-            primary_label="Back to Pods",
+            primary_label="Back to Instances",
             secondary_href=snapshot_secondary_href,
             secondary_label=snapshot_secondary_label,
             detail=extract_upstream_error_message(pod_resp, pod),

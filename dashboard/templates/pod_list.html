@@ -68,7 +68,7 @@
     <tr>
         <th rowspan="2">Tenant</th>
         <th rowspan="2">Namespace</th>
-        <th rowspan="2" class="pod-name-col">Pod Name</th>
+        <th rowspan="2" class="pod-name-col">Instance Name</th>
         <th rowspan="2">State</th>
         {% if is_inferx_admin %}
         <th rowspan="2">Node Name</th>
@@ -165,7 +165,7 @@
 <script>
 async function terminatePod(btn) {
     const { tenant, namespace, funcname, fprevision, id } = btn.dataset;
-    if (!confirm(`Terminate pod ${id}?`)) return;
+    if (!confirm(`Terminate instance ${id}?`)) return;
 
     btn.disabled = true;
     btn.textContent = 'Terminating...';

@@ -27,6 +27,12 @@
         font-size: var(--ix-font-size-subtle);
     }
 
+    .model-user-subtitle a {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
     .model-user-actions {
         display: flex;
         flex-wrap: wrap;
@@ -289,7 +295,11 @@
     <div class="model-user-header">
         <div>
             <h2>Model {{ name }}</h2>
-            <p class="model-user-subtitle">Namespace: {{ namespace }}</p>
+            <p class="model-user-subtitle">
+                Tenant: <a href="{{ tenant_models_href }}">{{ tenant }}</a>
+                <span aria-hidden="true">·</span>
+                Namespace: <a href="{{ models_list_href }}">{{ namespace }}</a>
+            </p>
         </div>
         {% if isAdmin or is_inferx_admin %}
         <div class="model-user-actions">
@@ -339,11 +349,11 @@
     </section>
 
     <section class="model-user-section">
-        <h3>Pods</h3>
+        <h3>Instances</h3>
         <table class="ix-table pods-table" style="width: 100%;">
             <thead>
                 <tr>
-                    <th>Pod Name</th>
+                    <th>Instance Name</th>
                     <th>State</th>
                 </tr>
             </thead>
@@ -359,7 +369,7 @@
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td class="empty-table-row" colspan="2">No pods found for this model yet.</td>
+                    <td class="empty-table-row" colspan="2">No instances found for this model yet.</td>
                 </tr>
                 {% endif %}
             </tbody>
@@ -678,7 +688,7 @@
                 return 'Model details are temporarily unavailable.';
             case 'pending':
             default:
-                return 'Model status is pending. Waiting for pod details to settle.';
+                return 'Model status is pending. Waiting for instance details to settle.';
         }
     }
 
@@ -718,7 +728,7 @@
         }
         tbody.dataset.podsSignature = nextSignature;
         if (!Array.isArray(pods) || pods.length === 0) {
-            tbody.innerHTML = '<tr><td class="empty-table-row" colspan="2">No pods found for this model yet.</td></tr>';
+            tbody.innerHTML = '<tr><td class="empty-table-row" colspan="2">No instances found for this model yet.</td></tr>';
             return;
         }
 
