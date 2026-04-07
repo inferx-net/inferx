@@ -1110,6 +1110,20 @@ async fn FuncCall(
 
         return Ok(resp);
     }
+
+    if partsCount > 5 {
+        let p5 = parts[5].to_owned();
+        if p5.starts_with("sleep") || p5.starts_with("wake_up") {
+            let body = Body::from(format!("service failure: unsupported"));
+            let resp = Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(body)
+                .unwrap();
+
+            return Ok(resp);
+        }
+    }
+
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
     let funcname = parts[4].to_owned();
