@@ -25,7 +25,7 @@ use crate::common::*;
 use crate::node_config::NodeAgentConfig;
 use crate::node_config::NODE_CONFIG;
 
-pub const MASK_BITS: usize = 8;
+pub const MASK_BITS: usize = 12;
 
 lazy_static::lazy_static! {
     #[derive(Debug)]
