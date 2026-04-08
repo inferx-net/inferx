@@ -3493,6 +3493,38 @@
         return infMs + sbyMs;
     }
 
+    function getAnalyticsInferenceNumer(entry) {
+        if (typeof entry?.inference_numer === 'number') return entry.inference_numer;
+        if (typeof entry?.inference_cents === 'number') return entry.inference_cents * 3600000;
+        return 0;
+    }
+
+    function getAnalyticsStandbyNumer(entry) {
+        if (typeof entry?.standby_numer === 'number') return entry.standby_numer;
+        if (typeof entry?.standby_cents === 'number') return entry.standby_cents * 3600000;
+        return 0;
+    }
+
+    function getAnalyticsInferenceCents(entry) {
+        if (typeof entry?.inference_numer === 'number') return Math.trunc(entry.inference_numer / 3600000);
+        if (typeof entry?.inference_cents === 'number') return entry.inference_cents;
+        return 0;
+    }
+
+    function getAnalyticsStandbyCents(entry) {
+        if (typeof entry?.standby_numer === 'number') return Math.trunc(entry.standby_numer / 3600000);
+        if (typeof entry?.standby_cents === 'number') return entry.standby_cents;
+        return 0;
+    }
+
+    function getAnalyticsChargeCents(entry) {
+        if (typeof entry?.inference_numer === 'number' || typeof entry?.standby_numer === 'number') {
+            return Math.trunc((getAnalyticsInferenceNumer(entry) + getAnalyticsStandbyNumer(entry)) / 3600000);
+        }
+        if (typeof entry?.charge_cents === 'number') return entry.charge_cents;
+        return getAnalyticsInferenceCents(entry) + getAnalyticsStandbyCents(entry);
+    }
+
     function updateAnalyticsHourlyViewControls() {
         const controlsEl = document.getElementById('analytics-hourly-view-controls');
         if (!controlsEl) return;
@@ -3596,6 +3628,8 @@
                     week_end: granularity === 'weekly' ? bucketEnd.toISOString() : null,
                     inference_ms: 0,
                     standby_ms: 0,
+                    inference_numer: 0,
+                    standby_numer: 0,
                     inference_cents: 0,
                     standby_cents: 0,
                     charge_cents: 0,
@@ -3605,9 +3639,11 @@
             const bucket = bucketMap.get(key);
             bucket.inference_ms += u.inference_ms || 0;
             bucket.standby_ms += u.standby_ms || 0;
-            bucket.inference_cents += u.inference_cents || 0;
-            bucket.standby_cents += u.standby_cents || 0;
-            bucket.charge_cents += u.charge_cents || 0;
+            bucket.inference_numer += getAnalyticsInferenceNumer(u);
+            bucket.standby_numer += getAnalyticsStandbyNumer(u);
+            bucket.inference_cents = Math.trunc(bucket.inference_numer / 3600000);
+            bucket.standby_cents = Math.trunc(bucket.standby_numer / 3600000);
+            bucket.charge_cents = Math.trunc((bucket.inference_numer + bucket.standby_numer) / 3600000);
         });
 
         return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
@@ -3792,16 +3828,16 @@
                     bVal = b.standby_ms || 0;
                     break;
                 case 'inf_cost':
-                    aVal = a.inference_cents || 0;
-                    bVal = b.inference_cents || 0;
+                    aVal = getAnalyticsInferenceCents(a);
+                    bVal = getAnalyticsInferenceCents(b);
                     break;
                 case 'sby_cost':
-                    aVal = a.standby_cents || 0;
-                    bVal = b.standby_cents || 0;
+                    aVal = getAnalyticsStandbyCents(a);
+                    bVal = getAnalyticsStandbyCents(b);
                     break;
                 case 'total_cost':
-                    aVal = (a.inference_cents || 0) + (a.standby_cents || 0);
-                    bVal = (b.inference_cents || 0) + (b.standby_cents || 0);
+                    aVal = getAnalyticsChargeCents(a);
+                    bVal = getAnalyticsChargeCents(b);
                     break;
                 case 'period':
                 default:
@@ -3814,24 +3850,24 @@
 
         let totalInfMs = 0;
         let totalSbyMs = 0;
-        let totalInfCents = 0;
-        let totalSbyCents = 0;
+        let totalInfNumer = 0;
+        let totalSbyNumer = 0;
 
         rows.forEach(u => {
             totalInfMs += u.inference_ms || 0;
             totalSbyMs += u.standby_ms || 0;
-            totalInfCents += u.inference_cents || 0;
-            totalSbyCents += u.standby_cents || 0;
+            totalInfNumer += getAnalyticsInferenceNumer(u);
+            totalSbyNumer += getAnalyticsStandbyNumer(u);
         });
 
         tbody.innerHTML = sortedRows.map(u => {
             const infMs = u.inference_ms || 0;
             const sbyMs = u.standby_ms || 0;
-            const infCents = u.inference_cents || 0;
-            const sbyCents = u.standby_cents || 0;
+            const infCents = getAnalyticsInferenceCents(u);
+            const sbyCents = getAnalyticsStandbyCents(u);
             const infHours = infMs / 3600000;
             const sbyHours = sbyMs / 3600000;
-            const totalCents = infCents + sbyCents;
+            const totalCents = getAnalyticsChargeCents(u);
             const periodLabel = formatAnalyticsDetailPeriodLabel(u);
 
             return `
@@ -3846,11 +3882,13 @@
             `;
         }).join('');
 
+        const totalInfCents = Math.trunc(totalInfNumer / 3600000);
+        const totalSbyCents = Math.trunc(totalSbyNumer / 3600000);
         document.getElementById('analytics-group-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
         document.getElementById('analytics-group-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
         document.getElementById('analytics-group-total-inf-cost').textContent = formatUsd(totalInfCents);
         document.getElementById('analytics-group-total-sby-cost').textContent = formatUsd(totalSbyCents);
-        document.getElementById('analytics-group-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
+        document.getElementById('analytics-group-total-cost').textContent = formatUsd(Math.trunc((totalInfNumer + totalSbyNumer) / 3600000));
 
         const setDetailSortIcon = (id, column) => {
             const el = document.getElementById(id);
@@ -4000,25 +4038,43 @@
 
         let totalInfMs = 0;
         let totalSbyMs = 0;
-        let totalInfCents = 0;
-        let totalSbyCents = 0;
+        let totalInfNumer = 0;
+        let totalSbyNumer = 0;
 
         usageRows.forEach(u => {
             totalInfMs += u.inference_ms || 0;
             totalSbyMs += u.standby_ms || 0;
-            totalInfCents += u.inference_cents || 0;
-            totalSbyCents += u.standby_cents || 0;
+            totalInfNumer += getAnalyticsInferenceNumer(u);
+            totalSbyNumer += getAnalyticsStandbyNumer(u);
         });
+
+        if (typeof hourlyData?.inference_ms === 'number') totalInfMs = hourlyData.inference_ms;
+        if (typeof hourlyData?.standby_ms === 'number') totalSbyMs = hourlyData.standby_ms;
+
+        const totalInfCents = (typeof hourlyData?.inference_cents === 'number')
+            ? hourlyData.inference_cents
+            : Math.trunc(totalInfNumer / 3600000);
+        const totalSbyCents = (typeof hourlyData?.standby_cents === 'number')
+            ? hourlyData.standby_cents
+            : Math.trunc(totalSbyNumer / 3600000);
+        const totalCents = (typeof hourlyData?.total_cents === 'number')
+            ? hourlyData.total_cents
+            : Math.trunc((totalInfNumer + totalSbyNumer) / 3600000);
+        const totalMs = (typeof hourlyData?.total_ms === 'number')
+            ? hourlyData.total_ms
+            : (totalInfMs + totalSbyMs);
 
         const grouped = {
             usage: [{
                 tenant: tenantName,
                 inference_ms: totalInfMs,
                 standby_ms: totalSbyMs,
-                usage_ms: totalInfMs + totalSbyMs,
+                usage_ms: totalMs,
+                inference_numer: totalInfNumer,
+                standby_numer: totalSbyNumer,
                 inference_cents: totalInfCents,
                 standby_cents: totalSbyCents,
-                charge_cents: totalInfCents + totalSbyCents
+                charge_cents: totalCents
             }],
             other: {
                 count: 0,
@@ -4031,10 +4087,10 @@
             },
             inference_ms: totalInfMs,
             standby_ms: totalSbyMs,
-            total_ms: totalInfMs + totalSbyMs,
+            total_ms: totalMs,
             inference_cents: totalInfCents,
             standby_cents: totalSbyCents,
-            total_cents: totalInfCents + totalSbyCents
+            total_cents: totalCents
         };
 
         analyticsData = grouped;
@@ -4425,6 +4481,8 @@
                 bucketMap.set(key, {
                     hour: bucketStart.toISOString(),
                     week_end: bucketEnd ? bucketEnd.toISOString() : null,
+                    inference_numer: 0,
+                    standby_numer: 0,
                     charge_cents: 0,
                     inference_cents: 0,
                     standby_cents: 0,
@@ -4438,9 +4496,11 @@
                 ? h.usage_ms
                 : ((h.inference_ms || 0) + (h.standby_ms || 0));
             const bucket = bucketMap.get(key);
-            bucket.charge_cents += h.charge_cents || 0;
-            bucket.inference_cents += h.inference_cents || 0;
-            bucket.standby_cents += h.standby_cents || 0;
+            bucket.inference_numer += getAnalyticsInferenceNumer(h);
+            bucket.standby_numer += getAnalyticsStandbyNumer(h);
+            bucket.inference_cents = Math.trunc(bucket.inference_numer / 3600000);
+            bucket.standby_cents = Math.trunc(bucket.standby_numer / 3600000);
+            bucket.charge_cents = Math.trunc((bucket.inference_numer + bucket.standby_numer) / 3600000);
             bucket.usage_ms += usageMs;
             bucket.inference_ms += h.inference_ms || 0;
             bucket.standby_ms += h.standby_ms || 0;

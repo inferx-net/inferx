@@ -1,0 +1,67 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-tenant-quota-backfill
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: tenant-quota-backfill
+          image: inferx/inferx_util:v0.1.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              : "${BACKFILL_CUTOFF:?set BACKFILL_CUTOFF to the exact UTC cutoff timestamp used for this backfill}"
+              if [ "${BACKFILL_CUTOFF}" = "REPLACE_WITH_CUTOFF_TIMESTAMP" ]; then
+                echo "BACKFILL_CUTOFF must be replaced before applying this Job." >&2
+                exit 1
+              fi
+              echo "Running TenantQuota carry migration"
+              psql -v ON_ERROR_STOP=1 -f /scripts/migrate-tenant-quota-carry.sql
+              echo "Backfilling TenantQuota through ${BACKFILL_CUTOFF} (end exclusive)"
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -v backfill_cutoff="${BACKFILL_CUTOFF}" \
+                -f /scripts/backfill-tenant-quota-carry.sql
+              echo "Verifying TenantQuota carry state through ${BACKFILL_CUTOFF} (end exclusive)"
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -v backfill_cutoff="${BACKFILL_CUTOFF}" \
+                -f /scripts/verify-tenant-quota-carry.sql
+              echo "Syncing tenant quota_exceeded states to gateway"
+              sh /scripts/sync-tenant-quota-exceeded.sh
+          env:
+            - name: PGHOST
+              value: billingdb
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              value: billing_user
+            - name: PGPASSWORD
+              value: "123456"
+            - name: PGDATABASE
+              value: billingdb
+            - name: GATEWAY_URL
+              value: "http://gateway:4000"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: billing-secrets
+                  key: api-key
+            - name: BACKFILL_CUTOFF
+              # MUST be replaced before applying this Job.
+              # Choose a UTC timestamp after billing-quota-check is suspended and no
+              # billing-quota-check Job remains in flight.
+              value: "2026-04-07T23:24:43Z"
+          volumeMounts:
+            - name: sql-scripts
+              mountPath: /scripts
+      volumes:
+        - name: sql-scripts
+          configMap:
+            name: billing-sql-scripts

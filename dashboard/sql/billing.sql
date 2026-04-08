@@ -34,6 +34,8 @@ CREATE TABLE TenantQuota (
     used_cents             BIGINT DEFAULT 0,          -- Cumulative usage in cents
     inference_used_cents   BIGINT NOT NULL DEFAULT 0, -- Cumulative inference usage in cents
     standby_used_cents     BIGINT NOT NULL DEFAULT 0, -- Cumulative standby usage in cents
+    inference_carry_numer  BIGINT NOT NULL DEFAULT 0, -- Exact inference numerator remainder / 3600000
+    standby_carry_numer    BIGINT NOT NULL DEFAULT 0, -- Exact standby numerator remainder / 3600000
     threshold_cents        BIGINT DEFAULT 0,          -- Disable when remaining < this
     quota_exceeded         BOOLEAN DEFAULT FALSE,
     currency               VARCHAR(3) DEFAULT 'USD'
@@ -64,6 +66,8 @@ CREATE TABLE UsageHourlyByFunc (
     charge_cents     BIGINT NOT NULL,
     inference_cents  BIGINT NOT NULL DEFAULT 0,
     standby_cents    BIGINT NOT NULL DEFAULT 0,
+    inference_numer  BIGINT NOT NULL DEFAULT 0,
+    standby_numer    BIGINT NOT NULL DEFAULT 0,
     inference_ms     BIGINT NOT NULL DEFAULT 0,
     standby_ms       BIGINT NOT NULL DEFAULT 0,
     UNIQUE(tenant, namespace, funcname, fprevision, hour)
