@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-tenant-quota-reconcile
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: tenant-quota-reconcile
+          image: inferx/inferx_util:v0.1.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "Reconciling tenant quota_exceeded states from TenantQuota to gateway"
+              sh /scripts/sync-tenant-quota-exceeded.sh
+          env:
+            - name: PGHOST
+              value: billingdb
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              value: billing_user
+            - name: PGPASSWORD
+              value: "123456"
+            - name: PGDATABASE
+              value: billingdb
+            - name: GATEWAY_URL
+              value: "http://gateway:4000"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: billing-secrets
+                  key: api-key
+          volumeMounts:
+            - name: sql-scripts
+              mountPath: /scripts
+      volumes:
+        - name: sql-scripts
+          configMap:
+            name: billing-sql-scripts

@@ -375,9 +375,9 @@ pub struct UsageTick {
     pub tenant: String,
     pub namespace: String,
     pub funcname: String,
-    pub fprevision: i64,            // model version
-    pub nodename: Option<String>,   // NULL for standby ticks
-    pub pod_id: Option<i64>,        // NULL for standby ticks
+    pub fprevision: i64,          // model version
+    pub nodename: Option<String>, // NULL for standby ticks
+    pub pod_id: Option<i64>,      // NULL for standby ticks
     pub gateway_id: Option<i64>,
 
     // GPU resource info
@@ -387,7 +387,7 @@ pub struct UsageTick {
     pub total_vram_mb: i64,
 
     // Tick info
-    pub tick_time: DateTime<Utc>,  // Time when interval was calculated
+    pub tick_time: DateTime<Utc>, // Time when interval was calculated
     pub interval_ms: i64,
     pub tick_type: String,  // "start", "periodic", "final"
     pub usage_type: String, // "request", "snapshot", or "standby"
@@ -1081,11 +1081,11 @@ impl SqlAudit {
             INSERT INTO TenantQuota (tenant)
             VALUES ($1)
             ON CONFLICT (tenant) DO NOTHING
-            "#
+            "#,
         )
-            .bind(tenant)
-            .execute(&self.pool)
-            .await?;
+        .bind(tenant)
+        .execute(&self.pool)
+        .await?;
 
         // Step 2: Update balance_cents and quota_exceeded based on current credits and usage
         let query = r#"
@@ -1225,13 +1225,23 @@ impl SqlAudit {
             WHERE tenant = $1
             "#,
         )
-            .bind(tenant)
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or((0, 0));
+        .bind(tenant)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((0, 0));
 
-        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency,
-            inference_used_cents, standby_used_cents, period_ms.0, period_ms.1))
+        Ok((
+            balance_cents,
+            used_cents,
+            threshold_cents,
+            quota_exceeded,
+            total_credits_cents,
+            currency,
+            inference_used_cents,
+            standby_used_cents,
+            period_ms.0,
+            period_ms.1,
+        ))
     }
 
     /// Get tenant hourly usage for the last N hours (v4: returns cost + time breakdown)
@@ -1245,9 +1255,9 @@ impl SqlAudit {
             r#"
             SELECT
                 hour,
-                SUM(charge_cents)::bigint AS charge_cents,
-                SUM(inference_cents)::bigint AS inference_cents,
-                SUM(standby_cents)::bigint AS standby_cents,
+                (SUM(inference_numer + standby_numer)::bigint / 3600000) AS charge_cents,
+                (SUM(inference_numer)::bigint / 3600000) AS inference_cents,
+                (SUM(standby_numer)::bigint / 3600000) AS standby_cents,
                 SUM(inference_ms)::bigint AS inference_ms,
                 SUM(standby_ms)::bigint AS standby_ms
             FROM UsageHourlyByFunc
@@ -1257,10 +1267,10 @@ impl SqlAudit {
             ORDER BY hour ASC
             "#,
         )
-            .bind(tenant)
-            .bind(hours)
-            .fetch_all(&self.pool)
-            .await?;
+        .bind(tenant)
+        .bind(hours)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(records)
     }
@@ -1277,9 +1287,9 @@ impl SqlAudit {
             r#"
             SELECT
                 hour,
-                SUM(charge_cents)::bigint AS charge_cents,
-                SUM(inference_cents)::bigint AS inference_cents,
-                SUM(standby_cents)::bigint AS standby_cents,
+                (SUM(inference_numer + standby_numer)::bigint / 3600000) AS charge_cents,
+                (SUM(inference_numer)::bigint / 3600000) AS inference_cents,
+                (SUM(standby_numer)::bigint / 3600000) AS standby_cents,
                 SUM(inference_ms)::bigint AS inference_ms,
                 SUM(standby_ms)::bigint AS standby_ms
             FROM UsageHourlyByFunc
@@ -1290,11 +1300,11 @@ impl SqlAudit {
             ORDER BY hour ASC
             "#,
         )
-            .bind(tenant)
-            .bind(namespace)
-            .bind(hours)
-            .fetch_all(&self.pool)
-            .await?;
+        .bind(tenant)
+        .bind(namespace)
+        .bind(hours)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(records)
     }
@@ -1312,9 +1322,9 @@ impl SqlAudit {
             r#"
             SELECT
                 hour,
-                SUM(charge_cents)::bigint AS charge_cents,
-                SUM(inference_cents)::bigint AS inference_cents,
-                SUM(standby_cents)::bigint AS standby_cents,
+                (SUM(inference_numer + standby_numer)::bigint / 3600000) AS charge_cents,
+                (SUM(inference_numer)::bigint / 3600000) AS inference_cents,
+                (SUM(standby_numer)::bigint / 3600000) AS standby_cents,
                 SUM(inference_ms)::bigint AS inference_ms,
                 SUM(standby_ms)::bigint AS standby_ms
             FROM UsageHourlyByFunc
@@ -1326,26 +1336,28 @@ impl SqlAudit {
             ORDER BY hour ASC
             "#,
         )
-            .bind(tenant)
-            .bind(namespace)
-            .bind(funcname)
-            .bind(hours)
-            .fetch_all(&self.pool)
-            .await?;
+        .bind(tenant)
+        .bind(namespace)
+        .bind(funcname)
+        .bind(hours)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(records)
     }
 
     /// Get namespace hourly usage for a UTC time range [start, end]
-    /// Returns: (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    /// Returns:
+    /// (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms,
+    ///  inference_numer, standby_numer)
     pub async fn GetNamespaceHourlyUsageRange(
         &self,
         tenant: &str,
         namespace: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
-        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1359,9 +1371,8 @@ impl SqlAudit {
             historical AS (
                 SELECT
                     h.hour,
-                    SUM(h.charge_cents)::bigint AS charge_cents,
-                    SUM(h.inference_cents)::bigint AS inference_cents,
-                    SUM(h.standby_cents)::bigint AS standby_cents,
+                    SUM(h.inference_numer)::bigint AS inference_numer,
+                    SUM(h.standby_numer)::bigint AS standby_numer,
                     SUM(h.inference_ms)::bigint AS inference_ms,
                     SUM(h.standby_ms)::bigint AS standby_ms
                 FROM UsageHourlyByFunc h
@@ -1377,9 +1388,9 @@ impl SqlAudit {
                 SELECT
                     date_trunc('hour', t.tick_time) AS hour,
                     t.usage_type,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::bigint AS interval_ms,
+                    t.gpu_count::bigint AS gpu_count,
+                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1390,21 +1401,20 @@ impl SqlAudit {
             recent AS (
                 SELECT
                     hour,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents,
-                    (SUM(CASE WHEN usage_type != 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    COALESCE(SUM(CASE WHEN usage_type != 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS inference_cents,
-                    (SUM(CASE WHEN usage_type = 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    END), 0)::bigint AS inference_numer,
+                    COALESCE(SUM(CASE WHEN usage_type = 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS standby_cents,
+                    END), 0)::bigint AS standby_numer,
                     SUM(CASE WHEN usage_type != 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS standby_ms
                 FROM recent_ticks
@@ -1412,20 +1422,24 @@ impl SqlAudit {
             )
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM historical
             UNION ALL
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM recent
             ORDER BY hour ASC
             "#,
@@ -1441,7 +1455,9 @@ impl SqlAudit {
     }
 
     /// Get model hourly usage for a UTC time range [start, end]
-    /// Returns: (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    /// Returns:
+    /// (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms,
+    ///  inference_numer, standby_numer)
     pub async fn GetFuncHourlyUsageRange(
         &self,
         tenant: &str,
@@ -1449,8 +1465,8 @@ impl SqlAudit {
         funcname: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
-        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1465,9 +1481,8 @@ impl SqlAudit {
             historical AS (
                 SELECT
                     h.hour,
-                    SUM(h.charge_cents)::bigint AS charge_cents,
-                    SUM(h.inference_cents)::bigint AS inference_cents,
-                    SUM(h.standby_cents)::bigint AS standby_cents,
+                    SUM(h.inference_numer)::bigint AS inference_numer,
+                    SUM(h.standby_numer)::bigint AS standby_numer,
                     SUM(h.inference_ms)::bigint AS inference_ms,
                     SUM(h.standby_ms)::bigint AS standby_ms
                 FROM UsageHourlyByFunc h
@@ -1484,9 +1499,9 @@ impl SqlAudit {
                 SELECT
                     date_trunc('hour', t.tick_time) AS hour,
                     t.usage_type,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::bigint AS interval_ms,
+                    t.gpu_count::bigint AS gpu_count,
+                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1498,21 +1513,20 @@ impl SqlAudit {
             recent AS (
                 SELECT
                     hour,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents,
-                    (SUM(CASE WHEN usage_type != 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    COALESCE(SUM(CASE WHEN usage_type != 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS inference_cents,
-                    (SUM(CASE WHEN usage_type = 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    END), 0)::bigint AS inference_numer,
+                    COALESCE(SUM(CASE WHEN usage_type = 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS standby_cents,
+                    END), 0)::bigint AS standby_numer,
                     SUM(CASE WHEN usage_type != 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS standby_ms
                 FROM recent_ticks
@@ -1520,20 +1534,24 @@ impl SqlAudit {
             )
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM historical
             UNION ALL
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM recent
             ORDER BY hour ASC
             "#,
@@ -1555,8 +1573,8 @@ impl SqlAudit {
         tenant: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>> {
-        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)> = sqlx::query_as(
+    ) -> Result<Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)>> {
+        let records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1569,9 +1587,8 @@ impl SqlAudit {
             historical AS (
                 SELECT
                     h.hour,
-                    SUM(h.charge_cents)::bigint AS charge_cents,
-                    SUM(h.inference_cents)::bigint AS inference_cents,
-                    SUM(h.standby_cents)::bigint AS standby_cents,
+                    SUM(h.inference_numer)::bigint AS inference_numer,
+                    SUM(h.standby_numer)::bigint AS standby_numer,
                     SUM(h.inference_ms)::bigint AS inference_ms,
                     SUM(h.standby_ms)::bigint AS standby_ms
                 FROM UsageHourlyByFunc h
@@ -1586,9 +1603,9 @@ impl SqlAudit {
                 SELECT
                     date_trunc('hour', t.tick_time) AS hour,
                     t.usage_type,
-                    t.interval_ms,
-                    t.gpu_count,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::bigint AS interval_ms,
+                    t.gpu_count::bigint AS gpu_count,
+                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1598,21 +1615,20 @@ impl SqlAudit {
             recent AS (
                 SELECT
                     hour,
-                    (SUM(gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour) / 3600000)::bigint AS charge_cents,
-                    (SUM(CASE WHEN usage_type != 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    COALESCE(SUM(CASE WHEN usage_type != 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS inference_cents,
-                    (SUM(CASE WHEN usage_type = 'standby'
-                        THEN gpu_count::numeric * interval_ms::numeric * rate_cents_per_hour
+                    END), 0)::bigint AS inference_numer,
+                    COALESCE(SUM(CASE WHEN usage_type = 'standby'
+                        THEN gpu_count * interval_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS standby_cents,
+                    END), 0)::bigint AS standby_numer,
                     SUM(CASE WHEN usage_type != 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby'
-                        THEN interval_ms::bigint * gpu_count::bigint
+                        THEN interval_ms * gpu_count
                         ELSE 0
                     END)::bigint AS standby_ms
                 FROM recent_ticks
@@ -1620,20 +1636,24 @@ impl SqlAudit {
             )
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM historical
             UNION ALL
             SELECT
                 hour,
-                charge_cents,
-                inference_cents,
-                standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
                 inference_ms,
-                standby_ms
+                standby_ms,
+                inference_numer,
+                standby_numer
             FROM recent
             ORDER BY hour ASC
             "#,
@@ -1662,7 +1682,7 @@ impl SqlAudit {
         Vec<(String, String, i64, i64, i64, i64, i64)>,
         (i64, i64, i64, i64, i64),
     )> {
-        let items: Vec<(String, String, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        let raw_items: Vec<(String, String, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1678,9 +1698,8 @@ impl SqlAudit {
                     h.namespace,
                     h.inference_ms,
                     h.standby_ms,
-                    h.inference_cents,
-                    h.standby_cents,
-                    h.charge_cents
+                    h.inference_numer,
+                    h.standby_numer
                 FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
@@ -1693,8 +1712,8 @@ impl SqlAudit {
                     t.funcname,
                     t.namespace,
                     t.usage_type,
-                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::bigint * t.gpu_count::bigint AS gpu_ms,
+                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1707,9 +1726,8 @@ impl SqlAudit {
                     namespace,
                     inference_ms,
                     standby_ms,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents
+                    inference_numer,
+                    standby_numer
                 FROM historical
                 UNION ALL
                 SELECT
@@ -1717,15 +1735,14 @@ impl SqlAudit {
                     namespace,
                     SUM(CASE WHEN usage_type != 'standby' THEN gpu_ms ELSE 0 END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby' THEN gpu_ms ELSE 0 END)::bigint AS standby_ms,
-                    (SUM(CASE WHEN usage_type != 'standby'
+                    COALESCE(SUM(CASE WHEN usage_type != 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS inference_cents,
-                    (SUM(CASE WHEN usage_type = 'standby'
+                    END), 0)::bigint AS inference_numer,
+                    COALESCE(SUM(CASE WHEN usage_type = 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS standby_cents,
-                    (SUM(gpu_ms * rate_cents_per_hour) / 3600000)::bigint AS charge_cents
+                    END), 0)::bigint AS standby_numer
                 FROM recent_ticks
                 GROUP BY funcname, namespace
             ),
@@ -1735,9 +1752,8 @@ impl SqlAudit {
                     namespace,
                     SUM(inference_ms)::bigint AS inference_ms,
                     SUM(standby_ms)::bigint AS standby_ms,
-                    SUM(inference_cents)::bigint AS inference_cents,
-                    SUM(standby_cents)::bigint AS standby_cents,
-                    SUM(charge_cents)::bigint AS charge_cents
+                    SUM(inference_numer)::bigint AS inference_numer,
+                    SUM(standby_numer)::bigint AS standby_numer
                 FROM combined
                 GROUP BY funcname, namespace
             )
@@ -1746,12 +1762,14 @@ impl SqlAudit {
                 namespace,
                 inference_ms,
                 standby_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer,
+                standby_numer
             FROM grouped
             ORDER BY
-                charge_cents DESC,
+                (inference_numer + standby_numer) DESC,
                 funcname ASC,
                 namespace ASC
             "#,
@@ -1762,15 +1780,23 @@ impl SqlAudit {
         .fetch_all(&self.pool)
         .await?;
 
+        let mut items: Vec<(String, String, i64, i64, i64, i64, i64)> =
+            Vec::with_capacity(raw_items.len());
         let mut total: (i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0);
+        let mut total_inference_numer: i64 = 0;
+        let mut total_standby_numer: i64 = 0;
 
-        for row in &items {
+        for row in raw_items {
             total.0 += row.2;
             total.1 += row.3;
-            total.2 += row.4;
-            total.3 += row.5;
-            total.4 += row.6;
+            total_inference_numer += row.7;
+            total_standby_numer += row.8;
+            items.push((row.0, row.1, row.2, row.3, row.4, row.5, row.6));
         }
+
+        total.2 = total_inference_numer / 3600000;
+        total.3 = total_standby_numer / 3600000;
+        total.4 = (total_inference_numer + total_standby_numer) / 3600000;
 
         Ok((items, total))
     }
@@ -1790,7 +1816,7 @@ impl SqlAudit {
         Vec<(String, i64, i64, i64, i64, i64)>,
         (i64, i64, i64, i64, i64),
     )> {
-        let items: Vec<(String, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        let raw_items: Vec<(String, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1805,9 +1831,8 @@ impl SqlAudit {
                     h.namespace,
                     h.inference_ms,
                     h.standby_ms,
-                    h.inference_cents,
-                    h.standby_cents,
-                    h.charge_cents
+                    h.inference_numer,
+                    h.standby_numer
                 FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
@@ -1819,8 +1844,8 @@ impl SqlAudit {
                 SELECT
                     t.namespace,
                     t.usage_type,
-                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
-                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+                    t.interval_ms::bigint * t.gpu_count::bigint AS gpu_ms,
+                    GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1832,24 +1857,22 @@ impl SqlAudit {
                     namespace,
                     inference_ms,
                     standby_ms,
-                    inference_cents,
-                    standby_cents,
-                    charge_cents
+                    inference_numer,
+                    standby_numer
                 FROM historical
                 UNION ALL
                 SELECT
                     namespace,
                     SUM(CASE WHEN usage_type != 'standby' THEN gpu_ms ELSE 0 END)::bigint AS inference_ms,
                     SUM(CASE WHEN usage_type = 'standby' THEN gpu_ms ELSE 0 END)::bigint AS standby_ms,
-                    (SUM(CASE WHEN usage_type != 'standby'
+                    COALESCE(SUM(CASE WHEN usage_type != 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS inference_cents,
-                    (SUM(CASE WHEN usage_type = 'standby'
+                    END), 0)::bigint AS inference_numer,
+                    COALESCE(SUM(CASE WHEN usage_type = 'standby'
                         THEN gpu_ms * rate_cents_per_hour
                         ELSE 0
-                    END) / 3600000)::bigint AS standby_cents,
-                    (SUM(gpu_ms * rate_cents_per_hour) / 3600000)::bigint AS charge_cents
+                    END), 0)::bigint AS standby_numer
                 FROM recent_ticks
                 GROUP BY namespace
             ),
@@ -1858,9 +1881,8 @@ impl SqlAudit {
                     namespace,
                     SUM(inference_ms)::bigint AS inference_ms,
                     SUM(standby_ms)::bigint AS standby_ms,
-                    SUM(inference_cents)::bigint AS inference_cents,
-                    SUM(standby_cents)::bigint AS standby_cents,
-                    SUM(charge_cents)::bigint AS charge_cents
+                    SUM(inference_numer)::bigint AS inference_numer,
+                    SUM(standby_numer)::bigint AS standby_numer
                 FROM combined
                 GROUP BY namespace
             )
@@ -1868,12 +1890,14 @@ impl SqlAudit {
                 namespace,
                 inference_ms,
                 standby_ms,
-                inference_cents,
-                standby_cents,
-                charge_cents
+                inference_numer / 3600000 AS inference_cents,
+                standby_numer / 3600000 AS standby_cents,
+                (inference_numer + standby_numer) / 3600000 AS charge_cents,
+                inference_numer,
+                standby_numer
             FROM grouped
             ORDER BY
-                charge_cents DESC,
+                (inference_numer + standby_numer) DESC,
                 namespace ASC
             "#,
         )
@@ -1883,15 +1907,22 @@ impl SqlAudit {
         .fetch_all(&self.pool)
         .await?;
 
+        let mut items: Vec<(String, i64, i64, i64, i64, i64)> = Vec::with_capacity(raw_items.len());
         let mut total: (i64, i64, i64, i64, i64) = (0, 0, 0, 0, 0);
+        let mut total_inference_numer: i64 = 0;
+        let mut total_standby_numer: i64 = 0;
 
-        for row in &items {
+        for row in raw_items {
             total.0 += row.1;
             total.1 += row.2;
-            total.2 += row.3;
-            total.3 += row.4;
-            total.4 += row.5;
+            total_inference_numer += row.6;
+            total_standby_numer += row.7;
+            items.push((row.0, row.1, row.2, row.3, row.4, row.5));
         }
+
+        total.2 = total_inference_numer / 3600000;
+        total.3 = total_standby_numer / 3600000;
+        total.4 = (total_inference_numer + total_standby_numer) / 3600000;
 
         Ok((items, total))
     }
@@ -1902,8 +1933,26 @@ impl SqlAudit {
         &self,
         tenant: &str,
         hours: i32,
-    ) -> Result<(i64, i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64)> {
-        let row: (i64, i64, Option<String>, i64, Option<String>, i64, Option<DateTime<Utc>>, i64) = sqlx::query_as(
+    ) -> Result<(
+        i64,
+        i64,
+        Option<String>,
+        i64,
+        Option<String>,
+        i64,
+        Option<DateTime<Utc>>,
+        i64,
+    )> {
+        let row: (
+            i64,
+            i64,
+            Option<String>,
+            i64,
+            Option<String>,
+            i64,
+            Option<DateTime<Utc>>,
+            i64,
+        ) = sqlx::query_as(
             r#"
             WITH
             params AS (
@@ -1913,7 +1962,7 @@ impl SqlAudit {
                     date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
             ),
             historical AS (
-                SELECT h.funcname, h.namespace, h.hour, h.inference_ms, h.inference_cents
+                SELECT h.funcname, h.namespace, h.hour, h.inference_ms, h.inference_numer
                 FROM UsageHourlyByFunc h
                 JOIN params p ON true
                 WHERE h.tenant = p.tenant
@@ -1925,10 +1974,10 @@ impl SqlAudit {
                     t.funcname,
                     t.namespace,
                     date_trunc('hour', t.tick_time) AS hour,
-                    t.interval_ms::numeric * t.gpu_count::numeric AS gpu_ms,
-                    t.gpu_count::numeric * t.interval_ms::numeric
-                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric
-                        AS raw_cost
+                    t.interval_ms::bigint * t.gpu_count::bigint AS gpu_ms,
+                    t.gpu_count::bigint * t.interval_ms::bigint
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+                        AS inference_numer
                 FROM UsageTick t
                 JOIN params p ON true
                 WHERE t.tenant = p.tenant
@@ -1937,12 +1986,12 @@ impl SqlAudit {
                   AND t.tick_time < NOW()
             ),
             combined AS (
-                SELECT funcname, namespace, hour, inference_ms, inference_cents
+                SELECT funcname, namespace, hour, inference_ms, inference_numer
                 FROM historical
                 UNION ALL
                 SELECT funcname, namespace, hour,
                        SUM(gpu_ms)::bigint AS inference_ms,
-                       (SUM(raw_cost) / 3600000)::bigint AS inference_cents
+                       SUM(inference_numer)::bigint AS inference_numer
                 FROM recent_ticks
                 GROUP BY funcname, namespace, hour
             ),
@@ -1952,14 +2001,14 @@ impl SqlAudit {
                     namespace,
                     hour,
                     SUM(inference_ms)::bigint AS inference_ms,
-                    SUM(inference_cents)::bigint AS charge_cents
+                    SUM(inference_numer)::bigint AS inference_numer
                 FROM combined
                 GROUP BY funcname, namespace, hour
             ),
             total AS (
                 SELECT
                     COALESCE(SUM(inference_ms), 0)::bigint AS total_ms,
-                    COALESCE(SUM(charge_cents), 0)::bigint AS total_cents
+                    COALESCE(SUM(inference_numer), 0)::bigint / 3600000 AS total_cents
                 FROM period_usage
             ),
             top_model AS (

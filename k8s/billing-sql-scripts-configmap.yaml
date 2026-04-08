@@ -6,6 +6,8 @@ data:
   # SQL to incrementally update usage and check quota
   # Returns tenants with their quota status
   update-and-check-quota.sql: |
+    \set ON_ERROR_STOP on
+
     -- Step 1: Insert any new tenants found in ticks or credits
     INSERT INTO TenantQuota (tenant)
     SELECT DISTINCT tenant
@@ -42,32 +44,31 @@ data:
         b.gpu_count,
         b.interval_ms,
         b.usage_type,
-        GetBillingRateCents(b.usage_type, b.tick_time, b.tenant)::numeric AS rate_cents_per_hour
+        GetBillingRateCents(b.usage_type, b.tick_time, b.tenant)::bigint AS rate_cents_per_hour
       FROM batch b
     ),
 
-    -- 3) Aggregate delta charge per tenant in this batch
-    -- Rate lookup is centralized in GetBillingRateCents(...)
-    -- Keep split alignment exact by deriving standby as residual:
-    --   delta_standby = delta_total - delta_inference
+    -- 3) Aggregate exact billing numerators per tenant in this batch.
+    -- Price each tick before aggregation so differing rates stay exact.
     agg AS (
       SELECT
         t.tenant,
-        (SUM(
-          t.gpu_count::numeric
-          * t.interval_ms::numeric
-          * t.rate_cents_per_hour
-        )
-          / 3600000)::bigint AS delta_cents,
-        (SUM(
+        COALESCE(SUM(
           CASE WHEN t.usage_type != 'standby'
-            THEN t.gpu_count::numeric
-              * t.interval_ms::numeric
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
               * t.rate_cents_per_hour
             ELSE 0
           END
-        )
-          / 3600000)::bigint AS delta_inference_cents
+        ), 0)::bigint AS inference_batch_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * t.rate_cents_per_hour
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_batch_numer
       FROM tick_with_rate t
       GROUP BY t.tenant
     ),
@@ -90,19 +91,50 @@ data:
       GROUP BY h.tenant
     ),
 
-    -- 6) Update usage split + balance + quota_exceeded for affected tenants
+    -- 6) Apply carry-aware deltas for tenants in the current locked batch only.
+    calc AS (
+      SELECT
+        q.tenant,
+        q.threshold_cents,
+        q.inference_used_cents,
+        q.standby_used_cents,
+        q.inference_carry_numer,
+        q.standby_carry_numer,
+        a.inference_batch_numer,
+        a.standby_batch_numer,
+        (q.inference_carry_numer + a.inference_batch_numer) / 3600000 AS delta_inference_cents,
+        (q.standby_carry_numer + a.standby_batch_numer) / 3600000 AS delta_standby_cents,
+        (q.inference_carry_numer + a.inference_batch_numer) % 3600000 AS next_inference_carry_numer,
+        (q.standby_carry_numer + a.standby_batch_numer) % 3600000 AS next_standby_carry_numer
+      FROM TenantQuota q
+      JOIN agg a ON a.tenant = q.tenant
+    ),
+
+    -- 7) Update usage split + balance + quota_exceeded for affected tenants
     updated AS (
       UPDATE TenantQuota q
       SET
-        used_cents = q.used_cents + a.delta_cents,
-        inference_used_cents = q.inference_used_cents + a.delta_inference_cents,
-        standby_used_cents = q.standby_used_cents + (a.delta_cents - a.delta_inference_cents),
-        balance_cents = COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents),
+        inference_used_cents = c2.inference_used_cents + c2.delta_inference_cents,
+        standby_used_cents = c2.standby_used_cents + c2.delta_standby_cents,
+        used_cents =
+          c2.inference_used_cents + c2.standby_used_cents
+          + c2.delta_inference_cents + c2.delta_standby_cents,
+        inference_carry_numer = c2.next_inference_carry_numer,
+        standby_carry_numer = c2.next_standby_carry_numer,
+        balance_cents = COALESCE(c.total_credits, 0) - (
+          c2.inference_used_cents + c2.standby_used_cents
+          + c2.delta_inference_cents + c2.delta_standby_cents
+        ),
         quota_exceeded =
-          (COALESCE(c.total_credits, 0) - (q.used_cents + a.delta_cents)) <= q.threshold_cents
-      FROM agg a
-      LEFT JOIN credits c ON c.tenant = a.tenant
-      WHERE q.tenant = a.tenant
+          (
+            COALESCE(c.total_credits, 0) - (
+              c2.inference_used_cents + c2.standby_used_cents
+              + c2.delta_inference_cents + c2.delta_standby_cents
+            )
+          ) <= c2.threshold_cents
+      FROM calc c2
+      LEFT JOIN credits c ON c.tenant = c2.tenant
+      WHERE q.tenant = c2.tenant
       RETURNING
         q.tenant,
         q.used_cents,
@@ -111,7 +143,7 @@ data:
         COALESCE(c.total_credits, 0) AS credits_cents
     ),
 
-    -- 7) Mark exactly the locked batch rows as processed
+    -- 8) Mark exactly the locked batch rows as processed
     mark_processed AS (
       UPDATE UsageTick t
       SET processed_at = now()
@@ -119,7 +151,7 @@ data:
       RETURNING t.id
     )
 
-    -- 8) Return only tenants where quota_exceeded changed
+    -- 9) Return only tenants where quota_exceeded changed
     SELECT
       u.tenant,
       u.credits_cents,
@@ -135,15 +167,19 @@ data:
   # Shell script to check quotas and update etcd via gateway API
   quota-check.sh: |
     #!/bin/sh
-    set -e
+    set -eu
 
     GATEWAY_URL="${GATEWAY_URL:-http://gateway:4000}"
     API_KEY="${API_KEY:-}"
+    TMPFILE="$(mktemp)"
+    trap 'rm -f "${TMPFILE}"' EXIT INT TERM
 
     echo "Checking tenant quotas (incremental)..."
 
-    # Update usage and quota_exceeded atomically in SQL, returns only changed tenants
-    psql -q -t -A -F',' -f /scripts/update-and-check-quota.sql | while IFS=',' read -r tenant credits used balance quota_exceeded; do
+    # Update usage and quota_exceeded atomically in SQL, then sync only tenants
+    # whose state changed in this batch.
+    psql -v ON_ERROR_STOP=1 -q -t -A -F',' -f /scripts/update-and-check-quota.sql >"${TMPFILE}"
+    while IFS=',' read -r tenant credits used balance quota_exceeded; do
       # Skip empty lines
       [ -z "$tenant" ] && continue
 
@@ -152,28 +188,635 @@ data:
       case "${quota_exceeded}" in
         true|false) ;;
         *)
-          echo "Invalid quota_exceeded value '${quota_exceeded}' for ${tenant}, skipping update"
-          echo ""
-          continue
+          echo "Invalid quota_exceeded value '${quota_exceeded}' for ${tenant}, aborting sync" >&2
+          exit 1
           ;;
       esac
 
-      # Server-side CAS update to avoid stale writes clobbering concurrent tenant changes.
       curl -sS -f -X POST "${GATEWAY_URL}/tenant/${tenant}/quota-exceeded" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${API_KEY}" \
-        -d "{\"quota_exceeded\": ${quota_exceeded}}" || echo "Failed to update tenant ${tenant}"
+        -d "{\"quota_exceeded\": ${quota_exceeded}}"
 
       echo ""
-    done
+    done <"${TMPFILE}"
 
     echo "Quota check completed."
+
+  # One-shot full DB-to-gateway reconciliation for backfill completion or manual repair.
+  sync-tenant-quota-exceeded.sh: |
+    #!/bin/sh
+    set -eu
+
+    GATEWAY_URL="${GATEWAY_URL:-http://gateway:4000}"
+    API_KEY="${API_KEY:-}"
+    TMPFILE="$(mktemp)"
+    trap 'rm -f "${TMPFILE}"' EXIT INT TERM
+
+    psql -v ON_ERROR_STOP=1 -q -t -A -F',' -c "
+      SELECT
+        tenant,
+        CASE WHEN COALESCE(quota_exceeded, false) THEN 'true' ELSE 'false' END AS quota_exceeded
+      FROM TenantQuota
+      ORDER BY tenant
+    " >"${TMPFILE}"
+
+    while IFS=',' read -r tenant quota_exceeded; do
+      [ -z "$tenant" ] && continue
+
+      case "${quota_exceeded}" in
+        true|false) ;;
+        *)
+          echo "Invalid quota_exceeded value '${quota_exceeded}' for ${tenant}, aborting sync" >&2
+          exit 1
+          ;;
+      esac
+
+      curl -sS -f -X POST "${GATEWAY_URL}/tenant/${tenant}/quota-exceeded" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -d "{\"quota_exceeded\": ${quota_exceeded}}"
+    done <"${TMPFILE}"
+
+    echo "Tenant quota_exceeded sync completed."
+
+  migrate-tenant-quota-carry.sql: |
+    \set ON_ERROR_STOP on
+
+    ALTER TABLE TenantQuota
+      ADD COLUMN IF NOT EXISTS inference_carry_numer BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS standby_carry_numer BIGINT NOT NULL DEFAULT 0;
+
+  backfill-tenant-quota-carry.sql: |
+    \set ON_ERROR_STOP on
+
+    BEGIN;
+
+    -- Recompute TenantQuota exactly for all ticks strictly before :backfill_cutoff.
+    -- Run only while billing-quota-check is suspended.
+    WITH params AS (
+      SELECT :'backfill_cutoff'::timestamptz AS cutoff
+    ),
+    target_tenants AS (
+      SELECT tenant FROM TenantQuota
+      UNION
+      SELECT tenant FROM TenantCreditHistory
+      UNION
+      SELECT DISTINCT t.tenant
+      FROM UsageTick t
+      JOIN params p ON TRUE
+      WHERE t.tick_time < p.cutoff
+    )
+    INSERT INTO TenantQuota (tenant)
+    SELECT tenant
+    FROM target_tenants
+    ON CONFLICT (tenant) DO NOTHING;
+
+    WITH params AS (
+      SELECT :'backfill_cutoff'::timestamptz AS cutoff
+    ),
+    credits AS (
+      SELECT
+        h.tenant,
+        COALESCE(SUM(h.amount_cents), 0)::bigint AS total_credits
+      FROM TenantCreditHistory h
+      GROUP BY h.tenant
+    ),
+    usage_totals AS (
+      SELECT
+        t.tenant,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_numer
+      FROM UsageTick t
+      JOIN params p ON TRUE
+      WHERE t.tick_time < p.cutoff
+      GROUP BY t.tenant
+    ),
+    target_tenants AS (
+      SELECT tenant FROM TenantQuota
+      UNION
+      SELECT tenant FROM TenantCreditHistory
+      UNION
+      SELECT tenant FROM usage_totals
+    ),
+    recomputed AS (
+      SELECT
+        tt.tenant,
+        COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
+        COALESCE(c.total_credits, 0)::bigint AS total_credits,
+        COALESCE(u.inference_numer, 0)::bigint AS inference_numer,
+        COALESCE(u.standby_numer, 0)::bigint AS standby_numer,
+        COALESCE(u.inference_numer, 0)::bigint / 3600000 AS inference_used_cents,
+        COALESCE(u.standby_numer, 0)::bigint / 3600000 AS standby_used_cents,
+        COALESCE(u.inference_numer, 0)::bigint % 3600000 AS inference_carry_numer,
+        COALESCE(u.standby_numer, 0)::bigint % 3600000 AS standby_carry_numer
+      FROM target_tenants tt
+      LEFT JOIN TenantQuota q ON q.tenant = tt.tenant
+      LEFT JOIN credits c ON c.tenant = tt.tenant
+      LEFT JOIN usage_totals u ON u.tenant = tt.tenant
+    ),
+    updated AS (
+      UPDATE TenantQuota q
+      SET
+        inference_used_cents = r.inference_used_cents,
+        standby_used_cents = r.standby_used_cents,
+        used_cents = r.inference_used_cents + r.standby_used_cents,
+        inference_carry_numer = r.inference_carry_numer,
+        standby_carry_numer = r.standby_carry_numer,
+        balance_cents = r.total_credits - (r.inference_used_cents + r.standby_used_cents),
+        quota_exceeded =
+          (r.total_credits - (r.inference_used_cents + r.standby_used_cents)) <= r.threshold_cents
+      FROM recomputed r
+      WHERE q.tenant = r.tenant
+      RETURNING q.tenant
+    ),
+    mark_processed AS (
+      UPDATE UsageTick t
+      SET processed_at = now()
+      FROM params p
+      WHERE t.processed_at IS NULL
+        AND t.tick_time < p.cutoff
+      RETURNING t.id
+    )
+    SELECT
+      p.cutoff AS backfill_cutoff,
+      (SELECT COUNT(*)::bigint FROM updated) AS updated_tenants,
+      (SELECT COUNT(*)::bigint FROM mark_processed) AS marked_ticks
+    FROM params p
+    GROUP BY p.cutoff;
+
+    COMMIT;
+
+  verify-tenant-quota-carry.sql: |
+    \set ON_ERROR_STOP on
+
+    -- Immediate post-backfill check only.
+    -- This compares TenantQuota to exact totals for tick_time < :backfill_cutoff.
+    -- After billing-quota-check resumes and applies newer ticks, rerunning this
+    -- script with the same cutoff will report mismatches by design.
+    BEGIN;
+
+    CREATE TEMP TABLE verify_tenant_quota_state ON COMMIT DROP AS
+    WITH params AS (
+      SELECT :'backfill_cutoff'::timestamptz AS cutoff
+    ),
+    credits AS (
+      SELECT
+        h.tenant,
+        COALESCE(SUM(h.amount_cents), 0)::bigint AS total_credits
+      FROM TenantCreditHistory h
+      GROUP BY h.tenant
+    ),
+    usage_totals AS (
+      SELECT
+        t.tenant,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_numer
+      FROM UsageTick t
+      JOIN params p ON TRUE
+      WHERE t.tick_time < p.cutoff
+      GROUP BY t.tenant
+    ),
+    expected AS (
+      SELECT
+        q.tenant,
+        q.used_cents,
+        q.inference_used_cents,
+        q.standby_used_cents,
+        q.inference_carry_numer,
+        q.standby_carry_numer,
+        q.balance_cents,
+        q.quota_exceeded,
+        COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
+        COALESCE(c.total_credits, 0)::bigint AS total_credits,
+        COALESCE(u.inference_numer, 0)::bigint / 3600000 AS expected_inference_used_cents,
+        COALESCE(u.standby_numer, 0)::bigint / 3600000 AS expected_standby_used_cents,
+        COALESCE(u.inference_numer, 0)::bigint % 3600000 AS expected_inference_carry_numer,
+        COALESCE(u.standby_numer, 0)::bigint % 3600000 AS expected_standby_carry_numer
+      FROM TenantQuota q
+      LEFT JOIN credits c ON c.tenant = q.tenant
+      LEFT JOIN usage_totals u ON u.tenant = q.tenant
+    )
+    SELECT
+      e.*,
+      e.expected_inference_used_cents + e.expected_standby_used_cents AS expected_used_cents,
+      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents) AS expected_balance_cents,
+      (
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+      ) <= e.threshold_cents AS expected_quota_exceeded,
+      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents) AS split_mismatch,
+      e.inference_carry_numer < 0
+        OR e.inference_carry_numer >= 3600000
+        OR e.standby_carry_numer < 0
+        OR e.standby_carry_numer >= 3600000 AS carry_range_mismatch,
+      e.inference_used_cents IS DISTINCT FROM e.expected_inference_used_cents
+        OR e.standby_used_cents IS DISTINCT FROM e.expected_standby_used_cents
+        OR e.inference_carry_numer IS DISTINCT FROM e.expected_inference_carry_numer
+        OR e.standby_carry_numer IS DISTINCT FROM e.expected_standby_carry_numer AS exact_usage_mismatch,
+      e.balance_cents IS DISTINCT FROM (
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+      ) AS balance_mismatch,
+      e.quota_exceeded IS DISTINCT FROM (
+        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents))
+        <= e.threshold_cents
+      ) AS quota_exceeded_mismatch
+    FROM expected e;
+
+    SELECT
+      tenant,
+      used_cents,
+      expected_used_cents,
+      inference_used_cents,
+      expected_inference_used_cents,
+      standby_used_cents,
+      expected_standby_used_cents,
+      inference_carry_numer,
+      expected_inference_carry_numer,
+      standby_carry_numer,
+      expected_standby_carry_numer,
+      balance_cents,
+      expected_balance_cents,
+      quota_exceeded,
+      expected_quota_exceeded,
+      threshold_cents,
+      total_credits
+    FROM verify_tenant_quota_state
+    WHERE split_mismatch
+       OR carry_range_mismatch
+       OR exact_usage_mismatch
+       OR balance_mismatch
+       OR quota_exceeded_mismatch
+    ORDER BY tenant
+    LIMIT 50;
+
+    CREATE TEMP TABLE verify_tenant_quota_counts ON COMMIT DROP AS
+    SELECT
+      COUNT(*) FILTER (WHERE split_mismatch) AS split_mismatch_count,
+      COUNT(*) FILTER (WHERE carry_range_mismatch) AS carry_range_count,
+      COUNT(*) FILTER (WHERE exact_usage_mismatch) AS exact_usage_mismatch_count,
+      COUNT(*) FILTER (WHERE balance_mismatch) AS balance_mismatch_count,
+      COUNT(*) FILTER (WHERE quota_exceeded_mismatch) AS quota_exceeded_mismatch_count
+    FROM verify_tenant_quota_state;
+
+    SELECT
+      split_mismatch_count,
+      carry_range_count,
+      exact_usage_mismatch_count,
+      balance_mismatch_count,
+      quota_exceeded_mismatch_count
+    FROM verify_tenant_quota_counts;
+
+    SELECT 1 / CASE
+      WHEN split_mismatch_count
+         + carry_range_count
+         + exact_usage_mismatch_count
+         + balance_mismatch_count
+         + quota_exceeded_mismatch_count = 0 THEN 1
+      ELSE 0
+    END AS verification_passed
+    FROM verify_tenant_quota_counts;
+
+    COMMIT;
+
+  verify-tenant-quota-live.sql: |
+    \set ON_ERROR_STOP on
+
+    -- Live post-resume verification.
+    -- This compares current TenantQuota to exact totals derived from already
+    -- processed UsageTick rows. Unprocessed ticks are intentionally excluded so
+    -- the check can run safely between quota-check executions without false
+    -- mismatches from newly arrived but not-yet-billed usage.
+    BEGIN;
+
+    CREATE TEMP TABLE verify_tenant_quota_live_state ON COMMIT DROP AS
+    WITH credits AS (
+      SELECT
+        h.tenant,
+        COALESCE(SUM(h.amount_cents), 0)::bigint AS total_credits
+      FROM TenantCreditHistory h
+      GROUP BY h.tenant
+    ),
+    usage_totals AS (
+      SELECT
+        t.tenant,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_numer
+      FROM UsageTick t
+      WHERE t.processed_at IS NOT NULL
+      GROUP BY t.tenant
+    ),
+    expected AS (
+      SELECT
+        q.tenant,
+        q.used_cents,
+        q.inference_used_cents,
+        q.standby_used_cents,
+        q.inference_carry_numer,
+        q.standby_carry_numer,
+        q.balance_cents,
+        q.quota_exceeded,
+        COALESCE(q.threshold_cents, 0)::bigint AS threshold_cents,
+        COALESCE(c.total_credits, 0)::bigint AS total_credits,
+        COALESCE(u.inference_numer, 0)::bigint / 3600000 AS expected_inference_used_cents,
+        COALESCE(u.standby_numer, 0)::bigint / 3600000 AS expected_standby_used_cents,
+        COALESCE(u.inference_numer, 0)::bigint % 3600000 AS expected_inference_carry_numer,
+        COALESCE(u.standby_numer, 0)::bigint % 3600000 AS expected_standby_carry_numer
+      FROM TenantQuota q
+      LEFT JOIN credits c ON c.tenant = q.tenant
+      LEFT JOIN usage_totals u ON u.tenant = q.tenant
+    )
+    SELECT
+      e.*,
+      e.expected_inference_used_cents + e.expected_standby_used_cents AS expected_used_cents,
+      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents) AS expected_balance_cents,
+      (
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+      ) <= e.threshold_cents AS expected_quota_exceeded,
+      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents) AS split_mismatch,
+      e.inference_carry_numer < 0
+        OR e.inference_carry_numer >= 3600000
+        OR e.standby_carry_numer < 0
+        OR e.standby_carry_numer >= 3600000 AS carry_range_mismatch,
+      e.inference_used_cents IS DISTINCT FROM e.expected_inference_used_cents
+        OR e.standby_used_cents IS DISTINCT FROM e.expected_standby_used_cents
+        OR e.inference_carry_numer IS DISTINCT FROM e.expected_inference_carry_numer
+        OR e.standby_carry_numer IS DISTINCT FROM e.expected_standby_carry_numer AS exact_usage_mismatch,
+      e.balance_cents IS DISTINCT FROM (
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+      ) AS balance_mismatch,
+      e.quota_exceeded IS DISTINCT FROM (
+        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents))
+        <= e.threshold_cents
+      ) AS quota_exceeded_mismatch
+    FROM expected e;
+
+    SELECT
+      tenant,
+      used_cents,
+      expected_used_cents,
+      inference_used_cents,
+      expected_inference_used_cents,
+      standby_used_cents,
+      expected_standby_used_cents,
+      inference_carry_numer,
+      expected_inference_carry_numer,
+      standby_carry_numer,
+      expected_standby_carry_numer,
+      balance_cents,
+      expected_balance_cents,
+      quota_exceeded,
+      expected_quota_exceeded,
+      threshold_cents,
+      total_credits
+    FROM verify_tenant_quota_live_state
+    WHERE split_mismatch
+       OR carry_range_mismatch
+       OR exact_usage_mismatch
+       OR balance_mismatch
+       OR quota_exceeded_mismatch
+    ORDER BY tenant
+    LIMIT 50;
+
+    CREATE TEMP TABLE verify_tenant_quota_live_counts ON COMMIT DROP AS
+    SELECT
+      COUNT(*) FILTER (WHERE split_mismatch) AS split_mismatch_count,
+      COUNT(*) FILTER (WHERE carry_range_mismatch) AS carry_range_count,
+      COUNT(*) FILTER (WHERE exact_usage_mismatch) AS exact_usage_mismatch_count,
+      COUNT(*) FILTER (WHERE balance_mismatch) AS balance_mismatch_count,
+      COUNT(*) FILTER (WHERE quota_exceeded_mismatch) AS quota_exceeded_mismatch_count
+    FROM verify_tenant_quota_live_state;
+
+    SELECT
+      split_mismatch_count,
+      carry_range_count,
+      exact_usage_mismatch_count,
+      balance_mismatch_count,
+      quota_exceeded_mismatch_count
+    FROM verify_tenant_quota_live_counts;
+
+    SELECT 1 / CASE
+      WHEN split_mismatch_count
+         + carry_range_count
+         + exact_usage_mismatch_count
+         + balance_mismatch_count
+         + quota_exceeded_mismatch_count = 0 THEN 1
+      ELSE 0
+    END AS verification_passed
+    FROM verify_tenant_quota_live_counts;
+
+    COMMIT;
+
+  migrate-usage-hourly-by-func-numer.sql: |
+    \set ON_ERROR_STOP on
+
+    ALTER TABLE UsageHourlyByFunc
+      ADD COLUMN IF NOT EXISTS inference_numer BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS standby_numer BIGINT NOT NULL DEFAULT 0;
+
+  verify-usage-hourly-by-func-numer.sql: |
+    \set ON_ERROR_STOP on
+
+    -- Verification recomputes expected hourly rows from UsageTick for the
+    -- selected range and checks both completeness and exact values.
+    -- If UsageTick retention has already deleted source ticks for some hours in
+    -- this range, those rows cannot be exactly backfilled from current data and
+    -- may appear as mismatches because the old cent fields remain populated while
+    -- the new numerator fields stayed at migration defaults.
+    -- In that case, shorten the backfill range to the retained tick window or
+    -- restore the missing UsageTick rows from backup before running verification.
+
+    BEGIN;
+
+    CREATE TEMP TABLE verify_usage_hourly_by_func_state ON COMMIT DROP AS
+    WITH params AS (
+      SELECT
+        date_trunc('hour', :'start_hour'::timestamptz) AS start_hour,
+        date_trunc('hour', :'end_hour'::timestamptz) AS end_hour
+    ),
+    expected AS (
+      SELECT
+        t.tenant,
+        t.namespace,
+        t.funcname,
+        t.fprevision,
+        date_trunc('hour', t.tick_time) AS hour,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS expected_inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count::bigint
+              * t.interval_ms::bigint
+              * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+            ELSE 0
+          END
+        ), 0)::bigint AS expected_standby_numer,
+        SUM(CASE WHEN t.usage_type != 'standby'
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)::bigint AS expected_inference_ms,
+        SUM(CASE WHEN t.usage_type = 'standby'
+          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)::bigint AS expected_standby_ms
+      FROM UsageTick t
+      JOIN params p ON TRUE
+      WHERE t.tick_time >= p.start_hour
+        AND t.tick_time < p.end_hour
+      GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision, date_trunc('hour', t.tick_time)
+    ),
+    actual AS (
+      SELECT
+        h.tenant,
+        h.namespace,
+        h.funcname,
+        h.fprevision,
+        h.hour,
+        h.charge_cents,
+        h.inference_cents,
+        h.standby_cents,
+        h.inference_numer,
+        h.standby_numer,
+        h.inference_ms,
+        h.standby_ms
+      FROM UsageHourlyByFunc h
+      JOIN params p ON TRUE
+      WHERE h.hour >= p.start_hour
+        AND h.hour < p.end_hour
+    )
+    SELECT
+      COALESCE(a.tenant, e.tenant) AS tenant,
+      COALESCE(a.namespace, e.namespace) AS namespace,
+      COALESCE(a.funcname, e.funcname) AS funcname,
+      COALESCE(a.fprevision, e.fprevision) AS fprevision,
+      COALESCE(a.hour, e.hour) AS hour,
+      a.charge_cents,
+      a.inference_cents,
+      a.standby_cents,
+      a.inference_numer,
+      a.standby_numer,
+      a.inference_ms,
+      a.standby_ms,
+      e.expected_inference_numer,
+      e.expected_standby_numer,
+      e.expected_inference_ms,
+      e.expected_standby_ms,
+      a.tenant IS NULL AS missing_actual_row,
+      e.tenant IS NULL AS unexpected_actual_row,
+      a.inference_cents IS DISTINCT FROM a.inference_numer / 3600000 AS inference_cents_self_mismatch,
+      a.standby_cents IS DISTINCT FROM a.standby_numer / 3600000 AS standby_cents_self_mismatch,
+      a.charge_cents IS DISTINCT FROM (a.inference_numer + a.standby_numer) / 3600000 AS charge_cents_self_mismatch,
+      a.inference_numer IS DISTINCT FROM e.expected_inference_numer AS inference_numer_mismatch,
+      a.standby_numer IS DISTINCT FROM e.expected_standby_numer AS standby_numer_mismatch,
+      a.inference_ms IS DISTINCT FROM e.expected_inference_ms AS inference_ms_mismatch,
+      a.standby_ms IS DISTINCT FROM e.expected_standby_ms AS standby_ms_mismatch
+    FROM actual a
+    FULL OUTER JOIN expected e
+      ON e.tenant = a.tenant
+     AND e.namespace = a.namespace
+     AND e.funcname = a.funcname
+     AND e.fprevision = a.fprevision
+     AND e.hour = a.hour
+    WHERE a.tenant IS NULL
+       OR e.tenant IS NULL
+       OR a.inference_cents IS DISTINCT FROM a.inference_numer / 3600000
+       OR a.standby_cents IS DISTINCT FROM a.standby_numer / 3600000
+       OR a.charge_cents IS DISTINCT FROM (a.inference_numer + a.standby_numer) / 3600000
+       OR a.inference_numer IS DISTINCT FROM e.expected_inference_numer
+       OR a.standby_numer IS DISTINCT FROM e.expected_standby_numer
+       OR a.inference_ms IS DISTINCT FROM e.expected_inference_ms
+       OR a.standby_ms IS DISTINCT FROM e.expected_standby_ms;
+
+    SELECT *
+    FROM verify_usage_hourly_by_func_state
+    ORDER BY tenant, namespace, funcname, fprevision, hour
+    LIMIT 50;
+
+    CREATE TEMP TABLE verify_usage_hourly_by_func_counts ON COMMIT DROP AS
+    SELECT
+      COUNT(*) FILTER (WHERE missing_actual_row) AS missing_actual_row_count,
+      COUNT(*) FILTER (WHERE unexpected_actual_row) AS unexpected_actual_row_count,
+      COUNT(*) FILTER (
+        WHERE inference_cents_self_mismatch
+           OR standby_cents_self_mismatch
+           OR charge_cents_self_mismatch
+      ) AS cent_self_mismatch_count,
+      COUNT(*) FILTER (
+        WHERE inference_numer_mismatch
+           OR standby_numer_mismatch
+           OR inference_ms_mismatch
+           OR standby_ms_mismatch
+      ) AS exact_value_mismatch_count
+    FROM verify_usage_hourly_by_func_state;
+
+    SELECT
+      missing_actual_row_count,
+      unexpected_actual_row_count,
+      cent_self_mismatch_count,
+      exact_value_mismatch_count
+    FROM verify_usage_hourly_by_func_counts;
+
+    SELECT 1 / CASE
+      WHEN missing_actual_row_count
+         + unexpected_actual_row_count
+         + cent_self_mismatch_count
+         + exact_value_mismatch_count = 0 THEN 1
+      ELSE 0
+    END AS verification_passed
+    FROM verify_usage_hourly_by_func_counts;
+
+    COMMIT;
 
   # -- Old hourly-aggregate.sql targeting UsageHourly (kept for reference):
   # -- INSERT INTO UsageHourly (tenant, hour, ...) SELECT ... FROM UsageTick
   # -- GROUP BY tenant, hour ON CONFLICT (tenant, hour) DO UPDATE SET ...
 
   hourly-aggregate.sql: |
+    \set ON_ERROR_STOP on
+
     -- Aggregate ticks from the last 3 hours into UsageHourlyByFunc
     -- Uses a 3-hour window for self-healing: if a cron run is missed,
     -- the next run will fill in the gap. ON CONFLICT makes this idempotent.
@@ -183,44 +826,66 @@ data:
         t.namespace,
         t.funcname,
         t.fprevision,
-        t.tick_time,
-        t.interval_ms,
-        t.gpu_count,
+        date_trunc('hour', t.tick_time) AS hour,
+        t.interval_ms::bigint AS interval_ms,
+        t.gpu_count::bigint AS gpu_count,
         t.usage_type,
-        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
       FROM UsageTick t
       WHERE t.tick_time >= date_trunc('hour', NOW() - INTERVAL '3 hours')
         AND t.tick_time < date_trunc('hour', NOW())
+    ),
+    hourly AS (
+      SELECT
+        t.tenant,
+        t.namespace,
+        t.funcname,
+        t.fprevision,
+        t.hour,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count * t.interval_ms * t.rate_cents_per_hour
+            ELSE 0
+          END
+        ), 0)::bigint AS inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count * t.interval_ms * t.rate_cents_per_hour
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_numer,
+        SUM(CASE WHEN t.usage_type != 'standby'
+          THEN t.interval_ms * t.gpu_count ELSE 0 END)::bigint AS inference_ms,
+        SUM(CASE WHEN t.usage_type = 'standby'
+          THEN t.interval_ms * t.gpu_count ELSE 0 END)::bigint AS standby_ms
+      FROM tick_with_rate t
+      GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision, t.hour
     )
     INSERT INTO UsageHourlyByFunc
       (tenant, namespace, funcname, fprevision, hour,
-       charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+       charge_cents, inference_cents, standby_cents,
+       inference_numer, standby_numer, inference_ms, standby_ms)
     SELECT
-      t.tenant,
-      t.namespace,
-      t.funcname,
-      t.fprevision,
-      date_trunc('hour', t.tick_time) as hour,
-      (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
-        / 3600000)::bigint,
-      (SUM(CASE WHEN t.usage_type != 'standby'
-        THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
-        ELSE 0 END) / 3600000)::bigint,
-      (SUM(CASE WHEN t.usage_type = 'standby'
-        THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
-        ELSE 0 END) / 3600000)::bigint,
-      SUM(CASE WHEN t.usage_type != 'standby'
-        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END),
-      SUM(CASE WHEN t.usage_type = 'standby'
-        THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)
-    FROM tick_with_rate t
-    GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision,
-             date_trunc('hour', t.tick_time)
+      h.tenant,
+      h.namespace,
+      h.funcname,
+      h.fprevision,
+      h.hour,
+      (h.inference_numer + h.standby_numer) / 3600000,
+      h.inference_numer / 3600000,
+      h.standby_numer / 3600000,
+      h.inference_numer,
+      h.standby_numer,
+      h.inference_ms,
+      h.standby_ms
+    FROM hourly h
     ON CONFLICT (tenant, namespace, funcname, fprevision, hour)
     DO UPDATE SET
       charge_cents = EXCLUDED.charge_cents,
       inference_cents = EXCLUDED.inference_cents,
       standby_cents = EXCLUDED.standby_cents,
+      inference_numer = EXCLUDED.inference_numer,
+      standby_numer = EXCLUDED.standby_numer,
       inference_ms = EXCLUDED.inference_ms,
       standby_ms = EXCLUDED.standby_ms;
 
@@ -243,6 +908,8 @@ data:
   #   ON CONFLICT (tenant, hour) DO UPDATE SET ...
 
   hourly-aggregate-by-func-range.sql: |
+    \set ON_ERROR_STOP on
+
     -- Backfill UsageHourlyByFunc for a custom [start_hour, end_hour) UTC range.
     -- Example:
     -- psql -v start_hour='2026-02-01T00:00:00Z' -v end_hour='2026-02-09T00:00:00Z' -f /scripts/hourly-aggregate-by-func-range.sql
@@ -259,46 +926,68 @@ data:
         t.namespace,
         t.funcname,
         t.fprevision,
-        t.tick_time,
-        t.interval_ms,
-        t.gpu_count,
+        date_trunc('hour', t.tick_time) AS hour,
+        t.interval_ms::bigint AS interval_ms,
+        t.gpu_count::bigint AS gpu_count,
         t.usage_type,
-        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::numeric AS rate_cents_per_hour
+        GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint AS rate_cents_per_hour
       FROM UsageTick t
       JOIN params p ON TRUE
       WHERE t.tick_time >= p.start_hour
         AND t.tick_time < p.end_hour
     ),
-    upserted AS (
-      INSERT INTO UsageHourlyByFunc
-        (tenant, namespace, funcname, fprevision, hour,
-         charge_cents, inference_cents, standby_cents, inference_ms, standby_ms)
+    hourly AS (
       SELECT
         t.tenant,
         t.namespace,
         t.funcname,
         t.fprevision,
-        date_trunc('hour', t.tick_time) as hour,
-        (SUM(t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour)
-          / 3600000)::bigint,
-        (SUM(CASE WHEN t.usage_type != 'standby'
-          THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
-          ELSE 0 END) / 3600000)::bigint,
-        (SUM(CASE WHEN t.usage_type = 'standby'
-          THEN t.gpu_count::numeric * t.interval_ms::numeric * t.rate_cents_per_hour
-          ELSE 0 END) / 3600000)::bigint,
+        t.hour,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type != 'standby'
+            THEN t.gpu_count * t.interval_ms * t.rate_cents_per_hour
+            ELSE 0
+          END
+        ), 0)::bigint AS inference_numer,
+        COALESCE(SUM(
+          CASE WHEN t.usage_type = 'standby'
+            THEN t.gpu_count * t.interval_ms * t.rate_cents_per_hour
+            ELSE 0
+          END
+        ), 0)::bigint AS standby_numer,
         SUM(CASE WHEN t.usage_type != 'standby'
-          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END),
+          THEN t.interval_ms * t.gpu_count ELSE 0 END)::bigint AS inference_ms,
         SUM(CASE WHEN t.usage_type = 'standby'
-          THEN t.interval_ms::bigint * t.gpu_count::bigint ELSE 0 END)
+          THEN t.interval_ms * t.gpu_count ELSE 0 END)::bigint AS standby_ms
       FROM tick_with_rate t
-      GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision,
-               date_trunc('hour', t.tick_time)
+      GROUP BY t.tenant, t.namespace, t.funcname, t.fprevision, t.hour
+    ),
+    upserted AS (
+      INSERT INTO UsageHourlyByFunc
+        (tenant, namespace, funcname, fprevision, hour,
+         charge_cents, inference_cents, standby_cents,
+         inference_numer, standby_numer, inference_ms, standby_ms)
+      SELECT
+        h.tenant,
+        h.namespace,
+        h.funcname,
+        h.fprevision,
+        h.hour,
+        (h.inference_numer + h.standby_numer) / 3600000,
+        h.inference_numer / 3600000,
+        h.standby_numer / 3600000,
+        h.inference_numer,
+        h.standby_numer,
+        h.inference_ms,
+        h.standby_ms
+      FROM hourly h
       ON CONFLICT (tenant, namespace, funcname, fprevision, hour)
       DO UPDATE SET
         charge_cents = EXCLUDED.charge_cents,
         inference_cents = EXCLUDED.inference_cents,
         standby_cents = EXCLUDED.standby_cents,
+        inference_numer = EXCLUDED.inference_numer,
+        standby_numer = EXCLUDED.standby_numer,
         inference_ms = EXCLUDED.inference_ms,
         standby_ms = EXCLUDED.standby_ms
       RETURNING tenant, hour

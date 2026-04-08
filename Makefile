@@ -1,7 +1,7 @@
 ARCH := ${shell uname -m}
-PLATFORM_VERSION ?= v0.2.4.1
+PLATFORM_VERSION ?= v0.2.4.2
 DB_VERSION ?= v0.2.4
-DASHBOARD_VERSION ?= v0.2.4.3
+DASHBOARD_VERSION ?= v0.2.4.4
 RUNTIME_VERSION ?= v0.2.4
 NA_VERSION ?= v0.2.4
 RUNMODEL_VERSION ?= v0.2.4.1
@@ -123,7 +123,8 @@ pushspdk:
 	sudo docker push inferx/spdk-container2:$(SPDK_VERSION)
 
 sql:
-	sudo cp ./dashboard/sql/create_table.sql /opt/inferx/config
+	sudo cp ./dashboard/sql/audit.sql /opt/inferx/config
+	sudo cp ./dashboard/sql/billing.sql /opt/inferx/config
 	sudo cp ./dashboard/sql/secret.sql /opt/inferx/config
 
 db: 
@@ -215,7 +216,6 @@ stopstatesvc:
 	sudo kubectl delete deployment statesvc
 
 rundb:
-	VERSION=$(DB_VERSION) envsubst < k8s/db-deployment.yaml | sudo kubectl apply -f -
 	VERSION=$(DB_VERSION) envsubst < k8s/db-audit.yaml | sudo kubectl apply -f -
 	VERSION=$(DB_VERSION) envsubst < k8s/db-billing.yaml | sudo kubectl apply -f -
 

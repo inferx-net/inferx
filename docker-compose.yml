@@ -23,11 +23,25 @@ services:
       - POSTGRES_PASSWORD=123456
       - POSTGRES_DB=auditdb
       - PGDATA=/data/postgres
-      - INIT_SQL=create_table.sql 
+      - INIT_SQL=audit.sql
     ports:
       - '5432:5432'
     volumes:
       - /opt/inferx/data/postgres:/data/postgres
+  billing_db:
+    image: inferx/inferx_postgres:${DBVersion}
+    restart: unless-stopped
+    container_name: billing_db
+    environment:
+      - POSTGRES_USER=billing_user
+      - POSTGRES_PASSWORD=123456
+      - POSTGRES_DB=billingdb
+      - PGDATA=/data/postgres
+      - INIT_SQL=billing.sql
+    ports:
+      - '5433:5432'
+    volumes:
+      - /opt/inferx/data/postgres_billing:/data/postgres
   etcd:
     image: quay.io/coreos/etcd:v3.5.13
     restart: unless-stopped
@@ -60,6 +74,7 @@ services:
       - ETCD_ADDR=http://localhost:2379
       - STATESVC_ADDR=http://localhost:1237
       - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+      - BILLINGDB_ADDR=postgresql://billing_user:123456@localhost:5433/billingdb
       - SECRDB_ADDR=postgresql://secret:123456@localhost:5431/secretdb
     pid: "host"
     healthcheck:
@@ -69,6 +84,8 @@ services:
       retries: 3
     depends_on:
       db:
+        condition: service_started
+      billing_db:
         condition: service_started
       etcd:
         condition: service_started
@@ -97,9 +114,12 @@ services:
       - NODE_NAME=${HOSTNAME}
       - ETCD_ADDR=http://localhost:2379
       - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+      - BILLINGDB_ADDR=postgresql://billing_user:123456@localhost:5433/billingdb
     pid: "host"
     depends_on:
       db:
+        condition: service_started
+      billing_db:
         condition: service_started
       etcd:
         condition: service_started
@@ -157,6 +177,7 @@ services:
       - ENALBE_BLOB=false
       - ETCD_ADDR=http://localhost:2379
       - AUDITDB_ADDR=postgresql://audit_user:123456@localhost:5432/auditdb
+      - BILLINGDB_ADDR=postgresql://billing_user:123456@localhost:5433/billingdb
     pid: "host"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:1240" ]
@@ -165,6 +186,8 @@ services:
       retries: 3
     depends_on:
       db:
+        condition: service_started
+      billing_db:
         condition: service_started
       etcd:
         condition: service_started

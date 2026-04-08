@@ -14,6 +14,7 @@ metadata:
   name: billing-quota-check
 spec:
   schedule: "* * * * *"  # Every minute
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -29,6 +30,9 @@ spec:
                 - /bin/sh
                 - -c
                 - |
+                  # Leave this CronJob suspended until the carry-column backfill has completed.
+                  # Resume with:
+                  # kubectl patch cronjob billing-quota-check -p '{"spec":{"suspend":false}}'
                   sh /scripts/quota-check.sh
               env:
                 - name: PGHOST
@@ -79,8 +83,12 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  set -e
-                  psql -f /scripts/hourly-aggregate.sql
+                  set -eu
+                  # Shared ConfigMap rollout is safe because the hourly job
+                  # applies the numerator-column migration before using the
+                  # upgraded aggregation SQL.
+                  psql -v ON_ERROR_STOP=1 -f /scripts/migrate-usage-hourly-by-func-numer.sql
+                  psql -v ON_ERROR_STOP=1 -f /scripts/hourly-aggregate.sql
               env:
                 - name: PGHOST
                   value: billingdb

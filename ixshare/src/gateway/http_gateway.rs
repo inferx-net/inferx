@@ -2230,11 +2230,19 @@ struct HourlyUsageRecord {
     standby_cents: i64,
     inference_ms: i64,
     standby_ms: i64,
+    inference_numer: i64,
+    standby_numer: i64,
 }
 
 #[derive(Serialize)]
 struct HourlyUsageResponse {
     usage: Vec<HourlyUsageRecord>,
+    inference_ms: i64,
+    standby_ms: i64,
+    total_ms: i64,
+    inference_cents: i64,
+    standby_cents: i64,
+    total_cents: i64,
     timezone: String,
 }
 
@@ -2326,30 +2334,76 @@ fn ParseHourlyRange(
     Ok((start_hour, end_hour, hours))
 }
 
-fn BuildHourlyUsage(usage_records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64)>, start_hour: DateTime<Utc>, total_hours: i32) -> Vec<HourlyUsageRecord> {
-    let mut usage_map: std::collections::HashMap<String, (i64, i64, i64, i64, i64)> = std::collections::HashMap::new();
-    for (hour, charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) in usage_records {
+fn BuildHourlyUsage(
+    usage_records: Vec<(DateTime<Utc>, i64, i64, i64, i64, i64, i64, i64)>,
+    start_hour: DateTime<Utc>,
+    total_hours: i32,
+) -> HourlyUsageResponse {
+    let mut usage_map: std::collections::HashMap<String, HourlyUsageRecord> =
+        std::collections::HashMap::new();
+    let mut total_inference_ms: i64 = 0;
+    let mut total_standby_ms: i64 = 0;
+    let mut total_inference_numer: i64 = 0;
+    let mut total_standby_numer: i64 = 0;
+
+    for (
+        hour,
+        charge_cents,
+        inference_cents,
+        standby_cents,
+        inference_ms,
+        standby_ms,
+        inference_numer,
+        standby_numer,
+    ) in usage_records
+    {
         let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-        usage_map.insert(hour_key, (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms));
+        usage_map.insert(
+            hour_key.clone(),
+            HourlyUsageRecord {
+                hour: hour_key,
+                charge_cents,
+                inference_cents,
+                standby_cents,
+                inference_ms,
+                standby_ms,
+                inference_numer,
+                standby_numer,
+            },
+        );
+        total_inference_ms += inference_ms;
+        total_standby_ms += standby_ms;
+        total_inference_numer += inference_numer;
+        total_standby_numer += standby_numer;
     }
 
     let mut usage: Vec<HourlyUsageRecord> = Vec::with_capacity(total_hours as usize);
     for i in 0..total_hours {
         let hour = start_hour + chrono::Duration::hours(i as i64);
         let hour_key = hour.format("%Y-%m-%dT%H:00:00Z").to_string();
-        let (charge_cents, inference_cents, standby_cents, inference_ms, standby_ms) =
-            usage_map.get(&hour_key).copied().unwrap_or((0, 0, 0, 0, 0));
-        usage.push(HourlyUsageRecord {
+        usage.push(usage_map.remove(&hour_key).unwrap_or(HourlyUsageRecord {
             hour: hour_key,
-            charge_cents,
-            inference_cents,
-            standby_cents,
-            inference_ms,
-            standby_ms,
-        });
+            charge_cents: 0,
+            inference_cents: 0,
+            standby_cents: 0,
+            inference_ms: 0,
+            standby_ms: 0,
+            inference_numer: 0,
+            standby_numer: 0,
+        }));
     }
 
-    usage
+    let total_ms = total_inference_ms + total_standby_ms;
+    HourlyUsageResponse {
+        usage,
+        inference_ms: total_inference_ms,
+        standby_ms: total_standby_ms,
+        total_ms,
+        inference_cents: total_inference_numer / 3600000,
+        standby_cents: total_standby_numer / 3600000,
+        total_cents: (total_inference_numer + total_standby_numer) / 3600000,
+        timezone: "UTC".to_string(),
+    }
 }
 
 #[derive(Serialize)]
@@ -3203,11 +3257,7 @@ async fn GetTenantHourlyUsage(
         .await
     {
         Ok(records) => {
-            let usage = BuildHourlyUsage(records, start_hour, total_hours);
-            let resp_body = HourlyUsageResponse {
-                usage,
-                timezone: "UTC".to_string(),
-            };
+            let resp_body = BuildHourlyUsage(records, start_hour, total_hours);
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -3368,11 +3418,7 @@ async fn GetTenantHourlyUsageByModel(
         .await
     {
         Ok(records) => {
-            let usage = BuildHourlyUsage(records, start_hour, total_hours);
-            let resp_body = HourlyUsageResponse {
-                usage,
-                timezone: "UTC".to_string(),
-            };
+            let resp_body = BuildHourlyUsage(records, start_hour, total_hours);
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -3429,11 +3475,7 @@ async fn GetTenantHourlyUsageByNamespace(
         .await
     {
         Ok(records) => {
-            let usage = BuildHourlyUsage(records, start_hour, total_hours);
-            let resp_body = HourlyUsageResponse {
-                usage,
-                timezone: "UTC".to_string(),
-            };
+            let resp_body = BuildHourlyUsage(records, start_hour, total_hours);
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()

@@ -1,0 +1,5 @@
+\set ON_ERROR_STOP on
+
+ALTER TABLE TenantQuota
+    ADD COLUMN IF NOT EXISTS inference_carry_numer BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS standby_carry_numer BIGINT NOT NULL DEFAULT 0;

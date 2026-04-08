@@ -60,11 +60,11 @@ spec:
               # MUST be replaced before applying this Job.
               # Choose the UTC start timestamp for the hourly backfill range.
               # After hour truncation it must still be earlier than BACKFILL_END.
-              value: "REPLACE_WITH_START_TIMESTAMP"
+              value: "2026-03-11T05:00:00Z"
             - name: BACKFILL_END
               # MUST be replaced before applying this Job.
               # Choose the end-exclusive UTC timestamp for the same backfill range.
-              value: "REPLACE_WITH_END_TIMESTAMP"
+              value: "2026-04-08T00:00:00Z"
           volumeMounts:
             - name: sql-scripts
               mountPath: /scripts
