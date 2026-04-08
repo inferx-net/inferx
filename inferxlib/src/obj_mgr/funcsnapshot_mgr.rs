@@ -13,6 +13,9 @@ pub struct SnapshotInfo {
     pub fatbinSize: u64,
     pub gpuMemSizes: BTreeMap<i32, u64>,
     pub standby: Standby,
+
+    #[serde(default)]
+    pub containerImage: String,
 }
 
 pub const ONE_GB: u64 = 1 << 30;
