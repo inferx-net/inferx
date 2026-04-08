@@ -10,21 +10,58 @@
     }
 
     .tab {
-        overflow: hidden;
-        border-bottom: 1px solid #ccc;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid #d7dee8;
     }
 
     .tab button {
-        background-color: inherit;
-        float: left;
+        background: transparent;
+        color: #475569;
         border: none;
+        border-radius: 0;
         outline: none;
-        padding: 10px 16px;
+        padding: 8px 6px 10px 6px;
         cursor: pointer;
+        font-size: clamp(17px, 1.35vw, 20px);
+        font-weight: 600;
+        line-height: 1.15;
+        position: relative;
+        transition: color 120ms ease, background-color 120ms ease;
+    }
+
+    .tab button::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -8px;
+        height: 2px;
+        background: transparent;
+        border-radius: 999px;
+    }
+
+    .tab button:hover {
+        background: transparent;
+        color: #1f2937;
     }
 
     .tab button.active {
-        background-color: #ccc;
+        background: transparent;
+        color: #be123c;
+    }
+
+    .tab button.active::after {
+        background: #d64161;
+    }
+
+    .tab button:focus-visible {
+        outline: 2px solid #f3b4c0;
+        outline-offset: 2px;
     }
 
     .tabcontent {
@@ -37,38 +74,11 @@
         display: block;
     }
 
-    /* Non-Billing admin tables */
-    .admin-data-table {
+    /* Non-billing admin tables reuse the shared .ix-table visuals from base.html.
+       Keep .admin-data-table as an admin-specific sizing alias. */
+    .content table.admin-data-table {
         width: 100%;
-        border-collapse: collapse;
-        background: #fff;
         font-size: 14px;
-    }
-
-    .admin-data-table th,
-    .admin-data-table td {
-        border: 1px solid #aebfd1;
-        padding: 8px 10px;
-        vertical-align: middle;
-        text-align: center;
-    }
-
-    .admin-data-table th {
-        background: #f8fafc;
-        color: #334155;
-        font-weight: 600;
-    }
-
-    .admin-data-table tbody tr:nth-child(odd) {
-        background: #ffffff;
-    }
-
-    .admin-data-table tbody tr:nth-child(even) {
-        background: #edf3fb;
-    }
-
-    .admin-data-table tbody tr:hover {
-        background: #e2ecf9;
     }
 
     /* API key section polish */
@@ -78,22 +88,25 @@
         justify-content: flex-start;
     }
 
-    #Apikeys .apikey-actions button {
+    #Apikeys .apikey-actions button,
+    #Namespaces .namespace-actions button {
         padding: 8px 14px;
         border: 1px solid #c9d5e6;
-        border-radius: 0;
+        border-radius: 4px;
         background: #ffffff;
         color: #334155;
         font-weight: 600;
         cursor: pointer;
     }
 
-    #Apikeys .apikey-actions button:enabled:hover {
+    #Apikeys .apikey-actions button:enabled:hover,
+    #Namespaces .namespace-actions button:enabled:hover {
         background: #f6faff;
         border-color: #afc2db;
     }
 
-    #Apikeys .apikey-actions button:disabled {
+    #Apikeys .apikey-actions button:disabled,
+    #Namespaces .namespace-actions button:disabled {
         background: #f3f4f6;
         color: #9ca3af;
         border-color: #d1d5db;
@@ -102,11 +115,121 @@
         opacity: 0.75;
     }
 
+    /* Namespace tab polish */
+    #Namespaces .namespace-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-start;
+    }
+
+    #Namespaces .namespace-create-card {
+        margin-top: 16px;
+        padding: 14px 16px 16px 16px;
+        border: 1px solid #cbd8ea;
+        border-radius: 2px;
+        background: linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
+    }
+
+    #Namespaces .namespace-create-card h2 {
+        margin: 0;
+        font-size: 18px;
+        color: #1f2937;
+    }
+
+    #Namespaces .namespace-create-hint {
+        margin: 6px 0 12px 0;
+        font-size: 13px;
+        color: #546274;
+    }
+
+    #Namespaces .namespace-create-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        align-items: end;
+    }
+
+    #Namespaces .namespace-field label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 13px;
+        color: #334155;
+        font-weight: 600;
+    }
+
+    #Namespaces .namespace-field input,
+    #Namespaces .namespace-field select {
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #fff;
+        color: #1f2937;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    #Namespaces .namespace-field input:focus,
+    #Namespaces .namespace-field select:focus {
+        outline: none;
+        border-color: #6b9ad6;
+        box-shadow: 0 0 0 2px rgba(107, 154, 214, 0.18);
+    }
+
+    #Namespaces .namespace-field-readonly {
+        width: 100%;
+        min-height: 36px;
+        padding: 7px 9px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #1f2937;
+        font-size: 14px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+    }
+
+    #Namespaces .namespace-create-submit {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    #Namespaces .namespace-create-submit button {
+        min-width: 170px;
+        padding: 9px 14px;
+        border: 1px solid #2f6fb2;
+        border-radius: 4px;
+        background: #3b82f6;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    #Namespaces .namespace-create-submit button:hover {
+        background: #2f74e8;
+    }
+
+    @media (max-width: 720px) {
+        #Namespaces .namespace-create-grid {
+            grid-template-columns: 1fr;
+        }
+
+        #Namespaces .namespace-create-submit button {
+            width: 100%;
+        }
+    }
+
     #Apikeys .apikey-raw-value {
+        display: inline-block;
+        max-width: calc(100% - 34px);
         font-family: monospace;
         font-size: 12px;
         letter-spacing: 0.2px;
         color: #334155;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        vertical-align: middle;
     }
 
     #Apikeys .apikey-copy-cell-btn {
@@ -115,7 +238,7 @@
         height: 24px;
         padding: 0;
         border: 1px solid #c9d5e6;
-        border-radius: 0;
+        border-radius: 4px;
         background: #ffffff;
         color: #334155;
         display: inline-flex;
@@ -171,7 +294,7 @@
         margin-top: 16px;
         padding: 14px 16px 16px 16px;
         border: 1px solid #cbd8ea;
-        border-radius: 0;
+        border-radius: 2px;
         background: linear-gradient(180deg, #f8fbff 0%, #f3f8ff 100%);
     }
 
@@ -239,7 +362,7 @@
         width: 100%;
         padding: 7px 9px;
         border: 1px solid #b7c6dc;
-        border-radius: 0;
+        border-radius: 4px;
         background: #fff;
         color: #1f2937;
         font-size: 14px;
@@ -253,6 +376,20 @@
         box-shadow: 0 0 0 2px rgba(107, 154, 214, 0.18);
     }
 
+    #Apikeys .apikey-field-readonly {
+        width: 100%;
+        min-height: 36px;
+        padding: 7px 9px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #1f2937;
+        font-size: 14px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+    }
+
     #Apikeys .apikey-create-submit {
         display: flex;
         justify-content: flex-end;
@@ -262,7 +399,7 @@
         min-width: 150px;
         padding: 9px 14px;
         border: 1px solid #2f6fb2;
-        border-radius: 0;
+        border-radius: 4px;
         background: #3b82f6;
         color: #fff;
         font-weight: 600;
@@ -537,7 +674,7 @@
         margin: 0;
         padding: 6px 14px;
         border: 1px solid #d1d9e6;
-        border-radius: 8px;
+        border-radius: 4px;
         background: #ffffff;
         color: #334155;
     }
@@ -551,20 +688,48 @@
         color: #475569;
         font-weight: 600;
     }
+
+    #Billing .billing-tenant-readonly {
+        display: none;
+        min-width: 220px;
+        padding: 6px 10px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #1f2937;
+        font-size: 14px;
+        line-height: 1.3;
+        vertical-align: middle;
+        box-sizing: border-box;
+    }
+
+    .billing-admin-tenant-link {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: #2563eb;
+        text-decoration: underline;
+        cursor: pointer;
+        font: inherit;
+    }
+
+    .billing-admin-tenant-link:hover {
+        color: #1d4ed8;
+    }
+
 </style>
 
 <div class="tab">
-    <button class="tablinks" onclick="openTab(event, 'Models')" style="font-size: 25px;">Models</button>
-    <button class="tablinks" onclick="openTab(event, 'Namespaces')" style="font-size: 25px;">Namespaces</button>
-    <button class="tablinks" onclick="openTab(event, 'Tenants')" style="font-size: 25px;">Tenants</button>
-    <button class="tablinks" onclick="openTab(event, 'Roles')" style="font-size: 25px;">Roles</button>
-    <button class="tablinks" onclick="openTab(event, 'Apikeys')" style="font-size: 25px;">Apikeys</button>
-    <button class="tablinks" onclick="openTab(event, 'Billing')" style="font-size: 25px;">Billing</button>
-    <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="font-size: 25px; display: none;">Billing Admin</button>
+    <button class="tablinks" onclick="openTab(event, 'Tenants')">Tenants</button>
+    <button class="tablinks" onclick="openTab(event, 'Namespaces')">Namespaces</button>
+    <button class="tablinks" onclick="openTab(event, 'Roles')">Roles</button>
+    <button class="tablinks" onclick="openTab(event, 'Apikeys')">Apikeys</button>
+    <button class="tablinks" onclick="openTab(event, 'Billing')">Billing</button>
+    <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="display: none;">Billing Admin</button>
 </div>
 
 <div id="Apikeys" class="tabcontent">
-    <table class="admin-data-table" style="width:100%" id="items-table">
+    <table class="ix-table admin-data-table" style="width:100%" id="items-table">
         <thead>
             <tr>
                 <th style="width: 50px;">Select</th>
@@ -590,7 +755,7 @@
         </form>
     </div>
 
-    <div class="apikey-create-card">
+    <div class="apikey-create-card" id="apikey-create-card">
         <h2>Create API Key</h2>
         <div id="apikey-create-hint" class="apikey-create-hint">Select a tenant (required), then optionally narrow to a namespace and expiration.</div>
         <form id="add-form" class="apikey-create-grid" onsubmit="return false;">
@@ -609,7 +774,7 @@
                 <option value="full">full</option>
             </select>
         </div>
-        <div class="apikey-field">
+        <div class="apikey-field" id="apikey-tenant-select-field">
             <label for="apikey_restrict_tenant" class="label-with-help">
                 <span>Tenant (Required)</span>
                 <span class="field-help" tabindex="0" aria-label="Tenant help" title="Required. Every API key must belong to exactly one tenant.">i</span>
@@ -618,7 +783,11 @@
                 <option value="">Select tenant</option>
             </select>
         </div>
-        <div class="apikey-field">
+        <div class="apikey-field" id="apikey-tenant-readonly-field" style="display: none;">
+            <label>Tenant (Required)</label>
+            <div id="apikey-tenant-readonly-value" class="apikey-field-readonly"></div>
+        </div>
+        <div class="apikey-field" id="apikey-namespace-select-field">
             <label for="apikey_restrict_namespace" class="label-with-help">
                 <span>Restrict to Namespace</span>
                 <span class="field-help" tabindex="0" aria-label="Restrict namespace help" title="Optional. Limit this key to one namespace under the selected tenant.">i</span>
@@ -626,6 +795,10 @@
             <select id="apikey_restrict_namespace" disabled>
                 <option value="">(optional)</option>
             </select>
+        </div>
+        <div class="apikey-field" id="apikey-namespace-readonly-field" style="display: none;">
+            <label>Restrict to Namespace</label>
+            <div id="apikey-namespace-readonly-value" class="apikey-field-readonly"></div>
         </div>
         <div class="apikey-field">
             <label for="apikey_expires_days">Expires In (days)</label>
@@ -639,10 +812,10 @@
 
     <!-- Modal to display newly created API key -->
     <div id="apikey-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; justify-content:center; align-items:center;">
-        <div style="background:white; padding:30px; border-radius:0; max-width:600px; width:90%; word-break:break-all;">
+        <div style="background:white; padding:30px; border-radius:4px; max-width:600px; width:90%; word-break:break-all;">
             <h3 style="margin-top:0;">API Key Created</h3>
-            <p>Copy this key now. You will not be able to see it again.</p>
-            <div id="apikey-modal-value" style="background:#f0f0f0; padding:10px; font-family:monospace; font-size:14px; border-radius:0; margin:10px 0;"></div>
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;">The API key has been created successfully. Copy it for use in API requests (for example, in the Authorization header as a Bearer token).</p>
+            <div id="apikey-modal-value" style="background:#f0f0f0; padding:10px; font-family:monospace; font-size:14px; border-radius:2px; margin:10px 0;"></div>
             <div style="margin-top:5px; font-size:13px; color:#555;">
                 <span>Access Level: <strong id="apikey-modal-access-level"></strong></span>
                 <span id="apikey-modal-expires-wrap" style="display:none;"> | Expires (Local): <strong id="apikey-modal-expires"></strong></span>
@@ -655,55 +828,14 @@
     </div>
 </div>
 
-<div id="Models" class="tabcontent">
-    <table class="admin-data-table" style="width:100%" id="models-table">
-        <thead>
-            <tr>
-                <th rowspan="2" style="width: 100px;">Select</th>
-                <th rowspan="2">Tenant</th>
-                <th rowspan="2">Namespace</th>
-                <th rowspan="2">Name</th>
-
-                <th colspan="2" style="text-align: center; border-bottom: 2px solid #eee;">Role</th>
-            </tr>
-            <tr>
-                <th style="width: 80px; text-align: center;">Admin</th>
-                <th style="width: 80px; text-align: center;">User</th>
-            </tr>
-        </thead>
-
-        <tbody>
-
-        </tbody>
-    </table>
-
-    <form id="delete-models-form">
-        <button id="delete-models-button" type="submit" onclick="delete_funcs()"">Delete Namespaces</button>
-    </form>
-    
-    <h2>Add model</h2>
-    <form id=" add-models-form">
-            Namespace
-            <select id="namespace_dropdown">
-                <option disabled selected>Select a namespace</option>
-            </select>
-            Model name
-            <input type="text" id="model_name" placeholder="Enter model name" required>
-            <br>
-            <textarea id="model_spec" rows="30" cols="120" placeholder="Enter model Spec" required></textarea>
-            <br>
-            <button type="submit" onclick="create_func()">Add model</button>
-    </form>
-</div>
-
 <div id="Roles" class="tabcontent">
     <h3>Tenant Roles</h3>
-    <table class="admin-data-table" style="width:100%" id="tenant-roles-table">
+    <table class="ix-table admin-data-table" style="width:100%" id="tenant-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
 
-                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #aebfd1;">Role</th>
             </tr>
             <tr>
                 <th style="width: 100px; text-align: center;">IsAdmin</th>
@@ -716,13 +848,13 @@
     <br>
 
     <h3>Namespace Roles</h3>
-    <table class="admin-data-table" style="width:100%" id="namespace-roles-table">
+    <table class="ix-table admin-data-table" style="width:100%" id="namespace-roles-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
                 <th rowspan="2">Namespace</th>
 
-                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #aebfd1;">Role</th>
             </tr>
             <tr>
                 <th style="width: 100px; text-align: center;">IsAdmin</th>
@@ -734,14 +866,14 @@
 </div>
 
 <div id="Namespaces" class="tabcontent">
-    <table class="admin-data-table" style="width:100%" id="namespaces-table">
+    <table class="ix-table admin-data-table" style="width:100%" id="namespaces-table">
         <thead>
             <tr>
                 <th rowspan="2" style="width: 150px;">Select</th>
                 <th rowspan="2">Tenant</th>
                 <th rowspan="2">Namespace</th>
 
-                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #aebfd1;">Role</th>
                 <th rowspan="2" style="text-align: center;">Admins</th>
                 <th rowspan="2" style="text-align: center;">Users</th>
             </tr>
@@ -756,30 +888,43 @@
         </tbody>
     </table>
 
-    <form id="delete-namespace-form">
-        <button id="delete-namespace-button" type="submit" onclick="delete_namespaces()"">Delete Namespaces</button>
-    </form>
-    
-    <h2>Add Namespace</h2>
-    
-    <form id=" add-namespace-form">
-            Tenant
-            <select id="tenant_dropdown" required>
-                <option disabled selected>Select a tenant</option>
-            </select>
-            <br>
-            <br>
-            <input type="text" id="namespace_name" placeholder="Enter Namespace name" required>
-            <button type="submit" onclick="create_namespace()">Create Namespace</button>
-    </form>
+    <div class="namespace-actions">
+        <form id="delete-namespace-form" onsubmit="return false;">
+            <button id="delete-namespace-button" type="button" onclick="delete_namespaces()">Delete Namespaces</button>
+        </form>
+    </div>
+
+    <div class="namespace-create-card" id="namespace-create-card">
+        <h2>Add Namespace</h2>
+        <div class="namespace-create-hint">Choose a tenant and create a new namespace under it.</div>
+        <form id="add-namespace-form" class="namespace-create-grid" onsubmit="return false;">
+            <div class="namespace-field" id="namespace-tenant-select-field">
+                <label for="tenant_dropdown">Tenant</label>
+                <select id="tenant_dropdown" required>
+                    <option disabled selected>Select a tenant</option>
+                </select>
+            </div>
+            <div class="namespace-field" id="namespace-tenant-readonly-field" style="display: none;">
+                <label>Tenant</label>
+                <div id="namespace-tenant-readonly-value" class="namespace-field-readonly"></div>
+            </div>
+            <div class="namespace-field">
+                <label for="namespace_name">Namespace Name</label>
+                <input type="text" id="namespace_name" placeholder="Enter namespace name" required>
+            </div>
+            <div class="namespace-create-submit">
+                <button type="button" onclick="create_namespace()">Create Namespace</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <div id="Tenants" class="tabcontent">
-    <table class="admin-data-table" style="width:100%" id="tenants-table">
+    <table class="ix-table admin-data-table" style="width:100%" id="tenants-table">
         <thead>
             <tr>
                 <th rowspan="2">Tenant</th>
-                <th colspan="2" style="text-align: center; border-bottom: 1px solid #ddd;">Role</th>
+                <th colspan="2" style="text-align: center; border-bottom: 1px solid #aebfd1;">Role</th>
                 <th rowspan="2" style="text-align: center;">Admins</th>
                 <th rowspan="2" style="text-align: center;">Users</th>
             </tr>
@@ -803,6 +948,7 @@
         <select id="billing_tenant_select" onchange="loadBillingData()" style="padding: 5px; font-size: 14px;">
             <option value="" disabled selected>Select a tenant</option>
         </select>
+        <span id="billing-tenant-readonly" class="billing-tenant-readonly"></span>
     </div>
 
     <!-- No tenant selected message -->
@@ -931,10 +1077,10 @@
         <!-- Usage Analytics Section -->
         <div id="usage-analytics-container" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 15px;">
             <h3 style="cursor: pointer; margin: 0;" onclick="toggleUsageAnalytics()">
-                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▶</span>
+                Usage Analytics <span id="analytics-toggle-icon" style="font-size: 14px;">▼</span>
             </h3>
 
-            <div id="usage-analytics-content" style="display: none; margin-top: 15px;">
+            <div id="usage-analytics-content" style="display: block; margin-top: 15px;">
                 <div id="analytics-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
                     <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
                     <input type="datetime-local" id="usage-start" style="font-size: 12px;">
@@ -967,8 +1113,8 @@
                 <!-- View Mode Selector -->
                 <div style="margin-bottom: 15px;">
                     <label>View By:</label>
-                    <input type="radio" name="analytics-view" value="tenant" checked onchange="loadAnalyticsView()"> Tenant
-                    <input type="radio" name="analytics-view" value="model" onchange="loadAnalyticsView()"> Model
+                    <input type="radio" name="analytics-view" value="tenant" onchange="loadAnalyticsView()"> Tenant
+                    <input type="radio" name="analytics-view" value="model" checked onchange="loadAnalyticsView()"> Model
                     <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
                 </div>
 
@@ -1048,7 +1194,7 @@
                     </div>
                 </div>
 
-                <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #ddd; padding: 10px;">
+                <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
                         <h4 id="analytics-group-detail-title" style="margin: 0;">Breakdown</h4>
                         <div id="analytics-group-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
@@ -1157,6 +1303,37 @@
     <div id="billing-admin-content" style="display: none;">
         <div id="billing-admin-message" style="display: none; margin-bottom: 15px; padding: 10px; border-radius: 4px; position: sticky; top: 10px; z-index: 10;"></div>
         <div style="display: grid; gap: 20px;">
+            <div id="billing-admin-tenant-profile-section" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
+                <div style="display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <h3 style="margin: 0;">Tenant Directory</h3>
+                        <p style="margin: 6px 0 0; font-size: 12px; color: #666;">
+                            Platform-wide tenant list for inferx administrators. Use row actions to preselect the Add Credits form safely.
+                        </p>
+                    </div>
+                    <button type="button" onclick="loadBillingAdminTenantProfiles(true)" style="padding: 6px 12px;">Refresh</button>
+                </div>
+
+                <table class="ix-table admin-data-table" style="width:100%; margin-top: 12px;" id="billing-admin-tenant-profile-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 56px;">#</th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('tenant_name')">Tenant Name <span id="billing-admin-tenant-sort-tenant_name"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('display_name')">Owner Name <span id="billing-admin-tenant-sort-display_name"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('email')">Email <span id="billing-admin-tenant-sort-email"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models(Normal/All) <span id="billing-admin-tenant-sort-models"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('used_cents')">Used (USD) <span id="billing-admin-tenant-sort-used_cents"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('balance_cents')">Balance (USD) <span id="billing-admin-tenant-sort-balance_cents"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('created_at')">Created At (Local) <span id="billing-admin-tenant-sort-created_at"></span></th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="9" style="text-align: center; color: #888;">Loading tenant directory...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
             <div id="billing-admin-credits-form" style="border: 1px solid #ccc; padding: 15px; background: #f9f9f9;">
                 <h3 style="margin-top: 0;">Add Credits</h3>
                 <p style="font-size: 12px; color: #666;">Admin-only action. Amount is in USD.</p>
@@ -1192,7 +1369,7 @@
                             <option value="all" selected>All Tenants</option>
                         </select>
                     </div>
-                    <table class="admin-data-table" style="width:100%" id="billing-admin-credit-history-table">
+                    <table class="ix-table admin-data-table" style="width:100%" id="billing-admin-credit-history-table">
                         <thead>
                             <tr>
                                 <th>Tenant</th>
@@ -1258,7 +1435,7 @@
                     Rate Add History <span id="billing-admin-rate-toggle-icon">▶</span>
                 </h3>
                 <div id="billing-admin-rate-history-content" style="display: none;">
-                    <table class="admin-data-table" style="width:100%" id="billing-admin-rate-history-table">
+                    <table class="ix-table admin-data-table" style="width:100%" id="billing-admin-rate-history-table">
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -1291,7 +1468,7 @@
     async function fetchWithAuth(url, options) {
         const resp = await fetch(url, options);
         if (resp.status === 401 || resp.status === 403 || resp.redirected) {
-            window.location.href = '/demo/login';
+            window.location.href = '/login';
             throw new Error('Session expired');
         }
         return resp;
@@ -1309,6 +1486,46 @@
             return window.tenantDisplayNameFromTenantObject(tenantObj);
         }
         return tenantObj?.name || '';
+    }
+
+    function billingTenantOwnerNameFromObj(tenantObj) {
+        const spec = tenantObj?.object?.spec || {};
+        const firstName = String(spec.first_name || spec.firstName || spec.given_name || spec.givenName || '').trim();
+        const lastName = String(spec.last_name || spec.lastName || spec.family_name || spec.familyName || '').trim();
+        const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+        if (fullName !== '') {
+            return fullName;
+        }
+
+        return String(spec.display_name || spec.displayName || '').trim();
+    }
+
+    function billingTenantOptionLabelFromObj(tenantObj) {
+        return billingTenantOptionLabel(tenantObj, '');
+    }
+
+    function billingTenantOptionLabel(tenantObj, ownerNameOverride) {
+        const tenantName = String(tenantObj?.name || '').trim();
+        if (tenantName === '') {
+            return '';
+        }
+
+        const ownerName = String(ownerNameOverride || '').trim() || billingTenantOwnerNameFromObj(tenantObj);
+        return ownerName !== '' ? `${tenantName} (${ownerName})` : tenantName;
+    }
+
+    function billingAnalyticsTenantLabel(tenantName) {
+        const normalizedTenantName = String(tenantName || '').trim();
+        if (normalizedTenantName === '') {
+            return '';
+        }
+
+        const ownerName = String(billingTenantOwnerNames[normalizedTenantName] || '').trim();
+        if (ownerName !== '') {
+            return `${normalizedTenantName} (${ownerName})`;
+        }
+
+        return tenantDisplayLabel(normalizedTenantName);
     }
 
     function tenantLinkLabelHtml(tenantName) {
@@ -1349,11 +1566,15 @@
     }
 
     window.onload = async function () {
-        const savedTab = localStorage.getItem('currentTab') || 'Models'; // Default to 'Models'
-        const targetBtn = document.querySelector(`button[onclick*="'${savedTab}'"]`) ||
-            document.querySelector(`button[onclick*="'Models'"]`);
+        const savedTab = localStorage.getItem('currentTab') || 'Apikeys';
+        let targetBtn = document.querySelector(`button[onclick*="'${savedTab}'"]`);
+        let targetTab = savedTab;
+        if (!targetBtn) {
+            targetBtn = document.querySelector(`button[onclick*="'Apikeys'"]`);
+            targetTab = 'Apikeys';
+        }
         if (targetBtn) {
-            openTab({ currentTarget: targetBtn }, savedTab);
+            openTab({ currentTarget: targetBtn }, targetTab);
         }
         await initBillingAdminAccess();
     };
@@ -1377,10 +1598,17 @@
     let billingAdminMessageTimer = null;
     let billingIsSubmitting = false;
     let billingTenantsPopulated = false;
+    let billingTenantsLoadingPromise = null;
+    let billingTenantOwnerNames = {};
     let billingAdminTenantsPopulated = false;
     let billingAdminAccessReady = false;
     let billingAdminAccessPromise = null;
     let billingAdminIsInferxAdmin = false;
+    let billingAdminTenantProfilesLoaded = false;
+    let billingAdminTenantProfilesLoadingPromise = null;
+    let billingAdminTenantProfilesRows = [];
+    let billingAdminTenantProfilesSortColumn = 'created_at';
+    let billingAdminTenantProfilesSortDirection = 'desc';
     let billingUsageRange = { mode: 'hours', hours: 24 };
     let billingUsageViewMode = 'chart';
     let billingUsageGranularity = 'hourly';
@@ -1400,29 +1628,78 @@
     // Called when Billing tab is opened
     async function populateBillingTenants() {
         if (billingTenantsPopulated) return;
+        if (billingTenantsLoadingPromise) return billingTenantsLoadingPromise;
 
         const dropdown = document.getElementById('billing_tenant_select');
+        const readonlyEl = document.getElementById('billing-tenant-readonly');
+        if (!dropdown) return;
 
-        try {
+        billingTenantsLoadingPromise = (async () => {
             const [roles, tenants] = await Promise.all([
-                fetchWithAuth('/demo/generate_roles').then(r => r.json()),
-                fetchWithAuth('/demo/generate_tenants').then(r => r.json())
+                fetchWithAuth('/generate_roles').then(r => r.json()),
+                fetchWithAuth('/generate_tenants').then(r => r.json())
             ]);
+            billingTenantOwnerNames = {};
+
+            if (IsInferxAdmin(roles)) {
+                try {
+                    const ownerResp = await fetchWithAuth('/proxy1/admin/tenants');
+                    if (ownerResp.ok) {
+                        const ownerRows = await ownerResp.json();
+                        if (Array.isArray(ownerRows)) {
+                            ownerRows.forEach((row) => {
+                                const tenantName = String(row?.tenant_name || '').trim();
+                                const ownerName = String(row?.display_name || '').trim();
+                                if (tenantName !== '' && ownerName !== '') {
+                                    billingTenantOwnerNames[tenantName] = ownerName;
+                                }
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Failed to load Billing tenant owner names:', error);
+                }
+            }
 
             upsertTenantDisplayMapFromList(tenants);
+            const allowedTenants = [];
             tenants.forEach(t => {
                 if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
+                    const label = billingTenantOptionLabel(t, billingTenantOwnerNames[t.name]);
                     const option = document.createElement('option');
                     option.value = t.name;
-                    option.textContent = tenantDisplayNameFromObj(t);
+                    option.textContent = label;
                     dropdown.appendChild(option);
+                    allowedTenants.push({ value: t.name, label });
                 }
             });
 
+            if (allowedTenants.length === 1) {
+                dropdown.value = allowedTenants[0].value;
+                dropdown.style.display = 'none';
+                if (readonlyEl) {
+                    readonlyEl.textContent = allowedTenants[0].label;
+                    readonlyEl.style.display = 'inline-block';
+                }
+                await loadBillingData();
+            } else {
+                dropdown.style.display = '';
+                if (readonlyEl) {
+                    readonlyEl.textContent = '';
+                    readonlyEl.style.display = 'none';
+                }
+            }
+
             billingTenantsPopulated = true;
-        } catch (error) {
-            console.error('Failed to populate billing tenants:', error);
-        }
+        })()
+            .catch((error) => {
+                console.error('Failed to populate billing tenants:', error);
+            })
+            .finally(() => {
+                billingTenantsLoadingPromise = null;
+            });
+
+        return billingTenantsLoadingPromise;
     }
 
     function showBillingAdminMessage(message, isError) {
@@ -1449,6 +1726,353 @@
         }
     }
 
+    function billingAdminTenantProfileDisplayValue(value) {
+        if (value === null || value === undefined) return '—';
+        const s = String(value).trim();
+        return s ? s : '—';
+    }
+
+    function setBillingAdminTenantProfilesTableMessage(message, isError) {
+        const tbody = document.querySelector('#billing-admin-tenant-profile-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = document.querySelectorAll('#billing-admin-tenant-profile-table thead th').length || 9;
+        td.style.textAlign = 'center';
+        td.style.color = isError ? 'red' : '#888';
+        td.textContent = message;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    }
+
+    function billingAdminTenantProfileSortText(value) {
+        if (value === null || value === undefined) return '';
+        return String(value).trim().toLowerCase();
+    }
+
+    function billingAdminTenantProfileSortTime(value) {
+        if (value === null || value === undefined) return null;
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function billingAdminTenantResourceHref(path, tenantName) {
+        const tenant = String(tenantName || '').trim();
+        if (tenant === '') return '';
+        return `{{ hosturl }}${path}?tenant=${encodeURIComponent(tenant)}`;
+    }
+
+    function compareBillingAdminTenantProfileRows(a, b) {
+        const col = billingAdminTenantProfilesSortColumn;
+        const dir = billingAdminTenantProfilesSortDirection === 'asc' ? 1 : -1;
+
+        if (col === 'tenant_name' || col === 'display_name' || col === 'email') {
+            const av = billingAdminTenantProfileSortText(a?.[col]);
+            const bv = billingAdminTenantProfileSortText(b?.[col]);
+            if (av === '' && bv !== '') return 1;
+            if (av !== '' && bv === '') return -1;
+            return dir * av.localeCompare(bv, undefined, { sensitivity: 'base' });
+        }
+
+        if (col === 'used_cents' || col === 'balance_cents') {
+            const av = Number(a?.[col] ?? 0);
+            const bv = Number(b?.[col] ?? 0);
+            if (av === bv) return 0;
+            return dir * (av - bv);
+        }
+
+        if (col === 'models') {
+            const avNormal = Number(a?.normal_model_count ?? 0);
+            const bvNormal = Number(b?.normal_model_count ?? 0);
+            if (avNormal !== bvNormal) return dir * (avNormal - bvNormal);
+
+            const avTotal = Number(a?.total_model_count ?? 0);
+            const bvTotal = Number(b?.total_model_count ?? 0);
+            if (avTotal === bvTotal) return 0;
+            return dir * (avTotal - bvTotal);
+        }
+
+        if (col === 'created_at') {
+            const av = billingAdminTenantProfileSortTime(a?.created_at);
+            const bv = billingAdminTenantProfileSortTime(b?.created_at);
+            if (av === null && bv !== null) return 1;
+            if (av !== null && bv === null) return -1;
+            if (av === null && bv === null) return 0;
+            if (av === bv) return 0;
+            return dir * (av - bv);
+        }
+
+        return 0;
+    }
+
+    function updateBillingAdminTenantProfilesSortIcons() {
+        const cols = ['tenant_name', 'display_name', 'email', 'models', 'used_cents', 'balance_cents', 'created_at'];
+        cols.forEach((col) => {
+            const el = document.getElementById(`billing-admin-tenant-sort-${col}`);
+            if (!el) return;
+            el.textContent = billingAdminTenantProfilesSortColumn === col
+                ? (billingAdminTenantProfilesSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        });
+    }
+
+    function sortBillingAdminTenantProfilesTable(column) {
+        if (billingAdminTenantProfilesSortColumn === column) {
+            billingAdminTenantProfilesSortDirection =
+                billingAdminTenantProfilesSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingAdminTenantProfilesSortColumn = column;
+            billingAdminTenantProfilesSortDirection =
+                (column === 'models' || column === 'used_cents' || column === 'balance_cents' || column === 'created_at')
+                    ? 'desc'
+                    : 'asc';
+        }
+        renderBillingAdminTenantProfiles(billingAdminTenantProfilesRows);
+    }
+
+    function renderBillingAdminTenantProfiles(rows) {
+        const tbody = document.querySelector('#billing-admin-tenant-profile-table tbody');
+        if (!tbody) return;
+
+        billingAdminTenantProfilesRows = Array.isArray(rows) ? rows.slice() : [];
+        tbody.innerHTML = '';
+        if (!Array.isArray(rows) || rows.length === 0) {
+            updateBillingAdminTenantProfilesSortIcons();
+            setBillingAdminTenantProfilesTableMessage('No tenants found', false);
+            return;
+        }
+
+        const sortedRows = rows.slice().sort(compareBillingAdminTenantProfileRows);
+        updateBillingAdminTenantProfilesSortIcons();
+
+        sortedRows.forEach((row, index) => {
+            const tr = document.createElement('tr');
+            const tenantName = String(row?.tenant_name || '');
+            const reverseIndex = sortedRows.length - index;
+
+            const indexTd = document.createElement('td');
+            indexTd.textContent = String(reverseIndex);
+            indexTd.style.textAlign = 'center';
+            tr.appendChild(indexTd);
+
+            const tenantTd = document.createElement('td');
+            if (tenantName !== '') {
+                const tenantLink = document.createElement('button');
+                tenantLink.type = 'button';
+                tenantLink.className = 'billing-admin-tenant-link';
+                tenantLink.textContent = tenantName;
+                tenantLink.addEventListener('click', () => {
+                    billingAdminOpenTenantBilling(tenantName);
+                });
+                tenantTd.appendChild(tenantLink);
+            } else {
+                tenantTd.textContent = '—';
+            }
+            tr.appendChild(tenantTd);
+
+            const ownerTd = document.createElement('td');
+            const ownerLabel = billingAdminTenantProfileDisplayValue(row?.display_name);
+            const allowPlaceholderLinks = tenantName === 'public';
+            if (tenantName !== '' && (ownerLabel !== '—' || allowPlaceholderLinks)) {
+                const ownerLink = document.createElement('a');
+                ownerLink.className = 'billing-admin-tenant-link';
+                ownerLink.href = billingAdminTenantResourceHref('listfunc', tenantName);
+                ownerLink.textContent = ownerLabel;
+                ownerTd.appendChild(ownerLink);
+            } else {
+                ownerTd.textContent = ownerLabel;
+            }
+            tr.appendChild(ownerTd);
+
+            const emailTd = document.createElement('td');
+            const emailLabel = billingAdminTenantProfileDisplayValue(row?.email);
+            if (tenantName !== '' && (emailLabel !== '—' || allowPlaceholderLinks)) {
+                const emailLink = document.createElement('a');
+                emailLink.className = 'billing-admin-tenant-link';
+                emailLink.href = billingAdminTenantResourceHref('listpod', tenantName);
+                emailLink.textContent = emailLabel;
+                emailTd.appendChild(emailLink);
+            } else {
+                emailTd.textContent = emailLabel;
+            }
+            tr.appendChild(emailTd);
+
+            const modelsTd = document.createElement('td');
+            const normalModelCount = Number(row?.normal_model_count ?? 0);
+            const totalModelCount = Number(row?.total_model_count ?? 0);
+            modelsTd.textContent = `${Number.isFinite(normalModelCount) ? normalModelCount : 0} / ${Number.isFinite(totalModelCount) ? totalModelCount : 0}`;
+            tr.appendChild(modelsTd);
+
+            const usedTd = document.createElement('td');
+            if (row?.used_cents === null || row?.used_cents === undefined) {
+                usedTd.textContent = '—';
+            } else {
+                usedTd.textContent = formatUsd(Number(row.used_cents) || 0);
+            }
+            tr.appendChild(usedTd);
+
+            const balanceTd = document.createElement('td');
+            if (row?.balance_cents === null || row?.balance_cents === undefined) {
+                balanceTd.textContent = '—';
+            } else {
+                const balanceCents = Number(row.balance_cents) || 0;
+                balanceTd.textContent = formatUsdSigned(balanceCents);
+                if (balanceCents < 0) {
+                    balanceTd.classList.add('amount-negative');
+                }
+            }
+            tr.appendChild(balanceTd);
+
+            const createdTd = document.createElement('td');
+            const createdDisplay = formatLocalDateTime(row?.created_at);
+            createdTd.textContent = createdDisplay ? createdDisplay : '—';
+            tr.appendChild(createdTd);
+
+            const actionsTd = document.createElement('td');
+            const actionsWrap = document.createElement('div');
+            actionsWrap.style.display = 'flex';
+            actionsWrap.style.gap = '8px';
+            actionsWrap.style.flexWrap = 'wrap';
+
+            const creditBtn = document.createElement('button');
+            creditBtn.type = 'button';
+            creditBtn.textContent = 'Add Credit';
+            creditBtn.style.padding = '4px 10px';
+            creditBtn.addEventListener('click', () => {
+                billingAdminSelectTenantForCredits(tenantName);
+            });
+            actionsWrap.appendChild(creditBtn);
+
+            const billingBtn = document.createElement('button');
+            billingBtn.type = 'button';
+            billingBtn.textContent = 'Billing';
+            billingBtn.style.padding = '4px 10px';
+            billingBtn.addEventListener('click', () => {
+                billingAdminOpenTenantBilling(tenantName);
+            });
+            actionsWrap.appendChild(billingBtn);
+
+            actionsTd.appendChild(actionsWrap);
+            tr.appendChild(actionsTd);
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function loadBillingAdminTenantProfiles(force = false) {
+        if (!billingAdminIsInferxAdmin) {
+            return;
+        }
+
+        if (billingAdminTenantProfilesLoaded && !force) {
+            return;
+        }
+
+        if (billingAdminTenantProfilesLoadingPromise && !force) {
+            return billingAdminTenantProfilesLoadingPromise;
+        }
+
+        billingAdminTenantProfilesLoadingPromise = (async () => {
+            setBillingAdminTenantProfilesTableMessage('Loading tenant directory...', false);
+
+            const resp = await fetchWithAuth('/proxy1/admin/tenants');
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+
+            const rows = await resp.json();
+            if (!Array.isArray(rows)) {
+                throw new Error('unexpected response');
+            }
+
+            renderBillingAdminTenantProfiles(rows);
+            billingAdminTenantProfilesLoaded = true;
+        })()
+            .catch((error) => {
+                console.error('Failed to load Billing Admin tenant directory:', error);
+                setBillingAdminTenantProfilesTableMessage('Failed to load tenant directory', true);
+            })
+            .finally(() => {
+                billingAdminTenantProfilesLoadingPromise = null;
+            });
+
+        return billingAdminTenantProfilesLoadingPromise;
+    }
+
+    async function billingAdminSelectTenantForCredits(tenantName) {
+        const tenant = String(tenantName || '').trim();
+        if (!tenant) return;
+
+        await initBillingAdminAccess();
+        if (!billingAdminIsInferxAdmin) {
+            showBillingAdminMessage('Permission denied. Only Inferx administrators can add credits.', true);
+            return;
+        }
+
+        await populateBillingAdminTenants();
+
+        const dropdown = document.getElementById('billing-admin-credit-tenant');
+        if (!dropdown) return;
+
+        const exists = Array.from(dropdown.options || []).some((opt) => opt.value === tenant);
+        if (!exists) {
+            showBillingAdminMessage(`Tenant '${tenant}' is not available in the Add Credits dropdown.`, true);
+            return;
+        }
+
+        dropdown.value = tenant;
+
+        const form = document.getElementById('billing-admin-credits-form');
+        if (form && form.scrollIntoView) {
+            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        const amountInput = document.getElementById('billing-admin-credit-amount');
+        if (amountInput && amountInput.focus) {
+            amountInput.focus();
+        }
+
+        showBillingAdminMessage(`Selected tenant '${tenant}' in Add Credits form.`, false);
+    }
+
+    async function billingAdminOpenTenantBilling(tenantName) {
+        const tenant = String(tenantName || '').trim();
+        if (!tenant) return;
+
+        await initBillingAdminAccess();
+        if (!billingAdminIsInferxAdmin) {
+            showBillingAdminMessage('Permission denied. Only Inferx administrators can open tenant billing from Billing Admin.', true);
+            return;
+        }
+
+        const billingTabBtn = document.querySelector(`button[onclick*="'Billing'"]`);
+        if (!billingTabBtn) {
+            showBillingAdminMessage('Billing tab is unavailable.', true);
+            return;
+        }
+
+        openTab({ currentTarget: billingTabBtn }, 'Billing');
+        await populateBillingTenants();
+
+        const dropdown = document.getElementById('billing_tenant_select');
+        if (!dropdown) return;
+
+        const exists = Array.from(dropdown.options || []).some((opt) => opt.value === tenant);
+        if (!exists) {
+            showBillingAdminMessage(`Tenant '${tenant}' is not available in the Billing tab.`, true);
+            return;
+        }
+
+        dropdown.value = tenant;
+        await loadBillingData();
+
+        const billingTab = document.getElementById('Billing');
+        if (billingTab && billingTab.scrollIntoView) {
+            billingTab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
     function onBillingRateScopeChange() {
         const scope = document.getElementById('billing-rate-scope');
         const row = document.getElementById('billing-rate-tenant-row');
@@ -1464,7 +2088,7 @@
         if (!creditTenantDropdown || !creditHistoryTenantDropdown || !rateTenantDropdown) return;
 
         try {
-            const tenants = await fetchWithAuth('/demo/generate_tenants').then(r => r.json());
+            const tenants = await fetchWithAuth('/generate_tenants').then(r => r.json());
             upsertTenantDisplayMapFromList(tenants);
             tenants.forEach(t => {
                 const label = tenantDisplayNameFromObj(t);
@@ -1507,7 +2131,7 @@
         const noAccess = document.getElementById('billing-admin-no-access');
 
         try {
-            const roles = await fetchWithAuth('/demo/generate_roles').then(r => r.json());
+            const roles = await fetchWithAuth('/generate_roles').then(r => r.json());
             billingAdminIsInferxAdmin = IsInferxAdmin(roles);
         } catch (error) {
             console.error('Failed to check Billing Admin access:', error);
@@ -1526,14 +2150,15 @@
 
         if (!billingAdminIsInferxAdmin && localStorage.getItem('currentTab') === 'BillingAdmin') {
             const fallback = document.querySelector(`button[onclick*="'Billing'"]`) ||
-                document.querySelector(`button[onclick*="'Models'"]`);
+                document.querySelector(`button[onclick*="'Apikeys'"]`);
             if (fallback) {
-                openTab({ currentTarget: fallback }, fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Models');
+                openTab({ currentTarget: fallback }, fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Apikeys');
             }
         }
 
         if (billingAdminIsInferxAdmin) {
             await populateBillingAdminTenants();
+            await loadBillingAdminTenantProfiles();
             const effectiveFromInput = document.getElementById('billing-rate-effective-from');
             if (effectiveFromInput && !effectiveFromInput.value) {
                 effectiveFromInput.value = toLocalDatetimeValue(new Date());
@@ -1887,7 +2512,7 @@
             let tenantStatus = null;
 
             try {
-                const summaryResp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/billing-summary`);
+                const summaryResp = await fetchWithAuth(`/proxy1/tenant/${tenant}/billing-summary`);
                 if (summaryResp.ok) {
                     data = await summaryResp.json();
                     hasBillingSummary = true;
@@ -1899,8 +2524,8 @@
             if (!hasBillingSummary) {
                 // Phase 1 fallback: use existing /credits endpoint + tenant object for status
                 const [creditsResp, tenantResp] = await Promise.all([
-                    fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`),
-                    fetchWithAuth(`/demo/proxy1/object/tenant/system/system/${tenant}/`)
+                    fetchWithAuth(`/proxy1/tenant/${tenant}/credits`),
+                    fetchWithAuth(`/proxy1/object/tenant/system/system/${tenant}/`)
                 ]);
 
                 if (!creditsResp.ok) throw new Error(`Credits HTTP ${creditsResp.status}`);
@@ -2087,7 +2712,7 @@
             } else {
                 params.set('hours', String(billingUsageRange.hours || 24));
             }
-            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
+            const resp = await fetchWithAuth(`/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
 
             if (resp.status === 404) {
                 billingUsageRawRows = [];
@@ -2332,7 +2957,7 @@
         const offset = page * billingPageSize;
 
         try {
-            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits/history?limit=${billingPageSize}&offset=${offset}`);
+            const resp = await fetchWithAuth(`/proxy1/tenant/${tenant}/credits/history?limit=${billingPageSize}&offset=${offset}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
@@ -2424,7 +3049,7 @@
             if (tenant !== 'all') {
                 params.set('tenant', tenant);
             }
-            const resp = await fetchWithAuth(`/demo/proxy1/billing/credits/history?${params.toString()}`);
+            const resp = await fetchWithAuth(`/proxy1/billing/credits/history?${params.toString()}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
@@ -2510,7 +3135,7 @@
         params.set('scope', 'all');
 
         try {
-            const resp = await fetchWithAuth(`/demo/proxy1/billing/rates?${params.toString()}`);
+            const resp = await fetchWithAuth(`/proxy1/billing/rates?${params.toString()}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
@@ -2606,7 +3231,7 @@
         btn.textContent = 'Adding...';
 
         try {
-            const resp = await fetchWithAuth(`/demo/proxy1/tenant/${tenant}/credits`, {
+            const resp = await fetchWithAuth(`/proxy1/tenant/${tenant}/credits`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2707,7 +3332,7 @@
         btn.disabled = true;
         btn.textContent = 'Adding...';
         try {
-            const resp = await fetchWithAuth('/demo/proxy1/billing/rates', {
+            const resp = await fetchWithAuth('/proxy1/billing/rates', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2759,7 +3384,16 @@
     openTab = function(evt, tabName) {
         originalOpenTab(evt, tabName);
         if (tabName === 'Billing') {
+            ensureAnalyticsDefaultViewMode();
             populateBillingTenants();
+        } else if (tabName === 'BillingAdmin') {
+            initBillingAdminAccess().then(() => {
+                if (billingAdminIsInferxAdmin) {
+                    loadBillingAdminTenantProfiles();
+                }
+            }).catch((error) => {
+                console.error('Failed to initialize Billing Admin tab:', error);
+            });
         }
     };
 
@@ -2767,7 +3401,7 @@
     // Usage Analytics Functions
     // =====================================================
 
-    let analyticsExpanded = false;
+    let analyticsExpanded = true;
     let analyticsData = null;
     let analyticsSortColumn = 'total_cost';
     let analyticsSortDirection = 'desc';
@@ -2780,6 +3414,18 @@
     let analyticsDetailGranularity = 'hourly';
     let analyticsDetailSortColumn = 'period';
     let analyticsDetailSortDirection = 'desc';
+    let analyticsInitialViewApplied = false;
+
+    function ensureAnalyticsDefaultViewMode() {
+        if (analyticsInitialViewApplied) return;
+
+        const modelRadio = document.querySelector('input[name="analytics-view"][value="model"]');
+        if (modelRadio) {
+            modelRadio.checked = true;
+        }
+
+        analyticsInitialViewApplied = true;
+    }
 
     function toggleUsageAnalytics() {
         analyticsExpanded = !analyticsExpanded;
@@ -3060,16 +3706,16 @@
         const params = new URLSearchParams(timeParams);
         let endpoint = '';
         if (viewMode === 'tenant') {
-            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
-            titleEl.textContent = `Breakdown: ${tenantDisplayLabel(tenant)}`;
+            endpoint = `/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
+            titleEl.textContent = `Breakdown: ${billingAnalyticsTenantLabel(tenant)}`;
         } else if (viewMode === 'model') {
             params.set('namespace', item.namespace || '');
             params.set('funcname', item.funcname || '');
-            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
+            endpoint = `/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
             titleEl.textContent = `Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
         } else {
             params.set('namespace', item.namespace || '');
-            endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly-by-namespace?${params.toString()}`;
+            endpoint = `/proxy1/tenant/${tenant}/usage/hourly-by-namespace?${params.toString()}`;
             titleEl.textContent = `Breakdown: ${item.namespace || '--'}`;
         }
 
@@ -3305,16 +3951,16 @@
 
         switch (viewMode) {
             case 'tenant':
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                endpoint = `/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
                 break;
             case 'model':
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-model?${timeParams}`;
+                endpoint = `/proxy1/tenant/${tenant}/usage/by-model?${timeParams}`;
                 break;
             case 'namespace':
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}`;
+                endpoint = `/proxy1/tenant/${tenant}/usage/by-namespace?${timeParams}`;
                 break;
             default:
-                endpoint = `/demo/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
+                endpoint = `/proxy1/tenant/${tenant}/usage/hourly?${timeParams}`;
                 break;
         }
 
@@ -3395,6 +4041,24 @@
         renderGroupedTable(grouped, 'tenant');
     }
 
+    function escapeAnalyticsHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function analyticsModelHref(item) {
+        const tenant = String(item?.tenant || document.getElementById('billing_tenant_select')?.value || '').trim();
+        const namespace = String(item?.namespace || '').trim();
+        const funcname = String(item?.funcname || '').trim();
+        if (!tenant || !namespace || !funcname) return '';
+
+        return `{{ hosturl }}func?tenant=${encodeURIComponent(tenant)}&namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(funcname)}`;
+    }
+
     function renderGroupedTable(data, viewMode) {
         document.getElementById('analytics-error').style.display = 'none';
         const hourlyControlsEl = document.getElementById('analytics-hourly-view-controls');
@@ -3463,10 +4127,10 @@
             if (analyticsSortColumn === 'name') {
                 aVal = viewMode === 'model'
                     ? a.funcname
-                    : (viewMode === 'namespace' ? a.namespace : tenantDisplayLabel(a.tenant));
+                    : (viewMode === 'namespace' ? a.namespace : billingAnalyticsTenantLabel(a.tenant));
                 bVal = viewMode === 'model'
                     ? b.funcname
-                    : (viewMode === 'namespace' ? b.namespace : tenantDisplayLabel(b.tenant));
+                    : (viewMode === 'namespace' ? b.namespace : billingAnalyticsTenantLabel(b.tenant));
                 return analyticsSortDirection === 'asc'
                     ? aVal.localeCompare(bVal)
                     : bVal.localeCompare(aVal);
@@ -3509,7 +4173,7 @@
             row.style.cursor = 'pointer';
             const groupLabel = viewMode === 'model'
                 ? `${item.funcname} (${item.namespace})`
-                : (viewMode === 'namespace' ? item.namespace : tenantDisplayLabel(item.tenant));
+                : (viewMode === 'namespace' ? item.namespace : billingAnalyticsTenantLabel(item.tenant));
             const infMs = item.inference_ms || 0;
             const sbyMs = item.standby_ms || 0;
             const infCents = item.inference_cents || 0;
@@ -3518,6 +4182,8 @@
             const infHours = (infMs / 3600000).toFixed(2);
             const sbyHours = (sbyMs / 3600000).toFixed(2);
             const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : 0;
+            const safeGroupLabel = escapeAnalyticsHtml(truncateText(groupLabel, 40));
+            const safeGroupTitle = escapeAnalyticsHtml(groupLabel);
 
             const barWidth = Math.min(percent, 100);
             const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
@@ -3531,8 +4197,16 @@
                 renderGroupedTable(data, viewMode);
             };
 
+            let groupCellHtml = safeGroupLabel;
+            if (viewMode === 'model') {
+                const modelHref = analyticsModelHref(item);
+                if (modelHref !== '') {
+                    groupCellHtml = `<a href="${modelHref}" onclick="event.stopPropagation();">${safeGroupLabel}</a>`;
+                }
+            }
+
             row.innerHTML = `
-                <td style="padding: 8px;" title="${groupLabel}">${truncateText(groupLabel, 40)}</td>
+                <td style="padding: 8px;" title="${safeGroupTitle}">${groupCellHtml}</td>
                 <td style="text-align: right; padding: 8px;">${infHours}</td>
                 <td style="text-align: right; padding: 8px;">${sbyHours}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
@@ -3873,6 +4547,105 @@
         selectEl.appendChild(option);
     }
 
+    function setReadonlyFieldMode(selectFieldEl, readonlyFieldEl, readonlyValueEl, showReadonly, text = '') {
+        if (selectFieldEl) selectFieldEl.style.display = showReadonly ? 'none' : '';
+        if (readonlyFieldEl) readonlyFieldEl.style.display = showReadonly ? '' : 'none';
+        if (readonlyValueEl) readonlyValueEl.textContent = showReadonly ? text : '';
+    }
+
+    function getNonEmptySelectValues(selectEl) {
+        if (!selectEl) return [];
+        return Array.from(selectEl.options)
+            .map(option => String(option.value || '').trim())
+            .filter(value => value !== '');
+    }
+
+    function refreshApikeyCreateTenantFieldPresentation() {
+        const cardEl = document.getElementById('apikey-create-card');
+        const tenantSelect = document.getElementById('apikey_restrict_tenant');
+        const tenantSelectField = document.getElementById('apikey-tenant-select-field');
+        const tenantReadonlyField = document.getElementById('apikey-tenant-readonly-field');
+        const tenantReadonlyValue = document.getElementById('apikey-tenant-readonly-value');
+        if (!cardEl || !tenantSelect) return;
+
+        const tenantValues = getNonEmptySelectValues(tenantSelect);
+        if (apikeyCreatorIsInferxAdmin) {
+            cardEl.style.display = '';
+            tenantSelect.value = 'system';
+            setReadonlyFieldMode(
+                tenantSelectField,
+                tenantReadonlyField,
+                tenantReadonlyValue,
+                true,
+                tenantDisplayLabel('system')
+            );
+            return;
+        }
+
+        if (tenantValues.length === 0) {
+            cardEl.style.display = 'none';
+            setReadonlyFieldMode(tenantSelectField, tenantReadonlyField, tenantReadonlyValue, false);
+            return;
+        }
+
+        cardEl.style.display = '';
+        if (tenantValues.length === 1) {
+            tenantSelect.value = tenantValues[0];
+            setReadonlyFieldMode(
+                tenantSelectField,
+                tenantReadonlyField,
+                tenantReadonlyValue,
+                true,
+                tenantDisplayLabel(tenantValues[0])
+            );
+            return;
+        }
+
+        setReadonlyFieldMode(tenantSelectField, tenantReadonlyField, tenantReadonlyValue, false);
+        if (!tenantSelect.value || !tenantValues.includes(tenantSelect.value)) {
+            tenantSelect.selectedIndex = 0;
+        }
+    }
+
+    function refreshApikeyCreateNamespaceFieldPresentation() {
+        const tenantSelect = document.getElementById('apikey_restrict_tenant');
+        const namespaceSelect = document.getElementById('apikey_restrict_namespace');
+        const namespaceSelectField = document.getElementById('apikey-namespace-select-field');
+        const namespaceReadonlyField = document.getElementById('apikey-namespace-readonly-field');
+        const namespaceReadonlyValue = document.getElementById('apikey-namespace-readonly-value');
+        if (!namespaceSelect) return;
+
+        if (apikeyCreatorIsInferxAdmin) {
+            setReadonlyFieldMode(
+                namespaceSelectField,
+                namespaceReadonlyField,
+                namespaceReadonlyValue,
+                true,
+                '(not used)'
+            );
+            return;
+        }
+
+        if (!tenantSelect || !tenantSelect.value) {
+            setReadonlyFieldMode(namespaceSelectField, namespaceReadonlyField, namespaceReadonlyValue, false);
+            return;
+        }
+
+        const namespaceValues = getNonEmptySelectValues(namespaceSelect);
+        if (namespaceValues.length === 0) {
+            setReadonlyFieldMode(
+                namespaceSelectField,
+                namespaceReadonlyField,
+                namespaceReadonlyValue,
+                true,
+                '(optional)'
+            );
+            return;
+        }
+
+        setReadonlyFieldMode(namespaceSelectField, namespaceReadonlyField, namespaceReadonlyValue, false);
+    }
+
     function configureApikeyCreateForm(roles) {
         const hintEl = document.getElementById('apikey-create-hint');
         const accessLevelSelect = document.getElementById('apikey_access_level');
@@ -3892,6 +4665,8 @@
             if (hintEl) {
                 hintEl.textContent = 'Inferx admin self-created keys are forced to full access level on tenant system.';
             }
+            refreshApikeyCreateTenantFieldPresentation();
+            refreshApikeyCreateNamespaceFieldPresentation();
             return;
         }
 
@@ -3900,6 +4675,7 @@
         if (hintEl) {
             hintEl.textContent = 'Select a tenant (required), then optionally narrow to a namespace and expiration.';
         }
+        refreshApikeyCreateTenantFieldPresentation();
         onApikeyRestrictTenantChange();
     }
 
@@ -3914,6 +4690,7 @@
 
         if (!selectedTenant) {
             namespaceSelect.disabled = true;
+            refreshApikeyCreateNamespaceFieldPresentation();
             return;
         }
 
@@ -3931,6 +4708,7 @@
 
         // Keep enabled for tenant-only restrictions even when no namespace options exist.
         namespaceSelect.disabled = false;
+        refreshApikeyCreateNamespaceFieldPresentation();
     }
 
     function updateDeleteApikeyButtonState() {
@@ -4041,7 +4819,7 @@
             tenant: tenant
         });
 
-        const url = `/demo/generate_tenantuser?${params.toString()}`;
+        const url = `/generate_tenantuser?${params.toString()}`;
         try {
             const response = await fetchWithAuth(url);
 
@@ -4074,7 +4852,7 @@
             namespace: namespace
         });
 
-        const url = `/demo/generate_namespaceuser?${params.toString()}`;
+        const url = `/generate_namespaceuser?${params.toString()}`;
 
         try {
             const response = await fetchWithAuth(url);
@@ -4102,7 +4880,7 @@
     }
 
     async function fetchItems() {
-        const apikeys_resp = await fetchWithAuth('/demo/generate_apikeys');
+        const apikeys_resp = await fetchWithAuth('/generate_apikeys');
         const apikeys = await apikeys_resp.json();
         const apikey_tbody = document.querySelector('#items-table tbody');
         apikey_tbody.innerHTML = '';
@@ -4132,12 +4910,26 @@
 
         const tenant_dropdown = document.getElementById("tenant_dropdown");
         const namespace_dropdown = document.getElementById("namespace_dropdown");
+        const namespaceCreateCard = document.getElementById("namespace-create-card");
+        const namespaceTenantSelectField = document.getElementById("namespace-tenant-select-field");
+        const namespaceTenantReadonlyField = document.getElementById("namespace-tenant-readonly-field");
+        const namespaceTenantReadonlyValue = document.getElementById("namespace-tenant-readonly-value");
         const apikeyRestrictTenantSelect = document.getElementById("apikey_restrict_tenant");
         const apikeyRestrictNamespaceSelect = document.getElementById("apikey_restrict_namespace");
         const apikeyTenantChoices = new Set();
         const apikeyNamespaceChoices = {};
+        const namespaceCreateTenantChoices = [];
 
-        const roles_resp = await fetchWithAuth('/demo/generate_roles');
+        if (tenant_dropdown) {
+            tenant_dropdown.innerHTML = '';
+            const placeholderOption = document.createElement("option");
+            placeholderOption.disabled = true;
+            placeholderOption.selected = true;
+            placeholderOption.textContent = "Select a tenant";
+            tenant_dropdown.appendChild(placeholderOption);
+        }
+
+        const roles_resp = await fetchWithAuth('/generate_roles');
         const roles = await roles_resp.json();
 
         // Target both table bodies
@@ -4189,55 +4981,57 @@
             }
         });
 
-        const funcs_resp = await fetchWithAuth('/demo/generate_funcs');
-        const funcs = await funcs_resp.json();
         const funcs_tbody = document.querySelector('#models-table tbody');
-        funcs_tbody.innerHTML = '';
-        funcs.forEach(key => {
-            const isAdmin = IsAdmin(roles, key.func.tenant, key.func.namespace);
-            const isUser = IsUser(roles, key.func.tenant, key.func.namespace);
+        if (funcs_tbody) {
+            const funcs_resp = await fetchWithAuth('/generate_funcs');
+            const funcs = await funcs_resp.json();
+            funcs_tbody.innerHTML = '';
+            funcs.forEach(key => {
+                const isAdmin = IsAdmin(roles, key.func.tenant, key.func.namespace);
+                const isUser = IsUser(roles, key.func.tenant, key.func.namespace);
 
-            if (isAdmin || isUser) {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                <td style="text-align: center;">
-                    <input type="checkbox" 
-                        data-id="${key.tenant}/system/${key.name}"
-                        ${!isAdmin ? 'disabled' : ''} 
-                        style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
-                </td>
-                <td style="text-align: center;">
-                    <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
-                        ${tenantLinkLabelHtml(key.func.tenant)}
-                    </a>
-                </td>
-                <td style="text-align: center;">
-                    <a
-                        href="{{ hosturl }}listfunc?tenant=${key.func.tenant}&&namespace=${key.func.namespace}">
-                        ${key.func.namespace}
-                    </a>
-                </td>
-                <td style="text-align: center;">
-                    <a
-                        href="{{ hosturl }}func?tenant=${key.func.tenant}&&namespace=${key.func.namespace}&&name=${key.func.name}">
-                        ${key.func.name}
-                    </a>
-                </td>
-                <td style="text-align: center;">${isAdmin
-                        ? '<span style="color: green; font-weight: bold;">✓</span>'
-                        : '<span style="color: #666;">-</span>'}
-                </td>
-                <td style="text-align: center;">${isUser
-                        ? '<span style="color: green; font-weight: bold;">✓</span>'
-                        : '<span style="color: #666;">-</span>'}
-                </td>
-            `;
-                funcs_tbody.appendChild(row);
-            }
-        });
+                if (isAdmin || isUser) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                    <td style="text-align: center;">
+                        <input type="checkbox" 
+                            data-id="${key.tenant}/system/${key.name}"
+                            ${!isAdmin ? 'disabled' : ''} 
+                            style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
+                            ${tenantLinkLabelHtml(key.func.tenant)}
+                        </a>
+                    </td>
+                    <td style="text-align: center;">
+                        <a
+                            href="{{ hosturl }}listfunc?tenant=${key.func.tenant}&&namespace=${key.func.namespace}">
+                            ${key.func.namespace}
+                        </a>
+                    </td>
+                    <td style="text-align: center;">
+                        <a
+                            href="{{ hosturl }}func?tenant=${key.func.tenant}&&namespace=${key.func.namespace}&&name=${key.func.name}">
+                            ${key.func.name}
+                        </a>
+                    </td>
+                    <td style="text-align: center;">${isAdmin
+                            ? '<span style="color: green; font-weight: bold;">✓</span>'
+                            : '<span style="color: #666;">-</span>'}
+                    </td>
+                    <td style="text-align: center;">${isUser
+                            ? '<span style="color: green; font-weight: bold;">✓</span>'
+                            : '<span style="color: #666;">-</span>'}
+                    </td>
+                `;
+                    funcs_tbody.appendChild(row);
+                }
+            });
+        }
 
 
-        const namespaces_resp = await fetchWithAuth('/demo/generate_namespaces');
+        const namespaces_resp = await fetchWithAuth('/generate_namespaces');
         const namespaces = await namespaces_resp.json();
         const namespaces_tbody = document.querySelector('#namespaces-table tbody');
         namespaces_tbody.innerHTML = '';
@@ -4291,7 +5085,7 @@
            `;
             namespaces_tbody.appendChild(row);
 
-            if (isAdmin) {
+            if (isAdmin && namespace_dropdown) {
                 const option = document.createElement("option");
                 option.value = key.tenant + "/" + key.name;
                 option.textContent = `${tenantDisplayLabel(key.tenant)}/${key.name}`;
@@ -4300,7 +5094,7 @@
 
         };
 
-        const tenants_resp = await fetchWithAuth('/demo/generate_tenants');
+        const tenants_resp = await fetchWithAuth('/generate_tenants');
         const tenants = await tenants_resp.json();
         upsertTenantDisplayMapFromList(tenants);
         const tenants_tbody = document.querySelector('#tenants-table tbody');
@@ -4342,12 +5136,34 @@
             tenants_tbody.appendChild(row);
 
             if (isAdmin) {
+                namespaceCreateTenantChoices.push(key.name);
                 const option = document.createElement("option");
                 option.value = key.name;
                 option.textContent = tenantDisplayLabel(key.name);
                 tenant_dropdown.appendChild(option);
             }
         };
+
+        if (namespaceCreateCard && tenant_dropdown) {
+            if (namespaceCreateTenantChoices.length === 0) {
+                namespaceCreateCard.style.display = "none";
+            } else if (namespaceCreateTenantChoices.length === 1) {
+                const onlyTenant = namespaceCreateTenantChoices[0];
+                tenant_dropdown.value = onlyTenant;
+                namespaceCreateCard.style.display = "";
+                if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "none";
+                if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "";
+                if (namespaceTenantReadonlyValue) {
+                    namespaceTenantReadonlyValue.textContent = tenantDisplayLabel(onlyTenant);
+                }
+            } else {
+                namespaceCreateCard.style.display = "";
+                tenant_dropdown.selectedIndex = 0;
+                if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "";
+                if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "none";
+                if (namespaceTenantReadonlyValue) namespaceTenantReadonlyValue.textContent = "";
+            }
+        }
 
         // Populate API key restriction tenant/namespace dropdowns.
         if (apikeyRestrictTenantSelect && apikeyRestrictNamespaceSelect) {
@@ -4381,7 +5197,6 @@
     }
 
     async function create_func() {
-        var access_token = "{{ session['token'] }}";
         const namespace_dropdown = document.getElementById("namespace_dropdown");
         const isSelected = namespace_dropdown.selectedIndex !== -1;
         if (!isSelected) {
@@ -4405,7 +5220,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
 
         const model_spec = document.getElementById('model_spec').value.trim();
         if (!model_spec) {
@@ -4431,7 +5246,7 @@
                 })
             };
 
-            const response = await fetchWithAuth("/demo/proxy/object/", options);
+            const response = await fetchWithAuth("/proxy/object/", options);
             const text = await response.text();
             if (response.status == '200') {
                 alert("Create Model successfully! " + text);
@@ -4449,13 +5264,12 @@
     }
 
     async function delete_funcs() {
-        var access_token = "{{ session['token'] }}";
         try {
             const checkboxes = document.querySelectorAll('#models-table tbody input[type="checkbox"]:checked');
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/demo/proxy/object/function/' + key + "/", {
+                    fetchWithAuth('/proxy/object/function/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -4474,7 +5288,7 @@
         }
 
         const tenant = tenant_dropdown.value;
-        if (tenant == "Select a tenant") {
+        if (!tenant || tenant == "Select a tenant") {
             alert("need choose a tenant");
             return
         }
@@ -4489,7 +5303,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
         // url = "http://192.168.0.22:1250/proxy/object/";
 
         try {
@@ -4512,7 +5326,7 @@
                 })
             };
 
-            const apikeys_resp = await fetchWithAuth("/demo/proxy/object/", options);
+            const apikeys_resp = await fetchWithAuth("/proxy/object/", options);
             const text = await apikeys_resp.text();
 
             if (apikeys_resp.status === 200) {
@@ -4533,7 +5347,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/demo/proxy/object/namespace/' + key + "/", {
+                    fetchWithAuth('/proxy/object/namespace/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -4554,7 +5368,7 @@
         const port = window.location.port;
         const schema = window.location.protocol;
 
-        url = schema + "//" + hostname + ":" + port + "/demo/proxy1/object/";
+        url = schema + "//" + hostname + ":" + port + "/proxy1/object/";
         // url = "http://192.168.0.22:1250/proxy/object/";
 
         try {
@@ -4577,7 +5391,7 @@
                 })
             };
 
-            const resp = await fetchWithAuth("/demo/proxy/object/", options);
+            const resp = await fetchWithAuth("/proxy/object/", options);
             const text = await resp.text();
 
             if (resp.status === 200) {
@@ -4598,7 +5412,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/demo/proxy/object/tenant/' + key + "/", {
+                    fetchWithAuth('/proxy/object/tenant/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -4611,7 +5425,13 @@
     async function create_apikey() {
         const nameInput = document.getElementById('apikey_name');
         const keyname = nameInput.value.trim();
-        if (!keyname) return;
+        if (!keyname) {
+            alert("Please enter an API key name.");
+            if (nameInput && typeof nameInput.focus === 'function') {
+                nameInput.focus();
+            }
+            return;
+        }
 
         const accessLevel = document.getElementById('apikey_access_level').value;
         const restrictTenant = document.getElementById('apikey_restrict_tenant').value.trim();
@@ -4637,7 +5457,7 @@
         if (expiresDays) payload.expires_in_days = parseInt(expiresDays);
 
         try {
-            const resp = await fetchWithAuth("/demo/apikeys", {
+            const resp = await fetchWithAuth("/apikeys", {
                 method: 'PUT',
                 headers: {
                     'Accept': 'application/json',
@@ -4726,7 +5546,7 @@
             if (!confirm(`Delete ${checkboxes.length} selected API key(s)?`)) return;
 
             await Promise.all(Array.from(checkboxes).map(cb => {
-                return fetchWithAuth("/demo/apikeys", {
+                return fetchWithAuth("/apikeys", {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -4748,5 +5568,4 @@
     fetchItems();
 </script>
 
-{{ hosturl }}
 {% endblock %}

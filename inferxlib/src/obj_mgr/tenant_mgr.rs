@@ -27,7 +27,7 @@ pub struct TenantObject {
 
 fn default_resourcelimit() -> ResourceLimit {
     return ResourceLimit {
-        maxFuncCnt: 2,
+        maxFuncCnt: 6,
         allocMemStandby: false,
         maxReplica: 2,
         maxStandby: 1,

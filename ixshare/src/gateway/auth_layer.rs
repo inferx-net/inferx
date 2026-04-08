@@ -105,8 +105,33 @@ pub fn Username(token: &KeycloakToken<String>) -> String {
     return token.extra.profile.preferred_username.clone();
 }
 
+pub fn DisplayName(token: &KeycloakToken<String>) -> Option<String> {
+    return token
+        .extra
+        .profile
+        .full_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            token
+                .extra
+                .profile
+                .given_name
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+        });
+}
+
 pub fn Subject(token: &KeycloakToken<String>) -> String {
     return token.subject.clone();
+}
+
+pub fn Email(token: &KeycloakToken<String>) -> String {
+    return token.extra.email.email.clone();
+}
+
+pub fn EmailVerified(token: &KeycloakToken<String>) -> bool {
+    return token.extra.email.email_verified;
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
@@ -185,6 +210,9 @@ pub struct ApikeyDeleteRequest {
 pub struct AccessToken {
     pub subject: String,
     pub username: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub email_verified: bool,
     pub roles: BTreeSet<String>,
     pub apiKeys: Vec<String>,
     pub scope: String,
@@ -212,6 +240,9 @@ impl AccessToken {
         return Self {
             subject: "".to_owned(),
             username: username.to_owned(),
+            display_name: None,
+            email: "".to_owned(),
+            email_verified: false,
             roles: set,
             apiKeys: apikeys,
             scope: "full".to_owned(),
@@ -226,6 +257,9 @@ impl AccessToken {
         return Self {
             subject: "".to_owned(),
             username: Self::INERX_ADMIN.to_owned(),
+            display_name: None,
+            email: "".to_owned(),
+            email_verified: false,
             roles: BTreeSet::new(),
             apiKeys: Vec::new(),
             scope: "full".to_owned(),
@@ -653,6 +687,9 @@ impl TokenCache {
             anonymous: Arc::new(AccessToken {
                 subject: "".to_owned(),
                 username: "anonymous".to_owned(),
+                display_name: None,
+                email: "".to_owned(),
+                email_verified: false,
                 roles: BTreeSet::new(),
                 apiKeys: Vec::new(),
                 scope: "read".to_owned(),
@@ -798,6 +835,9 @@ impl TokenCache {
         Ok(AccessToken {
             subject: base.subject.clone(),
             username: base.username.clone(),
+            display_name: base.display_name.clone(),
+            email: base.email.clone(),
+            email_verified: base.email_verified,
             roles: filtered_roles,
             apiKeys: base.apiKeys.clone(),
             scope: normalized_scope,
@@ -1178,7 +1218,11 @@ pub async fn auth_transform_keycloaktoken(
             KeycloakAuthStatus::Success(t) => {
                 let username = Username(t);
                 let subject = Subject(t);
-                let token = match GetTokenCache().await.GetTokenByUsername(&username).await {
+                let email = Email(t);
+                let email_verified = EmailVerified(t);
+                let display_name = DisplayName(t);
+                let token_cache = GetTokenCache().await;
+                let token = match token_cache.GetTokenByUsername(&username).await {
                     Err(e) => {
                         let body = Body::from(format!(
                             "auth_transform_keycloaktoken fail with error {:?} for username {}",
@@ -1193,11 +1237,18 @@ pub async fn auth_transform_keycloaktoken(
                     }
                     Ok(t) => t,
                 };
-                if token.subject == subject {
+                if token.subject == subject
+                    && token.email == email
+                    && token.email_verified == email_verified
+                    && token.display_name == display_name
+                {
                     token
                 } else {
                     let mut with_subject = (*token).clone();
                     with_subject.subject = subject;
+                    with_subject.email = email;
+                    with_subject.email_verified = email_verified;
+                    with_subject.display_name = display_name;
                     Arc::new(with_subject)
                 }
             }

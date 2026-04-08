@@ -3,25 +3,127 @@
 
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <title> InferX AI Function </title>
+    <title> InferX | Serverless Inference Platform </title>
     <style>
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: #334155;
+        }
+
+        nav {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 10px;
+            margin: 0 0 6px 0;
         }
 
         nav a {
             color: #d64161;
-            font-size: 3em;
-            margin-left: 50px;
+            font-size: clamp(19px, 1.7vw, 24px);
+            font-weight: 600;
+            line-height: 1.2;
+            margin-left: 0;
+            padding: 4px 8px;
+            border-radius: 4px;
             text-decoration: none;
+            white-space: nowrap;
+        }
+
+        nav a:hover {
+            background: #fff1f2;
+        }
+
+        nav a.active {
+            background: #d64161;
+            color: #ffffff;
+        }
+
+        nav a.active:hover {
+            background: #c22f50;
+        }
+
+        nav a.nav-support-link {
+            margin-left: auto;
+            min-height: 28px;
+            padding: 4px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            background: #f1f5f9;
+            color: #1e3a8a;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.1;
+            position: relative;
+            gap: 6px;
+        }
+
+        nav a.nav-support-link:hover {
+            background: #e2e8f0;
+            border-color: #94a3b8;
+            color: #1e40af;
+        }
+
+        nav a.nav-support-link .nav-support-icon {
+            width: 14px;
+            height: 14px;
+            display: inline-block;
+            flex: 0 0 auto;
+        }
+
+        nav a.nav-support-link:focus-visible {
+            outline: 2px solid #93c5fd;
+            outline-offset: 2px;
+        }
+
+        nav a.nav-support-link .nav-support-text {
+            display: inline-block;
+        }
+
+        nav a.nav-support-link::after {
+            content: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 8px);
+            padding: 5px 8px;
+            border-radius: 4px;
+            background: #0f172a;
+            color: #f8fafc;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.2;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-2px);
+            transition: opacity 120ms ease, transform 120ms ease;
+            z-index: 1200;
+        }
+
+        nav a.nav-support-link:hover::after,
+        nav a.nav-support-link:focus-visible::after {
+            content: attr(data-tooltip);
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .nav-divider {
+            border: 0;
+            border-top: 1px solid #d7dee8;
+            margin: 6px 0 10px 0;
         }
 
         .content table.ix-table {
             border-collapse: collapse;
             background: #fff;
+            table-layout: fixed;
         }
 
         .content table.ix-table th,
@@ -30,6 +132,14 @@
             padding: 10px 12px;
             text-align: center;
             vertical-align: middle;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .content table.ix-table a {
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .content table.ix-table th {
@@ -55,6 +165,77 @@
             padding: 4px 6px;
         }
 
+        .ix-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #2563eb;
+            background: #2563eb;
+            color: #fff;
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 14px;
+            text-decoration: none;
+            cursor: pointer;
+            box-sizing: border-box;
+            transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+        }
+
+        .ix-btn.secondary {
+            background: #fff;
+            color: #1e3a8a;
+            border-color: #93c5fd;
+        }
+
+        .ix-btn.danger {
+            background: #b91c1c;
+            border-color: #b91c1c;
+        }
+
+        .ix-btn:hover:not(:disabled),
+        .ix-btn:focus-visible:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+        }
+
+        .ix-btn:hover:not(:disabled) {
+            background: #1d4ed8;
+            border-color: #1d4ed8;
+        }
+
+        .ix-btn.secondary:hover:not(:disabled),
+        .ix-btn.secondary:focus-visible:not(:disabled) {
+            background: #eff6ff;
+            border-color: #60a5fa;
+            box-shadow: 0 8px 18px rgba(59, 130, 246, 0.14);
+        }
+
+        .ix-btn.danger:hover:not(:disabled),
+        .ix-btn.danger:focus-visible:not(:disabled) {
+            background: #991b1b;
+            border-color: #991b1b;
+            box-shadow: 0 8px 18px rgba(185, 28, 28, 0.18);
+        }
+
+        .ix-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .ix-row-actions {
+            display: inline-flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .ix-row-actions .ix-btn {
+            padding: 4px 8px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
         .audit {
             padding: 20px;
             margin: 10px;
@@ -66,43 +247,337 @@
             font-size: 20px;
         }
 
-        .topbar {
-            display: flex;
-            justify-content: space-between;
+        .brand-header {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            table-layout: fixed;
+            background: #475569;
+            border: 1px solid #64748b;
+            border-radius: 2px;
+            margin-bottom: 10px;
+        }
+
+        .brand-header td {
+            border: none;
+            padding: 5px 10px;
+            vertical-align: middle;
+        }
+
+        .brand-logo-cell {
+            width: 70px;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.14);
+        }
+
+        .brand-logo {
+            display: block;
+            margin: 0 auto;
+        }
+
+        .brand-title-cell {
+            width: auto;
+        }
+
+        .brand-header h1 {
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            column-gap: 8px;
+            row-gap: 4px;
+            margin: 0;
+            color: #f8fafc;
+            font-size: clamp(16px, 1.9vw, 25px);
+            line-height: 1.1;
+        }
+
+        .brand-title-lockup {
+            display: inline-flex;
+            align-items: flex-start;
+            gap: 4px;
+            white-space: nowrap;
+        }
+
+        .brand-title-name {
+            font-weight: 700;
+        }
+
+        .brand-title-separator {
+            font-weight: 500;
+        }
+
+        .brand-title-tagline {
+            font-weight: 500;
+        }
+
+        .brand-beta-badge {
+            display: inline-block;
+            padding: 0 3px;
+            border-radius: 999px;
+            background: #fbbf24;
+            color: #1f2937;
+            font-size: 0.3em;
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            position: relative;
+            top: -0.55em;
+        }
+
+        .brand-actions-cell {
+            width: 240px;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .brand-auth-menu {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+        }
+
+        .brand-auth-link {
+            display: inline-flex;
             align-items: center;
-            gap: 16px;
+            gap: 6px;
+            max-width: 100%;
+            padding: 7px 12px;
+            border-radius: 4px;
+            border: 1px solid rgba(191, 219, 254, 0.45);
+            background: rgba(255, 255, 255, 0.08);
+            color: #f8fafc;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+        .brand-auth-link:hover {
+            background: rgba(255, 255, 255, 0.14);
+            border-color: rgba(191, 219, 254, 0.7);
+        }
+
+        .brand-auth-link.has-menu::after {
+            content: "▾";
+            font-size: 11px;
+            opacity: 0.9;
+            flex: 0 0 auto;
+        }
+
+        .brand-auth-link[aria-expanded="true"] {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: rgba(191, 219, 254, 0.8);
+        }
+
+        .brand-auth-link:focus {
+            outline: 2px solid rgba(191, 219, 254, 0.9);
+            outline-offset: 2px;
+        }
+
+        .brand-auth-dropdown {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 6px);
+            min-width: 140px;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+            text-align: left;
+            z-index: 1000;
+        }
+
+        .brand-auth-dropdown[hidden] {
+            display: none;
+        }
+
+        .brand-auth-dropdown-item {
+            display: block;
+            padding: 8px 10px;
+            border-radius: 4px;
+            color: #0f172a;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .brand-auth-dropdown-item:hover {
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .copyable-area {
+            position: relative;
+            display: block;
+        }
+
+        .copyable-area-copy {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 1;
+        }
+
+        .copyable-area:hover .copyable-area-copy,
+        .copyable-area:focus-within .copyable-area-copy {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        @media (max-width: 900px) {
+            .brand-actions-cell {
+                width: 220px;
+            }
+
+            .brand-auth-link {
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+
+            nav a.nav-support-link {
+                margin-left: 0;
+                width: 34px;
+                height: 34px;
+                min-height: 34px;
+                padding: 0;
+            }
+
+            nav a.nav-support-link .nav-support-text {
+                display: none;
+            }
+
+            nav a.nav-support-link .nav-support-icon {
+                display: block;
+            }
+
+            nav a.nav-support-link::after {
+                content: attr(data-tooltip);
+            }
         }
 
     </style>
 </head>
 
 <body>
-    <table style="border-collapse: collapse; border: 2px solid rgba(255, 255, 255, 0.5);">
-        <td style="border: none;"><img src="doc/logo.png" alt="logo" width="100" height="100"></td>
-        <td style="border: none;">
-            <h1>InferX AI Function Platform (Lambda Function for Inference)</h1>
-            <h2>&nbsp;&nbsp;&nbsp;&nbsp;-- &nbsp; Serve tens models in one box with ultra-fast (<2 sec) cold start
-                    (contact: support@inferx.net)</</h2>
-        </td>
+    {% set is_logged_in = session.get('access_token', '') != '' %}
+    {% set is_gateway_aligned_anonymous_active = dashboard_gateway_aligned_anonymous_active | default(false) %}
+    {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active %}
+    {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
+    {% set request_path = request.path if request is defined and request.path is defined else '' %}
+    {% set request_path_no_slash = request_path.rstrip('/') %}
+    {% set nav_models_active = request_path_no_slash in ('',) or '/listfunc' in request_path or '/func_create' in request_path or '/func' in request_path or '/funclog' in request_path %}
+    {% set nav_catalog_active = '/catalog' in request_path %}
+    {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}
+    {% set nav_snapshots_active = '/listsnapshot' in request_path or '/snapshot' in request_path %}
+    {% set nav_nodes_active = '/listnode' in request_path or '/node' in request_path %}
+    {% set nav_admin_active = '/admin' in request_path %}
+    <table class="brand-header">
+        <tr>
+            <td class="brand-logo-cell"><img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="48" height="48"></td>
+            <td class="brand-title-cell">
+
+                <h1>
+                    <span class="brand-title-lockup">
+                        <span class="brand-title-name">InferX</span>
+                        <span class="brand-beta-badge">Beta</span>
+                    </span>
+                    <span class="brand-title-separator">&mdash;</span>
+                    <span class="brand-title-tagline">Serverless GPU Inference Platform, Built for Agent-Native Workloads</span>
+                </h1>
+            </td>
+            <td class="brand-actions-cell">
+                <div id="brand-auth-menu" class="brand-auth-menu">
+                    <a href="#" id="login_logout" class="brand-auth-link">Action</a>
+                    <div id="brand-auth-dropdown" class="brand-auth-dropdown" hidden>
+                        <a id="brand-auth-logout" class="brand-auth-dropdown-item" href="#">Log out</a>
+                    </div>
+                </div>
+            </td>
+        </tr>
     </table>
-    <div class="topbar">
-        <a href="#" id="login_logout" style="font-size: 2em; margin-left: auto;">Action</a>
-    </div>
-    <hr>
+    {% if show_public_nav %}
     <nav>
-        <a href="{{ hosturl }}intro"> Introduction </a>
-        <a href="{{ hosturl }}listfunc"> Models </a>
-        <a href="{{ hosturl }}listpod"> Pods </a>
-        <a href="{{ hosturl }}listsnapshot"> Snapshots </a>
-        <a href="{{ hosturl }}listnode"> Nodes </a>
-        <a href="{{ hosturl }}admin" id="admin"> Admin </a>
+        <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
+        <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
+        <a href="{{ hosturl }}listpod" class="{% if nav_pods_active %}active{% endif %}"> Pods </a>
+        {% if nav_is_inferx_admin %}
+        <a href="{{ hosturl }}listsnapshot" class="{% if nav_snapshots_active %}active{% endif %}"> Snapshots </a>
+        {% endif %}
+        <a href="{{ hosturl }}listnode" id="nav-nodes-link" class="{% if nav_nodes_active %}active{% endif %}"{% if not dashboard_gateway_aligned_anonymous_access %} style="display: none;"{% endif %}> Nodes </a>
+        {% if is_logged_in %}
+        <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>
+        {% endif %}
+        <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join Slack support" aria-label="Get support on Slack" target="_blank" rel="noopener noreferrer">
+            <svg class="nav-support-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                <path d="M5.5 6.5h5M5.5 8.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="nav-support-text">Get Support</span>
+        </a>
     </nav>
+    {% endif %}
     <script>
         const link = document.querySelector('#login_logout');
+        const authMenu = document.querySelector('#brand-auth-menu');
+        const authDropdown = document.querySelector('#brand-auth-dropdown');
+        const logoutLink = document.querySelector('#brand-auth-logout');
+        const isLoggedIn = {{ is_logged_in | tojson }};
+        const dashboardGatewayAlignedAnonymousAccess = {{ dashboard_gateway_aligned_anonymous_access | tojson }};
+        const isGatewayAlignedAnonymousActive = {{ is_gateway_aligned_anonymous_active | tojson }};
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
         const tenantDisplayMap = {};
+        const loginUrl = '{{ hosturl }}' + "login";
+        const logoutUrl = '{{ hosturl }}' + "logout";
+        const navNodesLink = document.querySelector('#nav-nodes-link');
+
+        function isInferxAdminFromRoles(rolesData) {
+            if (!Array.isArray(rolesData)) {
+                return false;
+            }
+
+            return rolesData.some((rb) => {
+                const rbObjType = String(rb && rb.objType || '').toLowerCase().trim();
+                const rbRole = String(rb && rb.role || '').toLowerCase().trim();
+                const rbTenant = String(rb && rb.tenant || '').toLowerCase().trim();
+                return rbObjType === 'tenant' && rbTenant === 'system' && rbRole === 'admin';
+            });
+        }
+
+        function setNodesNavVisibility(isVisible) {
+            if (!navNodesLink) {
+                return;
+            }
+            navNodesLink.style.display = isVisible ? '' : 'none';
+        }
+
+        function closeAuthDropdown() {
+            if (!authDropdown || !link) {
+                return;
+            }
+            authDropdown.hidden = true;
+            link.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleAuthDropdown() {
+            if (!authDropdown || !link) {
+                return;
+            }
+            const nextOpen = authDropdown.hidden;
+            authDropdown.hidden = !nextOpen;
+            link.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+        }
 
         function tenantDisplayNameFromTenantObject(tenantObj) {
             if (!tenantObj) {
@@ -173,14 +648,65 @@
             document.dispatchEvent(new CustomEvent('tenant-display-map-updated'));
         }
 
+        function getCopyableAreaText(target) {
+            if (!target) {
+                return '';
+            }
+
+            if (typeof target.value === 'string') {
+                return target.value;
+            }
+
+            return String(target.innerText || target.textContent || '');
+        }
+
+        async function copyTextFromElement(targetOrId) {
+            const target = typeof targetOrId === 'string'
+                ? document.getElementById(targetOrId)
+                : targetOrId;
+            if (!target) {
+                return false;
+            }
+
+            const text = getCopyableAreaText(target);
+            if (text === '') {
+                return false;
+            }
+
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_err) {
+            }
+
+            const helper = document.createElement('textarea');
+            helper.value = text;
+            helper.setAttribute('readonly', '');
+            helper.style.position = 'fixed';
+            helper.style.top = '0';
+            helper.style.left = '0';
+            helper.style.opacity = '0';
+            document.body.appendChild(helper);
+            helper.focus();
+            helper.select();
+
+            try {
+                return document.execCommand('copy');
+            } finally {
+                document.body.removeChild(helper);
+            }
+        }
+
         async function loadTenantDisplayMap() {
-            if (username === '') {
+            if (!isLoggedIn && !isGatewayAlignedAnonymousActive) {
                 refreshTenantBadge();
                 return;
             }
 
             try {
-                const resp = await fetch('/demo/generate_tenants');
+                const resp = await fetch('/generate_tenants');
                 if (!resp.ok) {
                     refreshTenantBadge();
                     return;
@@ -204,25 +730,90 @@
             }
         }
 
+        async function configureNodesNavVisibility() {
+            if (!navNodesLink) {
+                return;
+            }
+
+            if (dashboardGatewayAlignedAnonymousAccess) {
+                setNodesNavVisibility(true);
+                return;
+            }
+
+            if (!isLoggedIn) {
+                setNodesNavVisibility(false);
+                return;
+            }
+
+            if (String(username).trim().toLowerCase() === 'inferx_admin') {
+                setNodesNavVisibility(true);
+                return;
+            }
+
+            try {
+                const resp = await fetch('/generate_roles');
+                if (!resp.ok) {
+                    setNodesNavVisibility(false);
+                    return;
+                }
+
+                const roles = await resp.json();
+                setNodesNavVisibility(isInferxAdminFromRoles(roles));
+            } catch (_e) {
+                setNodesNavVisibility(false);
+            }
+        }
+
         window.getTenantDisplayName = getTenantDisplayName;
         window.applyTenantDisplayNames = applyTenantDisplayNames;
         window.updateTenantDisplayMap = updateTenantDisplayMap;
         window.tenantDisplayNameFromTenantObject = tenantDisplayNameFromTenantObject;
+        window.copyTextFromElement = copyTextFromElement;
 
-        if (username == "") {
-            link.href = '{{ hosturl }}' + "login";
-            link.textContent = 'login'
+        if (!isLoggedIn) {
+            link.href = loginUrl;
+            link.textContent = 'Log in';
+            link.removeAttribute('aria-haspopup');
+            link.removeAttribute('aria-expanded');
+            link.classList.remove('has-menu');
+            if (authDropdown) {
+                authDropdown.hidden = true;
+            }
         } else {
-            link.href = '{{ hosturl }}' + "logout";
-            link.textContent = "logout(" + userDisplayName + ")";
+            link.href = '#';
+            link.textContent = userDisplayName || username || 'Account';
+            link.setAttribute('aria-haspopup', 'menu');
+            link.setAttribute('aria-expanded', 'false');
+            link.classList.add('has-menu');
+            if (logoutLink) {
+                logoutLink.href = logoutUrl;
+            }
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                toggleAuthDropdown();
+            });
+            document.addEventListener('click', (event) => {
+                if (!authMenu || authMenu.contains(event.target)) {
+                    return;
+                }
+                closeAuthDropdown();
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    closeAuthDropdown();
+                }
+            });
         }
 
         refreshTenantBadge();
         applyTenantDisplayNames(document);
         loadTenantDisplayMap();
+        configureNodesNavVisibility();
 
     </script>
-    <hr>
+    {% if show_public_nav %}
+    <hr class="nav-divider">
+    {% endif %}
     <div class="content">
         {% block content %} {% endblock %}
     </div>

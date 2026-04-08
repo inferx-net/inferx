@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgConnectOptions;
 use sqlx::postgres::PgPool;
@@ -44,6 +46,15 @@ pub struct OnboardInfo {
     pub saga_step: i32,
     pub onboarded_at: Option<chrono::NaiveDateTime>,
     pub completed_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct TenantProfile {
+    pub tenant_name: String,
+    pub sub: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub created_at: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -346,6 +357,103 @@ impl SqlSecret {
             where sub = $1";
 
         let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn UpsertTenantProfile(
+        &self,
+        tenant_name: &str,
+        sub: &str,
+        display_name: &Option<String>,
+        email: &str,
+    ) -> Result<()> {
+        let query = "insert into TenantProfile (
+                tenant_name, sub, display_name, email
+            ) values (
+                $1, $2, $3, $4
+            ) on conflict (sub) do update
+            set display_name = EXCLUDED.display_name,
+                email = EXCLUDED.email,
+                updated_at = NOW()";
+
+        let _res = sqlx::query(query)
+            .bind(tenant_name)
+            .bind(sub)
+            .bind(display_name)
+            .bind(email)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
+    }
+
+    pub async fn GetTenantProfilesByTenantNames(
+        &self,
+        tenant_names: &[String],
+    ) -> Result<HashMap<String, TenantProfile>> {
+        if tenant_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let names = tenant_names.to_vec();
+        let query = "select
+                tenant_name,
+                sub,
+                display_name,
+                email::text as email,
+                created_at
+            from TenantProfile
+            where tenant_name = any($1)";
+
+        let rows = sqlx::query_as::<_, TenantProfile>(query)
+            .bind(names)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut map = HashMap::new();
+        for row in rows {
+            map.insert(row.tenant_name.clone(), row);
+        }
+        return Ok(map);
+    }
+
+    pub async fn CompleteOnboardWithProfile(
+        &self,
+        sub: &str,
+        tenant_name: &str,
+        display_name: &Option<String>,
+        email: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        let upsert_query = "insert into TenantProfile (
+                tenant_name, sub, display_name, email
+            ) values (
+                $1, $2, $3, $4
+            ) on conflict (sub) do update
+            set display_name = EXCLUDED.display_name,
+                email = EXCLUDED.email,
+                updated_at = NOW()";
+
+        let _res = sqlx::query(upsert_query)
+            .bind(tenant_name)
+            .bind(sub)
+            .bind(display_name)
+            .bind(email)
+            .execute(&mut *tx)
+            .await?;
+
+        let complete_query = "update UserOnboard
+            set status = 'complete',
+                saga_step = GREATEST(saga_step, 3),
+                completed_at = NOW()
+            where sub = $1";
+
+        let _res = sqlx::query(complete_query)
+            .bind(sub)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
         return Ok(());
     }
 

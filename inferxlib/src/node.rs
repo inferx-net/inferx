@@ -147,5 +147,6 @@ pub struct ContainerDef {
     pub stdin_once: bool,
     pub resources: NodeResources,
     pub ports: Vec<ContainerPort>,
+    #[serde(default)]
     pub mountfiles: Vec<MountFile>,
 }

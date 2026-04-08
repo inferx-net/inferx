@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: secret-db-pvc
+  name: keycloak-db-pvc
 spec:
   accessModes:
     - ReadWriteOnce
@@ -12,55 +12,49 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: secret-db
-spec:      
+  name: keycloak-postgres
+spec:
   replicas: 1
   selector:
     matchLabels:
-      app: secret-db
+      app: keycloak-postgres
   template:
     metadata:
       labels:
-        app: secret-db
+        app: keycloak-postgres
     spec:
       nodeSelector:
-        inferx_storage: data
+        inferx_storage: data      
       containers:
         - name: postgres
-          image: inferx/inferx_postgres:${VERSION}
+          image: postgres:14.5
           imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 5432
           env:
             - name: POSTGRES_USER
-              value: secret
+              value: keycloak
             - name: POSTGRES_PASSWORD
               value: "123456"
             - name: POSTGRES_DB
-              value: secretdb
+              value: keycloak
             - name: PGDATA
               value: /data/postgres
-            - name: INIT_SQL
-              value: secret.sql 
+          ports:
+            - containerPort: 5432
           volumeMounts:
             - name: db-data
-              mountPath: /data/postgres
+              mountPath: /data/postgres  
       volumes:
         - name: db-data
-          hostPath:
-            path: /opt/inferx/data/postgres_secret
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: keycloak-db-pvc
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: secret-db
+  name: keycloak-postgres
 spec:
   selector:
-    app: secret-db
+    app: keycloak-postgres
   ports:
     - port: 5432
       targetPort: 5432
-      nodePort: 30541
-  type: NodePort
-

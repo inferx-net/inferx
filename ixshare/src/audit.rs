@@ -29,6 +29,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::ConnectOptions;
 use sqlx::FromRow;
 use sqlx::Row;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -454,14 +455,14 @@ impl UsageTickAuditAgent {
     }
 
     pub fn Enable() -> bool {
-        return NA_CONFIG.auditdbAddr.len() > 0;
+        return NA_CONFIG.billingdbAddr.len() > 0;
     }
 
     pub async fn Process(&self, mut rx: mpsc::Receiver<UsageTick>) -> Result<()> {
-        let addr = NA_CONFIG.auditdbAddr.clone();
-        info!("UsageTickAuditAgent: auditdb address {}", &addr);
+        let addr = NA_CONFIG.billingdbAddr.clone();
+        info!("UsageTickAuditAgent: billingdb address {}", &addr);
         if addr.len() == 0 {
-            info!("UsageTickAuditAgent: auditdb is not enabled");
+            info!("UsageTickAuditAgent: billingdb is not enabled");
             return Ok(());
         }
         let sqlaudit = SqlAudit::New(&addr).await?;
@@ -528,6 +529,13 @@ pub struct BillingRateHistoryRecord {
     pub tenant: Option<String>,
     pub created_at: DateTime<Utc>,
     pub added_by: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct TenantBillingAdminSummary {
+    pub tenant: String,
+    pub balance_cents: i64,
+    pub used_cents: i64,
 }
 
 impl SqlAudit {
@@ -856,6 +864,25 @@ impl SqlAudit {
         Ok(row.0 as i64)
     }
 
+    /// Check whether a tenant credit record already exists for the given payment reference.
+    pub async fn HasTenantCreditPaymentRef(&self, tenant: &str, payment_ref: &str) -> Result<bool> {
+        let row: (bool,) = sqlx::query_as(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM TenantCreditHistory
+                WHERE tenant = $1 AND payment_ref = $2
+            )
+            "#,
+        )
+        .bind(tenant)
+        .bind(payment_ref)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.0)
+    }
+
     /// Add a billing rate row.
     pub async fn AddBillingRate(
         &self,
@@ -1109,6 +1136,48 @@ impl SqlAudit {
         );
 
         Ok(balance)
+    }
+
+    pub async fn GetTenantBillingSummariesByTenantNames(
+        &self,
+        tenant_names: &[String],
+    ) -> Result<HashMap<String, TenantBillingAdminSummary>> {
+        if tenant_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let names = tenant_names.to_vec();
+        let rows = sqlx::query_as::<_, TenantBillingAdminSummary>(
+            r#"
+            WITH input_tenants AS (
+                SELECT DISTINCT unnest($1::text[]) AS tenant
+            ),
+            credit_totals AS (
+                SELECT
+                    tenant,
+                    COALESCE(SUM(amount_cents), 0)::bigint AS total_credits
+                FROM TenantCreditHistory
+                WHERE tenant = ANY($1)
+                GROUP BY tenant
+            )
+            SELECT
+                i.tenant,
+                (COALESCE(c.total_credits, 0)::bigint - COALESCE(q.used_cents, 0)::bigint) AS balance_cents,
+                COALESCE(q.used_cents, 0)::bigint AS used_cents
+            FROM input_tenants i
+            LEFT JOIN credit_totals c ON c.tenant = i.tenant
+            LEFT JOIN TenantQuota q ON q.tenant = i.tenant
+            "#
+        )
+        .bind(names)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut map = HashMap::new();
+        for row in rows {
+            map.insert(row.tenant.clone(), row);
+        }
+        Ok(map)
     }
 
     /// Get tenant billing summary in cents

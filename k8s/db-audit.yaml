@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auditdb-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auditdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auditdb
+  template:
+    metadata:
+      labels:
+        app: auditdb
+    spec:
+      nodeSelector:
+        inferx_storage: data      
+      containers:
+        - name: postgres
+          image: inferx/inferx_postgres:${VERSION}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: audit_user
+            - name: POSTGRES_PASSWORD
+              value: "123456"
+            - name: POSTGRES_DB
+              value: auditdb
+            - name: PGDATA
+              value: /data/postgres
+            - name: INIT_SQL
+              value: audit.sql
+          volumeMounts:
+            - name: db-data
+              mountPath: /data/postgres
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: auditdb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auditdb
+spec:
+  selector:
+    app: auditdb
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30542
+  type: NodePort

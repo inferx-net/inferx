@@ -161,10 +161,12 @@ pub struct GatewayConfig {
     pub nodeIp: String,
     pub schedulerPort: u16,
     pub auditdbAddr: String,
+    pub billingdbAddr: String,
     pub enforceBilling: bool,
     pub secretStoreAddr: String,
     pub keycloakconfig: KeycloadConfig,
     pub inferxAdminApikey: String,
+    pub onboardInitialCreditCents: i64,
     pub gatewayPort: u16,
 }
 
@@ -224,6 +226,17 @@ impl GatewayConfig {
             Err(_) => config.auditdbAddr.clone(),
         };
 
+        let billingdbAddr = match std::env::var("BILLINGDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => {
+                if config.billingdbAddr.len() > 0 {
+                    config.billingdbAddr.clone()
+                } else {
+                    auditdbAddr.clone()
+                }
+            }
+        };
+
         let enforceBilling = match std::env::var("ENFORCE_BILLING") {
             Ok(s) => match s.parse::<bool>() {
                 Ok(v) => v,
@@ -256,6 +269,27 @@ impl GatewayConfig {
             Err(_) => String::new(),
         };
 
+        let onboardInitialCreditCents = match std::env::var("ONBOARD_INITIAL_CREDIT_CENTS") {
+            Ok(s) => match s.parse::<i64>() {
+                Ok(v) if v >= 0 => v,
+                Ok(v) => {
+                    warn!(
+                        "invalid ONBOARD_INITIAL_CREDIT_CENTS value '{}' (negative {}), defaulting to 3000",
+                        &s, v
+                    );
+                    3000
+                }
+                Err(_) => {
+                    warn!(
+                        "invalid ONBOARD_INITIAL_CREDIT_CENTS value '{}', defaulting to 3000",
+                        &s
+                    );
+                    3000
+                }
+            },
+            Err(_) => 3000,
+        };
+
         let gatewayPort = if config.gatewayPort == 0 {
             DEFAULT_GATEWAY_PORT
         } else {
@@ -270,12 +304,14 @@ impl GatewayConfig {
             schedulerPort: schedulerPort,
             secretStoreAddr: secretStoreAddr,
             auditdbAddr: auditdbAddr,
+            billingdbAddr: billingdbAddr,
             enforceBilling: enforceBilling,
             keycloakconfig: KeycloadConfig {
                 url: keycloakUrl,
                 realm: keycloakRealm,
             },
             inferxAdminApikey: inferxAdminApikey,
+            onboardInitialCreditCents: onboardInitialCreditCents,
             gatewayPort: gatewayPort,
         };
 
@@ -292,6 +328,8 @@ pub struct SchedulerConfig {
     pub nodeIp: String,
     pub schedulerPort: u16,
     pub auditdbAddr: String,
+    pub billingdbAddr: String,
+    pub enableSnapshotBilling: bool,
 }
 
 impl SchedulerConfig {
@@ -328,12 +366,40 @@ impl SchedulerConfig {
             Err(_) => config.auditdbAddr.clone(),
         };
 
+        let billingdbAddr = match std::env::var("BILLINGDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => {
+                if config.billingdbAddr.len() > 0 {
+                    config.billingdbAddr.clone()
+                } else {
+                    auditdbAddr.clone()
+                }
+            }
+        };
+
+        let enableSnapshotBilling = match std::env::var("ENABLE_SNAPSHOT_BILLING") {
+            Ok(s) => match s.parse::<bool>() {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        "invalid ENABLE_SNAPSHOT_BILLING value '{}', defaulting to {}",
+                        &s,
+                        config.enableSnapshotBilling
+                    );
+                    config.enableSnapshotBilling
+                }
+            },
+            Err(_) => config.enableSnapshotBilling,
+        };
+
         let ret = Self {
             etcdAddrs: etcdAddrs,
             stateSvcAddrs: stateSvcAddrs,
             nodeIp: nodeIp,
             schedulerPort: schedulerPort,
             auditdbAddr: auditdbAddr,
+            billingdbAddr: billingdbAddr,
+            enableSnapshotBilling: enableSnapshotBilling,
         };
 
         info!("SchedulerConfig is {:#?}", &ret);
@@ -440,6 +506,7 @@ pub struct NodeAgentConfig {
     pub memcache: ShareMem,
     pub tlsconfig: TLSConfig,
     pub auditdbAddr: String,
+    pub billingdbAddr: String,
     pub secretStoreAddr: String,
 
     pub initCudaHostAllocSize: i64, // GB
@@ -742,6 +809,17 @@ impl NodeAgentConfig {
             Err(_) => config.auditdbAddr.clone(),
         };
 
+        let billingdbAddr = match std::env::var("BILLINGDB_ADDR") {
+            Ok(s) => s,
+            Err(_) => {
+                if config.billingdbAddr.len() > 0 {
+                    config.billingdbAddr.clone()
+                } else {
+                    auditdbAddr.clone()
+                }
+            }
+        };
+
         let ret = Self {
             etcdAddrs: etcdAddrs,
             stateSvcAddrs: stateSvcAddrs,
@@ -762,6 +840,7 @@ impl NodeAgentConfig {
             memcache: config.sharemem.clone(),
             tlsconfig: config.tlsconfig.clone(),
             auditdbAddr: auditdbAddr,
+            billingdbAddr: billingdbAddr,
             secretStoreAddr: secretStoreAddr,
             initCudaHostAllocSize: initCudaHostAllocSize,
         };
@@ -837,6 +916,9 @@ pub struct NodeConfig {
     pub auditdbAddr: String,
 
     #[serde(default)]
+    pub billingdbAddr: String,
+
+    #[serde(default)]
     pub resources: ResourceConfig,
 
     #[serde(default)]
@@ -844,6 +926,9 @@ pub struct NodeConfig {
 
     #[serde(default)]
     pub enableBlobStore: bool,
+
+    #[serde(default)]
+    pub enableSnapshotBilling: bool,
 
     #[serde(default)]
     pub sharemem: ShareMem,

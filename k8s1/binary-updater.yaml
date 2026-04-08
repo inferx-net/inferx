@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: inferx-binary-updater
+  labels:
+    app: inferx-binary-updater
+spec:
+  selector:
+    matchLabels:
+      app: inferx-binary-updater
+  template:
+    metadata:
+      labels:
+        app: inferx-binary-updater
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: inferx_nodeType
+                    operator: In
+                    values: ["inferx_blob", "inferx_file"]
+      initContainers:
+        - name: binary-injector
+          image: inferx/inferx_bin:${VERSION}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /opt/inferx/bin/${VERSION}
+              cp /binaries/* /opt/inferx/bin/${VERSION}/
+              ln -sfn /opt/inferx/bin/${VERSION} /opt/inferx/bin/current
+          volumeMounts:
+            - name: inferx-bin
+              mountPath: /opt/inferx/bin
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+      volumes:
+        - name: inferx-bin
+          hostPath:
+            path: /opt/inferx/bin
+            type: DirectoryOrCreate

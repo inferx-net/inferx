@@ -36,6 +36,7 @@
         border: 1px solid black;
         padding: 2px;
     }
+
 </style>
 
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
@@ -91,7 +92,7 @@
 <h1 style="display:none;">Image</h1>
 <textarea id="urlInput" rows="2" cols="120" style="display:none;"></textarea>
 {% endif %}
-<h1>Prompt</h1>
+<h2>Prompt</h2>
 
 <textarea id="prompt" rows="3" cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["prompt"] }}</textarea>
 <br />
@@ -120,10 +121,13 @@
 <textarea id="output" rows="20" cols="120"></textarea>
 <textarea id="debug" rows="20" cols="120" hidden></textarea>
 
-<h1>Sample Rest Call</h1>
-<textarea id="restcall" rows="8" cols="120">
+<h2>Sample Rest Call</h2>
+<div class="copyable-area">
+    <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('restcall')">Copy</button>
+    <textarea id="restcall" rows="8" cols="120">
 {{ func["sampleRestCall"] }}
 </textarea>
+</div>
 
 <h2>Pods</h2>
 <table class="ix-table" style="width:100%; text-align: center; border-collapse: collapse;">
@@ -281,7 +285,7 @@
 
 
 {% if fails %}
-<h2>Failures</h2>
+<h2>Logs</h2>
 <table class="ix-table" style="width:100%">
     <tr>
         <th>tenant</th>
@@ -340,15 +344,16 @@
 {% endif %}
 
 
-<h2>Func</h2>
-{% if isAdmin %}
-<button id="updateSpec" onclick="updateSpec()">Update Model</button>
-<button id="deleteSpec" onclick="deleteFunc()">Delete Model</button>
-{% endif %}
+<h2>Model Spec</h2>
 <br />
 <textarea id="spec" rows="50" cols="120">{{ funcspec }}</textarea>
 
-<h2>FuncPolicy</h2>
+{% if is_inferx_admin %}
+<h2>Model Full Spec</h2>
+<textarea id="full-spec" rows="25" cols="120" readonly>{{ full_funcspec }}</textarea>
+{% endif %}
+
+<h2>Policy</h2>
 <textarea id="FuncPolicy" rows="5" cols="120">{{ funcpolicy }}</textarea>
 
 <script>
@@ -357,8 +362,9 @@
     const name = {{ name | tojson }};
     const apiType = {{ apiType | tojson }};
     const map = {{ map | tojson }};
-    const path = {{ path | tojson }};
+    const sampleQueryPath = {{ path | tojson }};
     const funcconfig = {{ func | tojson }};
+    const funcEditData = {{ func_edit_data | tojson }};
 
     function loadImage() {
         const url = document.getElementById("urlInput").value;
@@ -391,23 +397,43 @@
         const debugDiv = document.getElementById('debug');
         const spec = document.getElementById('spec').value;
         try {
-            funcconfig.func.object.spec = JSON.parse(spec);
+            let response;
+            if (funcEditData == null || typeof funcEditData !== 'object') {
+                // Legacy fallback: update raw full spec directly.
+                funcconfig.func.object.spec = JSON.parse(spec);
+                response = await fetch("/proxy/object/", {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(funcconfig.func)
+                });
+            } else {
+                const partialSpec = JSON.parse(spec);
+                const hfModel = (funcEditData.hf_model || '').trim();
+                if (hfModel === '') {
+                    throw new Error("hf_model is missing in edit projection; cannot submit partial update");
+                }
 
-            const hostname = window.location.hostname;
-            const port = window.location.port;
-            const schema = window.location.protocol;
+                const payload = {
+                    mode: 'update',
+                    tenant: tenant,
+                    namespace: namespace,
+                    name: name,
+                    hf_model: hfModel,
+                    spec: partialSpec
+                };
 
-            url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/";
-            const body = {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(funcconfig.func)
-            };
-
-            const response = await fetch(url, body);
+                response = await fetch("/func_save", {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+            }
             const text = await response.text();
             if (response.status == '200') {
                 alert("Update Model Spec successfully! ");
@@ -430,7 +456,7 @@
                 const port = window.location.port;
                 const schema = window.location.protocol;
 
-                url = schema + "//" + hostname + ":" + port + "/demo/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
+                url = schema + "//" + hostname + ":" + port + "/proxy/object/function/" + tenant + "/" + namespace + "/" + name + "/";
                 const body = {
                     method: 'DELETE',
                     headers: {
@@ -507,7 +533,7 @@
             abortController = new AbortController();
             const { signal } = abortController;
 
-            url = schema + "//" + hostname + ":" + port + "/demo/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + path;
+            url = schema + "//" + hostname + ":" + port + "/proxy/funccall/" + tenant + "/" + namespace + "/" + name + "/" + sampleQueryPath;
 
             let body;
             if (apiType == "text2text") {
@@ -566,7 +592,7 @@
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '12'
+                    'X-Inferx-Timeout': '60'
                 },
                 body: body,
                 signal
@@ -669,14 +695,14 @@
             const port = window.location.port;
             const schema = window.location.protocol;
 
-            url = schema + "//" + hostname + ":" + port + "/demo/text2img";
+            url = schema + "//" + hostname + ":" + port + "/text2img";
 
             const body = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '12'
+                    'X-Inferx-Timeout': '60'
                 },
                 body: JSON.stringify({
                     "prompt": prompt,
@@ -774,14 +800,14 @@
             const port = window.location.port;
             const schema = window.location.protocol;
 
-            url = schema + "//" + hostname + ":" + port + "/demo/text2audio";
+            url = schema + "//" + hostname + ":" + port + "/text2audio";
 
             const body = {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
-                    'X-Inferx-Timeout': '12'
+                    'X-Inferx-Timeout': '60'
                 },
                 body: JSON.stringify({
                     "prompt": prompt,

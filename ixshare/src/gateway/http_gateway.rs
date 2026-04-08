@@ -13,6 +13,7 @@
 // limitations under
 
 use core::str;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -30,7 +31,7 @@ use opentelemetry::KeyValue;
 use axum::extract::{Query, Request, State};
 use axum::http::HeaderValue;
 use axum::middleware::{from_fn_with_state, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use axum::{
     body::Body, extract::Path, routing::delete, routing::get, routing::head, routing::post,
@@ -65,11 +66,12 @@ use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
 use crate::metastore::unique_id::UID;
+use crate::na;
 use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use crate::peer_mgr::IxTcpClient;
 use crate::print::{set_trace_logging, trace_logging_enabled};
 use inferxlib::data_obj::DataObject;
-use inferxlib::obj_mgr::func_mgr::{ApiType, Function};
+use inferxlib::obj_mgr::func_mgr::{ApiType, FuncState, Function};
 
 use super::auth_layer::Grant;
 use super::auth_layer::ObjectType;
@@ -85,7 +87,9 @@ use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
+use super::scheduler_client::SCHEDULER_CLIENT;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
+const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 
 lazy_static::lazy_static! {
     #[derive(Debug)]
@@ -300,6 +304,7 @@ pub struct HttpGateway {
     pub funcAgentMgr: FuncAgentMgr,
     pub namespaceStore: NamespaceStore,
     pub sqlAudit: SqlAudit,
+    pub sqlBilling: SqlAudit,
     pub client: CacherClient,
 }
 
@@ -335,6 +340,7 @@ impl HttpGateway {
             .route("/apikey/", put(CreateApikey))
             .route("/apikey/", delete(DeleteApikey))
             .route("/onboard", post(Onboard))
+            .route("/admin/tenants", get(GetAdminTenants))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -383,7 +389,7 @@ impl HttpGateway {
             .route("/pods/:tenant/:namespace/:funcname/", get(GetFuncPods))
             .route(
                 "/pod/:tenant/:namespace/:funcname/:version/:id/",
-                get(GetFuncPod),
+                get(GetFuncPod).delete(KillPod),
             )
             .route("/functions/:tenant/:namespace/", get(ListFuncBrief))
             .route(
@@ -1198,7 +1204,7 @@ async fn FuncCall(
     let (parts, body) = req.into_parts();
 
     // Collect the body bytes
-    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+    let bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
         Err(_e) => {
             let resp = FailureResponse(
                 Error::BAD_REQUEST(StatusCode::BAD_REQUEST),
@@ -1213,7 +1219,7 @@ async fn FuncCall(
 
     let json_req: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-    error!("FuncCall get req {:#?}", json_req);
+    trace!("FuncCall get req {:#?}", json_req);
     let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
 
     let mut retry = 0;
@@ -1553,6 +1559,23 @@ struct OnboardResponse {
     tenant_name: String,
     role: String,
     created: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    apikey: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    apikey_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AdminTenantProfileRow {
+    tenant_name: String,
+    sub: Option<String>,
+    display_name: Option<String>,
+    email: Option<String>,
+    normal_model_count: u64,
+    total_model_count: u64,
+    used_cents: i64,
+    balance_cents: i64,
+    created_at: Option<chrono::NaiveDateTime>,
 }
 
 async fn Onboard(
@@ -1560,15 +1583,21 @@ async fn Onboard(
     State(gw): State<HttpGateway>,
 ) -> SResult<Response, StatusCode> {
     match gw.Onboard(&token).await {
-        Ok((tenant_name, created)) => {
-            let body = Body::from(
-                serde_json::to_string(&OnboardResponse {
-                    tenant_name: tenant_name,
-                    role: "admin".to_owned(),
-                    created: created,
-                })
-                .unwrap(),
-            );
+        Ok((tenant_name, created, apikey, apikey_name)) => {
+            let apikey = if apikey.is_empty() { None } else { Some(apikey) };
+            let apikey_name = if apikey_name.is_empty() {
+                None
+            } else {
+                Some(apikey_name)
+            };
+            let body = Body::from(serde_json::to_string(&OnboardResponse {
+                tenant_name: tenant_name,
+                role: "admin".to_owned(),
+                created: created,
+                apikey,
+                apikey_name,
+            }).unwrap());
+
             let resp = Response::builder()
                 .status(StatusCode::OK)
                 .header(CONTENT_TYPE, "application/json")
@@ -1580,6 +1609,147 @@ async fn Onboard(
             let body = Body::from("service failure: No permission");
             let resp = Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetAdminTenants(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("service failure: No permission");
+        let resp = Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let tenant_objs = match gw.objRepo.tenantMgr.GetObjects("", "") {
+        Ok(v) => v,
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let mut tenant_names = Vec::new();
+    for t in tenant_objs {
+        tenant_names.push(t.Name());
+    }
+    tenant_names.sort();
+    tenant_names.dedup();
+
+    let mut model_counts: HashMap<String, (u64, u64)> = HashMap::new();
+    match gw.objRepo.funcMgr.GetObjects("", "") {
+        Ok(funcs) => {
+            for func in funcs {
+                let is_normal = match gw
+                    .objRepo
+                    .funcstatusMgr
+                    .Get(&func.tenant, &func.namespace, &func.name)
+                {
+                    Ok(funcstatus) => matches!(funcstatus.object.state, FuncState::Normal),
+                    Err(_) => matches!(func.object.status.state, FuncState::Normal),
+                };
+
+                let entry = model_counts.entry(func.tenant.clone()).or_insert((0, 0));
+                entry.1 += 1;
+                if is_normal {
+                    entry.0 += 1;
+                }
+            }
+        }
+        Err(e) => {
+            let body = Body::from(format!("service failure {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+
+    match GetTokenCache()
+        .await
+        .sqlstore
+        .GetTenantProfilesByTenantNames(&tenant_names)
+        .await
+    {
+        Ok(mut profiles) => {
+            let mut billing = match gw
+                .sqlBilling
+                .GetTenantBillingSummariesByTenantNames(&tenant_names)
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    let body = Body::from(format!("service failure {:?}", e));
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body)
+                        .unwrap();
+                    return Ok(resp);
+                }
+            };
+
+            let mut rows = Vec::with_capacity(tenant_names.len());
+            for tenant_name in tenant_names {
+                let (normal_model_count, total_model_count) = match model_counts.remove(&tenant_name)
+                {
+                    Some((normal, total)) => (normal, total),
+                    None => (0, 0),
+                };
+                let (used_cents, balance_cents) = match billing.remove(&tenant_name) {
+                    Some(summary) => (summary.used_cents, summary.balance_cents),
+                    None => (0, 0),
+                };
+                match profiles.remove(&tenant_name) {
+                    Some(profile) => rows.push(AdminTenantProfileRow {
+                        tenant_name,
+                        sub: Some(profile.sub),
+                        display_name: profile.display_name,
+                        email: Some(profile.email),
+                        normal_model_count,
+                        total_model_count,
+                        used_cents,
+                        balance_cents,
+                        created_at: profile.created_at,
+                    }),
+                    None => rows.push(AdminTenantProfileRow {
+                        tenant_name,
+                        sub: None,
+                        display_name: None,
+                        email: None,
+                        normal_model_count,
+                        total_model_count,
+                        used_cents,
+                        balance_cents,
+                        created_at: None,
+                    }),
+                }
+            }
+
+            let body = Body::from(serde_json::to_string(&rows).unwrap());
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
                 .body(body)
                 .unwrap();
             return Ok(resp);
@@ -2550,7 +2720,7 @@ async fn AddBillingRate(
     );
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .AddBillingRate(
             usage_type,
             req.rate_cents_per_hour,
@@ -2634,21 +2804,17 @@ async fn AddTenantCredits(
         "AddTenantCredits: tenant={}, amount_cents={}, currency={}, note={:?}, payment_ref={:?}, added_by={:?}",
         &tenant, req.amount_cents, currency, req.note, req.payment_ref, added_by
     );
-    match gw
-        .sqlAudit
-        .AddTenantCredit(
-            &tenant,
-            req.amount_cents,
-            currency,
-            req.note.as_deref(),
-            req.payment_ref.as_deref(),
-            added_by,
-        )
-        .await
-    {
+    match gw.sqlBilling.AddTenantCredit(
+        &tenant,
+        req.amount_cents,
+        currency,
+        req.note.as_deref(),
+        req.payment_ref.as_deref(),
+        added_by,
+    ).await {
         Ok(id) => {
             error!("AddTenantCredits: credit added with id={}", id);
-            let quota_exceeded = match gw.sqlAudit.RecalculateTenantQuota(&tenant).await {
+            let quota_exceeded = match gw.sqlBilling.RecalculateTenantQuota(&tenant).await {
                 Ok(v) => v,
                 Err(e) => {
                     let body = Body::from(format!("Failed to recalc tenant quota: {:?}", e));
@@ -2721,7 +2887,7 @@ async fn AddTenantCredits(
             }
 
             // Get updated balance
-            let balance = match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
+            let balance = match gw.sqlBilling.GetTenantCreditBalance(&tenant).await {
                 Ok(b) => b,
                 Err(e) => {
                     error!("AddTenantCredits: GetTenantCreditBalance failed: {:?}", e);
@@ -2813,7 +2979,7 @@ async fn GetBillingRateHistory(
         .filter(|t| !t.is_empty());
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .ListBillingRateHistory(scope, tenant.as_deref(), limit, offset)
         .await
     {
@@ -2852,25 +3018,9 @@ async fn GetTenantCredits(
         return Ok(resp);
     }
 
-    match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
-        Ok((
-            balance_cents,
-            used_cents,
-            _threshold,
-            quota_exceeded,
-            _total_credits,
-            currency,
-            _,
-            _,
-            _,
-            _,
-        )) => {
-            let resp_body = CreditResponse {
-                balance_cents,
-                used_cents,
-                currency,
-                quota_exceeded,
-            };
+    match gw.sqlBilling.GetTenantBillingSummary(&tenant).await {
+        Ok((balance_cents, used_cents, _threshold, quota_exceeded, _total_credits, currency, _, _, _, _)) => {
+            let resp_body = CreditResponse { balance_cents, used_cents, currency, quota_exceeded };
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -2925,7 +3075,7 @@ async fn GetBillingCreditHistory(
         .filter(|t| t != "all" && t != "__all__");
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .ListBillingCreditHistory(tenant.as_deref(), limit, offset)
         .await
     {
@@ -2975,11 +3125,11 @@ async fn GetTenantCreditHistory(
     }
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .ListTenantCreditHistory(&tenant, limit, offset)
         .await
     {
-        Ok((records, total)) => match gw.sqlAudit.GetTenantCreditBalance(&tenant).await {
+        Ok((records, total)) => match gw.sqlBilling.GetTenantCreditBalance(&tenant).await {
             Ok(balance) => {
                 let resp_body = CreditHistoryResponse {
                     records,
@@ -3028,19 +3178,9 @@ async fn GetTenantBillingSummary(
         return Ok(resp);
     }
 
-    match gw.sqlAudit.GetTenantBillingSummary(&tenant).await {
-        Ok((
-            balance_cents,
-            used_cents,
-            threshold_cents,
-            quota_exceeded,
-            total_credits_cents,
-            currency,
-            inference_cents,
-            standby_cents,
-            inference_ms,
-            standby_ms,
-        )) => {
+    match gw.sqlBilling.GetTenantBillingSummary(&tenant).await {
+        Ok((balance_cents, used_cents, threshold_cents, quota_exceeded, total_credits_cents, currency,
+            inference_cents, standby_cents, inference_ms, standby_ms)) => {
             let resp_body = BillingSummaryResponse {
                 balance_cents,
                 used_cents,
@@ -3096,7 +3236,7 @@ async fn GetTenantHourlyUsage(
         };
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .GetTenantHourlyUsageRange(&tenant, start_hour, end_hour)
         .await
     {
@@ -3148,7 +3288,7 @@ async fn GetTenantUsageByModel(
     let _deprecated_limit = params.limit;
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .GetTenantUsageByModel(&tenant, start_hour, end_hour)
         .await
     {
@@ -3277,7 +3417,7 @@ async fn GetTenantHourlyUsageByModel(
         };
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .GetFuncHourlyUsageRange(&tenant, &namespace, &funcname, start_hour, end_hour)
         .await
     {
@@ -3338,7 +3478,7 @@ async fn GetTenantHourlyUsageByNamespace(
         };
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .GetNamespaceHourlyUsageRange(&tenant, &namespace, start_hour, end_hour)
         .await
     {
@@ -3390,7 +3530,7 @@ async fn GetTenantUsageByNamespace(
     let _deprecated_limit = params.limit;
 
     match gw
-        .sqlAudit
+        .sqlBilling
         .GetTenantUsageByNamespace(&tenant, start_hour, end_hour)
         .await
     {
@@ -3493,17 +3633,8 @@ async fn GetTenantUsageSummary(
 
     let hours = params.hours.unwrap_or(24).min(720).max(1);
 
-    match gw.sqlAudit.GetTenantAnalyticsSummary(&tenant, hours).await {
-        Ok((
-            total_ms,
-            total_cents,
-            top_model_name,
-            top_model_ms,
-            top_namespace_name,
-            top_namespace_ms,
-            peak_hour,
-            peak_hour_ms,
-        )) => {
+    match gw.sqlBilling.GetTenantAnalyticsSummary(&tenant, hours).await {
+        Ok((total_ms, total_cents, top_model_name, top_model_ms, top_namespace_name, top_namespace_ms, peak_hour, peak_hour_ms)) => {
             let top_model = top_model_name.map(|name| TopModelInfo {
                 funcname: name,
                 gpu_hours: top_model_ms as f64 / 3600000.0,
@@ -3874,6 +4005,59 @@ async fn GetFuncPod(
                 .body(body)
                 .unwrap();
             return Ok(resp);
+        }
+    }
+}
+
+async fn KillPod(
+    State(_gw): State<HttpGateway>,
+    Extension(token): Extension<Arc<AccessToken>>,
+    Path((tenant, namespace, funcname, version, id)): Path<(String, String, String, i64, String)>,
+) -> impl IntoResponse {
+    if !token.IsNamespaceAdmin(&tenant, &namespace) {
+        let body = Body::from("service failure: No permission");
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap()
+            .into_response();
+    }
+
+    let req = na::KillPodReq {
+        tenant,
+        namespace,
+        funcname,
+        fprevision: version,
+        id,
+    };
+
+    let mut client = match SCHEDULER_CLIENT.GetClient().await {
+        Ok(client) => client,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+
+    match client.kill_pod(req).await {
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()).into_response(),
+        Ok(resp) => {
+            let resp = resp.into_inner();
+            let status =
+                na::KillPodStatus::from_i32(resp.status).unwrap_or(na::KillPodStatus::Internal);
+
+            match status {
+                na::KillPodStatus::Ok if resp.error.is_empty() => {
+                    StatusCode::ACCEPTED.into_response()
+                }
+                na::KillPodStatus::Ok => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, resp.error).into_response()
+                }
+                na::KillPodStatus::NotFound => (StatusCode::NOT_FOUND, resp.error).into_response(),
+                na::KillPodStatus::InvalidState => {
+                    (StatusCode::CONFLICT, resp.error).into_response()
+                }
+                na::KillPodStatus::Internal => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, resp.error).into_response()
+                }
+            }
         }
     }
 }
