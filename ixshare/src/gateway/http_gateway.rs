@@ -100,6 +100,44 @@ pub fn GatewayId() -> i64 {
     return GATEWAY_ID.load(std::sync::atomic::Ordering::Relaxed);
 }
 
+fn summarize_headers_for_log(headers: &http::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let header_name = name.as_str().to_string();
+            let header_value = if header_name.eq_ignore_ascii_case("authorization")
+                || header_name.eq_ignore_ascii_case("cookie")
+                || header_name.eq_ignore_ascii_case("proxy-authorization")
+                || header_name.eq_ignore_ascii_case("x-api-key")
+            {
+                "[redacted]".to_string()
+            } else {
+                value.to_str().unwrap_or("<non-utf8>").to_string()
+            };
+            (header_name, header_value)
+        })
+        .collect()
+}
+
+fn redact_inline_media_in_json(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            Value::Array(items.iter().map(redact_inline_media_in_json).collect())
+        }
+        Value::Object(map) => {
+            let mut redacted = serde_json::Map::with_capacity(map.len());
+            for (key, item) in map {
+                redacted.insert(key.clone(), redact_inline_media_in_json(item));
+            }
+            Value::Object(redacted)
+        }
+        Value::String(text) if text.starts_with("data:") => {
+            Value::String(format!("[redacted data URL; {} chars]", text.len()))
+        }
+        _ => value.clone(),
+    }
+}
+
 fn tenant_from_path(path: &str) -> Option<&str> {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() < 2 {
@@ -1038,12 +1076,12 @@ pub struct Disconnect {
     pub start: std::time::Instant,
     pub cancel: AtomicBool,
     pub req: serde_json::Value,
-    pub headers: http::HeaderMap,
+    pub headers: Vec<(String, String)>,
     pub labels: FunccallLabels,
 }
 
 impl Disconnect {
-    pub fn New(req: serde_json::Value, headers: http::HeaderMap, labels: &FunccallLabels) -> Self {
+    pub fn New(req: serde_json::Value, headers: Vec<(String, String)>, labels: &FunccallLabels) -> Self {
         return Self {
             start: std::time::Instant::now(),
             cancel: AtomicBool::new(false),
@@ -1214,8 +1252,11 @@ async fn FuncCall(
 
     let json_req: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-    trace!("FuncCall get req {:#?}", json_req);
-    let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
+    let redacted_json_req = redact_inline_media_in_json(&json_req);
+    drop(json_req);
+    let redacted_headers = summarize_headers_for_log(&headers);
+    trace!("FuncCall get req {:#?}", redacted_json_req);
+    let disconnect = Disconnect::New(redacted_json_req.clone(), redacted_headers.clone(), &labels);
 
     let mut retry = 0;
 
@@ -1419,8 +1460,8 @@ async fn FuncCall(
                         framecount,
                         retry-1,
                         bytecnt,
-                        &headers,
-                        json_req
+                        &redacted_headers,
+                        redacted_json_req
                     );
                     return;
                 }

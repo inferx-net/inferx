@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import json
+import ipaddress
+import mimetypes
 import os
 import re
+import socket
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlparse
 import pytz
 
 import requests
@@ -69,6 +72,19 @@ DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS = os.getenv(
     "DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS",
     "false",
 ).lower() in ("1", "true", "yes")
+DEBUG_PROXY_GATEWAY_REQUESTS = os.getenv(
+    "DEBUG_PROXY_GATEWAY_REQUESTS",
+    "false",
+).lower() in ("1", "true", "yes")
+REMOTE_IMAGE_ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+REMOTE_IMAGE_FETCH_MAX_BYTES = 10 * 1024 * 1024
+REMOTE_IMAGE_FETCH_REDIRECT_LIMIT = 3
+REMOTE_IMAGE_FETCH_CONNECT_TIMEOUT_SEC = 10.0
+REMOTE_IMAGE_FETCH_READ_TIMEOUT_SEC = 20.0
+REMOTE_IMAGE_FETCH_HEADERS = {
+    "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.1",
+    "User-Agent": "InferX-Dashboard/1.0 remote-image-fetch",
+}
 
 
 @app.context_processor
@@ -2701,6 +2717,86 @@ def clone_json_value(value):
     return json.loads(json.dumps(value))
 
 
+def redact_inline_media_in_value(value):
+    if isinstance(value, list):
+        return [redact_inline_media_in_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_inline_media_in_value(item) for key, item in value.items()}
+    if isinstance(value, str) and value.startswith("data:"):
+        return f"[redacted data URL; {len(value)} chars]"
+    return value
+
+
+def summarize_headers_for_log(headers):
+    summarized = {}
+    for key, value in (headers or {}).items():
+        normalized_key = str(key or "")
+        if normalized_key.lower() in {"authorization", "cookie", "proxy-authorization", "x-api-key"}:
+            summarized[normalized_key] = "[redacted]"
+        else:
+            summarized[normalized_key] = str(value)
+    return summarized
+
+
+def summarize_cookies_for_log(cookies):
+    try:
+        keys = sorted([str(key) for key in cookies.keys()])
+    except Exception:
+        keys = []
+    return {
+        "count": len(keys),
+        "keys": keys,
+        "values": "[redacted]",
+    }
+
+
+def summarize_request_body_for_log(body_bytes):
+    if not body_bytes:
+        return {"kind": "empty", "bytes": 0}
+
+    body_size = len(body_bytes)
+    try:
+        parsed = json.loads(body_bytes.decode("utf-8"))
+        return {
+            "kind": "json",
+            "bytes": body_size,
+            "body": redact_inline_media_in_value(parsed),
+        }
+    except Exception:
+        pass
+
+    try:
+        text = body_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "kind": "binary",
+            "bytes": body_size,
+            "body": "[non-utf8 body omitted]",
+        }
+
+    return {
+        "kind": "text",
+        "bytes": body_size,
+        "body": text if len(text) <= 2048 else f"{text[:2048]}... [truncated]",
+    }
+
+
+def maybe_log_proxy_gateway_request(path, upstream_url, method, headers, cookies, body_bytes, timeout_sec):
+    if not DEBUG_PROXY_GATEWAY_REQUESTS:
+        return
+
+    app.logger.warning(
+        "dashboard proxy gateway request path=%s method=%s upstream=%s timeout_sec=%s headers=%s cookies=%s body=%s",
+        path,
+        method,
+        upstream_url,
+        timeout_sec,
+        summarize_headers_for_log(headers),
+        summarize_cookies_for_log(cookies),
+        summarize_request_body_for_log(body_bytes),
+    )
+
+
 def parse_named_command_arg(commands, flag_name):
     if not isinstance(commands, list):
         return ""
@@ -4771,7 +4867,7 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
     body = sample_query.get("body", {})
     if not isinstance(body, dict):
         body = {}
-    body_for_ui = dict(body)
+    body_for_ui = clone_json_value(body)
 
     prompt = sample_query.get("prompt")
     api_type = str(sample_query.get("apiType", "") or "").strip().lower()
@@ -4784,6 +4880,44 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
         and "input" not in body_for_ui
     ):
         body_for_ui["prompt"] = prompt
+
+    if api_type == "image2text":
+        messages = body_for_ui.get("messages")
+        if not isinstance(messages, list) or len(messages) == 0:
+            body_for_ui["messages"] = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": str(prompt or "What is in this image?")},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "<data-url>",
+                            },
+                        },
+                    ],
+                },
+            ]
+        else:
+            def replace_image_urls_with_placeholder(value):
+                if isinstance(value, list):
+                    return [replace_image_urls_with_placeholder(item) for item in value]
+                if isinstance(value, dict):
+                    replaced = {}
+                    for key, item in value.items():
+                        if key == "image_url":
+                            image_value = clone_json_value(item) if isinstance(item, dict) else {}
+                            image_value["url"] = "<data-url>"
+                            replaced[key] = image_value
+                        else:
+                            replaced[key] = replace_image_urls_with_placeholder(item)
+                    return replaced
+                if isinstance(value, str) and value.startswith("data:"):
+                    return "<data-url>"
+                return value
+
+            body_for_ui["messages"] = replace_image_urls_with_placeholder(messages)
+        body_for_ui.setdefault("stream", True)
 
     token = str(apikey or "").strip()
     if token == "":
@@ -5224,6 +5358,167 @@ def parse_inferx_timeout_seconds(raw_value, default_value: float = 60.0, min_val
         return max_value
     return value
 
+
+class RemoteImageFetchError(Exception):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+def infer_remote_image_content_type(content_type: str, remote_url: str) -> str:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type in REMOTE_IMAGE_ALLOWED_MIME_TYPES:
+        return normalized_type
+
+    guessed_type, _ = mimetypes.guess_type(urlparse(remote_url).path)
+    guessed_type = str(guessed_type or "").strip().lower()
+    if guessed_type in REMOTE_IMAGE_ALLOWED_MIME_TYPES:
+        return guessed_type
+    return ""
+
+
+def is_allowed_remote_image_host(hostname: str) -> bool:
+    normalized_host = str(hostname or "").strip().lower()
+    if normalized_host == "" or normalized_host == "localhost" or normalized_host.endswith(".local"):
+        return False
+
+    try:
+        address_info = socket.getaddrinfo(normalized_host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False
+
+    if len(address_info) == 0:
+        return False
+
+    for entry in address_info:
+        ip_text = str(entry[4][0] or "").split("%", 1)[0].strip()
+        if ip_text == "":
+            return False
+        try:
+            ip_addr = ipaddress.ip_address(ip_text)
+        except ValueError:
+            return False
+        if (
+            ip_addr.is_private
+            or ip_addr.is_loopback
+            or ip_addr.is_link_local
+            or ip_addr.is_reserved
+            or ip_addr.is_multicast
+            or ip_addr.is_unspecified
+        ):
+            return False
+
+    return True
+
+
+def validate_remote_image_url(raw_url: str) -> str:
+    normalized_url = str(raw_url or "").strip()
+    if normalized_url == "":
+        raise RemoteImageFetchError(400, "Remote URL is required.")
+
+    parsed = urlparse(normalized_url)
+    if parsed.scheme not in ("http", "https"):
+        raise RemoteImageFetchError(400, "Remote URL must use http or https.")
+    if parsed.hostname is None or parsed.netloc == "":
+        raise RemoteImageFetchError(400, "Remote URL must include a valid host.")
+    if parsed.username or parsed.password:
+        raise RemoteImageFetchError(400, "Remote URL must not include embedded credentials.")
+    if not is_allowed_remote_image_host(parsed.hostname):
+        raise RemoteImageFetchError(403, "Remote URL host is not allowed.")
+
+    return parsed._replace(fragment="").geturl()
+
+
+def fetch_remote_image_bytes(remote_url: str) -> tuple[bytes, str]:
+    current_url = validate_remote_image_url(remote_url)
+    session = requests.Session()
+
+    try:
+        for _redirect_index in range(REMOTE_IMAGE_FETCH_REDIRECT_LIMIT + 1):
+            try:
+                resp = session.get(
+                    current_url,
+                    headers=REMOTE_IMAGE_FETCH_HEADERS,
+                    timeout=(REMOTE_IMAGE_FETCH_CONNECT_TIMEOUT_SEC, REMOTE_IMAGE_FETCH_READ_TIMEOUT_SEC),
+                    stream=True,
+                    allow_redirects=False,
+                )
+            except requests.exceptions.Timeout:
+                raise RemoteImageFetchError(504, "Remote image download timed out.")
+            except requests.exceptions.RequestException as e:
+                raise RemoteImageFetchError(502, f"Remote image download failed: {e}")
+
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redirect_target = str(resp.headers.get("Location") or "").strip()
+                resp.close()
+                if redirect_target == "":
+                    raise RemoteImageFetchError(502, "Remote image redirect was missing a Location header.")
+                current_url = validate_remote_image_url(urljoin(current_url, redirect_target))
+                continue
+
+            if resp.status_code != 200:
+                resp.close()
+                raise RemoteImageFetchError(
+                    resp.status_code,
+                    f"Remote image fetch failed with HTTP {resp.status_code}.",
+                )
+
+            content_type = infer_remote_image_content_type(resp.headers.get("Content-Type"), current_url)
+            if content_type == "":
+                resp.close()
+                raise RemoteImageFetchError(
+                    415,
+                    "Remote URL did not return a supported image type. Use JPEG, PNG, or WebP.",
+                )
+
+            image_bytes = bytearray()
+            try:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    image_bytes.extend(chunk)
+                    if len(image_bytes) > REMOTE_IMAGE_FETCH_MAX_BYTES:
+                        raise RemoteImageFetchError(
+                            413,
+                            "Remote image is too large. The source file must be 10 MiB or smaller.",
+                        )
+            except requests.exceptions.Timeout:
+                raise RemoteImageFetchError(504, "Remote image download timed out while reading the response body.")
+            except requests.exceptions.RequestException as e:
+                raise RemoteImageFetchError(
+                    502,
+                    f"Remote image download failed while reading the response body: {e}",
+                )
+            finally:
+                resp.close()
+
+            return bytes(image_bytes), content_type
+
+        raise RemoteImageFetchError(400, "Remote image fetch hit too many redirects.")
+    finally:
+        session.close()
+
+
+@prefix_bp.route('/image2text/fetch-remote', methods=['POST'])
+@not_require_login
+def fetch_remote_image_for_image2text():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return Response("Request body must be a JSON object.", status=400, mimetype='text/plain')
+
+    remote_url = payload.get("url")
+    try:
+        image_bytes, content_type = fetch_remote_image_bytes(remote_url)
+    except RemoteImageFetchError as e:
+        return Response(e.message, status=e.status_code, mimetype='text/plain')
+
+    response = Response(image_bytes, status=200, mimetype=content_type)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Length"] = str(len(image_bytes))
+    return response
+
 @prefix_bp.route('/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @not_require_login
 def proxy(path):
@@ -5243,18 +5538,28 @@ def proxy(path):
     
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"
+    request_body = request.get_data()
     # Keep proxy read-timeout slightly above client-declared inference timeout so
     # backend timeout responses are returned directly when possible.
     requested_timeout_sec = parse_inferx_timeout_seconds(request.headers.get("X-Inferx-Timeout"), default_value=60.0)
     proxy_read_timeout_sec = min(requested_timeout_sec + 5.0, 600.0)
     connect_timeout_sec = 10.0
+    maybe_log_proxy_gateway_request(
+        path=normalized_path,
+        upstream_url=url,
+        method=request.method,
+        headers=headers,
+        cookies=request.cookies,
+        body_bytes=request_body,
+        timeout_sec=proxy_read_timeout_sec,
+    )
 
     try:
         resp = requests.request(
             method=request.method,
             url=url,
             headers=headers,
-            data=request.get_data(),
+            data=request_body,
             cookies=request.cookies,
             allow_redirects=False,
             timeout=(connect_timeout_sec, proxy_read_timeout_sec),
