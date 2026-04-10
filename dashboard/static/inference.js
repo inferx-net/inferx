@@ -1,4 +1,15 @@
 (function () {
+    const IMAGE_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    const IMAGE_SOURCE_MAX_BYTES = 10 * 1024 * 1024;
+    const IMAGE_TARGET_DATA_URL_BYTES = 5 * 1024 * 1024;
+    const IMAGE_HARD_DATA_URL_BYTES = 6 * 1024 * 1024;
+    const IMAGE_MAX_EDGE_PX = 1600;
+    const IMAGE_EXPORT_QUALITIES = [0.92, 0.82, 0.72, 0.62];
+    const DEFAULT_TIMEOUT_SECONDS = 60;
+    const IMAGE_TIMEOUT_MIN_SECONDS = 180;
+    const IMAGE_TIMEOUT_MAX_SECONDS = 420;
+    const IMAGE_TIMEOUT_PER_MIB_SECONDS = 30;
+
     function setElementText(target, text) {
         if (!target) {
             return;
@@ -63,14 +74,352 @@
         return text === '' ? '-' : text;
     }
 
+    function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) {
+            return '0 MiB';
+        }
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+    }
+
+    function inferImageMimeType(mimeType, fallbackName) {
+        const normalizedType = String(mimeType || '').split(';', 1)[0].trim().toLowerCase();
+        if (IMAGE_ALLOWED_MIME_TYPES.has(normalizedType)) {
+            return normalizedType;
+        }
+
+        const normalizedName = String(fallbackName || '').trim().toLowerCase();
+        if (normalizedName.endsWith('.jpg') || normalizedName.endsWith('.jpeg')) {
+            return 'image/jpeg';
+        }
+        if (normalizedName.endsWith('.png')) {
+            return 'image/png';
+        }
+        if (normalizedName.endsWith('.webp')) {
+            return 'image/webp';
+        }
+        return '';
+    }
+
+    function dataUrlSizeBytes(dataUrl) {
+        return new Blob([String(dataUrl || '')]).size;
+    }
+
+    function loadBlobAsImage(blob) {
+        return new Promise(function (resolve, reject) {
+            const objectUrl = URL.createObjectURL(blob);
+            const image = new Image();
+
+            image.onload = function () {
+                URL.revokeObjectURL(objectUrl);
+                resolve(image);
+            };
+            image.onerror = function () {
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error('Image could not be decoded.'));
+            };
+            image.src = objectUrl;
+        });
+    }
+
+    async function normalizeImageBlob(blob, sourceLabel) {
+        const effectiveType = inferImageMimeType(blob && blob.type, sourceLabel);
+        if (!effectiveType) {
+            throw new Error('Unsupported image type. Use JPEG, PNG, or WebP.');
+        }
+
+        if (!blob || blob.size > IMAGE_SOURCE_MAX_BYTES) {
+            throw new Error('Image is too large. The source file must be 10 MiB or smaller.');
+        }
+
+        const image = await loadBlobAsImage(blob);
+        const width = image.naturalWidth || image.width;
+        const height = image.naturalHeight || image.height;
+        if (!width || !height) {
+            throw new Error('Image could not be decoded.');
+        }
+
+        const longestEdge = Math.max(width, height);
+        const scale = longestEdge > IMAGE_MAX_EDGE_PX ? (IMAGE_MAX_EDGE_PX / longestEdge) : 1;
+        const targetWidth = Math.max(1, Math.round(width * scale));
+        const targetHeight = Math.max(1, Math.round(height * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const context = canvas.getContext('2d');
+        if (!context) {
+            throw new Error('Browser could not prepare the image for upload.');
+        }
+
+        let bestCandidate = null;
+        const exportTypes = effectiveType === 'image/png'
+            ? ['image/png', 'image/jpeg']
+            : [effectiveType].concat(effectiveType === 'image/jpeg' ? [] : ['image/jpeg']);
+
+        for (const exportType of exportTypes) {
+            const qualities = exportType === 'image/png' ? [null] : IMAGE_EXPORT_QUALITIES;
+            for (const quality of qualities) {
+                if (exportType === 'image/jpeg') {
+                    context.fillStyle = '#ffffff';
+                    context.fillRect(0, 0, targetWidth, targetHeight);
+                } else {
+                    context.clearRect(0, 0, targetWidth, targetHeight);
+                }
+                context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+                const dataUrl = quality == null
+                    ? canvas.toDataURL(exportType)
+                    : canvas.toDataURL(exportType, quality);
+                const sizeBytes = dataUrlSizeBytes(dataUrl);
+                const candidate = {
+                    dataUrl: dataUrl,
+                    sizeBytes: sizeBytes,
+                    width: targetWidth,
+                    height: targetHeight,
+                    mimeType: exportType,
+                };
+
+                if (!bestCandidate || sizeBytes < bestCandidate.sizeBytes) {
+                    bestCandidate = candidate;
+                }
+                if (sizeBytes <= IMAGE_TARGET_DATA_URL_BYTES) {
+                    return candidate;
+                }
+            }
+        }
+
+        if (bestCandidate && bestCandidate.sizeBytes <= IMAGE_HARD_DATA_URL_BYTES) {
+            return bestCandidate;
+        }
+
+        throw new Error(
+            'Image is still too large after normalization. Keep the encoded upload at 6 MiB or less.'
+        );
+    }
+
+    async function fetchRemoteImageBlob(remoteFetchPath, url, signal) {
+        let response;
+        try {
+            response = await fetch(new URL(remoteFetchPath, window.location.origin).toString(), {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/octet-stream',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: url }),
+                signal: signal,
+            });
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                throw error;
+            }
+            throw new Error(
+                'Dashboard could not fetch the remote image. Download the image and upload it instead.'
+            );
+        }
+
+        if (!response.ok) {
+            let responseMessage = '';
+            try {
+                responseMessage = String(await response.text() || '').trim();
+            } catch (_error) {
+                responseMessage = '';
+            }
+            throw new Error(
+                responseMessage || ('Dashboard failed to fetch the remote image with HTTP ' + response.status + '.')
+            );
+        }
+
+        let fetchedBlob;
+        try {
+            fetchedBlob = await response.blob();
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                throw error;
+            }
+            throw new Error(
+                'Remote URL fetch could not read the full image body. Download the image and upload it instead.'
+            );
+        }
+        const effectiveType = inferImageMimeType(
+            response.headers.get('Content-Type') || fetchedBlob.type,
+            url
+        );
+        if (!effectiveType) {
+            throw new Error('Remote URL did not return a supported image type. Use JPEG, PNG, or WebP.');
+        }
+
+        if (effectiveType === fetchedBlob.type) {
+            return fetchedBlob;
+        }
+        return new Blob([fetchedBlob], { type: effectiveType });
+    }
+
+    function computeRequestTimeoutSeconds(apiType, body) {
+        if (apiType !== 'image2text') {
+            return String(DEFAULT_TIMEOUT_SECONDS);
+        }
+
+        const bodyBytes = new Blob([String(body || '')]).size;
+        const bodyMiB = Math.max(1, Math.ceil(bodyBytes / (1024 * 1024)));
+        const timeoutSeconds = Math.max(
+            IMAGE_TIMEOUT_MIN_SECONDS,
+            DEFAULT_TIMEOUT_SECONDS + (bodyMiB * IMAGE_TIMEOUT_PER_MIB_SECONDS)
+        );
+        return String(Math.min(IMAGE_TIMEOUT_MAX_SECONDS, timeoutSeconds));
+    }
+
     function createInferenceController(config) {
         const context = config || {};
         let abortController = null;
         let inferenceInFlight = false;
         let firstOutputNotified = false;
+        let previewObjectUrl = null;
 
         function getElement(id) {
             return document.getElementById(id);
+        }
+
+        function clearPreviewObjectUrl() {
+            if (previewObjectUrl) {
+                URL.revokeObjectURL(previewObjectUrl);
+                previewObjectUrl = null;
+            }
+        }
+
+        function clearImagePreview() {
+            const preview = getElement('preview');
+            clearPreviewObjectUrl();
+            if (!preview) {
+                return;
+            }
+
+            preview.style.display = 'none';
+            preview.removeAttribute('src');
+            preview.onload = null;
+            preview.onerror = null;
+        }
+
+        function setImageSourceStatus(message, tone) {
+            const target = getElement('imageSourceStatus');
+            if (!target) {
+                return;
+            }
+
+            target.textContent = String(message || '');
+            if (tone === 'error') {
+                target.style.color = '#b42318';
+                return;
+            }
+            if (tone === 'warning') {
+                target.style.color = '#b54708';
+                return;
+            }
+            target.style.color = '#475467';
+        }
+
+        function getSelectedImageFile() {
+            const fileInput = getElement('imageFileInput');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                return null;
+            }
+            return fileInput.files[0];
+        }
+
+        function getSelectedImageSourceType() {
+            const selected = document.querySelector('input[name="imageSourceType"]:checked');
+            return selected ? String(selected.value || 'file') : 'file';
+        }
+
+        function getUrlInputValue() {
+            return String((getElement('urlInput') || {}).value || '').trim();
+        }
+
+        function buildRemoteImageFetchUrl() {
+            return String(context.remoteImageFetchPath || '/image2text/fetch-remote');
+        }
+
+        function syncImageSourceControls() {
+            if (context.apiType !== 'image2text') {
+                return;
+            }
+
+            const sourceType = getSelectedImageSourceType();
+            const imageFileInput = getElement('imageFileInput');
+            const urlInput = getElement('urlInput');
+            const uploadSection = getElement('imageUploadSection');
+            const urlSection = getElement('imageUrlSection');
+
+            if (imageFileInput) {
+                imageFileInput.disabled = sourceType !== 'file';
+            }
+            if (urlInput) {
+                urlInput.disabled = sourceType !== 'url';
+            }
+            if (uploadSection) {
+                uploadSection.style.opacity = sourceType === 'file' ? '1' : '0.55';
+            }
+            if (urlSection) {
+                urlSection.style.opacity = sourceType === 'url' ? '1' : '0.55';
+            }
+        }
+
+        function updateImageSourceStatus() {
+            if (context.apiType !== 'image2text') {
+                return;
+            }
+
+            const sourceType = getSelectedImageSourceType();
+            const selectedFile = getSelectedImageFile();
+            if (sourceType === 'file' && selectedFile) {
+                setImageSourceStatus(
+                    'Active source: uploaded file "' + selectedFile.name + '" (' + formatBytes(selectedFile.size) + ').',
+                    'info'
+                );
+                return;
+            }
+
+            const imageUrl = getUrlInputValue();
+            if (sourceType === 'url' && imageUrl !== '') {
+                setImageSourceStatus(
+                    'Active source: remote URL via dashboard fetch. Click Preview or Run to fetch it.',
+                    'warning'
+                );
+                return;
+            }
+
+            if (sourceType === 'file') {
+                setImageSourceStatus(
+                    'Active source: uploaded file. Select a local image to continue.',
+                    'info'
+                );
+                return;
+            }
+
+            setImageSourceStatus(
+                'Active source: remote URL via dashboard fetch. Paste an image URL to continue.',
+                'warning'
+            );
+        }
+
+        function setImagePreviewSource(source) {
+            const preview = getElement('preview');
+            if (!preview) {
+                return;
+            }
+
+            preview.onload = function () {
+                preview.style.display = 'block';
+                preview.onload = null;
+                preview.onerror = null;
+            };
+            preview.onerror = function () {
+                preview.style.display = 'none';
+                preview.onload = null;
+                preview.onerror = null;
+                setImageSourceStatus('Preview failed. You can still upload the file directly.', 'warning');
+            };
+            preview.src = source;
         }
 
         function notifyStart() {
@@ -98,23 +447,51 @@
             }
         }
 
-        function loadImage() {
-            const urlInput = getElement('urlInput');
+        async function loadImage() {
             const preview = getElement('preview');
-            const url = String(urlInput && urlInput.value || '').trim();
-
             if (!preview) {
                 return;
             }
 
-            if (url.endsWith('.jpg') || url.endsWith('.jpeg')) {
-                preview.src = url;
-                preview.style.display = 'block';
-                return;
-            }
+            try {
+                clearImagePreview();
+                syncImageSourceControls();
 
-            window.alert('Please enter a valid JPEG image URL ending with .jpg or .jpeg');
-            preview.style.display = 'none';
+                const sourceType = getSelectedImageSourceType();
+                if (sourceType === 'file') {
+                    const selectedFile = getSelectedImageFile();
+                    if (selectedFile) {
+                        previewObjectUrl = URL.createObjectURL(selectedFile);
+                        setImagePreviewSource(previewObjectUrl);
+                        updateImageSourceStatus();
+                        return;
+                    }
+
+                    updateImageSourceStatus();
+                    return;
+                }
+
+                const imageUrl = getUrlInputValue();
+                if (imageUrl === '') {
+                    preview.style.display = 'none';
+                    preview.removeAttribute('src');
+                    updateImageSourceStatus();
+                    return;
+                }
+
+                setImageSourceStatus(
+                    'Fetching the remote image through dashboard for preview.',
+                    'warning'
+                );
+                const fetchedBlob = await fetchRemoteImageBlob(buildRemoteImageFetchUrl(), imageUrl);
+                previewObjectUrl = URL.createObjectURL(fetchedBlob);
+                setImagePreviewSource(previewObjectUrl);
+                updateImageSourceStatus();
+            } catch (error) {
+                preview.style.display = 'none';
+                preview.removeAttribute('src');
+                setImageSourceStatus(String(error && error.message || error), 'error');
+            }
         }
 
         function loadAudio() {
@@ -163,6 +540,45 @@
             if (tpsDiv && !response.ok) {
                 tpsDiv.textContent = '';
             }
+        }
+
+        async function prepareImageData(signal) {
+            const sourceType = getSelectedImageSourceType();
+            if (sourceType === 'file') {
+                const selectedFile = getSelectedImageFile();
+                if (!selectedFile) {
+                    throw new Error('Select an image file before running image2text.');
+                }
+
+                const normalizedUpload = await normalizeImageBlob(
+                    selectedFile,
+                    selectedFile.name || selectedFile.type
+                );
+                setImageSourceStatus(
+                    'Using uploaded file. Sending ' + formatBytes(normalizedUpload.sizeBytes) + ' at '
+                        + normalizedUpload.width + 'x' + normalizedUpload.height + '.',
+                    normalizedUpload.sizeBytes > IMAGE_TARGET_DATA_URL_BYTES ? 'warning' : 'info'
+                );
+                return normalizedUpload;
+            }
+
+            const imageUrl = getUrlInputValue();
+            if (imageUrl === '') {
+                throw new Error('Provide a remote URL before running image2text.');
+            }
+
+            setImageSourceStatus(
+                'Fetching the remote image through dashboard.',
+                'warning'
+            );
+            const fetchedBlob = await fetchRemoteImageBlob(buildRemoteImageFetchUrl(), imageUrl, signal);
+            const normalizedUrlUpload = await normalizeImageBlob(fetchedBlob, imageUrl);
+            setImageSourceStatus(
+                'Using remote URL via dashboard fetch. Sending ' + formatBytes(normalizedUrlUpload.sizeBytes) + ' at '
+                    + normalizedUrlUpload.width + 'x' + normalizedUrlUpload.height + '.',
+                normalizedUrlUpload.sizeBytes > IMAGE_TARGET_DATA_URL_BYTES ? 'warning' : 'info'
+            );
+            return normalizedUrlUpload;
         }
 
         function resetVisualOutputs() {
@@ -240,6 +656,7 @@
                     requestMap.prompt = prompt;
                     body = JSON.stringify(requestMap);
                 } else if (context.apiType === 'image2text') {
+                    const imageData = await prepareImageData(signal);
                     body = JSON.stringify({
                         model: requestMap.model,
                         messages: [
@@ -250,7 +667,7 @@
                                     {
                                         type: 'image_url',
                                         image_url: {
-                                            url: inputUrl,
+                                            url: imageData.dataUrl,
                                         },
                                     },
                                 ],
@@ -290,7 +707,7 @@
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
-                        'X-Inferx-Timeout': '60',
+                        'X-Inferx-Timeout': computeRequestTimeoutSeconds(context.apiType, body),
                     },
                     body: body,
                     signal: signal,
@@ -355,6 +772,10 @@
             } catch (error) {
                 if (!(error instanceof DOMException && error.name === 'AbortError')) {
                     console.error('Error fetching inference output:', error);
+                    if (context.apiType === 'image2text') {
+                        setImageSourceStatus(String(error && error.message || error), 'error');
+                    }
+                    setElementText(output, String(error && error.message || error));
                 }
             } finally {
                 finishRequestUi();
@@ -486,6 +907,38 @@
                 return;
             }
             await streamOutputText();
+        }
+
+        if (context.apiType === 'image2text') {
+            const imageFileInput = getElement('imageFileInput');
+            const urlInput = getElement('urlInput');
+            const imageSourceInputs = document.querySelectorAll('input[name="imageSourceType"]');
+
+            if (imageFileInput) {
+                imageFileInput.addEventListener('change', function () {
+                    loadImage();
+                });
+            }
+            if (urlInput) {
+                urlInput.addEventListener('input', function () {
+                    clearImagePreview();
+                    updateImageSourceStatus();
+                });
+            }
+            imageSourceInputs.forEach(function (input) {
+                input.addEventListener('change', function () {
+                    syncImageSourceControls();
+                    if (getSelectedImageSourceType() === 'file' && getSelectedImageFile()) {
+                        loadImage();
+                        return;
+                    }
+                    clearImagePreview();
+                    updateImageSourceStatus();
+                });
+            });
+
+            syncImageSourceControls();
+            updateImageSourceStatus();
         }
 
         return {

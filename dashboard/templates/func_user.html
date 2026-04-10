@@ -381,13 +381,45 @@
         <div class="playground-state-hint" id="playground-state-note"></div>
         <div class="playground-grid">
             {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
+            {% set image_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
             <div>
-                <label for="urlInput"><strong>Image URL</strong></label>
-                <textarea id="urlInput" rows="2">{{ func["func"]["object"]["spec"]["sample_query"]["dataUrl"] }}</textarea>
+                <label for="imageFileInput"><strong>Image</strong></label>
+                <div style="margin-top: 8px;">
+                    <label style="display: inline-flex; align-items: center; gap: 8px; margin-right: 16px;">
+                        <input id="imageSourceTypeFile" type="radio" name="imageSourceType" value="file" {% if not image_sample_url %}checked{% endif %}>
+                        <span>Upload file</span>
+                    </label>
+                    <label style="display: inline-flex; align-items: center; gap: 8px;">
+                        <input id="imageSourceTypeUrl" type="radio" name="imageSourceType" value="url" {% if image_sample_url %}checked{% endif %}>
+                        <span>Use remote URL</span>
+                    </label>
+                </div>
+                <div id="imageUploadSection">
+                    <input
+                        id="imageFileInput"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        style="display: block; width: 100%; margin-top: 8px;"
+                    >
+                    <div style="margin-top: 8px; color: #475467; font-size: 0.95rem;">
+                        Upload a local image for best reliability. Remote URL fetch may fail.
+                    </div>
+                </div>
+                <div id="imageUrlSection">
+                    <label for="urlInput" style="display: block; margin-top: 12px;"><strong>Remote URL</strong></label>
+                    <textarea id="urlInput" rows="2" placeholder="https://example.com/image.jpg">{{ image_sample_url }}</textarea>
+                    <div style="margin-top: 8px; color: #475467; font-size: 0.95rem;">
+                        Remote URL mode is fetched by dashboard server-side. Some sites may still reject it.
+                    </div>
+                </div>
+                <div id="imageSourceStatus" style="margin-top: 8px; min-height: 1.4em; color: #475467;"></div>
                 <div style="margin-top: 8px;">
                     <button class="ix-btn secondary" type="button" onclick="loadImage()">Preview</button>
                 </div>
                 <img id="preview" src="" alt="Image will appear here" style="max-width: 100%; display: none; margin-top: 12px;">
+                <div style="margin-top: 8px; color: #475467; font-size: 0.9rem;">
+                    Larger images take longer before streaming starts because the upload must finish first.
+                </div>
             </div>
             {% elif func["func"]["object"]["spec"]["sample_query"]["apiType"] == "audio2text" %}
             <div>
@@ -500,6 +532,7 @@
     const failLogsPath = {{ url_for('prefix.GetFailLogsJson') | tojson }};
     const text2imgPath = {{ (hosturl ~ 'text2img') | tojson }};
     const text2audioPath = {{ (hosturl ~ 'text2audio') | tojson }};
+    const remoteImageFetchPath = {{ (hosturl ~ 'image2text/fetch-remote') | tojson }};
 
     const SNAPSHOT_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'Snapshoting']);
     const RESTORE_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'LoadingTimeout', 'Restoring']);
@@ -978,6 +1011,7 @@
         map: map,
         sampleQueryPath: sampleQueryPath,
         proxyBasePath: proxyBasePath,
+        remoteImageFetchPath: remoteImageFetchPath,
         text2imgPath: text2imgPath,
         text2audioPath: text2audioPath,
         onRequestStart: function () {
