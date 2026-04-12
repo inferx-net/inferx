@@ -1608,6 +1608,8 @@ struct AdminTenantProfileRow {
     display_name: Option<String>,
     email: Option<String>,
     normal_model_count: u64,
+    normal_catalog_model_count: u64,
+    total_catalog_model_count: u64,
     total_model_count: u64,
     used_cents: i64,
     balance_cents: i64,
@@ -1691,7 +1693,7 @@ async fn GetAdminTenants(
     tenant_names.sort();
     tenant_names.dedup();
 
-    let mut model_counts: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut model_counts: HashMap<String, (u64, u64, u64, u64)> = HashMap::new();
     match gw.objRepo.funcMgr.GetObjects("", "") {
         Ok(funcs) => {
             for func in funcs {
@@ -1703,11 +1705,18 @@ async fn GetAdminTenants(
                     Ok(funcstatus) => matches!(funcstatus.object.state, FuncState::Normal),
                     Err(_) => matches!(func.object.status.state, FuncState::Normal),
                 };
+                let is_catalog_backed = func.object.spec.catalogSource.is_some();
 
-                let entry = model_counts.entry(func.tenant.clone()).or_insert((0, 0));
-                entry.1 += 1;
+                let entry = model_counts.entry(func.tenant.clone()).or_insert((0, 0, 0, 0));
+                entry.3 += 1;
                 if is_normal {
                     entry.0 += 1;
+                }
+                if is_catalog_backed {
+                    entry.2 += 1;
+                    if is_normal {
+                        entry.1 += 1;
+                    }
                 }
             }
         }
@@ -1746,10 +1755,16 @@ async fn GetAdminTenants(
 
             let mut rows = Vec::with_capacity(tenant_names.len());
             for tenant_name in tenant_names {
-                let (normal_model_count, total_model_count) = match model_counts.remove(&tenant_name)
-                {
-                    Some((normal, total)) => (normal, total),
-                    None => (0, 0),
+                let (
+                    normal_model_count,
+                    normal_catalog_model_count,
+                    total_catalog_model_count,
+                    total_model_count,
+                ) = match model_counts.remove(&tenant_name) {
+                    Some((normal, normal_catalog, total_catalog, total)) => {
+                        (normal, normal_catalog, total_catalog, total)
+                    }
+                    None => (0, 0, 0, 0),
                 };
                 let (used_cents, balance_cents) = match billing.remove(&tenant_name) {
                     Some(summary) => (summary.used_cents, summary.balance_cents),
@@ -1762,6 +1777,8 @@ async fn GetAdminTenants(
                         display_name: profile.display_name,
                         email: Some(profile.email),
                         normal_model_count,
+                        normal_catalog_model_count,
+                        total_catalog_model_count,
                         total_model_count,
                         used_cents,
                         balance_cents,
@@ -1773,6 +1790,8 @@ async fn GetAdminTenants(
                         display_name: None,
                         email: None,
                         normal_model_count,
+                        normal_catalog_model_count,
+                        total_catalog_model_count,
                         total_model_count,
                         used_cents,
                         balance_cents,
