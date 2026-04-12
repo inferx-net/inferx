@@ -6306,15 +6306,15 @@ def GetFunc():
 
     is_inferx_admin = is_inferx_admin_user()
     initial_model_status = infer_model_status(func.get("pods", []), func_health_state, fails)
-    func_admin_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name)
-    func_user_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name, view="user")
+    func_admin_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name, view="admin")
+    func_user_href = dashboard_href("prefix.GetFunc", tenant=tenant, namespace=namespace, name=name)
     func_edit_href = "{}?{}".format(
         dashboard_href("prefix.FuncCreate"),
         urlencode({"edit": f"{tenant}/{namespace}/{name}"}),
     )
     tenant_models_href = dashboard_href("prefix.ListFunc", tenant=tenant)
     models_list_href = dashboard_href("prefix.ListFunc", tenant=tenant, namespace=namespace)
-    template_name = "func.html" if is_inferx_admin and view != "user" else "func_user.html"
+    template_name = "func.html" if is_inferx_admin and view == "admin" else "func_user.html"
 
     return render_template(
         template_name,

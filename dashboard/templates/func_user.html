@@ -512,6 +512,12 @@
             <summary><strong>Model Spec</strong></summary>
             <pre class="model-spec-block">{{ funcspec }}</pre>
         </details>
+        {% if is_inferx_admin %}
+        <details style="margin-top: 12px;">
+            <summary><strong>Model Full Spec</strong></summary>
+            <pre class="model-spec-block">{{ full_funcspec }}</pre>
+        </details>
+        {% endif %}
     </section>
 </div>
 
