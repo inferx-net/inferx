@@ -515,13 +515,89 @@
         }
 
         function buildFunccallUrl() {
+            const sampleQueryPath = context.apiType === 'text2text'
+                ? 'v1/chat/completions'
+                : context.sampleQueryPath;
             return buildUrlFromSegments(context.proxyBasePath, [
                 'funccall',
                 context.tenant,
                 context.namespace,
                 context.name,
-                context.sampleQueryPath,
+                sampleQueryPath,
             ]);
+        }
+
+        function buildText2TextChatRequestMap(requestMap, prompt) {
+            const chatRequest = cloneMapValue(requestMap) || {};
+            const promptText = String(prompt || '');
+            delete chatRequest.prompt;
+
+            const messages = Array.isArray(chatRequest.messages) ? cloneMapValue(chatRequest.messages) : [];
+            if (messages.length === 0) {
+                chatRequest.messages = [
+                    {
+                        role: 'user',
+                        content: promptText,
+                    },
+                ];
+                chatRequest.stream = true;
+                return chatRequest;
+            }
+
+            let replaced = false;
+            for (let i = 0; i < messages.length; i += 1) {
+                const message = messages[i];
+                if (!message || typeof message !== 'object') {
+                    continue;
+                }
+                const role = String(message.role || '').trim().toLowerCase();
+                if (role !== 'user') {
+                    continue;
+                }
+
+                const content = message.content;
+                if (typeof content === 'string') {
+                    message.content = promptText;
+                    replaced = true;
+                    break;
+                }
+
+                if (Array.isArray(content)) {
+                    const newContent = [];
+                    let textReplaced = false;
+                    content.forEach(function (item) {
+                        if (
+                            !textReplaced
+                            && item
+                            && typeof item === 'object'
+                            && String(item.type || '').trim().toLowerCase() === 'text'
+                        ) {
+                            const updatedItem = cloneMapValue(item) || {};
+                            updatedItem.text = promptText;
+                            newContent.push(updatedItem);
+                            textReplaced = true;
+                            return;
+                        }
+                        newContent.push(cloneMapValue(item));
+                    });
+                    if (!textReplaced) {
+                        newContent.unshift({ type: 'text', text: promptText });
+                    }
+                    message.content = newContent;
+                    replaced = true;
+                    break;
+                }
+            }
+
+            if (!replaced) {
+                messages.unshift({
+                    role: 'user',
+                    content: promptText,
+                });
+            }
+            chatRequest.messages = messages;
+            chatRequest.stream = true;
+            return chatRequest;
         }
 
         function updateLatencyDisplays(response) {
@@ -653,8 +729,7 @@
                 let body = '';
 
                 if (context.apiType === 'text2text') {
-                    requestMap.prompt = prompt;
-                    body = JSON.stringify(requestMap);
+                    body = JSON.stringify(buildText2TextChatRequestMap(requestMap, prompt));
                 } else if (context.apiType === 'image2text') {
                     const imageData = await prepareImageData(signal);
                     body = JSON.stringify({

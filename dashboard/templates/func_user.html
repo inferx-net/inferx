@@ -348,6 +348,9 @@
         <p class="status-note fail" id="poll-feedback-note" hidden></p>
     </section>
 
+    {% set section_class = 'model-user-section' %}
+    {% include '_client_setup.html' %}
+
     <section class="model-user-section">
         <h3>Instances</h3>
         <table class="ix-table pods-table" style="width: 100%;">
