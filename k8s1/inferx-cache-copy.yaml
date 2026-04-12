@@ -1,0 +1,102 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inferx-cache-backup-manual
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      # Source is a hostPath, so this job must run on the node that already
+      # contains the cache you want to migrate.
+      nodeSelector:
+        kubernetes.io/hostname: REPLACE_WITH_NODE_SELECTOR
+      containers:
+        - name: rsync
+          image: inferx/inferx_util:v0.2.0
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+            - name: RSYNC_DELETE
+              value: "false"
+            - name: PROGRESS_INTERVAL_SEC
+              value: "10"
+          command: ["/bin/bash","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              mkdir -p /dst
+              interval="${PROGRESS_INTERVAL_SEC:-10}"
+              start_ts=$(date +%s)
+              initial_bytes=$(du -sb /dst 2>/dev/null | awk '{print $1}')
+              initial_bytes="${initial_bytes:-0}"
+              prev_ts="$start_ts"
+              prev_bytes="$initial_bytes"
+
+              print_progress() {
+                current_ts=$(date +%s)
+                current_bytes=$(du -sb /dst 2>/dev/null | awk '{print $1}')
+                current_bytes="${current_bytes:-$prev_bytes}"
+                elapsed=$(( current_ts - start_ts ))
+                step_elapsed=$(( current_ts - prev_ts ))
+                copied_bytes=$(( current_bytes - initial_bytes ))
+                step_bytes=$(( current_bytes - prev_bytes ))
+                if [ "$elapsed" -le 0 ]; then
+                  elapsed=1
+                fi
+                if [ "$step_elapsed" -le 0 ]; then
+                  step_elapsed=1
+                fi
+                awk -v now="$current_ts" -v copied="$copied_bytes" -v step="$step_bytes" -v elapsed="$elapsed" -v step_elapsed="$step_elapsed" '
+                  BEGIN {
+                    gib = 1024 * 1024 * 1024
+                    printf "[%s] copied=%.2f GiB interval_rate=%.3f GiB/s avg_rate=%.3f GiB/s\n",
+                      strftime("%Y-%m-%d %H:%M:%S", now),
+                      copied / gib,
+                      (step / step_elapsed) / gib,
+                      (copied / elapsed) / gib
+                  }'
+                prev_ts="$current_ts"
+                prev_bytes="$current_bytes"
+              }
+
+              progress_loop() {
+                while true; do
+                  sleep "$interval"
+                  print_progress
+                done
+              }
+
+              progress_loop &
+              progress_pid=$!
+              trap 'kill "$progress_pid" 2>/dev/null || true' EXIT
+
+              rsync_args=(-aHAX --numeric-ids --partial --inplace --stats) &&
+              if [ "${RSYNC_DELETE:-false}" = "true" ]; then
+                echo "Running rsync with --delete"
+                rsync_args+=(--delete)
+              else
+                echo "Running rsync without --delete; set RSYNC_DELETE=true to enable deletion"
+              fi &&
+              rsync "${rsync_args[@]}" /src/ /dst/
+
+              kill "$progress_pid" 2>/dev/null || true
+              wait "$progress_pid" 2>/dev/null || true
+              print_progress
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+            - name: dst
+              mountPath: /dst
+      volumes:
+        - name: src
+          hostPath:
+            path: /opt/inferx/cache
+            type: Directory
+        - name: dst
+          persistentVolumeClaim:
+            claimName: inferx-cache-pvc

@@ -46,11 +46,11 @@ pushhf: hf
 util:
 	- mkdir -p ./target/util
 	cp -f ./deployment/inferx_util.Dockerfile ./target/util/Dockerfile
-	sudo docker build -t inferx/inferx_util:v0.1.0 ./target/util
+	sudo docker build -t inferx/inferx_util:v0.2.0 ./target/util
 
 pushutil: util
 	# sudo docker login -u inferx
-	sudo docker push inferx/inferx_util:v0.1.0
+	sudo docker push inferx/inferx_util:v0.2.0
 
 util_slim: 
 	- mkdir -p ./target/util
