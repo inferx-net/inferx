@@ -2630,18 +2630,86 @@ def validate_partial_spec(
     return normalized_spec
 
 
+def build_text2text_chat_body_for_ui(body, prompt):
+    body_for_ui = clone_json_value(body) if isinstance(body, dict) else {}
+    body_for_ui.pop("prompt", None)
+
+    prompt_text = str(prompt or "")
+    messages = body_for_ui.get("messages")
+    if not isinstance(messages, list) or len(messages) == 0:
+        body_for_ui["messages"] = [
+            {
+                "role": "user",
+                "content": prompt_text,
+            }
+        ]
+        return body_for_ui
+
+    normalized_messages = clone_json_value(messages)
+    replaced = False
+    for message in normalized_messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "") or "").strip().lower()
+        if role != "user":
+            continue
+
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = prompt_text
+            replaced = True
+            break
+
+        if isinstance(content, list):
+            new_content = []
+            text_replaced = False
+            for item in content:
+                if (
+                    not text_replaced
+                    and isinstance(item, dict)
+                    and str(item.get("type", "") or "").strip().lower() == "text"
+                ):
+                    updated_item = clone_json_value(item)
+                    updated_item["text"] = prompt_text
+                    new_content.append(updated_item)
+                    text_replaced = True
+                else:
+                    new_content.append(clone_json_value(item))
+            if not text_replaced:
+                new_content.insert(0, {"type": "text", "text": prompt_text})
+            message["content"] = new_content
+            replaced = True
+            break
+
+    if not replaced:
+        normalized_messages.insert(
+            0,
+            {
+                "role": "user",
+                "content": prompt_text,
+            },
+        )
+    body_for_ui["messages"] = normalized_messages
+    return body_for_ui
+
+
 def build_sample_query(hf_model: str):
-    return {
-        "apiType": "text2text",
-        "prompt": "write a quick sort algorithm.",
-        "prompts": list(DEFAULT_SAMPLE_QUERY_PROMPTS),
-        "path": "v1/completions",
-        "body": {
+    prompt = "write a quick sort algorithm."
+    body = build_text2text_chat_body_for_ui(
+        {
             "model": hf_model,
             "max_tokens": "1000",
             "temperature": "0",
             "stream": "true",
         },
+        prompt,
+    )
+    return {
+        "apiType": "text2text",
+        "prompt": prompt,
+        "prompts": list(DEFAULT_SAMPLE_QUERY_PROMPTS),
+        "path": "v1/chat/completions",
+        "body": body,
     }
 
 
@@ -4915,8 +4983,7 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
     if not isinstance(sample_query, dict):
         return ""
 
-    path = str(sample_query.get("path", "v1/completions") or "v1/completions").strip()
-    path = path.lstrip("/")
+    path = str(sample_query.get("path", "v1/completions") or "v1/completions").strip().lstrip("/")
     body = sample_query.get("body", {})
     if not isinstance(body, dict):
         body = {}
@@ -4924,15 +4991,10 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
 
     prompt = sample_query.get("prompt")
     api_type = str(sample_query.get("apiType", "") or "").strip().lower()
-    if (
-        isinstance(prompt, str)
-        and prompt.strip() != ""
-        and api_type == "text2text"
-        and "prompt" not in body_for_ui
-        and "messages" not in body_for_ui
-        and "input" not in body_for_ui
-    ):
-        body_for_ui["prompt"] = prompt
+    if api_type == "text2text":
+        path = "v1/chat/completions"
+        body_for_ui = build_text2text_chat_body_for_ui(body_for_ui, prompt)
+        body_for_ui.setdefault("stream", True)
 
     if api_type == "image2text":
         messages = body_for_ui.get("messages")
