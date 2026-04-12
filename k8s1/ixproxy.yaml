@@ -136,8 +136,8 @@ spec:
           hostPath:
             path: /opt/inferx/bin
         - name: opt-inferx-cache
-          hostPath:
-            path: /opt/inferx/cache
+          persistentVolumeClaim:
+            claimName: inferx-cache-pvc
         - name: opt-inferx-data
           hostPath:
             path: /opt/inferx/data
