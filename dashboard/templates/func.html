@@ -94,6 +94,9 @@
     </tr>
 </table>
 
+{% set section_class = '' %}
+{% include '_client_setup.html' %}
+
 {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
 {% set image_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
 <h1>Image</h1>

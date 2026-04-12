@@ -4858,6 +4858,59 @@ def getrest(tenant: str, namespace: str, name: str):
     return resp
 
 
+def build_inference_apikey_placeholder() -> str:
+    return "<INFERENCE_API_KEY(Find or create one on Admin|Apikeys page)>"
+
+
+def build_client_setup_for_ui(tenant: str, namespace: str, funcname: str, sample_query, apikey: str, apikey_name: str, spec=None):
+    if not isinstance(sample_query, dict):
+        return {}
+
+    path = str(sample_query.get("path", "v1/completions") or "v1/completions").strip()
+    path = path.lstrip("/")
+    body = sample_query.get("body", {})
+    if not isinstance(body, dict):
+        body = {}
+
+    base_url = normalize_public_api_base_url()
+    api_base_url = ""
+    if path == "v1" or path.startswith("v1/"):
+        api_base_url = f"{base_url}/funccall/{tenant}/{namespace}/{funcname}/v1"
+
+    model_name = extract_sample_query_model_target(sample_query)
+    if model_name == "":
+        try:
+            model_name = resolve_effective_model_target_from_spec(
+                spec,
+                commands_label="deployed function commands",
+                sample_query_label="deployed function sample_query.body.model",
+            )
+        except ValueError:
+            model_name = ""
+
+    tenant_name = str(tenant or "").strip().lower()
+    auth_required = tenant_name != "public"
+    normalized_apikey = str(apikey or "").strip()
+    normalized_apikey_name = str(apikey_name or "").strip()
+
+    if not auth_required:
+        api_key_value = "(not required for public models)"
+        normalized_apikey_name = ""
+    elif normalized_apikey != "":
+        api_key_value = normalized_apikey
+    else:
+        api_key_value = build_inference_apikey_placeholder()
+
+    return {
+        "api_base_url": api_base_url,
+        "auth_required": auth_required,
+        "model_name": model_name,
+        "api_key": api_key_value,
+        "api_key_name": normalized_apikey_name,
+        "path": path,
+    }
+
+
 def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sample_query, apikey: str):
     if not isinstance(sample_query, dict):
         return ""
@@ -4921,7 +4974,7 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
 
     token = str(apikey or "").strip()
     if token == "":
-        token = "<INFERENCE_API_KEY(Find or create one on Admin|Apikeys page)>"
+        token = build_inference_apikey_placeholder()
 
     body_json = json.dumps(body_for_ui, ensure_ascii=False)
     body_json = body_json.replace("'", "'\"'\"'")
@@ -6169,6 +6222,16 @@ def GetFunc():
         funcspec = json.dumps(func["func"]["object"]["spec"], indent=4)
 
     onboarding_apikey = str(session.get("onboarding_inference_apikey", "") or "").strip()
+    onboarding_apikey_name = str(session.get("onboarding_inference_apikey_name", "") or "").strip()
+    client_setup = build_client_setup_for_ui(
+        tenant=tenant,
+        namespace=namespace,
+        funcname=name,
+        sample_query=sample,
+        apikey=onboarding_apikey,
+        apikey_name=onboarding_apikey_name,
+        spec=((func.get("func") or {}).get("object") or {}).get("spec"),
+    )
     sample_rest_call_for_ui = build_sample_rest_call_for_ui(
         tenant=tenant,
         namespace=namespace,
@@ -6209,6 +6272,8 @@ def GetFunc():
         funcpolicy=funcpolicy,
         path=sample["path"],
         initial_model_status=initial_model_status,
+        client_setup=client_setup,
+        admin_apikeys_href=f"{dashboard_href('prefix.apikeys')}#Apikeys",
         func_admin_href=func_admin_href,
         func_user_href=func_user_href,
         func_edit_href=func_edit_href,

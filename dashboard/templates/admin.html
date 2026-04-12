@@ -1549,6 +1549,10 @@
     }
 
     function openTab(evt, tabName) {
+        const targetTab = document.getElementById(tabName);
+        if (!targetTab) {
+            return;
+        }
         const tabcontent = document.getElementsByClassName("tabcontent");
         for (let i = 0; i < tabcontent.length; i++) {
             tabcontent[i].classList.remove("active");
@@ -1559,22 +1563,45 @@
             tablinks[i].classList.remove("active");
         }
 
-        document.getElementById(tabName).classList.add("active");
+        targetTab.classList.add("active");
         evt.currentTarget.classList.add("active");
 
         localStorage.setItem('currentTab', tabName);
     }
 
     window.onload = async function () {
+        const hashId = String(window.location.hash || '').replace(/^#/, '').trim();
+        let hashTab = '';
+        let hashTarget = null;
+        if (hashId !== '') {
+            hashTarget = document.getElementById(hashId);
+            if (hashTarget) {
+                if (hashTarget.classList.contains('tabcontent')) {
+                    hashTab = hashTarget.id;
+                } else {
+                    const parentTab = hashTarget.closest('.tabcontent');
+                    if (parentTab) {
+                        hashTab = parentTab.id;
+                    }
+                }
+            }
+        }
+
         const savedTab = localStorage.getItem('currentTab') || 'Apikeys';
-        let targetBtn = document.querySelector(`button[onclick*="'${savedTab}'"]`);
-        let targetTab = savedTab;
+        const initialTab = hashTab || savedTab;
+        let targetBtn = document.querySelector(`button[onclick*="'${initialTab}'"]`);
+        let targetTab = initialTab;
         if (!targetBtn) {
             targetBtn = document.querySelector(`button[onclick*="'Apikeys'"]`);
             targetTab = 'Apikeys';
         }
         if (targetBtn) {
             openTab({ currentTarget: targetBtn }, targetTab);
+        }
+        if (hashTarget && typeof hashTarget.scrollIntoView === 'function') {
+            window.setTimeout(function () {
+                hashTarget.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            }, 0);
         }
         await initBillingAdminAccess();
     };

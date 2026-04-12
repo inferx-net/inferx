@@ -1,0 +1,61 @@
+{% if client_setup %}
+{% macro client_setup_field(field_id, label, value, note='', rows=2) -%}
+<div>
+    <label for="{{ field_id }}" style="display: block; margin: 0 0 6px 0;">{{ label }}</label>
+    <div class="copyable-area">
+        <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('{{ field_id }}')">Copy</button>
+        <textarea id="{{ field_id }}" rows="{{ rows }}" readonly spellcheck="false">{{ value }}</textarea>
+    </div>
+    {% if note %}
+    <div style="margin-top: 6px; color: #64748b; font-size: var(--ix-font-size-caption);">{{ note }}</div>
+    {% endif %}
+</div>
+{%- endmacro %}
+
+<section{% if section_class %} class="{{ section_class }}"{% else %} style="margin: 18px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff;"{% endif %}>
+    <h3>Client Setup</h3>
+    <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+        Use these values in Continue, OpenWebUI, or any client that asks for an endpoint, API key, and model name.
+    </p>
+    <div style="display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+        {% if client_setup.api_base_url %}
+        {{ client_setup_field(
+            'client-api-base',
+            'API Base URL',
+            client_setup.api_base_url,
+            'Use this for OpenAI-compatible clients that ask for a base URL.',
+            2
+        ) }}
+        {% endif %}
+        {{ client_setup_field(
+            'client-model-name',
+            'Model Name',
+            client_setup.model_name,
+            'Derived from the deployed function spec and sample query, so it should preserve the effective provider/model target when one is encoded.',
+            2
+        ) }}
+        <div>
+            <label for="client-api-key" style="display: block; margin: 0 0 6px 0;">API Key</label>
+            <div class="copyable-area">
+                <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('client-api-key')">Copy</button>
+                <textarea id="client-api-key" rows="2" readonly spellcheck="false">{{ client_setup.api_key }}</textarea>
+            </div>
+            <div style="margin-top: 6px; color: #64748b; font-size: var(--ix-font-size-caption);">
+                {% if client_setup.auth_required %}
+                    {% if client_setup.api_key_name %}
+                    <div>Showing onboarding key <strong>{{ client_setup.api_key_name }}</strong>.</div>
+                    {% endif %}
+                    <div>Create or manage keys on <a href="{{ admin_apikeys_href }}">Admin &gt; Apikeys</a>.</div>
+                {% else %}
+                    <div>Public tenant models do not require a bearer token.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% if not client_setup.api_base_url %}
+    <p style="margin: 12px 0 0 0; color: #64748b; font-size: var(--ix-font-size-caption);">
+        This model does not expose a shared OpenAI-style <code>/v1</code> base URL.
+    </p>
+    {% endif %}
+</section>
+{% endif %}
