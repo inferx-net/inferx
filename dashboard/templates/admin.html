@@ -1308,7 +1308,7 @@
                     <div>
                         <h3 style="margin: 0;">Tenant Directory</h3>
                         <p style="margin: 6px 0 0; font-size: 12px; color: #666;">
-                            Platform-wide tenant list for inferx administrators. Use row actions to preselect the Add Credits form safely.
+                            Platform-wide tenant list for inferx administrators. Use row actions to preselect the Add Credits form safely. Models shows Normal from Catalog / All from Catalog / All Models across the tenant.
                         </p>
                     </div>
                     <button type="button" onclick="loadBillingAdminTenantProfiles(true)" style="padding: 6px 12px;">Refresh</button>
@@ -1321,7 +1321,7 @@
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('tenant_name')">Tenant Name <span id="billing-admin-tenant-sort-tenant_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('display_name')">Owner Name <span id="billing-admin-tenant-sort-display_name"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('email')">Email <span id="billing-admin-tenant-sort-email"></span></th>
-                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models(Normal/All) <span id="billing-admin-tenant-sort-models"></span></th>
+                            <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('models')">Models <span id="billing-admin-tenant-sort-models"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('used_cents')">Used (USD) <span id="billing-admin-tenant-sort-used_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('balance_cents')">Balance (USD) <span id="billing-admin-tenant-sort-balance_cents"></span></th>
                             <th style="cursor: pointer;" onclick="sortBillingAdminTenantProfilesTable('created_at')">Created At (Local) <span id="billing-admin-tenant-sort-created_at"></span></th>
@@ -1810,14 +1810,22 @@
         }
 
         if (col === 'models') {
-            const avNormal = Number(a?.normal_model_count ?? 0);
-            const bvNormal = Number(b?.normal_model_count ?? 0);
-            if (avNormal !== bvNormal) return dir * (avNormal - bvNormal);
+            const avNormalCatalog = Number(a?.normal_catalog_model_count ?? 0);
+            const bvNormalCatalog = Number(b?.normal_catalog_model_count ?? 0);
+            if (avNormalCatalog !== bvNormalCatalog) return dir * (avNormalCatalog - bvNormalCatalog);
+
+            const avTotalCatalog = Number(a?.total_catalog_model_count ?? 0);
+            const bvTotalCatalog = Number(b?.total_catalog_model_count ?? 0);
+            if (avTotalCatalog !== bvTotalCatalog) return dir * (avTotalCatalog - bvTotalCatalog);
 
             const avTotal = Number(a?.total_model_count ?? 0);
             const bvTotal = Number(b?.total_model_count ?? 0);
-            if (avTotal === bvTotal) return 0;
-            return dir * (avTotal - bvTotal);
+            if (avTotal !== bvTotal) return dir * (avTotal - bvTotal);
+
+            const avNormal = Number(a?.normal_model_count ?? 0);
+            const bvNormal = Number(b?.normal_model_count ?? 0);
+            if (avNormal === bvNormal) return 0;
+            return dir * (avNormal - bvNormal);
         }
 
         if (col === 'created_at') {
@@ -1926,9 +1934,10 @@
             tr.appendChild(emailTd);
 
             const modelsTd = document.createElement('td');
-            const normalModelCount = Number(row?.normal_model_count ?? 0);
+            const normalCatalogModelCount = Number(row?.normal_catalog_model_count ?? 0);
+            const totalCatalogModelCount = Number(row?.total_catalog_model_count ?? 0);
             const totalModelCount = Number(row?.total_model_count ?? 0);
-            modelsTd.textContent = `${Number.isFinite(normalModelCount) ? normalModelCount : 0} / ${Number.isFinite(totalModelCount) ? totalModelCount : 0}`;
+            modelsTd.textContent = `${Number.isFinite(normalCatalogModelCount) ? normalCatalogModelCount : 0} / ${Number.isFinite(totalCatalogModelCount) ? totalCatalogModelCount : 0} / ${Number.isFinite(totalModelCount) ? totalModelCount : 0}`;
             tr.appendChild(modelsTd);
 
             const usedTd = document.createElement('td');

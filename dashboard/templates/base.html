@@ -138,6 +138,70 @@
             margin: 6px 0 10px 0;
         }
 
+        .tenant-credit-banner {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 0 0 12px 0;
+            padding: 12px 14px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }
+
+        .tenant-credit-banner[hidden] {
+            display: none;
+        }
+
+        .tenant-credit-banner.info {
+            border-color: #bfdbfe;
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .tenant-credit-banner.exceeded {
+            border-color: #fecaca;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .tenant-credit-banner strong {
+            font-weight: 700;
+        }
+
+        .tenant-credit-banner.info strong {
+            color: #1e3a8a;
+        }
+
+        .tenant-credit-banner.exceeded strong {
+            color: #7f1d1d;
+        }
+
+        .tenant-credit-banner p {
+            margin: 0;
+        }
+
+        .tenant-credit-banner a {
+            font-weight: 700;
+            text-decoration: underline;
+        }
+
+        .tenant-credit-banner.info a {
+            color: #1e40af;
+        }
+
+        .tenant-credit-banner.exceeded a {
+            color: #991b1b;
+        }
+
+        .tenant-credit-banner.info a:hover {
+            color: #1d4ed8;
+        }
+
+        .tenant-credit-banner.exceeded a:hover {
+            color: #7f1d1d;
+        }
+
         .content table.ix-table {
             border-collapse: collapse;
             background: #fff;
@@ -487,6 +551,10 @@
             nav a.nav-support-link::after {
                 content: attr(data-tooltip);
             }
+
+            .tenant-credit-banner {
+                flex-direction: column;
+            }
         }
 
     </style>
@@ -561,10 +629,14 @@
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
+        const slackInviteUrl = {{ slack_invite_url | tojson }};
+        const TENANT_CREDIT_BANNER_AUTOHIDE_MS = 8000;
+        const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
         const loginUrl = '{{ hosturl }}' + "login";
         const logoutUrl = '{{ hosturl }}' + "logout";
         const navNodesLink = document.querySelector('#nav-nodes-link');
+        let tenantCreditBannerTimerId = null;
 
         function isInferxAdminFromRoles(rolesData) {
             if (!Array.isArray(rolesData)) {
@@ -788,6 +860,190 @@
             }
         }
 
+        function getTenantCreditBannerElements() {
+            return {
+                banner: document.getElementById('tenant-credit-banner'),
+                text: document.getElementById('tenant-credit-banner-text'),
+            };
+        }
+
+        function tenantCreditBannerCacheKey(tenantName) {
+            return `inferx:tenant-credit-banner:status:${tenantName}`;
+        }
+
+        function tenantCreditBannerSeenKey(tenantName) {
+            return `inferx:tenant-credit-banner:seen:${tenantName}`;
+        }
+
+        function readTenantCreditBannerCache(tenantName) {
+            try {
+                const raw = window.sessionStorage.getItem(tenantCreditBannerCacheKey(tenantName));
+                if (!raw) {
+                    return null;
+                }
+
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object') {
+                    return null;
+                }
+
+                const fetchedAt = Number(parsed.fetchedAt);
+                if (!Number.isFinite(fetchedAt) || fetchedAt <= 0) {
+                    return null;
+                }
+
+                if ((Date.now() - fetchedAt) > TENANT_CREDIT_BANNER_CACHE_TTL_MS) {
+                    return null;
+                }
+
+                return {
+                    quotaExceeded: parsed.quotaExceeded === true,
+                    fetchedAt,
+                };
+            } catch (_e) {
+                return null;
+            }
+        }
+
+        function writeTenantCreditBannerCache(tenantName, quotaExceeded) {
+            try {
+                window.sessionStorage.setItem(
+                    tenantCreditBannerCacheKey(tenantName),
+                    JSON.stringify({
+                        quotaExceeded: quotaExceeded === true,
+                        fetchedAt: Date.now(),
+                    }),
+                );
+            } catch (_e) {
+            }
+        }
+
+        function hasSeenTenantCreditInfoBanner(tenantName) {
+            try {
+                return window.sessionStorage.getItem(tenantCreditBannerSeenKey(tenantName)) === 'true';
+            } catch (_e) {
+                return false;
+            }
+        }
+
+        function markSeenTenantCreditInfoBanner(tenantName) {
+            try {
+                window.sessionStorage.setItem(tenantCreditBannerSeenKey(tenantName), 'true');
+            } catch (_e) {
+            }
+        }
+
+        function clearTenantCreditBannerTimer() {
+            if (tenantCreditBannerTimerId !== null) {
+                window.clearTimeout(tenantCreditBannerTimerId);
+                tenantCreditBannerTimerId = null;
+            }
+        }
+
+        function hideTenantCreditBanner() {
+            const { banner } = getTenantCreditBannerElements();
+            if (!banner) {
+                return;
+            }
+            clearTenantCreditBannerTimer();
+            banner.hidden = true;
+        }
+
+        function showTenantCreditBanner(quotaExceeded) {
+            const { banner, text } = getTenantCreditBannerElements();
+            if (!banner || !text) {
+                return;
+            }
+
+            clearTenantCreditBannerTimer();
+            const link = document.createElement('a');
+            link.href = slackInviteUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = 'Click support';
+
+            if (quotaExceeded) {
+                text.replaceChildren(
+                    document.createTextNode('Your credit has run out. InferX currently offers $20/month/model to continue using the service. '),
+                    link,
+                    document.createTextNode(' to set it up.'),
+                );
+            } else {
+                text.replaceChildren(
+                    document.createTextNode('InferX currently offers $20/month/model when your credit runs out. '),
+                    link,
+                    document.createTextNode(' to request setup.'),
+                );
+            }
+
+            banner.classList.toggle('info', !quotaExceeded);
+            banner.classList.toggle('exceeded', quotaExceeded);
+            banner.dataset.quotaExceeded = quotaExceeded ? 'true' : 'false';
+            banner.setAttribute('role', quotaExceeded ? 'alert' : 'status');
+            banner.setAttribute('aria-live', quotaExceeded ? 'assertive' : 'polite');
+            banner.hidden = false;
+
+            if (!quotaExceeded) {
+                tenantCreditBannerTimerId = window.setTimeout(() => {
+                    hideTenantCreditBanner();
+                }, TENANT_CREDIT_BANNER_AUTOHIDE_MS);
+            }
+        }
+
+        function applyTenantCreditBannerState(tenantName, quotaExceeded) {
+            if (quotaExceeded) {
+                showTenantCreditBanner(true);
+                return;
+            }
+
+            if (hasSeenTenantCreditInfoBanner(tenantName)) {
+                hideTenantCreditBanner();
+                return;
+            }
+
+            showTenantCreditBanner(false);
+            markSeenTenantCreditInfoBanner(tenantName);
+        }
+
+        async function loadTenantCreditBanner() {
+            const { banner } = getTenantCreditBannerElements();
+            if (!isLoggedIn || isGatewayAlignedAnonymousActive || !banner) {
+                hideTenantCreditBanner();
+                return;
+            }
+
+            const tenantName = String(activeTenantName || '').trim();
+            if (tenantName === '') {
+                hideTenantCreditBanner();
+                return;
+            }
+
+            const cachedState = readTenantCreditBannerCache(tenantName);
+            if (cachedState !== null) {
+                applyTenantCreditBannerState(tenantName, cachedState.quotaExceeded);
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/proxy1/tenant/${encodeURIComponent(tenantName)}/credits`, {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                if (!resp.ok) {
+                    hideTenantCreditBanner();
+                    return;
+                }
+
+                const payload = await resp.json();
+                const quotaExceeded = payload && payload.quota_exceeded === true;
+                writeTenantCreditBannerCache(tenantName, quotaExceeded);
+                applyTenantCreditBannerState(tenantName, quotaExceeded);
+            } catch (_e) {
+                hideTenantCreditBanner();
+            }
+        }
+
         window.getTenantDisplayName = getTenantDisplayName;
         window.applyTenantDisplayNames = applyTenantDisplayNames;
         window.updateTenantDisplayMap = updateTenantDisplayMap;
@@ -833,12 +1089,16 @@
         applyTenantDisplayNames(document);
         loadTenantDisplayMap();
         configureNodesNavVisibility();
+        window.addEventListener('DOMContentLoaded', loadTenantCreditBanner);
 
     </script>
     {% if show_public_nav %}
     <hr class="nav-divider">
     {% endif %}
     <div class="content">
+        <div id="tenant-credit-banner" class="tenant-credit-banner" role="alert" hidden>
+            <p id="tenant-credit-banner-text"></p>
+        </div>
         {% block content %} {% endblock %}
     </div>
 </body>
