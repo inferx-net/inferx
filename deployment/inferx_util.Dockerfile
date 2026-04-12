@@ -4,6 +4,7 @@ RUN apk add --no-cache \
     bash \
     vim \
     openssh-client \
+    rsync \
     curl \
     wget \
     iproute2 \
