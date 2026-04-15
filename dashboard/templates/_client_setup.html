@@ -1,56 +1,140 @@
 {% if client_setup %}
-{% macro client_setup_field(field_id, label, value, note='', rows=2) -%}
+<style>
+    .client-setup-value-shell {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 38px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #0f172a;
+        padding: 6px 8px 6px 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .client-setup-value {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: #0f172a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .client-setup-value.mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: 0.2px;
+        color: #334155;
+    }
+
+    .client-setup-copy-btn {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid #c9d5e6;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #334155;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        cursor: pointer;
+        flex: 0 0 auto;
+    }
+
+    .client-setup-copy-btn:hover {
+        background: #f6faff;
+        border-color: #afc2db;
+    }
+
+    .client-setup-copy-btn svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        pointer-events: none;
+    }
+
+    .client-setup-copy-btn::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 6px);
+        transform: translateX(-50%);
+        background: #111827;
+        color: #ffffff;
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 3px 6px;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 10;
+    }
+
+    .client-setup-copy-btn:hover::after,
+    .client-setup-copy-btn:focus-visible::after {
+        opacity: 1;
+    }
+
+    .client-setup-copy-btn.copied {
+        border-color: #16a34a;
+        color: #166534;
+        background: #f0fdf4;
+    }
+</style>
+{% macro client_setup_value_field(label, display_value, copy_value, tooltip='Copy', value_class='') -%}
 <div>
-    <label for="{{ field_id }}" style="display: block; margin: 0 0 6px 0;">{{ label }}</label>
-    <div class="copyable-area">
-        <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('{{ field_id }}')">Copy</button>
-        <textarea id="{{ field_id }}" rows="{{ rows }}" readonly spellcheck="false">{{ value }}</textarea>
+    <label style="display: block; margin: 0 0 6px 0;">{{ label }}</label>
+    <div class="client-setup-value-shell">
+        <span class="client-setup-value{% if value_class %} {{ value_class }}{% endif %}" data-copy-value="{{ copy_value }}">{{ display_value }}</span>
+        <button
+            type="button"
+            class="client-setup-copy-btn"
+            data-tooltip="{{ tooltip }}"
+            aria-label="{{ tooltip }}"
+            onclick="copyClientSetupValue(this)"
+        >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="10" height="10"></rect>
+                <rect x="5" y="5" width="10" height="10"></rect>
+            </svg>
+        </button>
     </div>
-    {% if note %}
-    <div style="margin-top: 6px; color: #64748b; font-size: var(--ix-font-size-caption);">{{ note }}</div>
-    {% endif %}
 </div>
 {%- endmacro %}
 
 <section{% if section_class %} class="{{ section_class }}"{% else %} style="margin: 18px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff;"{% endif %}>
     <h3>Client Setup</h3>
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
-        Use these values in Continue, OpenWebUI, or any client that asks for an endpoint, API key, and model name.
+        Use these values in Dify, OpenWebUI, Continue, OpenCode or any client that asks for an endpoint, API key, and model name.
     </p>
-    <div style="display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+    <div style="display: grid; gap: 12px;">
         {% if client_setup.api_base_url %}
-        {{ client_setup_field(
-            'client-api-base',
+        {{ client_setup_value_field(
             'API Base URL',
             client_setup.api_base_url,
-            'Use this for OpenAI-compatible clients that ask for a base URL.',
-            2
+            client_setup.api_base_url
         ) }}
         {% endif %}
-        {{ client_setup_field(
-            'client-model-name',
+        {{ client_setup_value_field(
             'Model Name',
             client_setup.model_name,
-            'Derived from the deployed function spec and sample query, so it should preserve the effective provider/model target when one is encoded.',
-            2
+            client_setup.model_name
         ) }}
-        <div>
-            <label for="client-api-key" style="display: block; margin: 0 0 6px 0;">API Key</label>
-            <div class="copyable-area">
-                <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('client-api-key')">Copy</button>
-                <textarea id="client-api-key" rows="2" readonly spellcheck="false">{{ client_setup.api_key }}</textarea>
-            </div>
-            <div style="margin-top: 6px; color: #64748b; font-size: var(--ix-font-size-caption);">
-                {% if client_setup.auth_required %}
-                    {% if client_setup.api_key_name %}
-                    <div>Showing onboarding key <strong>{{ client_setup.api_key_name }}</strong>.</div>
-                    {% endif %}
-                    <div>Create or manage keys on <a href="{{ admin_apikeys_href }}">Admin &gt; Apikeys</a>.</div>
-                {% else %}
-                    <div>Public tenant models do not require a bearer token.</div>
-                {% endif %}
-            </div>
-        </div>
+        {{ client_setup_value_field(
+            'API Key',
+            client_setup.api_key_display,
+            client_setup.api_key if client_setup.api_key_copyable else client_setup.api_key_display,
+            'Copy key' if client_setup.api_key_copyable else 'Copy',
+            'mono' if client_setup.api_key_copyable else ''
+        ) }}
     </div>
     {% if not client_setup.api_base_url %}
     <p style="margin: 12px 0 0 0; color: #64748b; font-size: var(--ix-font-size-caption);">
@@ -58,4 +142,84 @@
     </p>
     {% endif %}
 </section>
+<script>
+    (function () {
+        if (window.copyClientSetupValue) {
+            return;
+        }
+
+        async function copyClientSetupText(text) {
+            if (!text) {
+                return false;
+            }
+
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (_err) {
+                try {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.style.position = 'fixed';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    const copied = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    return copied;
+                } catch (_fallbackErr) {
+                    return false;
+                }
+            }
+        }
+
+        window.copyClientSetupValue = async function (button) {
+            const shell = button ? button.closest('.client-setup-value-shell') : null;
+            if (!shell) {
+                return;
+            }
+
+            const valueEl = shell.querySelector('.client-setup-value');
+            if (!valueEl) {
+                return;
+            }
+
+            const rawValue = valueEl.getAttribute('data-copy-value') || '';
+            const copied = await copyClientSetupText(rawValue);
+
+            const existingTimer = Number(button.dataset.resetTimer || 0);
+            if (existingTimer) {
+                window.clearTimeout(existingTimer);
+            }
+
+            const defaultTooltip = button.getAttribute('data-default-tooltip') || button.getAttribute('data-tooltip') || 'Copy';
+            if (!button.getAttribute('data-default-tooltip')) {
+                button.setAttribute('data-default-tooltip', defaultTooltip);
+            }
+
+            if (!copied) {
+                button.classList.remove('copied');
+                button.setAttribute('data-tooltip', 'Copy failed');
+                button.setAttribute('aria-label', 'Copy failed');
+                button.dataset.resetTimer = String(window.setTimeout(() => {
+                    button.setAttribute('data-tooltip', defaultTooltip);
+                    button.setAttribute('aria-label', defaultTooltip);
+                    delete button.dataset.resetTimer;
+                }, 1400));
+                return;
+            }
+
+            button.classList.add('copied');
+            button.setAttribute('data-tooltip', 'Copied');
+            button.setAttribute('aria-label', 'Copied');
+            button.dataset.resetTimer = String(window.setTimeout(() => {
+                button.classList.remove('copied');
+                button.setAttribute('data-tooltip', defaultTooltip);
+                button.setAttribute('aria-label', defaultTooltip);
+                delete button.dataset.resetTimer;
+            }, 1400));
+        };
+    })();
+</script>
 {% endif %}
