@@ -95,12 +95,17 @@ impl Default for HttpEndpoint {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleCall {
     pub apiType: ApiType,
+    #[serde(default)]
+    pub raw_query: bool,
     pub path: String,
+    #[serde(default)]
     pub prompt: String,
     #[serde(default)]
     pub prompts: Vec<String>,
     #[serde(default)]
     pub dataUrl: String,
+    #[serde(default)]
+    pub max_tokens: i32,
     pub body: serde_json::Value,
 
     #[serde(default = "DefaultLoadingTimeout")]
@@ -111,10 +116,12 @@ impl Default for SampleCall {
     fn default() -> Self {
         return Self {
             apiType: ApiType::Text2Text,
+            raw_query: false,
             path: "/v1/completions".to_owned(),
             dataUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
             prompts: Vec::new(),
+            max_tokens: 0,
             body: json!({
                 "name": "Unknown",
                 "max_tokens": 1000,
@@ -125,7 +132,7 @@ impl Default for SampleCall {
         };
     }
 }
-// 
+//
 // #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 // pub struct ScheduleConfig {
 //     #[serde(rename = "min_replica")]
@@ -203,6 +210,8 @@ pub struct MountFile {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncSpec {
     pub image: String,
+    #[serde(default)]
+    pub model_name: String,
     pub commands: Vec<String>,
     pub envs: Vec<(String, String)>,
     #[serde(default)]
@@ -228,7 +237,11 @@ pub struct FuncSpec {
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
 
-    #[serde(rename = "catalog_source", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "catalog_source",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub catalogSource: Option<CatalogSource>,
 
     #[serde(default)]
@@ -277,6 +290,7 @@ impl Default for FuncSpec {
     fn default() -> Self {
         return Self {
             image: String::new(),
+            model_name: String::new(),
             commands: Vec::new(),
             envs: Vec::new(),
             mounts: Vec::new(),
