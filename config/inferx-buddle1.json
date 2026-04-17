@@ -1,0 +1,85 @@
+{
+    "type": "function",
+    "tenant": "public",
+    "namespace": "Qwen",
+    "name": "inferx-buddle1",
+    "object": {
+        "spec": {
+            "image": "inferx/inferx-bundle:v0.1.0",
+            "commands": [
+                "python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen3-Reranker-0.6B --gpu-memory-utilization 0.2 --max-model-len 1200 --runner pooling --port 8002",
+                "python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen3-Reranker-0.6B --gpu-memory-utilization 0.2 --max-model-len 1200 --runner pooling --port 8003",
+                "python3 -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-1.5B --gpu-memory-utilization 0.50 --enable-sleep-mode --max-model-len 1000 --port 8001"
+            ],
+            "resources": {
+                "CPU": 12000,
+                "Mem": 24000,
+                "GPU": {
+                    "Type": "Any",
+                    "Count": 1,
+                    "vRam": 14000
+                },
+                "parallel": 100
+            },
+            "envs": [
+                [
+                    "LD_LIBRARY_PATH",
+                    "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+                ],
+                [
+                    "VLLM_CUDART_SO_PATH",
+                    "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+                ],
+                [
+                    "VLLM_SERVER_DEV_MODE",
+                    "1"
+                ]
+            ],
+            "mounts": [
+                {
+                    "hostpath": "/opt/inferx/cache",
+                    "mountpath": "/root/.cache/huggingface"
+                }
+            ],
+            "endpoint": {
+                "port": 8000,
+                "schema": "Http",
+                "probe": "/health"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "raw_query": true,
+                "path": "v1/chat/completions",
+                "prompt": "Seattle is a",
+                "max_tokens": 100,
+                "body": {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant."
+                        },
+                        {
+                            "role": "user",
+                            "content": "Seattle is a"
+                        }
+                    ],
+                    "max_tokens": "100",
+                    "temperature": "0",
+                    "stream": "true"
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "policy": {
+                "Link": {
+                    "objType": "funcpolicy",
+                    "namespace": "system",
+                    "name": "default_funcpolicy"
+                }
+            }
+        }
+    }
+}
