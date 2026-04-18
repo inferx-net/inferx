@@ -630,13 +630,11 @@
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
         const slackInviteUrl = {{ slack_invite_url | tojson }};
-        const TENANT_CREDIT_BANNER_AUTOHIDE_MS = 8000;
         const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
         const loginUrl = '{{ hosturl }}' + "login";
         const logoutUrl = '{{ hosturl }}' + "logout";
         const navNodesLink = document.querySelector('#nav-nodes-link');
-        let tenantCreditBannerTimerId = null;
 
         function isInferxAdminFromRoles(rolesData) {
             if (!Array.isArray(rolesData)) {
@@ -871,10 +869,6 @@
             return `inferx:tenant-credit-banner:status:${tenantName}`;
         }
 
-        function tenantCreditBannerSeenKey(tenantName) {
-            return `inferx:tenant-credit-banner:seen:${tenantName}`;
-        }
-
         function readTenantCreditBannerCache(tenantName) {
             try {
                 const raw = window.sessionStorage.getItem(tenantCreditBannerCacheKey(tenantName));
@@ -918,34 +912,11 @@
             }
         }
 
-        function hasSeenTenantCreditInfoBanner(tenantName) {
-            try {
-                return window.sessionStorage.getItem(tenantCreditBannerSeenKey(tenantName)) === 'true';
-            } catch (_e) {
-                return false;
-            }
-        }
-
-        function markSeenTenantCreditInfoBanner(tenantName) {
-            try {
-                window.sessionStorage.setItem(tenantCreditBannerSeenKey(tenantName), 'true');
-            } catch (_e) {
-            }
-        }
-
-        function clearTenantCreditBannerTimer() {
-            if (tenantCreditBannerTimerId !== null) {
-                window.clearTimeout(tenantCreditBannerTimerId);
-                tenantCreditBannerTimerId = null;
-            }
-        }
-
         function hideTenantCreditBanner() {
             const { banner } = getTenantCreditBannerElements();
             if (!banner) {
                 return;
             }
-            clearTenantCreditBannerTimer();
             banner.hidden = true;
         }
 
@@ -955,7 +926,6 @@
                 return;
             }
 
-            clearTenantCreditBannerTimer();
             const link = document.createElement('a');
             link.href = slackInviteUrl;
             link.target = '_blank';
@@ -982,27 +952,10 @@
             banner.setAttribute('role', quotaExceeded ? 'alert' : 'status');
             banner.setAttribute('aria-live', quotaExceeded ? 'assertive' : 'polite');
             banner.hidden = false;
-
-            if (!quotaExceeded) {
-                tenantCreditBannerTimerId = window.setTimeout(() => {
-                    hideTenantCreditBanner();
-                }, TENANT_CREDIT_BANNER_AUTOHIDE_MS);
-            }
         }
 
-        function applyTenantCreditBannerState(tenantName, quotaExceeded) {
-            if (quotaExceeded) {
-                showTenantCreditBanner(true);
-                return;
-            }
-
-            if (hasSeenTenantCreditInfoBanner(tenantName)) {
-                hideTenantCreditBanner();
-                return;
-            }
-
-            showTenantCreditBanner(false);
-            markSeenTenantCreditInfoBanner(tenantName);
+        function applyTenantCreditBannerState(quotaExceeded) {
+            showTenantCreditBanner(quotaExceeded);
         }
 
         async function loadTenantCreditBanner() {
@@ -1020,7 +973,7 @@
 
             const cachedState = readTenantCreditBannerCache(tenantName);
             if (cachedState !== null) {
-                applyTenantCreditBannerState(tenantName, cachedState.quotaExceeded);
+                applyTenantCreditBannerState(cachedState.quotaExceeded);
                 return;
             }
 
@@ -1038,7 +991,7 @@
                 const payload = await resp.json();
                 const quotaExceeded = payload && payload.quota_exceeded === true;
                 writeTenantCreditBannerCache(tenantName, quotaExceeded);
-                applyTenantCreditBannerState(tenantName, quotaExceeded);
+                applyTenantCreditBannerState(quotaExceeded);
             } catch (_e) {
                 hideTenantCreditBanner();
             }

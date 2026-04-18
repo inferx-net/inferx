@@ -119,6 +119,24 @@ fn summarize_headers_for_log(headers: &http::HeaderMap) -> Vec<(String, String)>
         .collect()
 }
 
+fn summarize_funccall_body_for_log(bytes: &Bytes, trace_enabled: bool) -> Value {
+    if bytes.is_empty() {
+        return Value::Null;
+    }
+
+    if !trace_enabled {
+        return Value::String(format!(
+            "[omitted request body; {} bytes; trace logging disabled]",
+            bytes.len()
+        ));
+    }
+
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(value) => redact_inline_media_in_json(&value),
+        Err(_) => Value::String(format!("[non-json request body; {} bytes]", bytes.len())),
+    }
+}
+
 fn redact_inline_media_in_json(value: &Value) -> Value {
     match value {
         Value::Array(items) => {
@@ -135,6 +153,39 @@ fn redact_inline_media_in_json(value: &Value) -> Value {
             Value::String(format!("[redacted data URL; {} chars]", text.len()))
         }
         _ => value.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summarize_funccall_body_for_log;
+    use hyper::body::Bytes;
+    use serde_json::Value;
+
+    #[test]
+    fn summarize_funccall_body_for_log_skips_empty_body() {
+        assert_eq!(
+            summarize_funccall_body_for_log(&Bytes::new(), false),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn summarize_funccall_body_for_log_omits_non_debug_payloads() {
+        let summary = summarize_funccall_body_for_log(&Bytes::from_static(br#"{"a":1}"#), false);
+        assert_eq!(
+            summary,
+            Value::String("[omitted request body; 7 bytes; trace logging disabled]".to_owned())
+        );
+    }
+
+    #[test]
+    fn summarize_funccall_body_for_log_falls_back_for_non_json_debug_payloads() {
+        let summary = summarize_funccall_body_for_log(&Bytes::from_static(b"not-json"), true);
+        assert_eq!(
+            summary,
+            Value::String("[non-json request body; 8 bytes]".to_owned())
+        );
     }
 }
 
@@ -1250,12 +1301,12 @@ async fn FuncCall(
         Ok(b) => b,
     };
 
-    let json_req: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let redacted_json_req = redact_inline_media_in_json(&json_req);
-    drop(json_req);
+    let trace_enabled = trace_logging_enabled();
+    let redacted_json_req = summarize_funccall_body_for_log(&bytes, trace_enabled);
     let redacted_headers = summarize_headers_for_log(&headers);
-    trace!("FuncCall get req {:#?}", redacted_json_req);
+    if trace_enabled {
+        trace!("FuncCall get req {:#?}", redacted_json_req);
+    }
     let disconnect = Disconnect::New(redacted_json_req.clone(), redacted_headers.clone(), &labels);
 
     let mut retry = 0;

@@ -269,6 +269,15 @@
                     <a class="ix-btn secondary" href="{{ hosturl }}func?tenant={{ tenant }}&&namespace={{ namespace }}&&name={{ name }}">Open</a>
                     {% if row_can_manage %}
                     <a class="ix-btn secondary" href="{{ hosturl }}func_create?edit={{ tenant }}/{{ namespace }}/{{ name }}">Edit</a>
+                    <button
+                        type="button"
+                        class="ix-btn danger row-delete-btn"
+                        data-id="{{ tenant }}/{{ namespace }}/{{ name }}"
+                        data-tenant="{{ tenant }}"
+                        data-namespace="{{ namespace }}"
+                        data-name="{{ name }}">
+                        Delete
+                    </button>
                     {% endif %}
                     {% if is_inferx_admin %}
                     <a class="ix-btn secondary" href="{{ url_for('prefix.CatalogAdminNew', from_func=tenant ~ '/' ~ namespace ~ '/' ~ name) }}">Save2Catalog</a>
@@ -341,6 +350,7 @@
         const selectAll = document.getElementById('select-all-models');
         const deleteBtn = document.getElementById('delete-selected-btn');
         const statusEl = document.getElementById('delete-status');
+        const rowDeleteButtons = Array.from(document.querySelectorAll('.row-delete-btn'));
 
         function selectableBoxes() {
             return Array.from(document.querySelectorAll('.model-select:not(:disabled)'));
@@ -348,6 +358,15 @@
 
         function selectedRows() {
             return Array.from(document.querySelectorAll('.model-select:not(:disabled):checked'));
+        }
+
+        function targetFromDataset(dataset) {
+            return {
+                id: dataset.id || '',
+                tenant: dataset.tenant || '',
+                namespace: dataset.namespace || '',
+                name: dataset.name || ''
+            };
         }
 
         function syncDeleteButtonState() {
@@ -360,6 +379,69 @@
         function setStatus(message, kind) {
             statusEl.textContent = message || '';
             statusEl.className = kind ? kind : '';
+        }
+
+        async function deleteTargets(targets, triggerBtn) {
+            if (targets.length === 0) {
+                setStatus('Select at least one model to delete.', 'error');
+                return;
+            }
+
+            const names = targets.map((target) => target.id);
+            const confirmLabel = targets.length === 1
+                ? `Delete model?\n\n${names[0]}`
+                : `Delete ${targets.length} model(s)?\n\n${names.join('\n')}`;
+            if (!window.confirm(confirmLabel)) {
+                return;
+            }
+
+            if (triggerBtn) {
+                triggerBtn.disabled = true;
+            }
+            if (deleteBtn) {
+                deleteBtn.disabled = true;
+            }
+
+            setStatus(
+                targets.length === 1
+                    ? `Deleting ${names[0]}...`
+                    : 'Deleting selected models...',
+                ''
+            );
+
+            const failures = [];
+            for (const target of targets) {
+                const tenant = encodeURIComponent(target.tenant);
+                const namespace = encodeURIComponent(target.namespace);
+                const name = encodeURIComponent(target.name);
+                try {
+                    const resp = await fetch(`/proxy/object/function/${tenant}/${namespace}/${name}/`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        failures.push(`${target.id}: HTTP ${resp.status} ${text}`);
+                    }
+                } catch (err) {
+                    failures.push(`${target.id}: ${err}`);
+                }
+            }
+
+            if (triggerBtn) {
+                triggerBtn.disabled = false;
+            }
+            syncDeleteButtonState();
+
+            if (failures.length > 0) {
+                setStatus(`Delete completed with ${failures.length} failure(s). ${failures[0]}`, 'error');
+                return;
+            }
+
+            setStatus(`Deleted ${targets.length} model(s). Reloading...`, 'success');
+            window.location.reload();
         }
 
         function syncSelectAll() {
@@ -395,50 +477,13 @@
         });
 
         deleteBtn?.addEventListener('click', async () => {
-            const rows = selectedRows();
-            if (rows.length === 0) {
-                setStatus('Select at least one model to delete.', 'error');
-                return;
-            }
+            await deleteTargets(selectedRows().map((row) => targetFromDataset(row.dataset)));
+        });
 
-            const names = rows.map((row) => row.dataset.id);
-            if (!window.confirm(`Delete ${rows.length} model(s)?\n\n${names.join('\n')}`)) {
-                return;
-            }
-
-            deleteBtn.disabled = true;
-            setStatus('Deleting selected models...', '');
-
-            const failures = [];
-            for (const row of rows) {
-                const tenant = encodeURIComponent(row.dataset.tenant || '');
-                const namespace = encodeURIComponent(row.dataset.namespace || '');
-                const name = encodeURIComponent(row.dataset.name || '');
-                try {
-                    const resp = await fetch(`/proxy/object/function/${tenant}/${namespace}/${name}/`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Accept': 'application/json'
-                        }
-                    });
-                    if (!resp.ok) {
-                        const text = await resp.text();
-                        failures.push(`${row.dataset.id}: HTTP ${resp.status} ${text}`);
-                    }
-                } catch (err) {
-                    failures.push(`${row.dataset.id}: ${err}`);
-                }
-            }
-
-            deleteBtn.disabled = false;
-
-            if (failures.length > 0) {
-                setStatus(`Delete completed with ${failures.length} failure(s). ${failures[0]}`, 'error');
-                return;
-            }
-
-            setStatus(`Deleted ${rows.length} model(s). Reloading...`, 'success');
-            window.location.reload();
+        rowDeleteButtons.forEach((button) => {
+            button.addEventListener('click', async () => {
+                await deleteTargets([targetFromDataset(button.dataset)], button);
+            });
         });
 
         {% if is_inferx_admin %}

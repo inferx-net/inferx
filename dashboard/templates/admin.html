@@ -455,6 +455,20 @@
         color: red;
     }
 
+    .billing-info-banner {
+        margin: 0 0 16px 0;
+        padding: 12px 14px;
+        border: 1px solid #bfdbfe;
+        border-radius: 4px;
+        background: #eff6ff;
+        color: #1e3a8a;
+        line-height: 1.45;
+    }
+
+    .billing-info-banner strong {
+        color: #1e40af;
+    }
+
     /* Stacked usage bar */
     .usage-bar-stack {
         display: flex;
@@ -942,6 +956,10 @@
 </div>
 
 <div id="Billing" class="tabcontent">
+    <div class="billing-info-banner" role="note">
+        <strong>Billing Notice:</strong> The amounts shown here are from a dry run for usage tracking only and are not actual charges. InferX access is charged separately at <strong>$20/month/model</strong>.
+    </div>
+
     <!-- Tenant Selector -->
     <div style="margin-bottom: 20px;">
         <label for="billing_tenant_select" style="font-size: 16px; font-weight: bold;">Tenant: </label>
@@ -1025,7 +1043,7 @@
                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 4px;">
                     <div>
                         <span style="display: inline-block; width: 10px; height: 10px; background: #4CAF50;"></span> Inference
-                        <span style="display: inline-block; width: 10px; height: 10px; background: #2196F3; margin-left: 10px;"></span> Standby
+                        <span style="display: inline-block; width: 10px; height: 10px; background: #2196F3; margin-left: 10px;"></span> Snapshot Retention
                     </div>
                     <div>(Local)</div>
                 </div>
@@ -1045,13 +1063,13 @@
                                     Inference (hrs) <span id="usage-sort-inf-hours-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
-                                    Standby (hrs) <span id="usage-sort-sby-hours-icon"></span>
+                                    Snapshot Retention (hrs) <span id="usage-sort-sby-hours-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
                                     Inference (USD) <span id="usage-sort-inf-cost-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
-                                    Standby (USD) <span id="usage-sort-sby-cost-icon"></span>
+                                    Snapshot Retention (USD) <span id="usage-sort-sby-cost-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('total_cost')">
                                     Total (USD) <span id="usage-sort-total-cost-icon"></span>
@@ -1162,13 +1180,13 @@
                                         Inference (hrs) <span id="sort-inf-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
-                                        Standby (hrs) <span id="sort-sby-hours-icon"></span>
+                                        Snapshot Retention (hrs) <span id="sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
                                         Inference (USD) <span id="sort-inf-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
-                                        Standby (USD) <span id="sort-sby-cost-icon"></span>
+                                        Snapshot Retention (USD) <span id="sort-sby-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('total_cost')">
                                         Total (USD) <span id="sort-total-cost-icon">▼</span>
@@ -1217,13 +1235,13 @@
                                         Inference (hrs) <span id="detail-sort-inf-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
-                                        Standby (hrs) <span id="detail-sort-sby-hours-icon"></span>
+                                        Snapshot Retention (hrs) <span id="detail-sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
                                         Inference (USD) <span id="detail-sort-inf-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
-                                        Standby (USD) <span id="detail-sort-sby-cost-icon"></span>
+                                        Snapshot Retention (USD) <span id="detail-sort-sby-cost-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
                                         Total (USD) <span id="detail-sort-total-cost-icon"></span>
@@ -1399,7 +1417,7 @@
                     <label>Usage Type:</label>
                     <select id="billing-rate-usage-type">
                         <option value="inference" selected>Inference</option>
-                        <option value="standby">Standby</option>
+                        <option value="standby">Snapshot Retention</option>
                     </select>
                 </div>
                 <div>
@@ -2593,7 +2611,7 @@
                 const infCents = data.period?.inference_cents || 0;
                 const sbyCents = data.period?.standby_cents || 0;
                 document.getElementById('used-breakdown').innerHTML =
-                    `<span>Inf: ${formatUsd(infCents)}</span> | <span>Sby: ${formatUsd(sbyCents)}</span>`;
+                    `<span>Inference: ${formatUsd(infCents)}</span> | <span>Snapshot Retention: ${formatUsd(sbyCents)}</span>`;
 
                 const thresholdCents = data.threshold_cents || 0;
                 document.getElementById('threshold-value').textContent = formatUsd(thresholdCents);
@@ -2703,7 +2721,7 @@
             const infHrs = (infMs / 3600000).toFixed(2);
             const sbyHrs = (sbyMs / 3600000).toFixed(2);
             const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
-            const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Standby: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
+            const tooltip = `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Snapshot Retention: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`;
 
             return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
                 `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +

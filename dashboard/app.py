@@ -4930,6 +4930,94 @@ def build_inference_apikey_placeholder() -> str:
     return "<INFERENCE_API_KEY(Find or create one on Admin|Apikeys page)>"
 
 
+def mask_apikey_for_ui(raw_key: str) -> str:
+    normalized = str(raw_key or "")
+    if normalized == "":
+        return ""
+    if len(normalized) <= 8:
+        return "********"
+    return f"{normalized[:3]}{'*' * max(0, len(normalized) - 7)}{normalized[-4:]}"
+
+
+def build_onboard_inference_apikey_name_for_ui(tenant_name: str, sub: str) -> str:
+    normalized_tenant = str(tenant_name or "").strip().lower()
+    normalized_sub = str(sub or "").strip().lower()
+    if normalized_tenant == "" or normalized_sub == "":
+        return ""
+
+    tenant_slug_parts = []
+    previous_was_dash = False
+    for char in normalized_tenant:
+        if char.isalnum():
+            tenant_slug_parts.append(char)
+            previous_was_dash = False
+            continue
+        if not previous_was_dash:
+            tenant_slug_parts.append("-")
+            previous_was_dash = True
+
+    tenant_slug = "".join(tenant_slug_parts).strip("-")
+    if tenant_slug == "":
+        tenant_slug = "tenant"
+
+    sub_slug = "".join(char for char in normalized_sub if char.isalnum())
+    if sub_slug == "":
+        sub_suffix = "user"
+    else:
+        sub_suffix = sub_slug[:8]
+
+    return f"quickstart-inference-{tenant_slug}-{sub_suffix}"
+
+
+def resolve_onboarding_inference_apikey_for_ui(tenant_name: str):
+    normalized_tenant = str(tenant_name or "").strip()
+    if normalized_tenant.lower() == "public":
+        return "", ""
+
+    onboarding_apikey = str(session.get("onboarding_inference_apikey", "") or "").strip()
+    onboarding_apikey_name = str(session.get("onboarding_inference_apikey_name", "") or "").strip()
+
+    if onboarding_apikey != "":
+        return onboarding_apikey, onboarding_apikey_name
+
+    if onboarding_apikey_name == "":
+        onboarding_apikey_name = build_onboard_inference_apikey_name_for_ui(
+            normalized_tenant,
+            session.get("sub", ""),
+        )
+
+    if onboarding_apikey_name == "":
+        return "", ""
+
+    try:
+        apikeys = getapikeys()
+    except Exception:
+        return "", onboarding_apikey_name
+
+    if not isinstance(apikeys, list):
+        return "", onboarding_apikey_name
+
+    for apikey in apikeys:
+        if not isinstance(apikey, dict):
+            continue
+        if str(apikey.get("keyname", "") or "").strip() != onboarding_apikey_name:
+            continue
+
+        restrict_tenant = str(apikey.get("restrict_tenant", "") or "").strip()
+        if restrict_tenant != "" and restrict_tenant != normalized_tenant:
+            continue
+
+        raw_apikey = str(apikey.get("apikey", "") or "").strip()
+        if raw_apikey == "":
+            continue
+
+        session["onboarding_inference_apikey"] = raw_apikey
+        session["onboarding_inference_apikey_name"] = onboarding_apikey_name
+        return raw_apikey, onboarding_apikey_name
+
+    return "", onboarding_apikey_name
+
+
 def build_client_setup_for_ui(tenant: str, namespace: str, funcname: str, sample_query, apikey: str, apikey_name: str, spec=None):
     if not isinstance(sample_query, dict):
         return {}
@@ -4960,20 +5048,27 @@ def build_client_setup_for_ui(tenant: str, namespace: str, funcname: str, sample
     auth_required = tenant_name != "public"
     normalized_apikey = str(apikey or "").strip()
     normalized_apikey_name = str(apikey_name or "").strip()
+    api_key_copyable = False
 
     if not auth_required:
         api_key_value = "(not required for public models)"
+        api_key_display = api_key_value
         normalized_apikey_name = ""
     elif normalized_apikey != "":
         api_key_value = normalized_apikey
+        api_key_display = mask_apikey_for_ui(normalized_apikey)
+        api_key_copyable = True
     else:
         api_key_value = build_inference_apikey_placeholder()
+        api_key_display = api_key_value
 
     return {
         "api_base_url": api_base_url,
         "auth_required": auth_required,
         "model_name": model_name,
         "api_key": api_key_value,
+        "api_key_display": api_key_display,
+        "api_key_copyable": api_key_copyable,
         "api_key_name": normalized_apikey_name,
         "path": path,
     }
@@ -6283,8 +6378,7 @@ def GetFunc():
         func_edit_data = None
         funcspec = json.dumps(func["func"]["object"]["spec"], indent=4)
 
-    onboarding_apikey = str(session.get("onboarding_inference_apikey", "") or "").strip()
-    onboarding_apikey_name = str(session.get("onboarding_inference_apikey_name", "") or "").strip()
+    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(tenant)
     client_setup = build_client_setup_for_ui(
         tenant=tenant,
         namespace=namespace,
@@ -6335,7 +6429,6 @@ def GetFunc():
         path=sample["path"],
         initial_model_status=initial_model_status,
         client_setup=client_setup,
-        admin_apikeys_href=f"{dashboard_href('prefix.apikeys')}#Apikeys",
         func_admin_href=func_admin_href,
         func_user_href=func_user_href,
         func_edit_href=func_edit_href,
