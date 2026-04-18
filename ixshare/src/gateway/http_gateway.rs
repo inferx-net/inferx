@@ -1212,15 +1212,8 @@ async fn FuncCall(
         Ok(b) => b,
     };
 
-    let json_req: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(j) => j,
-        Err(_) => {
-            serde_json::json!({
-                "status": "error",
-                "message": "Non json input"
-            })
-        }
-    };
+    let json_req: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
     trace!("FuncCall get req {:#?}", json_req);
     let disconnect = Disconnect::New(json_req.clone(), headers.clone(), &labels);
 
