@@ -65,6 +65,37 @@ fn ProbeTypeDefault() -> ProbeType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ModelCategory {
+    #[serde(rename = "llm")]
+    LLM,
+    #[serde(rename = "embedding")]
+    Embedding,
+    #[serde(rename = "rerank")]
+    Rerank,
+    #[serde(rename = "tts")]
+    TTS,
+    #[serde(rename = "stt")]
+    STT,
+}
+
+impl Default for ModelCategory {
+    fn default() -> Self {
+        return Self::LLM;
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ModelSvc {
+    #[serde(default)]
+    pub model_type: ModelCategory,
+    pub model_name: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub disable_sleep: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HttpEndpoint {
     pub port: u16,
     #[serde(default)]
@@ -74,6 +105,10 @@ pub struct HttpEndpoint {
     pub probeTimeout: u32,
     #[serde(default = "ProbeTypeDefault")]
     pub probetype: ProbeType,
+    #[serde(default)]
+    pub root_svc: ModelSvc,
+    #[serde(default)]
+    pub sub_svcs: BTreeMap<String, ModelSvc>,
 }
 
 fn ProbeTimeoutDefault() -> u32 {
@@ -88,6 +123,8 @@ impl Default for HttpEndpoint {
             probe: "/health".to_owned(),
             probeTimeout: 1000,
             probetype: ProbeType::Prompt,
+            root_svc: ModelSvc::default(),
+            sub_svcs: BTreeMap::new(),
         };
     }
 }
@@ -95,12 +132,17 @@ impl Default for HttpEndpoint {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SampleCall {
     pub apiType: ApiType,
+    #[serde(default)]
+    pub raw_query: bool,
     pub path: String,
+    #[serde(default)]
     pub prompt: String,
     #[serde(default)]
     pub prompts: Vec<String>,
     #[serde(default)]
     pub dataUrl: String,
+    #[serde(default)]
+    pub max_tokens: i32,
     pub body: serde_json::Value,
 
     #[serde(default = "DefaultLoadingTimeout")]
@@ -111,10 +153,12 @@ impl Default for SampleCall {
     fn default() -> Self {
         return Self {
             apiType: ApiType::Text2Text,
+            raw_query: false,
             path: "/v1/completions".to_owned(),
             dataUrl: "".to_owned(),
             prompt: "Seattle is a".to_owned(),
             prompts: Vec::new(),
+            max_tokens: 0,
             body: json!({
                 "name": "Unknown",
                 "max_tokens": 1000,
@@ -125,7 +169,7 @@ impl Default for SampleCall {
         };
     }
 }
-// 
+//
 // #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 // pub struct ScheduleConfig {
 //     #[serde(rename = "min_replica")]
@@ -228,7 +272,11 @@ pub struct FuncSpec {
     #[serde(default = "FuncpolicyDefault")]
     pub policy: ObjRef<FuncPolicySpec>,
 
-    #[serde(rename = "catalog_source", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "catalog_source",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub catalogSource: Option<CatalogSource>,
 
     #[serde(default)]
@@ -286,6 +334,7 @@ impl Default for FuncSpec {
                 schema: URIScheme::Http,
                 probeTimeout: 1000,
                 probetype: ProbeType::Prompt,
+                ..Default::default()
             },
             modelType: ModelType::Public,
             entrypoint: Vec::new(),
