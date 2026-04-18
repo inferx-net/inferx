@@ -206,6 +206,8 @@ pub enum ApiType {
     Text2Text,
     #[serde(rename = "image2text")]
     Image2Text,
+    #[serde(rename = "transcriptions")]
+    Transcriptions,
     #[serde(rename = "audio2text")]
     Audio2Text,
     #[serde(rename = "text2img")]
