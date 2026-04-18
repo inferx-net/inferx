@@ -64,12 +64,35 @@ fn ProbeTypeDefault() -> ProbeType {
     return ProbeType::Prompt;
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ModelCategory {
+    #[serde(rename = "llm")]
+    LLM,
+    #[serde(rename = "embedding")]
+    Embedding,
+    #[serde(rename = "rerank")]
+    Rerank,
+    #[serde(rename = "tts")]
+    TTS,
+    #[serde(rename = "stt")]
+    STT,
+}
+
+impl Default for ModelCategory {
+    fn default() -> Self {
+        return Self::LLM;
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ModelSvc {
-    pub model_type: String,
+    #[serde(default)]
+    pub model_type: ModelCategory,
     pub model_name: Vec<String>,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub disable_sleep: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
