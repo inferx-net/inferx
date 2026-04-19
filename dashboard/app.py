@@ -21,7 +21,7 @@ import re
 import socket
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 import pytz
 
 import requests
@@ -3356,6 +3356,11 @@ def normalize_catalog_entry_row(row):
     entry["updatetime_display"] = format_catalog_datetime(entry.get("updatetime"))
     entry["createtime"] = normalize_catalog_datetime_value(entry.get("createtime"))
     entry["updatetime"] = normalize_catalog_datetime_value(entry.get("updatetime"))
+    source_kind = str(entry.get("source_kind") or "").strip().lower()
+    source_model_id = str(entry.get("source_model_id") or "").strip()
+    entry["source_external_url"] = ""
+    if source_kind == "huggingface" and source_model_id != "":
+        entry["source_external_url"] = f"https://huggingface.co/{quote(source_model_id, safe='/')}"
     entry.update(build_catalog_default_summary(entry.get("default_func_spec")))
     return entry
 

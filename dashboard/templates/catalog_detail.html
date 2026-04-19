@@ -399,7 +399,14 @@
                 <div class="catalog-kv-label">API type</div>
                 <div>{{ catalog_entry.default_api_type or '—' }}</div>
                 <div class="catalog-kv-label">Source</div>
-                <div>{{ catalog_entry.source_kind }} / {{ catalog_entry.source_model_id }}</div>
+                <div>
+                    {% if catalog_entry.source_external_url %}
+                    {{ catalog_entry.source_kind }} /
+                    <a href="{{ catalog_entry.source_external_url }}" target="_blank" rel="noopener noreferrer">{{ catalog_entry.source_model_id }}</a>
+                    {% else %}
+                    {{ catalog_entry.source_kind }} / {{ catalog_entry.source_model_id }}
+                    {% endif %}
+                </div>
                 <div class="catalog-kv-label">Created</div>
                 <div>{{ catalog_entry.createtime_display or '—' }}</div>
                 <div class="catalog-kv-label">Updated</div>

@@ -192,3 +192,39 @@ curl -X POST  http://localhost:31501/funccall/public/Qwen/whisper-tiny/v1/audio/
 
 
 curl http://localhost:31501/funccall/public/Qwen/whisper-tiny/v1/models
+
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/inferx-buddle1/m2/rerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen3-Reranker-0.6B",
+    "query": "What is the capital of China?",
+    "documents": [
+        "The capital of China is Beijing.",
+        "Gravity is a force that attracts two bodies towards each other."
+    ],
+    "top_n": 2
+  }'
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/inferx-buddle1/m3/rerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen3-Reranker-0.6B",
+    "query": "What is the capital of China?",
+    "documents": [
+        "The capital of China is Beijing.",
+        "Gravity is a force that attracts two bodies towards each other."
+    ],
+    "top_n": 2
+  }'
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/inferx-buddle1/m1/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "10", "model": "Qwen/Qwen2.5-1.5B", "stream": "true", "temperature": "0", "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?"}'
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/inferx-buddle1/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "10", "model": "Qwen/Qwen2.5-1.5B", "stream": "true", "temperature": "0", "prompt": "Can you provide ways to eat combinations of bananas and dragonfruits?"}'
+
+
+curl http://localhost:31501/funccall/public/Qwen/inferx-buddle1/v1/models
