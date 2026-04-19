@@ -9,6 +9,41 @@
     const IMAGE_TIMEOUT_MIN_SECONDS = 180;
     const IMAGE_TIMEOUT_MAX_SECONDS = 420;
     const IMAGE_TIMEOUT_PER_MIB_SECONDS = 30;
+    const AUDIO_TIMEOUT_MIN_SECONDS = 180;
+    const AUDIO_TIMEOUT_MAX_SECONDS = 600;
+    const AUDIO_TIMEOUT_PER_MIB_SECONDS = 20;
+    const AUDIO_ALLOWED_MIME_TYPES = new Set([
+        'audio/flac',
+        'audio/m4a',
+        'audio/mp3',
+        'audio/mp4',
+        'audio/mpeg',
+        'audio/ogg',
+        'audio/wav',
+        'audio/wave',
+        'audio/vnd.wave',
+        'audio/webm',
+        'audio/x-flac',
+        'audio/x-m4a',
+        'audio/x-mp3',
+        'audio/x-wav',
+    ]);
+    const AUDIO_MIME_TYPE_EXTENSIONS = {
+        'audio/flac': '.flac',
+        'audio/m4a': '.m4a',
+        'audio/mp3': '.mp3',
+        'audio/mp4': '.mp4',
+        'audio/mpeg': '.mp3',
+        'audio/ogg': '.ogg',
+        'audio/wav': '.wav',
+        'audio/wave': '.wav',
+        'audio/vnd.wave': '.wav',
+        'audio/webm': '.webm',
+        'audio/x-flac': '.flac',
+        'audio/x-m4a': '.m4a',
+        'audio/x-mp3': '.mp3',
+        'audio/x-wav': '.wav',
+    };
 
     function setElementText(target, text) {
         if (!target) {
@@ -50,6 +85,14 @@
 
     function normalizePathBase(value) {
         return String(value || '').replace(/\/+$/, '');
+    }
+
+    function normalizeApiTypeValue(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function isTranscriptionApiType(value) {
+        return normalizeApiTypeValue(value) === 'transcriptions';
     }
 
     function buildUrlFromSegments(basePath, segments) {
@@ -255,18 +298,26 @@
         return new Blob([fetchedBlob], { type: effectiveType });
     }
 
-    function computeRequestTimeoutSeconds(apiType, body) {
-        if (apiType !== 'image2text') {
+    function computeRequestTimeoutSeconds(apiType, payloadBytes) {
+        if (apiType !== 'image2text' && !isTranscriptionApiType(apiType)) {
             return String(DEFAULT_TIMEOUT_SECONDS);
         }
 
-        const bodyBytes = new Blob([String(body || '')]).size;
-        const bodyMiB = Math.max(1, Math.ceil(bodyBytes / (1024 * 1024)));
+        const sizeBytes = Math.max(1, Number(payloadBytes) || 0);
+        const sizeMiB = Math.max(1, Math.ceil(sizeBytes / (1024 * 1024)));
+        if (apiType === 'image2text') {
+            const timeoutSeconds = Math.max(
+                IMAGE_TIMEOUT_MIN_SECONDS,
+                DEFAULT_TIMEOUT_SECONDS + (sizeMiB * IMAGE_TIMEOUT_PER_MIB_SECONDS)
+            );
+            return String(Math.min(IMAGE_TIMEOUT_MAX_SECONDS, timeoutSeconds));
+        }
+
         const timeoutSeconds = Math.max(
-            IMAGE_TIMEOUT_MIN_SECONDS,
-            DEFAULT_TIMEOUT_SECONDS + (bodyMiB * IMAGE_TIMEOUT_PER_MIB_SECONDS)
+            AUDIO_TIMEOUT_MIN_SECONDS,
+            DEFAULT_TIMEOUT_SECONDS + (sizeMiB * AUDIO_TIMEOUT_PER_MIB_SECONDS)
         );
-        return String(Math.min(IMAGE_TIMEOUT_MAX_SECONDS, timeoutSeconds));
+        return String(Math.min(AUDIO_TIMEOUT_MAX_SECONDS, timeoutSeconds));
     }
 
     function createInferenceController(config) {
@@ -275,15 +326,38 @@
         let inferenceInFlight = false;
         let firstOutputNotified = false;
         let previewObjectUrl = null;
+        let audioPreviewObjectUrl = null;
 
         function getElement(id) {
             return document.getElementById(id);
+        }
+
+        function isTranscriptionRequest() {
+            const normalizedPath = String(context.sampleQueryPath || '')
+                .trim()
+                .replace(/^\/+|\/+$/g, '')
+                .toLowerCase();
+            return normalizedPath === 'v1/audio/transcriptions' || isTranscriptionApiType(context.apiType);
+        }
+
+        function isTemporaryWhisperTinyTranscriptionTest() {
+            return String(context.tenant || '') === 'public'
+                && String(context.namespace || '') === 'Qwen'
+                && String(context.name || '') === 'whisper-tiny'
+                && isTranscriptionRequest();
         }
 
         function clearPreviewObjectUrl() {
             if (previewObjectUrl) {
                 URL.revokeObjectURL(previewObjectUrl);
                 previewObjectUrl = null;
+            }
+        }
+
+        function clearAudioPreviewObjectUrl() {
+            if (audioPreviewObjectUrl) {
+                URL.revokeObjectURL(audioPreviewObjectUrl);
+                audioPreviewObjectUrl = null;
             }
         }
 
@@ -300,8 +374,39 @@
             preview.onerror = null;
         }
 
+        function clearAudioPreview() {
+            const audioPreview = getElement('audioPreview');
+            clearAudioPreviewObjectUrl();
+            if (!audioPreview) {
+                return;
+            }
+
+            audioPreview.pause();
+            audioPreview.style.display = 'none';
+            audioPreview.removeAttribute('src');
+            audioPreview.load();
+        }
+
         function setImageSourceStatus(message, tone) {
             const target = getElement('imageSourceStatus');
+            if (!target) {
+                return;
+            }
+
+            target.textContent = String(message || '');
+            if (tone === 'error') {
+                target.style.color = '#b42318';
+                return;
+            }
+            if (tone === 'warning') {
+                target.style.color = '#b54708';
+                return;
+            }
+            target.style.color = '#475467';
+        }
+
+        function setAudioSourceStatus(message, tone) {
+            const target = getElement('audioSourceStatus');
             if (!target) {
                 return;
             }
@@ -326,8 +431,21 @@
             return fileInput.files[0];
         }
 
+        function getSelectedAudioFile() {
+            const fileInput = getElement('audioFileInput');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                return null;
+            }
+            return fileInput.files[0];
+        }
+
         function getSelectedImageSourceType() {
             const selected = document.querySelector('input[name="imageSourceType"]:checked');
+            return selected ? String(selected.value || 'file') : 'file';
+        }
+
+        function getSelectedAudioSourceType() {
+            const selected = document.querySelector('input[name="audioSourceType"]:checked');
             return selected ? String(selected.value || 'file') : 'file';
         }
 
@@ -337,6 +455,10 @@
 
         function buildRemoteImageFetchUrl() {
             return String(context.remoteImageFetchPath || '/image2text/fetch-remote');
+        }
+
+        function buildRemoteAudioFetchUrl() {
+            return String(context.remoteAudioFetchPath || '/audio/fetch-remote');
         }
 
         function syncImageSourceControls() {
@@ -352,6 +474,31 @@
 
             if (imageFileInput) {
                 imageFileInput.disabled = sourceType !== 'file';
+            }
+            if (urlInput) {
+                urlInput.disabled = sourceType !== 'url';
+            }
+            if (uploadSection) {
+                uploadSection.style.opacity = sourceType === 'file' ? '1' : '0.55';
+            }
+            if (urlSection) {
+                urlSection.style.opacity = sourceType === 'url' ? '1' : '0.55';
+            }
+        }
+
+        function syncAudioSourceControls() {
+            if (!isTranscriptionRequest()) {
+                return;
+            }
+
+            const sourceType = getSelectedAudioSourceType();
+            const audioFileInput = getElement('audioFileInput');
+            const urlInput = getElement('urlInput');
+            const uploadSection = getElement('audioUploadSection');
+            const urlSection = getElement('audioUrlSection');
+
+            if (audioFileInput) {
+                audioFileInput.disabled = sourceType !== 'file';
             }
             if (urlInput) {
                 urlInput.disabled = sourceType !== 'url';
@@ -402,6 +549,44 @@
             );
         }
 
+        function updateAudioSourceStatus() {
+            if (!isTranscriptionRequest()) {
+                return;
+            }
+
+            const sourceType = getSelectedAudioSourceType();
+            const selectedFile = getSelectedAudioFile();
+            if (sourceType === 'file' && selectedFile) {
+                setAudioSourceStatus(
+                    'Active source: uploaded audio file "' + selectedFile.name + '" (' + formatBytes(selectedFile.size) + ').',
+                    'info'
+                );
+                return;
+            }
+
+            const audioUrl = getUrlInputValue();
+            if (sourceType === 'url' && audioUrl !== '') {
+                setAudioSourceStatus(
+                    'Active source: remote URL via dashboard fetch. Click Preview or Run to fetch it.',
+                    'warning'
+                );
+                return;
+            }
+
+            if (sourceType === 'file') {
+                setAudioSourceStatus(
+                    'Active source: uploaded audio file. Select a local audio file to continue.',
+                    'info'
+                );
+                return;
+            }
+
+            setAudioSourceStatus(
+                'Active source: remote URL via dashboard fetch. Paste an audio URL to continue.',
+                'warning'
+            );
+        }
+
         function setImagePreviewSource(source) {
             const preview = getElement('preview');
             if (!preview) {
@@ -420,6 +605,17 @@
                 setImageSourceStatus('Preview failed. You can still upload the file directly.', 'warning');
             };
             preview.src = source;
+        }
+
+        function setAudioPreviewSource(source) {
+            const audioPreview = getElement('audioPreview');
+            if (!audioPreview) {
+                return;
+            }
+
+            audioPreview.src = source;
+            audioPreview.style.display = 'block';
+            audioPreview.load();
         }
 
         function notifyStart() {
@@ -494,15 +690,208 @@
             }
         }
 
-        function loadAudio() {
+        function normalizeAudioMimeType(mimeType, fallbackName) {
+            const normalizedType = String(mimeType || '').split(';', 1)[0].trim().toLowerCase();
+            if (AUDIO_ALLOWED_MIME_TYPES.has(normalizedType)) {
+                return normalizedType;
+            }
+
+            const normalizedName = String(fallbackName || '').trim().toLowerCase();
+            for (const [allowedType, extension] of Object.entries(AUDIO_MIME_TYPE_EXTENSIONS)) {
+                if (normalizedName.endsWith(extension)) {
+                    return allowedType;
+                }
+            }
+            return '';
+        }
+
+        function inferAudioFilename(remoteUrl, mimeType) {
+            try {
+                const parsed = new URL(String(remoteUrl || ''), window.location.origin);
+                const pathname = String(parsed.pathname || '');
+                const lastSegment = pathname.split('/').pop() || '';
+                if (lastSegment !== '' && /\.[A-Za-z0-9]+$/.test(lastSegment)) {
+                    return decodeURIComponent(lastSegment);
+                }
+            } catch (_error) {
+                // Fall through to the mime-type based fallback.
+            }
+
+            const extension = AUDIO_MIME_TYPE_EXTENSIONS[normalizeAudioMimeType(mimeType, '')] || '.wav';
+            return 'remote-audio' + extension;
+        }
+
+        async function fetchRemoteAudioBlob(remoteFetchPath, url, signal) {
+            let response;
+            try {
+                response = await fetch(new URL(remoteFetchPath, window.location.origin).toString(), {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/octet-stream',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url }),
+                    signal: signal,
+                });
+            } catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                    throw error;
+                }
+                throw new Error(
+                    'Dashboard could not fetch the remote audio. Download the audio and upload it instead.'
+                );
+            }
+
+            if (!response.ok) {
+                let responseMessage = '';
+                try {
+                    responseMessage = String(await response.text() || '').trim();
+                } catch (_error) {
+                    responseMessage = '';
+                }
+                throw new Error(
+                    responseMessage || ('Dashboard failed to fetch the remote audio with HTTP ' + response.status + '.')
+                );
+            }
+
+            let fetchedBlob;
+            try {
+                fetchedBlob = await response.blob();
+            } catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                    throw error;
+                }
+                throw new Error(
+                    'Remote URL fetch could not read the full audio body. Download the audio and upload it instead.'
+                );
+            }
+            const effectiveType = normalizeAudioMimeType(
+                response.headers.get('Content-Type') || fetchedBlob.type,
+                url
+            );
+            if (!effectiveType) {
+                throw new Error(
+                    'Remote URL did not return a supported audio type. Use WAV, MP3, MP4, M4A, OGG, WebM, or FLAC.'
+                );
+            }
+
+            if (effectiveType === fetchedBlob.type) {
+                return fetchedBlob;
+            }
+            return new Blob([fetchedBlob], { type: effectiveType });
+        }
+
+        async function prepareTranscriptionUpload(signal) {
+            const sourceType = getSelectedAudioSourceType();
+            if (sourceType === 'file') {
+                const selectedFile = getSelectedAudioFile();
+                if (!selectedFile) {
+                    throw new Error('Select an audio file before running transcription.');
+                }
+
+                const effectiveType = normalizeAudioMimeType(selectedFile.type, selectedFile.name);
+                if (!effectiveType) {
+                    throw new Error('Unsupported audio type. Use WAV, MP3, MP4, M4A, OGG, WebM, or FLAC.');
+                }
+
+                setAudioSourceStatus(
+                    'Using uploaded audio file "' + selectedFile.name + '" (' + formatBytes(selectedFile.size) + ').',
+                    'info'
+                );
+                return {
+                    blob: effectiveType === selectedFile.type ? selectedFile : new Blob([selectedFile], { type: effectiveType }),
+                    filename: selectedFile.name || ('audio' + (AUDIO_MIME_TYPE_EXTENSIONS[effectiveType] || '.wav')),
+                    sizeBytes: selectedFile.size,
+                };
+            }
+
+            const audioUrl = getUrlInputValue();
+            if (audioUrl === '') {
+                throw new Error('Provide a remote URL before running transcription.');
+            }
+
+            setAudioSourceStatus(
+                'Fetching the remote audio through dashboard.',
+                'warning'
+            );
+            const fetchedBlob = await fetchRemoteAudioBlob(buildRemoteAudioFetchUrl(), audioUrl, signal);
+            const effectiveType = normalizeAudioMimeType(fetchedBlob.type, audioUrl);
+            return {
+                blob: fetchedBlob,
+                filename: inferAudioFilename(audioUrl, effectiveType),
+                sizeBytes: fetchedBlob.size,
+            };
+        }
+
+        function appendMultipartField(formData, key, value) {
+            if (value == null) {
+                return;
+            }
+
+            let serializedValue = value;
+            if (typeof serializedValue === 'boolean') {
+                serializedValue = serializedValue ? 'true' : 'false';
+            } else if (typeof serializedValue === 'object') {
+                serializedValue = JSON.stringify(serializedValue);
+            } else {
+                serializedValue = String(serializedValue);
+            }
+
+            if (serializedValue.trim() === '') {
+                return;
+            }
+            formData.append(String(key || ''), serializedValue);
+        }
+
+        async function loadAudio() {
             const urlInput = getElement('urlInput');
             const audioPreview = getElement('audioPreview');
-            const url = String(urlInput && urlInput.value || '').trim();
 
             if (!audioPreview) {
                 return;
             }
 
+            if (isTranscriptionRequest()) {
+                try {
+                    clearAudioPreview();
+                    syncAudioSourceControls();
+
+                    const sourceType = getSelectedAudioSourceType();
+                    if (sourceType === 'file') {
+                        const selectedFile = getSelectedAudioFile();
+                        if (selectedFile) {
+                            audioPreviewObjectUrl = URL.createObjectURL(selectedFile);
+                            setAudioPreviewSource(audioPreviewObjectUrl);
+                            updateAudioSourceStatus();
+                            return;
+                        }
+
+                        updateAudioSourceStatus();
+                        return;
+                    }
+
+                    const url = getUrlInputValue();
+                    if (url === '') {
+                        updateAudioSourceStatus();
+                        return;
+                    }
+
+                    setAudioSourceStatus(
+                        'Fetching the remote audio through dashboard for preview.',
+                        'warning'
+                    );
+                    const fetchedBlob = await fetchRemoteAudioBlob(buildRemoteAudioFetchUrl(), url);
+                    audioPreviewObjectUrl = URL.createObjectURL(fetchedBlob);
+                    setAudioPreviewSource(audioPreviewObjectUrl);
+                    updateAudioSourceStatus();
+                } catch (error) {
+                    clearAudioPreview();
+                    setAudioSourceStatus(String(error && error.message || error), 'error');
+                }
+                return;
+            }
+
+            const url = String(urlInput && urlInput.value || '').trim();
             if (url.endsWith('.wav') || url.endsWith('.mp4') || url.endsWith('.mp3')) {
                 audioPreview.src = url;
                 audioPreview.style.display = 'block';
@@ -727,9 +1116,15 @@
             try {
                 const requestMap = cloneMapValue(context.map) || {};
                 let body = '';
+                let requestHeaders = {
+                    'Accept': 'application/json',
+                };
+                let timeoutPayloadBytes = 0;
+                const isTranscription = isTranscriptionRequest();
 
                 if (context.apiType === 'text2text') {
                     body = JSON.stringify(buildText2TextChatRequestMap(requestMap, prompt));
+                    requestHeaders['Content-Type'] = 'application/json';
                 } else if (context.apiType === 'image2text') {
                     const imageData = await prepareImageData(signal);
                     body = JSON.stringify({
@@ -752,6 +1147,30 @@
                         temperature: requestMap.temperature,
                         stream: true,
                     });
+                    requestHeaders['Content-Type'] = 'application/json';
+                    timeoutPayloadBytes = new Blob([body]).size;
+                } else if (isTranscription) {
+                    const audioUpload = await prepareTranscriptionUpload(signal);
+                    const formData = new FormData();
+                    formData.append('file', audioUpload.blob, audioUpload.filename);
+                    if (isTemporaryWhisperTinyTranscriptionTest()) {
+                        // Temporary compatibility path to match the known-good curl request
+                        // for public/Qwen/whisper-tiny while we validate the dashboard flow.
+                        formData.append('response_format', 'json');
+                        formData.append('language', 'en');
+                    } else if (prompt.trim() !== '') {
+                        formData.append('prompt', prompt.trim());
+                    }
+                    if (!isTemporaryWhisperTinyTranscriptionTest()) {
+                        Object.entries(requestMap).forEach(function ([key, value]) {
+                            if (key === 'model' || key === 'prompt' || key === 'messages' || key === 'stream') {
+                                return;
+                            }
+                            appendMultipartField(formData, key, value);
+                        });
+                    }
+                    body = formData;
+                    timeoutPayloadBytes = audioUpload.sizeBytes;
                 } else {
                     body = JSON.stringify({
                         model: requestMap.model,
@@ -773,17 +1192,26 @@
                         temperature: requestMap.temperature,
                         stream: true,
                     });
+                    requestHeaders['Content-Type'] = 'application/json';
                 }
 
                 appendElementText(debug, JSON.stringify(requestMap, null, 2));
+                if (isTranscription) {
+                    appendElementText(debug, '\n' + JSON.stringify({
+                        transcription_path: context.sampleQueryPath,
+                        source: getSelectedAudioSourceType(),
+                        temporary_whisper_tiny_frontend_override: isTemporaryWhisperTinyTranscriptionTest(),
+                    }, null, 2));
+                }
+
+                requestHeaders['X-Inferx-Timeout'] = computeRequestTimeoutSeconds(
+                    isTranscription ? 'transcriptions' : context.apiType,
+                    timeoutPayloadBytes
+                );
 
                 const response = await fetch(buildFunccallUrl(), {
                     method: 'POST',
-                    headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'X-Inferx-Timeout': computeRequestTimeoutSeconds(context.apiType, body),
-                    },
+                    headers: requestHeaders,
                     body: body,
                     signal: signal,
                 });
@@ -792,6 +1220,28 @@
 
                 if (!response.ok) {
                     setElementText(output, await response.text());
+                    return;
+                }
+
+                if (isTranscription) {
+                    const responseText = String(await response.text() || '');
+                    try {
+                        const parsed = JSON.parse(responseText);
+                        if (
+                            parsed
+                            && typeof parsed === 'object'
+                            && !Array.isArray(parsed)
+                            && typeof parsed.text === 'string'
+                            && Object.keys(parsed).length === 1
+                        ) {
+                            setElementText(output, parsed.text);
+                        } else {
+                            setElementText(output, JSON.stringify(parsed, null, 2));
+                        }
+                    } catch (_error) {
+                        setElementText(output, responseText);
+                    }
+                    notifyFirstOutput();
                     return;
                 }
 
@@ -1014,6 +1464,38 @@
 
             syncImageSourceControls();
             updateImageSourceStatus();
+        }
+
+        if (isTranscriptionRequest()) {
+            const audioFileInput = getElement('audioFileInput');
+            const urlInput = getElement('urlInput');
+            const audioSourceInputs = document.querySelectorAll('input[name="audioSourceType"]');
+
+            if (audioFileInput) {
+                audioFileInput.addEventListener('change', function () {
+                    loadAudio();
+                });
+            }
+            if (urlInput) {
+                urlInput.addEventListener('input', function () {
+                    clearAudioPreview();
+                    updateAudioSourceStatus();
+                });
+            }
+            audioSourceInputs.forEach(function (input) {
+                input.addEventListener('change', function () {
+                    syncAudioSourceControls();
+                    if (getSelectedAudioSourceType() === 'file' && getSelectedAudioFile()) {
+                        loadAudio();
+                        return;
+                    }
+                    clearAudioPreview();
+                    updateAudioSourceStatus();
+                });
+            });
+
+            syncAudioSourceControls();
+            updateAudioSourceStatus();
         }
 
         return {

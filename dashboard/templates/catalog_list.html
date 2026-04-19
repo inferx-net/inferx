@@ -131,6 +131,17 @@
         text-align: left !important;
     }
 
+    .catalog-intro-link {
+        color: #1d4ed8;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        white-space: nowrap;
+    }
+
+    .catalog-intro-link:hover {
+        color: #1e40af;
+    }
+
     .catalog-version-cell {
         white-space: nowrap;
         text-align: center;
@@ -441,7 +452,12 @@
                             {% endif %}
                         </div>
                     </td>
-                    <td class="catalog-intro-cell">{{ entry.brief_intro }}</td>
+                    <td class="catalog-intro-cell">
+                        {{ entry.brief_intro }}
+                        {% if entry.source_kind and entry.source_kind|lower == 'huggingface' and entry.source_external_url %}
+                        <a class="catalog-intro-link" href="{{ entry.source_external_url }}" target="_blank" rel="noopener noreferrer">View on Hugging Face</a>
+                        {% endif %}
+                    </td>
                     <td>
                         <div class="catalog-tags">
                             {% for tag in entry.tags %}

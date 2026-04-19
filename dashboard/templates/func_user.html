@@ -424,6 +424,46 @@
                     Larger images take longer before streaming starts because the upload must finish first.
                 </div>
             </div>
+            {% elif path|lower == "v1/audio/transcriptions" or func["func"]["object"]["spec"]["sample_query"]["apiType"] == "transcriptions" %}
+            {% set audio_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
+            <div>
+                <label><strong>Audio</strong></label>
+                <div style="margin-top: 8px;">
+                    <label style="display: inline-flex; align-items: center; gap: 8px; margin-right: 16px;">
+                        <input id="audioSourceTypeFile" type="radio" name="audioSourceType" value="file" {% if not audio_sample_url %}checked{% endif %}>
+                        <span>Upload file</span>
+                    </label>
+                    <label style="display: inline-flex; align-items: center; gap: 8px;">
+                        <input id="audioSourceTypeUrl" type="radio" name="audioSourceType" value="url" {% if audio_sample_url %}checked{% endif %}>
+                        <span>Use remote URL</span>
+                    </label>
+                </div>
+                <div id="audioUploadSection">
+                    <input
+                        id="audioFileInput"
+                        type="file"
+                        accept="audio/*,.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac"
+                        style="display: block; width: 100%; margin-top: 8px;"
+                    >
+                    <div style="margin-top: 8px; color: #475467; font-size: 0.95rem;">
+                        Upload a local audio file for best reliability. Remote URL mode downloads the audio through dashboard first.
+                    </div>
+                </div>
+                <div id="audioUrlSection">
+                    <label for="urlInput" style="display: block; margin-top: 12px;"><strong>Remote Audio URL</strong></label>
+                    <textarea id="urlInput" rows="2" placeholder="https://example.com/audio.wav">{{ audio_sample_url }}</textarea>
+                    <div style="margin-top: 8px; color: #475467; font-size: 0.95rem;">
+                        Remote URL mode fetches the audio through dashboard and forwards it as a multipart file upload.
+                    </div>
+                </div>
+                <div id="audioSourceStatus" style="margin-top: 8px; min-height: 1.4em; color: #475467;"></div>
+                <div style="margin-top: 8px;">
+                    <button class="ix-btn secondary" type="button" onclick="loadAudio()">Preview</button>
+                </div>
+                <audio id="audioPreview" controls style="display: none; margin-top: 12px; width: 100%;">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
             {% elif func["func"]["object"]["spec"]["sample_query"]["apiType"] == "audio2text" %}
             <div>
                 <label for="urlInput"><strong>Audio URL</strong></label>
@@ -1021,6 +1061,7 @@
         sampleQueryPath: sampleQueryPath,
         proxyBasePath: proxyBasePath,
         remoteImageFetchPath: remoteImageFetchPath,
+        remoteAudioFetchPath: {{ (hosturl ~ 'audio/fetch-remote') | tojson }},
         text2imgPath: text2imgPath,
         text2audioPath: text2audioPath,
         onRequestStart: function () {

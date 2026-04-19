@@ -1,0 +1,96 @@
+{
+    "type": "function",
+    "tenant": "tn-d84kadsy1q",
+    "namespace": "default",
+    "name": "Qwen3-Reranker-0.6B",
+    "spec": {
+        "image": "vllm/vllm-openai:v0.12.0",
+        "commands": [
+            "--model",
+            "Qwen/Qwen3-Reranker-0.6B",
+            "--trust-remote-code",
+            "--gpu-memory-utilization",
+            "0.95",
+            "--runner",
+            "pooling",
+            "--max-model-len",
+            "2000"
+        ],
+        "envs": [
+            [
+                "LD_LIBRARY_PATH",
+                "/usr/local/lib/python3.12/dist-packages/nvidia/cuda_nvrtc/lib/:$LD_LIBRARY_PATH"
+            ],
+            [
+                "VLLM_CUDART_SO_PATH",
+                "/usr/local/cuda-12.1/targets/x86_64-linux/lib/libcudart.so.12"
+            ]
+        ],
+        "mounts": [
+            {
+                "hostpath": "/opt/inferx/cache",
+                "mountpath": "/root/.cache/huggingface"
+            }
+        ],
+        "endpoint": {
+            "port": 8000,
+            "schema": "Http",
+            "probe": "/health",
+            "probeTimeout": 1000,
+            "probetype": "Prompt"
+        },
+        "version": 43363,
+        "model_type": "Public",
+        "entrypoint": [],
+        "resources": {
+            "CPU": 12000,
+            "Mem": 24000,
+            "ReadyMem": 0,
+            "CacheMem": 0,
+            "GPU": {
+                "Type": "Any",
+                "Count": 1,
+                "vRam": 6000,
+                "contextCount": 0
+            }
+        },
+        "standby": {
+            "gpu": "File",
+            "pageable": "File",
+            "pinned": "File"
+        },
+        "sample_query": {
+            "apiType": "unknown",
+            "path": "v1/completions",
+            "prompt": "write a quick sort algorithm.",
+            "prompts": [],
+            "dataUrl": "",
+            "body": {
+                "max_tokens": "1000",
+                "stream": "true",
+                "temperature": "0"
+            },
+            "loadingTimeout": 90
+        },
+        "policy": {
+            "Obj": {
+                "min_replica": 0,
+                "max_replica": 1,
+                "standby_per_node": 1,
+                "parallel": 50,
+                "queue_len": 100,
+                "queue_timeout": 30.0,
+                "scaleout_policy": {
+                    "WaitQueueRatio": {
+                        "wait_ratio": 0.1
+                    }
+                },
+                "scalein_timeout": 1.0,
+                "runtime_config": {
+                    "graph_sync": false
+                }
+            }
+        },
+        "mountfiles": []
+    }
+}

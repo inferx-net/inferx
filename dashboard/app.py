@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import json
 import ipaddress
 import mimetypes
@@ -20,7 +21,7 @@ import re
 import socket
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 import pytz
 
 import requests
@@ -78,12 +79,33 @@ DEBUG_PROXY_GATEWAY_REQUESTS = os.getenv(
 ).lower() in ("1", "true", "yes")
 REMOTE_IMAGE_ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 REMOTE_IMAGE_FETCH_MAX_BYTES = 10 * 1024 * 1024
+REMOTE_AUDIO_ALLOWED_MIME_TYPES = {
+    "audio/flac",
+    "audio/m4a",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/wave",
+    "audio/vnd.wave",
+    "audio/webm",
+    "audio/x-flac",
+    "audio/x-m4a",
+    "audio/x-mp3",
+    "audio/x-wav",
+}
+REMOTE_AUDIO_FETCH_MAX_BYTES = 25 * 1024 * 1024
 REMOTE_IMAGE_FETCH_REDIRECT_LIMIT = 3
 REMOTE_IMAGE_FETCH_CONNECT_TIMEOUT_SEC = 10.0
 REMOTE_IMAGE_FETCH_READ_TIMEOUT_SEC = 20.0
 REMOTE_IMAGE_FETCH_HEADERS = {
     "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.1",
     "User-Agent": "InferX-Dashboard/1.0 remote-image-fetch",
+}
+REMOTE_AUDIO_FETCH_HEADERS = {
+    "Accept": "audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/webm,audio/ogg,audio/*;q=0.8,*/*;q=0.1",
+    "User-Agent": "InferX-Dashboard/1.0 remote-audio-fetch",
 }
 
 
@@ -2155,6 +2177,102 @@ def strip_model_command_args(commands):
     return filtered
 
 
+JSON_VALUED_COMMAND_FLAGS = (
+    "--attention-config",
+    "--compilation-config",
+    "--ec-transfer-config",
+    "--hf-overrides",
+    "--ir-op-priority",
+    "--kernel-config",
+    "--kv-events-config",
+    "--kv-transfer-config",
+    "--limit-mm-per-prompt",
+    "--mamba-config",
+    "--media-io-kwargs",
+    "--mm-processor-kwargs",
+    "--model-loader-extra-config",
+    "--override-generation-config",
+    "--pooler-config",
+    "--quantization-config",
+    "--reasoning-config",
+    "--speculative-config",
+    "-ac",
+    "-cc",
+    "-sc",
+)
+
+
+def normalize_json_valued_command_arg_value(flag_name, raw_value, *, label="commands"):
+    normalized_value = str(raw_value).strip()
+    if normalized_value == "":
+        raise ValueError(f"{label} contains `{flag_name}` without a value")
+
+    looks_like_structured_value = (
+        (normalized_value.startswith("{") and normalized_value.endswith("}"))
+        or (normalized_value.startswith("[") and normalized_value.endswith("]"))
+    )
+    if not looks_like_structured_value:
+        return normalized_value
+
+    try:
+        parsed_value = json.loads(normalized_value)
+    except Exception:
+        try:
+            parsed_value = ast.literal_eval(normalized_value)
+        except Exception as exc:
+            raise ValueError(
+                f"{label} contains `{flag_name}` with an invalid JSON object/array value"
+            ) from exc
+
+    if not isinstance(parsed_value, (dict, list)):
+        raise ValueError(f"{label} contains `{flag_name}` with a non-object/array JSON value")
+
+    return json.dumps(parsed_value, separators=(",", ":"))
+
+
+def normalize_json_valued_command_args(commands, *, label="commands"):
+    raw_commands = [str(item) for item in commands] if isinstance(commands, list) else []
+    normalized_commands = []
+
+    i = 0
+    while i < len(raw_commands):
+        raw_token = raw_commands[i]
+        token = raw_token.strip()
+
+        matched_flag = None
+        for flag_name in JSON_VALUED_COMMAND_FLAGS:
+            if token == flag_name or token.startswith(f"{flag_name}="):
+                matched_flag = flag_name
+                break
+
+        if matched_flag is None:
+            normalized_commands.append(raw_token)
+            i += 1
+            continue
+
+        if token == matched_flag:
+            if i + 1 >= len(raw_commands):
+                raise ValueError(f"{label} contains `{matched_flag}` without a value")
+            normalized_commands.append(matched_flag)
+            normalized_commands.append(
+                normalize_json_valued_command_arg_value(
+                    matched_flag,
+                    raw_commands[i + 1],
+                    label=label,
+                )
+            )
+            i += 2
+            continue
+
+        raw_value = token.split("=", 1)[1]
+        normalized_commands.append(
+            f"{matched_flag}={normalize_json_valued_command_arg_value(matched_flag, raw_value, label=label)}"
+        )
+        i += 1
+
+    return normalized_commands
+
+
 def is_standard_vllm_image(image):
     return isinstance(image, str) and (
         image.startswith("vllm/vllm-openai:")
@@ -2617,6 +2735,10 @@ def validate_partial_spec(
         normalized_policy = {"Obj": policy_obj} if policy_obj else None
 
     normalized_commands = [str(item) for item in commands] if editor_mode == "advanced" else strip_reserved_command_args(commands)
+    normalized_commands = normalize_json_valued_command_args(
+        normalized_commands,
+        label="`spec.commands`",
+    )
 
     normalized_spec = {
         "image": image,
@@ -2978,8 +3100,14 @@ def extract_named_command_arg_tokens(commands, flag_name):
 
 
 def merge_catalog_runtime_commands(base_commands, submitted_commands, *, image, gpu_count, editor_mode="basic", sync_tensor_parallel=True):
-    normalized_base = [str(item) for item in base_commands] if isinstance(base_commands, list) else []
-    normalized_submitted = [str(item) for item in submitted_commands] if isinstance(submitted_commands, list) else []
+    normalized_base = normalize_json_valued_command_args(
+        [str(item) for item in base_commands] if isinstance(base_commands, list) else [],
+        label="catalog base commands",
+    )
+    normalized_submitted = normalize_json_valued_command_args(
+        [str(item) for item in submitted_commands] if isinstance(submitted_commands, list) else [],
+        label="submitted catalog commands",
+    )
     prefix_tokens = extract_locked_command_prefix_tokens(normalized_base)
     editable_tokens = strip_matching_command_prefix_tokens(normalized_submitted, prefix_tokens)
 
@@ -3228,6 +3356,11 @@ def normalize_catalog_entry_row(row):
     entry["updatetime_display"] = format_catalog_datetime(entry.get("updatetime"))
     entry["createtime"] = normalize_catalog_datetime_value(entry.get("createtime"))
     entry["updatetime"] = normalize_catalog_datetime_value(entry.get("updatetime"))
+    source_kind = str(entry.get("source_kind") or "").strip().lower()
+    source_model_id = str(entry.get("source_model_id") or "").strip()
+    entry["source_external_url"] = ""
+    if source_kind == "huggingface" and source_model_id != "":
+        entry["source_external_url"] = f"https://huggingface.co/{quote(source_model_id, safe='/')}"
     entry.update(build_catalog_default_summary(entry.get("default_func_spec")))
     return entry
 
@@ -4123,7 +4256,10 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
     commands = normalized_spec.get("commands")
     if not isinstance(commands, list) or any(not isinstance(item, str) for item in commands):
         raise ValueError("catalog `default_func_spec.commands` must be an array of strings")
-    commands = [str(item) for item in commands]
+    commands = normalize_json_valued_command_args(
+        [str(item) for item in commands],
+        label="catalog `default_func_spec.commands`",
+    )
     validate_catalog_command_tokens(commands)
     hf_model = resolve_effective_model_target_from_spec(
         normalized_spec,
@@ -5133,22 +5269,53 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
     if token == "":
         token = build_inference_apikey_placeholder()
 
-    body_json = json.dumps(body_for_ui, ensure_ascii=False)
-    body_json = body_json.replace("'", "'\"'\"'")
     base_url = normalize_public_api_base_url()
     url = f"{base_url}/funccall/{tenant}/{namespace}/{funcname}/{path}"
     tenant_name = str(tenant or "").strip().lower()
     include_auth_header = tenant_name != "public"
-    auth_header_line = ""
-    if include_auth_header:
-        auth_header_line = f"  -H 'Authorization: Bearer {token}' \\\n"
+    auth_header_line = f"  -H 'Authorization: Bearer {token}'" if include_auth_header else ""
 
-    return (
-        f"curl -X POST {url} \\\n"
-        f"  -H 'Content-Type: application/json' \\\n"
-        f"{auth_header_line}"
-        f"  -d '{body_json}'"
-    )
+    def shell_single_quote(value) -> str:
+        return str(value).replace("'", "'\"'\"'")
+
+    is_transcription_path = path.lower() == "v1/audio/transcriptions"
+    if api_type == "transcriptions" or is_transcription_path:
+        curl_lines = [
+            f"curl -X POST {url}",
+            "  -H 'Content-Type: multipart/form-data'",
+        ]
+        if auth_header_line != "":
+            curl_lines.append(auth_header_line)
+        curl_lines.append("  -F 'file=@/path/to/audio.wav'")
+        normalized_prompt = str(prompt or "").strip()
+        if normalized_prompt != "":
+            curl_lines.append(f"  -F 'prompt={shell_single_quote(normalized_prompt)}'")
+        for key, value in body_for_ui.items():
+            if str(key or "").strip() == "" or key == "model" or value is None:
+                continue
+            if isinstance(value, (dict, list)):
+                serialized_value = json.dumps(value, ensure_ascii=False)
+            elif isinstance(value, bool):
+                serialized_value = "true" if value else "false"
+            else:
+                serialized_value = str(value)
+            if serialized_value.strip() == "":
+                continue
+            curl_lines.append(
+                f"  -F '{shell_single_quote(key)}={shell_single_quote(serialized_value)}'"
+            )
+        return " \\\n".join(curl_lines)
+
+    body_json = json.dumps(body_for_ui, ensure_ascii=False)
+    body_json = body_json.replace("'", "'\"'\"'")
+    curl_lines = [
+        f"curl -X POST {url}",
+        "  -H 'Content-Type: application/json'",
+    ]
+    if auth_header_line != "":
+        curl_lines.append(auth_header_line)
+    curl_lines.append(f"  -d '{body_json}'")
+    return " \\\n".join(curl_lines)
 
 
 @prefix_bp.route('/text2img', methods=['POST'])
@@ -5576,6 +5743,13 @@ class RemoteImageFetchError(Exception):
         self.message = message
 
 
+class RemoteAudioFetchError(Exception):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
 def infer_remote_image_content_type(content_type: str, remote_url: str) -> str:
     normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
     if normalized_type in REMOTE_IMAGE_ALLOWED_MIME_TYPES:
@@ -5588,7 +5762,19 @@ def infer_remote_image_content_type(content_type: str, remote_url: str) -> str:
     return ""
 
 
-def is_allowed_remote_image_host(hostname: str) -> bool:
+def infer_remote_audio_content_type(content_type: str, remote_url: str) -> str:
+    normalized_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type in REMOTE_AUDIO_ALLOWED_MIME_TYPES:
+        return normalized_type
+
+    guessed_type, _ = mimetypes.guess_type(urlparse(remote_url).path)
+    guessed_type = str(guessed_type or "").split(";", 1)[0].strip().lower()
+    if guessed_type in REMOTE_AUDIO_ALLOWED_MIME_TYPES:
+        return guessed_type
+    return ""
+
+
+def is_allowed_remote_fetch_host(hostname: str) -> bool:
     normalized_host = str(hostname or "").strip().lower()
     if normalized_host == "" or normalized_host == "localhost" or normalized_host.endswith(".local"):
         return False
@@ -5622,26 +5808,26 @@ def is_allowed_remote_image_host(hostname: str) -> bool:
     return True
 
 
-def validate_remote_image_url(raw_url: str) -> str:
+def validate_remote_fetch_url(raw_url: str, error_cls) -> str:
     normalized_url = str(raw_url or "").strip()
     if normalized_url == "":
-        raise RemoteImageFetchError(400, "Remote URL is required.")
+        raise error_cls(400, "Remote URL is required.")
 
     parsed = urlparse(normalized_url)
     if parsed.scheme not in ("http", "https"):
-        raise RemoteImageFetchError(400, "Remote URL must use http or https.")
+        raise error_cls(400, "Remote URL must use http or https.")
     if parsed.hostname is None or parsed.netloc == "":
-        raise RemoteImageFetchError(400, "Remote URL must include a valid host.")
+        raise error_cls(400, "Remote URL must include a valid host.")
     if parsed.username or parsed.password:
-        raise RemoteImageFetchError(400, "Remote URL must not include embedded credentials.")
-    if not is_allowed_remote_image_host(parsed.hostname):
-        raise RemoteImageFetchError(403, "Remote URL host is not allowed.")
+        raise error_cls(400, "Remote URL must not include embedded credentials.")
+    if not is_allowed_remote_fetch_host(parsed.hostname):
+        raise error_cls(403, "Remote URL host is not allowed.")
 
     return parsed._replace(fragment="").geturl()
 
 
 def fetch_remote_image_bytes(remote_url: str) -> tuple[bytes, str]:
-    current_url = validate_remote_image_url(remote_url)
+    current_url = validate_remote_fetch_url(remote_url, RemoteImageFetchError)
     session = requests.Session()
 
     try:
@@ -5664,7 +5850,7 @@ def fetch_remote_image_bytes(remote_url: str) -> tuple[bytes, str]:
                 resp.close()
                 if redirect_target == "":
                     raise RemoteImageFetchError(502, "Remote image redirect was missing a Location header.")
-                current_url = validate_remote_image_url(urljoin(current_url, redirect_target))
+                current_url = validate_remote_fetch_url(urljoin(current_url, redirect_target), RemoteImageFetchError)
                 continue
 
             if resp.status_code != 200:
@@ -5710,6 +5896,76 @@ def fetch_remote_image_bytes(remote_url: str) -> tuple[bytes, str]:
         session.close()
 
 
+def fetch_remote_audio_bytes(remote_url: str) -> tuple[bytes, str]:
+    current_url = validate_remote_fetch_url(remote_url, RemoteAudioFetchError)
+    session = requests.Session()
+
+    try:
+        for _redirect_index in range(REMOTE_IMAGE_FETCH_REDIRECT_LIMIT + 1):
+            try:
+                resp = session.get(
+                    current_url,
+                    headers=REMOTE_AUDIO_FETCH_HEADERS,
+                    timeout=(REMOTE_IMAGE_FETCH_CONNECT_TIMEOUT_SEC, REMOTE_IMAGE_FETCH_READ_TIMEOUT_SEC),
+                    stream=True,
+                    allow_redirects=False,
+                )
+            except requests.exceptions.Timeout:
+                raise RemoteAudioFetchError(504, "Remote audio download timed out.")
+            except requests.exceptions.RequestException as e:
+                raise RemoteAudioFetchError(502, f"Remote audio download failed: {e}")
+
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redirect_target = str(resp.headers.get("Location") or "").strip()
+                resp.close()
+                if redirect_target == "":
+                    raise RemoteAudioFetchError(502, "Remote audio redirect was missing a Location header.")
+                current_url = validate_remote_fetch_url(urljoin(current_url, redirect_target), RemoteAudioFetchError)
+                continue
+
+            if resp.status_code != 200:
+                resp.close()
+                raise RemoteAudioFetchError(
+                    resp.status_code,
+                    f"Remote audio fetch failed with HTTP {resp.status_code}.",
+                )
+
+            content_type = infer_remote_audio_content_type(resp.headers.get("Content-Type"), current_url)
+            if content_type == "":
+                resp.close()
+                raise RemoteAudioFetchError(
+                    415,
+                    "Remote URL did not return a supported audio type. Use WAV, MP3, MP4, M4A, OGG, WebM, or FLAC.",
+                )
+
+            audio_bytes = bytearray()
+            try:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    audio_bytes.extend(chunk)
+                    if len(audio_bytes) > REMOTE_AUDIO_FETCH_MAX_BYTES:
+                        raise RemoteAudioFetchError(
+                            413,
+                            "Remote audio is too large. The source file must be 25 MiB or smaller.",
+                        )
+            except requests.exceptions.Timeout:
+                raise RemoteAudioFetchError(504, "Remote audio download timed out while reading the response body.")
+            except requests.exceptions.RequestException as e:
+                raise RemoteAudioFetchError(
+                    502,
+                    f"Remote audio download failed while reading the response body: {e}",
+                )
+            finally:
+                resp.close()
+
+            return bytes(audio_bytes), content_type
+
+        raise RemoteAudioFetchError(400, "Remote audio fetch hit too many redirects.")
+    finally:
+        session.close()
+
+
 @prefix_bp.route('/image2text/fetch-remote', methods=['POST'])
 @not_require_login
 def fetch_remote_image_for_image2text():
@@ -5727,6 +5983,26 @@ def fetch_remote_image_for_image2text():
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Content-Length"] = str(len(image_bytes))
+    return response
+
+
+@prefix_bp.route('/audio/fetch-remote', methods=['POST'])
+@not_require_login
+def fetch_remote_audio_for_transcriptions():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return Response("Request body must be a JSON object.", status=400, mimetype='text/plain')
+
+    remote_url = payload.get("url")
+    try:
+        audio_bytes, content_type = fetch_remote_audio_bytes(remote_url)
+    except RemoteAudioFetchError as e:
+        return Response(e.message, status=e.status_code, mimetype='text/plain')
+
+    response = Response(audio_bytes, status=200, mimetype=content_type)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Length"] = str(len(audio_bytes))
     return response
 
 @prefix_bp.route('/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
