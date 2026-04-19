@@ -14,7 +14,7 @@ metadata:
   name: billing-quota-check
 spec:
   schedule: "* * * * *"  # Every minute
-  suspend: true
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
