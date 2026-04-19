@@ -1,7 +1,7 @@
 ARCH := ${shell uname -m}
-PLATFORM_VERSION ?= v0.2.5.1
+PLATFORM_VERSION ?= v0.2.6beta1
 DB_VERSION ?= v0.2.5
-DASHBOARD_VERSION ?= v0.2.5.1
+DASHBOARD_VERSION ?= v0.2.6beta1
 RUNTIME_VERSION ?= v0.2.5
 NA_VERSION ?= v0.2.5.1
 RUNMODEL_VERSION ?= v0.2.5
@@ -251,7 +251,7 @@ runna:
 	# -sudo rm /opt/inferx/log/*.log
 	VERSION=$(NA_VERSION) envsubst < k8s/nodeagent.yaml | sudo kubectl apply -f -
 stopna:
-	sudo kubectl delete DaemonSet ixproxy
+# 	sudo kubectl delete DaemonSet ixproxy
 	sudo kubectl delete DaemonSet nodeagent-blob
 	sudo kubectl delete DaemonSet nodeagent-file
 

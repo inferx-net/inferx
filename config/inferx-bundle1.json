@@ -2,7 +2,7 @@
     "type": "function",
     "tenant": "public",
     "namespace": "Qwen",
-    "name": "inferx-buddle1",
+    "name": "inferx-bundle1",
     "object": {
         "spec": {
             "image": "inferx/inferx-bundle:v0.1.0",
@@ -72,13 +72,6 @@
                 "gpu": "File",
                 "pageable": "File",
                 "pinned": "File"
-            },
-            "policy": {
-                "Link": {
-                    "objType": "funcpolicy",
-                    "namespace": "system",
-                    "name": "default_funcpolicy"
-                }
             }
         }
     }

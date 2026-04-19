@@ -134,6 +134,45 @@
 <div style="margin-top: 10px; color: #475467;">
     Larger images take longer before streaming starts because the upload must finish first.
 </div>
+{% elif path|lower == "v1/audio/transcriptions" or func["func"]["object"]["spec"]["sample_query"]["apiType"] == "transcriptions" %}
+{% set audio_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
+<h1>Audio</h1>
+<div style="margin: 8px 0 12px;">
+    <label style="display: inline-flex; align-items: center; gap: 8px; margin-right: 16px;">
+        <input id="audioSourceTypeFile" type="radio" name="audioSourceType" value="file" {% if not audio_sample_url %}checked{% endif %}>
+        <span>Upload file</span>
+    </label>
+    <label style="display: inline-flex; align-items: center; gap: 8px;">
+        <input id="audioSourceTypeUrl" type="radio" name="audioSourceType" value="url" {% if audio_sample_url %}checked{% endif %}>
+        <span>Use remote URL</span>
+    </label>
+</div>
+<div id="audioUploadSection">
+    <input
+        id="audioFileInput"
+        type="file"
+        accept="audio/*,.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac"
+        style="display:block; width: 100%; max-width: 720px; margin-bottom: 10px;"
+    >
+    <div style="margin-bottom: 10px; color: #475467;">
+        Upload a local audio file for best reliability. Remote URL mode downloads the audio through dashboard first.
+    </div>
+</div>
+<div id="audioUrlSection">
+    <h3>Remote URL</h3>
+    <textarea id="urlInput" rows="1" cols="120" placeholder="https://example.com/audio.wav">{{ audio_sample_url }}</textarea>
+    <div style="margin-top: 8px; color: #475467;">
+        Remote URL mode fetches the audio through dashboard and forwards it as a multipart file upload.
+    </div>
+</div>
+<div id="audioSourceStatus" style="margin: 8px 0; min-height: 1.4em; color: #475467;"></div>
+<button type="button" onclick="loadAudio()">Preview</button>
+<audio id="audioPreview" controls style="display: none; margin-top: 10px; width: min(100%, 720px);">
+    Your browser does not support the audio element.
+</audio>
+<div style="margin-top: 10px; color: #475467;">
+    The dashboard sends transcription requests as multipart form uploads to match the backend API.
+</div>
 {% elif func["func"]["object"]["spec"]["sample_query"]["apiType"] == "audio2text" %}
 <h1>Audio</h1>
 <textarea id="urlInput" rows="1" cols="120">{{ func["func"]["object"]["spec"]["sample_query"]["dataUrl"] }}</textarea>
@@ -428,6 +467,7 @@
         sampleQueryPath: sampleQueryPath,
         proxyBasePath: {{ (hosturl ~ 'proxy') | tojson }},
         remoteImageFetchPath: {{ (hosturl ~ 'image2text/fetch-remote') | tojson }},
+        remoteAudioFetchPath: {{ (hosturl ~ 'audio/fetch-remote') | tojson }},
         text2imgPath: {{ (hosturl ~ 'text2img') | tojson }},
         text2audioPath: {{ (hosturl ~ 'text2audio') | tojson }}
     });

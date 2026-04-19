@@ -45,26 +45,14 @@
                 "path": "v1/audio/transcriptions",
                 "dataUrl": "https://huggingface.co/kyutai/tts-voices/resolve/main/alba-mackenna/casual.wav",
                 "body": {
-                    "max_tokens": "200",
-                    "temperature": "0"
+                    "response_format": "json",
+                    "language": "en"
                 }
             },
             "standby": {
                 "gpu": "File",
                 "pageable": "File",
                 "pinned": "File"
-            },
-            "policy": {
-                "Obj": {
-                    "min_replica": 0,
-                    "max_replica": 1,
-                    "standby_per_node": 1,
-                    "parallel": 20,
-                    "queue_len": 10,
-                    "runtime_config": {
-                        "graph_sync": false
-                    }
-                }
             }
         }
     }

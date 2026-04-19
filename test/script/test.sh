@@ -26,3 +26,169 @@ test/ixtest/target/debug/ixtest concurrency=40 duration=37 alias="Qwen/Qwen3-235
 ps aux | grep stop
 
 ps aux | grep stress
+
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "800", "model": "google/gemma-4-E4B-it", "temperature": "0", "messages": [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image_url", "image_url": {"url": "http://images.cocodataset.org/val2017/000000039769.jpg"}}]}], "stream": false}'
+
+https://www.kozco.com/tech/piano2.wav
+
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "800", "model": "google/gemma-4-E4B-it", "temperature": "0", "messages": [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image_url", "image_url": {"url": "http://images.cocodataset.org/val2017/000000039769.jpg"}}]}], "stream": false}'
+
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "800",
+    "model": "google/gemma-4-E4B-it",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Describe the sounds you hear in this audio" },
+          {
+            "type": "audio_url",
+            "audio_url": {
+              "url": "https://www.kozco.com/tech/piano2.wav"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "800", "model": "google/gemma-4-E4B-it", "temperature": "0", "messages": [{"role": "user", "content": [{"type": "text", "text": "Describe this image"}, {"type": "image_url", "image_url": {"url": "http://images.cocodataset.org/val2017/000000039769.jpg"}}]}], "stream": false}'
+
+
+curl -X POST \
+  http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "800",
+    "model": "google/gemma-4-E4B-it",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Describe the sounds you hear in this audio"
+          },
+          {
+            "type": "audio_url",
+            "audio_url": {
+              "url": "https://www.kozco.com/tech/piano2.wav"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+curl -X POST \
+  http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it-ix/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "800",
+    "model": "google/gemma-4-E4B-it",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Write a short summary of how rain forms."
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+
+
+curl -X POST \
+  http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it-ix/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "800",
+    "model": "google/gemma-4-E4B-it",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Describe the sounds you hear in this audio"
+          },
+          {
+            "type": "audio_url",
+            "audio_url": {
+              "url": "https://www.kozco.com/tech/piano2.wav"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+
+curl -X POST http://localhost:31501/funccall/public/Qwen/gemma-4-E4B-it-ix/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "800",
+    "model": "google/gemma-4-E4B-it",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Describe the sounds you hear in this audio" },
+          {
+            "type": "audio_url",
+            "audio_url": {
+              "url": "https://www.kozco.com/tech/piano2.wav"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+curl http://localhost:31501/funccall/public/default/Qwen2.5-Coder-0.5B/v1/models
+
+curl http://localhost:31501/funccall/public/default/phi4_history/v1/models
+
+curl -X POST http://localhost:31501/funccall/public/Trial/phi4_african_history_lora_ds2_axolotl/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"max_tokens": "10", "messages": [{"content": "write a quick sort algorithm.", "role": "user"}], "model": "phi4_african_history", "stream": "true", "temperature": "0"}'
+
+
+curl -X POST http://localhost:31501/funccall/tn-pvgiouccgp/default/Phi-4-mini-instruct/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <INFERENCE_API_KEY(Find or create one on Admin|Apikeys page)>' \
+  -d '{"max_tokens": "1000", "messages": [{"content": "write a quick sort algorithm.", "role": "user"}], "model": "phi4_african_history", "stream": "true", "temperature": "0"}'
+
+
+curl -X POST  http://localhost:31501/funccall/public/Qwen/whisper-tiny/v1/audio/transcriptions \
+    -H "Content-Type: multipart/form-data" \
+    -F "file=@/home/qq/code/inferx/config/clone_test.wav" \
+    -F "response_format=json" \
+    -F "language=en"
+
+
+curl http://localhost:31501/funccall/public/Qwen/whisper-tiny/v1/models
