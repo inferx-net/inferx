@@ -376,7 +376,6 @@ CATALOG_RESERVED_ENV_KEYS = {
     "HUGGING_FACE_HUB_TOKEN",
 }
 CATALOG_PLATFORM_ENV_KEYS = RESERVED_ENV_KEYS | CATALOG_RESERVED_ENV_KEYS
-CATALOG_ALLOWED_API_TYPES = {"text2text", "image2text", "audio2text", "text2img", "text2audio"}
 CATALOG_ALLOWED_STANDBY_TYPES = {"File", "Mem", "Blob"}
 CATALOG_ALLOWED_MOUNT_HOSTPATH_PREFIXES = ("/opt/inferx/",)
 CATALOG_HF_CACHE_MOUNTPATH = "/root/.cache/huggingface"
@@ -3254,6 +3253,25 @@ def normalize_catalog_api_type(api_type):
     return normalized
 
 
+def infer_catalog_modality_from_sample_query(sample_query):
+    sample_query_obj = sample_query if isinstance(sample_query, dict) else {}
+    api_type = normalize_catalog_api_type(sample_query_obj.get("apiType"))
+    path = str(sample_query_obj.get("path") or "").strip().lower().lstrip("/")
+
+    modality_map = {
+        "text2text": "text",
+        "image2text": "multimodal",
+        "audio2text": "multimodal",
+        "transcriptions": "multimodal",
+        "text2img": "image",
+        "text2audio": "audio",
+    }
+
+    if path == "v1/audio/transcriptions":
+        return "multimodal"
+    return modality_map.get(api_type, "text")
+
+
 def build_catalog_default_spec_from_func(full_spec):
     spec = clone_json_value(full_spec if isinstance(full_spec, dict) else {})
     spec.pop("catalog_source", None)
@@ -3264,15 +3282,6 @@ def build_catalog_default_spec_from_func(full_spec):
 
 def build_catalog_prefill_from_func(hf_model: str, full_spec, func_name: str):
     catalog_spec = build_catalog_default_spec_from_func(full_spec)
-    api_type = normalize_catalog_api_type(((full_spec.get("sample_query") or {}).get("apiType")) if isinstance(full_spec, dict) else "")
-    modality_map = {
-        "text2text": "text",
-        "openai": "text",
-        "image2text": "multimodal",
-        "audio2text": "multimodal",
-        "text2img": "image",
-        "text2audio": "audio",
-    }
     normalized_hf_model = str(hf_model or "").strip()
     provider = normalized_hf_model.split("/", 1)[0] if "/" in normalized_hf_model else ""
     display_name = normalized_hf_model.split("/")[-1] if normalized_hf_model != "" else ""
@@ -3281,7 +3290,9 @@ def build_catalog_prefill_from_func(hf_model: str, full_spec, func_name: str):
         "source_kind": "huggingface",
         "display_name": display_name,
         "provider": provider,
-        "modality": modality_map.get(api_type, "text"),
+        "modality": infer_catalog_modality_from_sample_query(
+            (full_spec.get("sample_query") or {}) if isinstance(full_spec, dict) else {}
+        ),
         "default_func_spec": catalog_spec,
         "parameter_count_b": None,
         "brief_intro": "",
@@ -4334,8 +4345,8 @@ def validate_catalog_template_spec(spec, *, source_model_id="", max_node_vram=0,
     if not isinstance(sample_query, dict):
         raise ValueError("catalog `default_func_spec.sample_query` must be an object")
     api_type = normalize_catalog_api_type(sample_query.get("apiType"))
-    if api_type not in CATALOG_ALLOWED_API_TYPES:
-        raise ValueError("catalog `default_func_spec.sample_query.apiType` must be a supported api type")
+    if api_type == "":
+        raise ValueError("catalog `default_func_spec.sample_query.apiType` must be a non-empty string")
     if not isinstance(sample_query.get("path"), str) or str(sample_query.get("path")).strip() == "":
         raise ValueError("catalog `default_func_spec.sample_query.path` must be a non-empty string")
     if not isinstance(sample_query.get("prompt"), str) or str(sample_query.get("prompt")).strip() == "":
@@ -5287,9 +5298,6 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
         if auth_header_line != "":
             curl_lines.append(auth_header_line)
         curl_lines.append("  -F 'file=@/path/to/audio.wav'")
-        normalized_prompt = str(prompt or "").strip()
-        if normalized_prompt != "":
-            curl_lines.append(f"  -F 'prompt={shell_single_quote(normalized_prompt)}'")
         for key, value in body_for_ui.items():
             if str(key or "").strip() == "" or key == "model" or value is None:
                 continue

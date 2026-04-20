@@ -332,6 +332,10 @@
             return document.getElementById(id);
         }
 
+        function getPromptValue() {
+            return String((getElement('prompt') || {}).value || '');
+        }
+
         function isTranscriptionRequest() {
             const normalizedPath = String(context.sampleQueryPath || '')
                 .trim()
@@ -340,11 +344,13 @@
             return normalizedPath === 'v1/audio/transcriptions' || isTranscriptionApiType(context.apiType);
         }
 
-        function isTemporaryWhisperTinyTranscriptionTest() {
-            return String(context.tenant || '') === 'public'
-                && String(context.namespace || '') === 'Qwen'
-                && String(context.name || '') === 'whisper-tiny'
-                && isTranscriptionRequest();
+        function getEffectiveTranscriptionPrompt() {
+            const prompt = getPromptValue().trim();
+            const samplePrompt = String(context.samplePrompt || '').trim();
+            if (prompt === '' || (samplePrompt !== '' && prompt === samplePrompt)) {
+                return '';
+            }
+            return prompt;
         }
 
         function clearPreviewObjectUrl() {
@@ -1106,7 +1112,7 @@
         async function streamOutputText() {
             const output = getElement('output');
             const debug = getElement('debug');
-            const prompt = String((getElement('prompt') || {}).value || '');
+            const prompt = getPromptValue();
             const inputUrl = String((getElement('urlInput') || {}).value || '');
             const tpsDiv = getElement('tpsDiv');
             const signal = startRequestUi();
@@ -1153,22 +1159,16 @@
                     const audioUpload = await prepareTranscriptionUpload(signal);
                     const formData = new FormData();
                     formData.append('file', audioUpload.blob, audioUpload.filename);
-                    if (isTemporaryWhisperTinyTranscriptionTest()) {
-                        // Temporary compatibility path to match the known-good curl request
-                        // for public/Qwen/whisper-tiny while we validate the dashboard flow.
-                        formData.append('response_format', 'json');
-                        formData.append('language', 'en');
-                    } else if (prompt.trim() !== '') {
-                        formData.append('prompt', prompt.trim());
+                    const transcriptionPrompt = getEffectiveTranscriptionPrompt();
+                    if (transcriptionPrompt !== '') {
+                        formData.append('prompt', transcriptionPrompt);
                     }
-                    if (!isTemporaryWhisperTinyTranscriptionTest()) {
-                        Object.entries(requestMap).forEach(function ([key, value]) {
-                            if (key === 'model' || key === 'prompt' || key === 'messages' || key === 'stream') {
-                                return;
-                            }
-                            appendMultipartField(formData, key, value);
-                        });
-                    }
+                    Object.entries(requestMap).forEach(function ([key, value]) {
+                        if (key === 'model' || key === 'prompt' || key === 'messages' || key === 'stream') {
+                            return;
+                        }
+                        appendMultipartField(formData, key, value);
+                    });
                     body = formData;
                     timeoutPayloadBytes = audioUpload.sizeBytes;
                 } else {
@@ -1200,7 +1200,6 @@
                     appendElementText(debug, '\n' + JSON.stringify({
                         transcription_path: context.sampleQueryPath,
                         source: getSelectedAudioSourceType(),
-                        temporary_whisper_tiny_frontend_override: isTemporaryWhisperTinyTranscriptionTest(),
                     }, null, 2));
                 }
 

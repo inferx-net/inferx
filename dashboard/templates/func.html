@@ -464,6 +464,7 @@
         name: name,
         apiType: apiType,
         map: map,
+        samplePrompt: {{ func["func"]["object"]["spec"]["sample_query"]["prompt"] | tojson }},
         sampleQueryPath: sampleQueryPath,
         proxyBasePath: {{ (hosturl ~ 'proxy') | tojson }},
         remoteImageFetchPath: {{ (hosturl ~ 'image2text/fetch-remote') | tojson }},
