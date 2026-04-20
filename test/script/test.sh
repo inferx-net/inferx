@@ -228,3 +228,13 @@ curl -X POST http://localhost:31501/funccall/public/Qwen/inferx-buddle1/v1/compl
 
 
 curl http://localhost:31501/funccall/public/Qwen/inferx-buddle1/v1/models
+
+
+
+
+
+
+curl -X POST  https://model.inferx.net/funccall/public/Trial/whisper-tiny/v1/audio/transcriptions     -H "Content-Type: multipart/form-data"     -F "file=@/home/qq/code/inferx/config/clone_test.wav"     -F "response_format=json"     -F "language=en" | jq .
+
+
+curl -X POST  https://dev1.inferx.net/funccall/public/Qwen/whisper-tiny/v1/audio/transcriptions     -H "Content-Type: multipart/form-data"     -F "file=@/home/qq/code/inferx/config/clone_test.wav"     -F "response_format=json"     -F "language=en" | jq .

@@ -1058,6 +1058,7 @@
         name: name,
         apiType: apiType,
         map: map,
+        samplePrompt: {{ func["func"]["object"]["spec"]["sample_query"]["prompt"] | tojson }},
         sampleQueryPath: sampleQueryPath,
         proxyBasePath: proxyBasePath,
         remoteImageFetchPath: remoteImageFetchPath,

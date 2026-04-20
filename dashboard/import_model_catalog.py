@@ -192,13 +192,14 @@ def infer_provider(config_data: dict, source_model_id: str) -> str:
 def infer_modality(spec: dict) -> str:
     sample_query = spec.get("sample_query") if isinstance(spec.get("sample_query"), dict) else {}
     api_type = dashboard_app.normalize_catalog_api_type(sample_query.get("apiType"))
+    path = str(sample_query.get("path") or "").strip().lower().lstrip("/")
     if api_type == "text2text":
         return "text"
     if api_type == "text2img":
         return "image"
     if api_type == "text2audio":
         return "audio"
-    if api_type in ("image2text", "audio2text"):
+    if api_type in ("image2text", "audio2text", "transcriptions") or path == "v1/audio/transcriptions":
         return "multimodal"
     return "text"
 
