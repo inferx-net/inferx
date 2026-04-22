@@ -629,7 +629,7 @@
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
-        const slackInviteUrl = {{ slack_invite_url | tojson }};
+        const billingPaymentUrl = 'https://buy.stripe.com/4gM4gs0jMdLZ0RTdNG4Vy02';
         const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
         const loginUrl = '{{ hosturl }}' + "login";
@@ -927,22 +927,22 @@
             }
 
             const link = document.createElement('a');
-            link.href = slackInviteUrl;
+            link.href = billingPaymentUrl;
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
-            link.textContent = 'Click support';
+            link.textContent = 'payment link';
 
             if (quotaExceeded) {
                 text.replaceChildren(
-                    document.createTextNode('Your credit has run out. InferX currently offers $20/month/model while in beta to continue using the service. '),
+                    document.createTextNode('Your credit has run out. InferX currently offers $20/month/model while in beta to continue using the service. Use the '),
                     link,
                     document.createTextNode(' to set it up.'),
                 );
             } else {
                 text.replaceChildren(
-                    document.createTextNode('InferX currently offers $20/month/model while in beta when your credit runs out. '),
+                    document.createTextNode('InferX currently offers $20/month/model while in beta when your credit runs out. Use the '),
                     link,
-                    document.createTextNode(' to request setup.'),
+                    document.createTextNode(' to set it up.'),
                 );
             }
 
@@ -1054,6 +1054,9 @@
         </div>
         {% block content %} {% endblock %}
     </div>
+    <!-- Start of HubSpot Embed Code -->
+    <script type="text/javascript" id="hs-script-loader" async defer src="//js.hs-scripts.com/20431530.js"></script>
+    <!-- End of HubSpot Embed Code -->
 </body>
 
 </html>
