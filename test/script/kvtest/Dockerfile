@@ -5,10 +5,7 @@ RUN pip install --no-cache-dir \
     cupy-cuda12x \
     nvidia-nvcomp-cu12
 
-# Install production connector (compiled binary)
-# Replace the placeholder .so with the real binary from email before building
+# Install production connector v1.1 (compiled binary, sent via email)
+# v1.1 changes: cleaner nvCOMP fallback logging, V3 cache reuse
 COPY revyzor_connector_inferx.cpython-312-x86_64-linux-gnu.so /app/revyzor_connector_inferx.cpython-312-x86_64-linux-gnu.so
 ENV PYTHONPATH="/app:${PYTHONPATH}"
-
-# Keep test stub for reference
-COPY revyzor_test_stub.py /app/revyzor_test_stub.py
