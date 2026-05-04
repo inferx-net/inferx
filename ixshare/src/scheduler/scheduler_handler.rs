@@ -2737,7 +2737,6 @@ impl SchedulerHandler {
 
         if remove {
             info!("RemovePodsByFunckey remove {} done", funckey);
-            self.funcs.remove(funckey);
         } else {
             info!(
                 "RemovePodsByFunckey remove {} fail, will retry later",
