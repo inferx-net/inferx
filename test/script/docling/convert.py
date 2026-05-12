@@ -2,6 +2,7 @@
 import sys
 import os
 import re
+import json
 from docling.document_converter import DocumentConverter
 from pathlib import Path
 from datetime import datetime
@@ -84,8 +85,169 @@ def build_markdown(docs: list[dict]) -> str:
     return markdown
 
 
+def generate_knowledge_index(docs: list[dict], base_url: str, api_key: str, model: str) -> str:
+    """Use LLM to generate a knowledge index and format it as markdown section."""
+    
+    # Prepare document overview for summarization
+    doc_overview = []
+    for i, doc in enumerate(docs, 1):
+        preview = doc['content'][:500].replace('\n', ' ').strip()
+        doc_overview.append(f"{i}. {doc['name']} ({doc['size_mb']:.2f} MB)\n   Preview: {preview}...\n")
+    
+    overview_text = "\n".join(doc_overview)
+    
+    # Prompt for index generation
+    summary_prompt = f"""You are creating a knowledge base index. Generate a CONCISE summary (max 500 words) that helps users quickly understand what information is available.
+
+## Task
+Create a searchable index/overview that includes:
+1. Main topics covered across all documents
+2. Key entities, concepts, or technical terms
+3. Document categories or themes
+4. Important dates or version information if present
+
+## Documents Overview
+{overview_text}
+
+## Output Format
+Return ONLY valid JSON with this structure:
+{{
+  "knowledge_domain": "brief description of overall domain",
+  "key_topics": ["topic1", "topic2", "topic3"],
+  "document_summaries": [
+    {{"name": "doc1.pdf", "main_points": ["point1", "point2"]}}
+  ],
+  "key_entities": ["entity1", "entity2"],
+  "search_hints": ["hint1", "hint2"]
+}}
+
+Do not add any text outside the JSON. Be concise."""
+    
+    # Direct HTTP call
+    try:
+        import urllib.request
+        
+        api_url = base_url
+        if not api_url.rstrip('/').endswith('/chat/completions'):
+            api_url = api_url.rstrip('/') + '/chat/completions'
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant that returns valid JSON only."},
+                {"role": "user", "content": summary_prompt}
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.3,
+        }
+        
+        data = json.dumps(payload).encode()
+        
+        req = urllib.request.Request(
+            api_url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+        )
+        
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            response = json.loads(resp.read().decode())
+            content = response["choices"][0]["message"]["content"].strip()
+        
+        # Strip markdown code fences if present
+        if content.startswith('```'):
+            content = re.sub(r'^```(?:json)?\s*', '', content, flags=re.MULTILINE)
+            content = re.sub(r'\s*```$', '', content)
+        
+        summary_json = json.loads(content)
+        
+        return format_summary_as_markdown(summary_json)
+        
+    except Exception as e:
+        print(f"    Index generation failed ({e}), using fallback")
+    
+    return generate_fallback_index(docs)
+
+
+def format_summary_as_markdown(summary_json: dict) -> str:
+    """Convert JSON summary to formatted markdown index section."""
+    
+    md = []
+    md.append("## KNOWLEDGE INDEX\n\n")
+    
+    # Domain
+    if "knowledge_domain" in summary_json:
+        md.append(f"**Domain:** {summary_json['knowledge_domain']}\n\n")
+    
+    # Key topics
+    if "key_topics" in summary_json and summary_json['key_topics']:
+        md.append("### Key Topics Covered\n")
+        for topic in summary_json['key_topics'][:10]:
+            md.append(f"- {topic}\n")
+        md.append("\n")
+    
+    # Document summaries
+    if "document_summaries" in summary_json:
+        md.append("### Document Overview\n")
+        for doc in summary_json['document_summaries'][:5]:
+            md.append(f"**{doc.get('name', 'Unknown')}**\n")
+            if 'main_points' in doc:
+                for point in doc['main_points'][:3]:
+                    md.append(f"  - {point}\n")
+            md.append("\n")
+    
+    # Key entities
+    if "key_entities" in summary_json and summary_json['key_entities']:
+        md.append("### Key Entities & Concepts\n")
+        for entity in summary_json['key_entities'][:15]:
+            md.append(f"- {entity}\n")
+        md.append("\n")
+    
+    # Search hints
+    if "search_hints" in summary_json and summary_json['search_hints']:
+        md.append("### Quick Search Hints\n")
+        for hint in summary_json['search_hints'][:8]:
+            md.append(f"- {hint}\n")
+        md.append("\n")
+    
+    md.append("---\n\n")
+    
+    return "".join(md)
+
+
+def generate_fallback_index(docs: list[dict]) -> str:
+    """Fallback index generator if LLM is unavailable."""
+    
+    md = []
+    md.append("## KNOWLEDGE INDEX\n\n")
+    md.append(f"**Total Documents:** {len(docs)}\n\n")
+    
+    # Extract file types
+    ext_count = {}
+    for doc in docs:
+        ext = Path(doc['name']).suffix
+        ext_count[ext] = ext_count.get(ext, 0) + 1
+    
+    md.append("### Document Types\n")
+    for ext, count in ext_count.items():
+        md.append(f"- {ext}: {count} document(s)\n")
+    md.append("\n")
+    
+    # List documents
+    md.append("### Available Documents\n")
+    for i, doc in enumerate(docs, 1):
+        md.append(f"{i}. **{doc['name']}** ({doc['size_mb']:.2f} MB)\n")
+    md.append("\n")
+    
+    md.append("---\n\n")
+    
+    return "".join(md)
+
+
 def build_llm_optimized_markdown(docs: list[dict]) -> str:
-    """Build markdown specifically optimized for LLM prompts."""
+    """Build markdown specifically optimized for LLM prompts (system + documents)."""
     output = []
     
     # System instruction
@@ -107,6 +269,8 @@ def build_llm_optimized_markdown(docs: list[dict]) -> str:
     output.append("   - `[bitcoin.pdf]` (missing section)\n")
     output.append("   - `Section 4` (missing filename)\n")
     output.append("\n")
+    
+    # Documents section
     output.append("## DOCUMENTS\n\n")
     
     # Document content with LLM enhancements
@@ -114,6 +278,53 @@ def build_llm_optimized_markdown(docs: list[dict]) -> str:
     output.append(llm_optimized)
     
     # Add QUESTION placeholder for user
+    output.append("\n## QUESTION\n")
+    
+    return "".join(output)
+
+
+def build_index_markdown(docs: list[dict], base_url: str = None, api_key: str = None, model: str = None) -> str:
+    """Build a complete LLM prompt file with system instruction, knowledge index, and documents."""
+    
+    output = []
+    
+    # 1. System instruction
+    output.append("## SYSTEM INSTRUCTION\n")
+    output.append("You are analyzing technical documents. Follow these rules:\n")
+    output.append("\n")
+    output.append("1. **Grounding**: Only use information from the documents below\n")
+    output.append("2. **Missing content**: If formulas appear as placeholders, infer meaning from surrounding text\n")
+    output.append("3. **Images**: Treat diagram descriptions as contextual hints\n")
+    output.append("4. **Code**: Explain code blocks when relevant\n")
+    output.append("5. **Citations**: Always cite both filename AND section number\n")
+    output.append("\n")
+    output.append("   **Correct examples:**\n")
+    output.append("   - `[bitcoin.pdf, Section 4 - Proof-of-Work]`\n")
+    output.append("   - `[bitcoin.pdf, Section 11]`\n")
+    output.append("   - `[bitcoin.pdf, Section 5, Step 3]`\n")
+    output.append("\n")
+    output.append("   **Incorrect examples:**\n")
+    output.append("   - `[bitcoin.pdf]` (missing section)\n")
+    output.append("   - `Section 4` (missing filename)\n")
+    output.append("\n")
+    
+    # 2. Knowledge index
+    if base_url and api_key and model:
+        print("  Generating knowledge base index...")
+        index_content = generate_knowledge_index(docs, base_url, api_key, model)
+        output.append(index_content)
+    else:
+        output.append("## KNOWLEDGE INDEX\n")
+        output.append(f"**Total Documents:** {len(docs)}\n\n")
+        for i, doc in enumerate(docs, 1):
+            output.append(f"{i}. {doc['name']}\n")
+        output.append("\n---\n\n")
+    
+    # 3. Documents
+    output.append("## DOCUMENTS\n\n")
+    output.append(build_llm_enhanced_content(docs))
+    
+    # 4. QUESTION placeholder
     output.append("\n## QUESTION\n")
     
     return "".join(output)
@@ -235,10 +446,11 @@ def use_info():
     sys.exit(1)
 
 def main():
-    input_dir = Path("/input")
-    output_dir = Path("/output")
+    input_dir = Path(os.environ.get("INPUT_DIR", "/input"))
+    output_dir = Path(os.environ.get("OUTPUT_DIR", "/output"))
     docling_output = output_dir / "merged.md"
     optimized_output = output_dir / "optimized.md"
+    index_output = output_dir / "index.md"
 
     config = parse_args()
 
@@ -282,7 +494,11 @@ def main():
 
     markdown = build_markdown(docs)
 
+    # llm.md: system instruction + documents (no index)
     llm_optimized = build_llm_optimized_markdown(docs)
+    
+    # index.md: complete LLM prompt with system + index + documents
+    index_markdown = build_index_markdown(docs, base_url, api_key, model)
     
     with open(docling_output, "w", encoding="utf-8") as f:
         f.write(markdown)
@@ -291,10 +507,14 @@ def main():
     with open(llm_output, "w", encoding="utf-8") as f:
         f.write(llm_optimized)
     
+    with open(index_output, "w", encoding="utf-8") as f:
+        f.write(index_markdown)
+    
     docling_chars = len(markdown)
     llm_chars = len(llm_optimized)
     print(f"\n✓ Docling: Created {docling_output} ({docling_chars} chars, {docling_chars/1024:.1f} KB)")
     print(f"  LLM-optimized: {llm_output} ({llm_chars} chars, {llm_chars/1024:.1f} KB)")
+    print(f"  Index prompt: {index_output} ({len(index_markdown)} chars)")
     print(f"  Processing time: {docling_end - docling_start:.2f} seconds")
 
     opt_start = time.time()
@@ -408,6 +628,7 @@ def main():
     print(f"  - {docling_output} (original)")
     print(f"  - {optimized_output} (optimized)")
     print(f"  - {llm_output} (LLM-optimized)")
+    print(f"  - {index_output} (knowledge index)")
 
 if __name__ == "__main__":
     main()
