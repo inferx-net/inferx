@@ -193,6 +193,7 @@ MAX_GPU_VRAM_MB_ENV = "INFERX_MAX_GPU_VRAM_MB"
 MAX_GPU_COUNT_ENV = "INFERX_MAX_GPU_COUNT"
 OPEN_CODE_CONFIG_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "integration" / "opencode.json"
 KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
+FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
 
 
 def load_max_gpu_vram_mb_override():
@@ -245,6 +246,57 @@ DEFAULT_VLLM_IMAGE_WHITELIST = [
     "vllm/vllm-omni:v0.14.0",
 ]
 VLLM_IMAGE_WHITELIST_ENV = "INFERX_VLLM_IMAGE_WHITELIST"
+
+
+def load_function_mappings():
+    raw = str(os.getenv(FUNCTION_MAPPINGS_ENV, "") or "").strip()
+    if raw == "":
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        app.logger.warning("failed to parse %s: %s", FUNCTION_MAPPINGS_ENV, e)
+        return []
+
+    entries = parsed.get("functionmappings") if isinstance(parsed, dict) else parsed
+    if not isinstance(entries, list):
+        app.logger.warning("%s must be a JSON array or an object with `functionmappings`", FUNCTION_MAPPINGS_ENV)
+        return []
+
+    normalized_entries = []
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            app.logger.warning("%s[%d] must be an object", FUNCTION_MAPPINGS_ENV, idx)
+            continue
+
+        preset = str(entry.get("preset", "") or "").strip()
+        catalog = str(entry.get("catalog", "") or "").strip()
+        token_length = entry.get("token_length")
+        if preset == "" or catalog == "":
+            app.logger.warning("%s[%d] is missing `preset` or `catalog`", FUNCTION_MAPPINGS_ENV, idx)
+            continue
+
+        try:
+            token_length = int(token_length)
+        except Exception:
+            app.logger.warning("%s[%d].token_length must be an integer", FUNCTION_MAPPINGS_ENV, idx)
+            continue
+
+        if token_length <= 0:
+            app.logger.warning("%s[%d].token_length must be > 0", FUNCTION_MAPPINGS_ENV, idx)
+            continue
+
+        normalized_entries.append({
+            "preset": preset,
+            "catalog": catalog,
+            "token_length": token_length,
+        })
+
+    return normalized_entries
+
+
+FUNCTION_MAPPINGS = load_function_mappings()
 
 
 def load_vllm_image_whitelist():
@@ -3308,6 +3360,374 @@ def knowledgebase_stage_file_path(tenant: str, namespace: str, name: str) -> Pat
     return KNOWLEDGEBASE_DIR / f"{tenant}.{namespace}.{name}" / "kb.data"
 
 
+def knowledgebase_root_dir_path(tenant: str, namespace: str, name: str) -> Path:
+    return KNOWLEDGEBASE_DIR / f"{tenant}.{namespace}.{name}"
+
+
+def knowledgebase_version_file_path(tenant: str, namespace: str, name: str, version: str) -> Path:
+    normalized_version = str(version or "").strip()
+    return knowledgebase_root_dir_path(tenant, namespace, name) / normalized_version / "kb.data"
+
+
+def resolve_knowledgebase_file_path(tenant: str, namespace: str, name: str, *, live_func=None) -> Path | None:
+    stage_file = knowledgebase_stage_file_path(tenant, namespace, name)
+    if stage_file.exists():
+        return stage_file
+
+    version = str(((((live_func or {}).get("func") or {}).get("object") or {}).get("spec") or {}).get("version") or "").strip()
+    if version != "":
+        version_file = knowledgebase_version_file_path(tenant, namespace, name, version)
+        if version_file.exists():
+            return version_file
+
+    return None
+
+
+def validate_function_name_or_raise(name: str):
+    normalized_name = str(name or "").strip()
+    if normalized_name == "":
+        raise ValueError("Function name is required.")
+    if not all(ch.isascii() and (ch.isalnum() or ch in "-_.") for ch in normalized_name):
+        raise ValueError("Function name may contain only letters, numbers, hyphens, underscores, and periods.")
+    return normalized_name
+
+
+def ensure_functions_db_available():
+    if psycopg2 is None or RealDictCursor is None:
+        raise RuntimeError("functions support requires `psycopg2-binary` in the dashboard environment")
+    if SECRDB_ADDR == "":
+        raise RuntimeError("SECRDB_ADDR is empty")
+
+
+def user_can_manage_models(roles) -> bool:
+    if not isinstance(roles, list):
+        return False
+    return any(
+        str(role.get('role', '')).lower() == 'admin'
+        and str(role.get('objType', '')).lower() in ('tenant', 'namespace')
+        for role in roles
+    )
+
+
+def normalize_function_row(row):
+    normalized = dict(row or {})
+    normalized["tenant"] = str(normalized.get("tenant", "") or "").strip()
+    normalized["namespace"] = str(normalized.get("namespace", "") or "").strip()
+    normalized["name"] = str(normalized.get("name", "") or "").strip()
+    normalized["preset"] = str(normalized.get("preset", "") or "").strip()
+    normalized["catalog"] = str(normalized.get("catalog", "") or "").strip()
+    try:
+        normalized["token_length"] = int(normalized.get("token_length"))
+    except Exception:
+        normalized["token_length"] = 0
+    normalized["created_at_display"] = format_catalog_datetime(normalized.get("created_at"))
+    normalized["created_at"] = normalize_catalog_datetime_value(normalized.get("created_at"))
+    return normalized
+
+
+def list_function_rows(*, tenant="", namespace=""):
+    ensure_functions_db_available()
+
+    normalized_tenant = str(tenant or "").strip()
+    normalized_namespace = str(namespace or "").strip()
+    where_clauses = []
+    params = []
+    if normalized_tenant != "":
+        where_clauses.append("tenant = %s")
+        params.append(normalized_tenant)
+    if normalized_namespace != "":
+        where_clauses.append("namespace = %s")
+        params.append(normalized_namespace)
+
+    query = """
+        SELECT id, tenant, namespace, name, preset, catalog, token_length, created_at
+        FROM functions
+    """
+    if where_clauses:
+        query += " WHERE " + " AND ".join(where_clauses)
+    query += " ORDER BY created_at DESC, id DESC"
+
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, tuple(params))
+                rows = cursor.fetchall()
+    except Exception as e:
+        raise RuntimeError(f"failed to query functions: {e}")
+
+    return [normalize_function_row(dict(row)) for row in rows]
+
+
+def query_function_row(tenant: str, namespace: str, name: str):
+    ensure_functions_db_available()
+    query = """
+        SELECT id, tenant, namespace, name, preset, catalog, token_length, created_at
+        FROM functions
+        WHERE tenant = %s AND namespace = %s AND name = %s
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (tenant, namespace, name))
+                row = cursor.fetchone()
+    except Exception as e:
+        raise RuntimeError(f"failed to query function `{tenant}/{namespace}/{name}`: {e}")
+
+    if row is None:
+        raise LookupError(f"function `{tenant}/{namespace}/{name}` not found")
+    return normalize_function_row(dict(row))
+
+
+def find_function_row(tenant: str, namespace: str, name: str):
+    try:
+        return query_function_row(tenant, namespace, name)
+    except LookupError:
+        return None
+
+
+def insert_function_row(*, tenant: str, namespace: str, name: str, preset: str, catalog: str, token_length: int):
+    ensure_functions_db_available()
+    query = """
+        INSERT INTO functions (tenant, namespace, name, preset, catalog, token_length)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id, tenant, namespace, name, preset, catalog, token_length, created_at
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (tenant, namespace, name, preset, catalog, token_length))
+                row = cursor.fetchone()
+            conn.commit()
+    except psycopg2.Error as e:
+        raise e
+    except Exception as e:
+        raise RuntimeError(f"failed to create function row `{tenant}/{namespace}/{name}`: {e}")
+    return normalize_function_row(dict(row))
+
+
+def delete_function_row(tenant: str, namespace: str, name: str):
+    ensure_functions_db_available()
+    query = """
+        DELETE FROM functions
+        WHERE tenant = %s AND namespace = %s AND name = %s
+        RETURNING id, tenant, namespace, name, preset, catalog, token_length, created_at
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (tenant, namespace, name))
+                row = cursor.fetchone()
+            conn.commit()
+    except Exception as e:
+        raise RuntimeError(f"failed to delete function row `{tenant}/{namespace}/{name}`: {e}")
+    if row is None:
+        raise LookupError(f"function `{tenant}/{namespace}/{name}` not found")
+    return normalize_function_row(dict(row))
+
+
+def remove_function_kb_directory(tenant: str, namespace: str, name: str):
+    kb_dir = knowledgebase_root_dir_path(tenant, namespace, name)
+    if not kb_dir.exists():
+        return
+    try:
+        import shutil
+        shutil.rmtree(kb_dir)
+    except Exception as e:
+        raise RuntimeError(f"failed to delete KB directory `{kb_dir}`: {e}")
+
+
+def get_function_mapping_entries():
+    return [dict(entry) for entry in FUNCTION_MAPPINGS]
+
+
+def query_function_mapping_catalog_entry(catalog_slug: str):
+    normalized_slug = str(catalog_slug or "").strip()
+    if normalized_slug == "":
+        raise ValueError("catalog slug is required")
+    return query_catalog_entry_by_slug(normalized_slug, active_only=False)
+
+
+def resolve_function_preset_options():
+    options = []
+    for mapping in get_function_mapping_entries():
+        catalog_slug = str(mapping.get("catalog", "") or "").strip()
+        if catalog_slug == "":
+            continue
+        try:
+            entry = query_function_mapping_catalog_entry(catalog_slug)
+            spec = validate_catalog_template_spec(entry.get("default_func_spec"))
+        except Exception:
+            continue
+
+        options.append({
+            "preset": str(mapping["preset"]),
+            "catalog": catalog_slug,
+            "token_length": int(mapping["token_length"]),
+            "model_name": str(entry.get("display_name", "") or catalog_slug).strip(),
+            "gpu_count": extract_gpu_count_from_spec(spec) or 0,
+            "catalog_slug": str(entry.get("slug", "") or catalog_slug).strip(),
+            "catalog_id": int(entry.get("id")),
+        })
+
+    return options
+
+
+def find_function_preset_option(preset: str):
+    normalized_preset = str(preset or "").strip()
+    for option in resolve_function_preset_options():
+        if str(option.get("preset", "")).strip() == normalized_preset:
+            return option
+    return None
+
+
+def build_function_detail_view(function_row, *, live_func=None, live_unavailable=False):
+    row = normalize_function_row(function_row)
+    live_spec = ((((live_func or {}).get("func") or {}).get("object") or {}).get("spec")) or {}
+    live_status = ((((live_func or {}).get("func") or {}).get("object") or {}).get("status")) or {}
+    is_live_available = isinstance(live_func, dict) and not live_unavailable
+    kb_file = resolve_knowledgebase_file_path(
+        row["tenant"],
+        row["namespace"],
+        row["name"],
+        live_func=live_func,
+    )
+    created_at_summary = row.get("created_at_display")
+    created_at_value = row.get("created_at")
+    if isinstance(created_at_value, str) and created_at_value.strip() != "":
+        try:
+            created_dt = datetime.fromisoformat(created_at_value.replace("Z", "+00:00")).astimezone(DASHBOARD_LOCAL_TZ)
+            created_at_summary = created_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            pass
+    return {
+        "row": row,
+        "is_live_available": is_live_available,
+        "state": str(live_status.get("state", "") or "").strip() if is_live_available else "unavailable",
+        "gpu_count": (
+            ((live_spec.get("resources") or {}).get("GPU") or {}).get("Count")
+            if is_live_available
+            else None
+        ),
+        "stage_file_exists": kb_file is not None,
+        "stage_file_name": kb_file.name if kb_file is not None else "kb.data",
+        "stage_file_download_href": dashboard_href(
+            "prefix.DownloadKnowledgebaseFile",
+            tenant=row["tenant"],
+            namespace=row["namespace"],
+            name=row["name"],
+        ),
+        "created_at_summary": created_at_summary,
+        "cleanup_href": dashboard_href(
+            "prefix.FunctionDetail",
+            tenant=row["tenant"],
+            namespace=row["namespace"],
+            name=row["name"],
+        ),
+    }
+
+
+def deploy_catalog_entry_to_function_target(entry, *, tenant: str, namespace: str, name: str):
+    catalog_source = {
+        "catalog_id": int(entry["id"]),
+        "catalog_version": int(entry["catalog_version"]),
+    }
+    full_spec = validate_catalog_template_spec(entry.get("default_func_spec"))
+    full_spec["catalog_source"] = dict(catalog_source)
+
+    gateway_req = {
+        "type": "function",
+        "tenant": tenant,
+        "namespace": namespace,
+        "name": name,
+        "object": {"spec": full_spec},
+    }
+
+    return requests.request(
+        "PUT",
+        f"{apihostaddr}/object/",
+        headers=gateway_headers(include_json=True),
+        json=gateway_req,
+        timeout=60,
+    )
+
+
+def delete_function_dashboard_artifacts(tenant: str, namespace: str, name: str):
+    remove_function_kb_directory(tenant, namespace, name)
+    delete_function_row(tenant, namespace, name)
+
+
+def delete_function_via_dashboard(tenant: str, namespace: str, name: str):
+    live_exists = False
+    try:
+        func_resp, func_payload = getfunc_response(tenant, namespace, name)
+        if func_resp.ok and isinstance(func_payload, dict):
+            live_exists = True
+        elif not is_upstream_resource_unavailable(func_resp, func_payload):
+            detail = extract_upstream_error_message(func_resp, func_payload) or "failed to load function"
+            status_code = func_resp.status_code if func_resp is not None else 502
+            return {
+                "ok": False,
+                "status": status_code,
+                "message": detail,
+                "live_exists": False,
+            }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 502,
+            "message": f"failed to load function: {e}",
+            "live_exists": False,
+        }
+
+    if live_exists:
+        try:
+            delete_resp = requests.delete(
+                f"{apihostaddr}/object/function/{tenant}/{namespace}/{name}/",
+                headers=gateway_headers(),
+                timeout=60,
+            )
+        except requests.exceptions.RequestException as e:
+            return {
+                "ok": False,
+                "status": 502,
+                "message": f"Error connecting to backend server: {e}",
+                "live_exists": True,
+            }
+
+        delete_payload = response_json_or_none(delete_resp)
+        if not delete_resp.ok:
+            return {
+                "ok": False,
+                "status": delete_resp.status_code,
+                "message": extract_upstream_error_message(delete_resp, delete_payload) or "Delete failed",
+                "live_exists": True,
+            }
+
+    try:
+        delete_function_dashboard_artifacts(tenant, namespace, name)
+    except LookupError as e:
+        return {
+            "ok": False,
+            "status": 404,
+            "message": str(e),
+            "live_exists": live_exists,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 500,
+            "message": str(e),
+            "live_exists": live_exists,
+        }
+
+    return {
+        "ok": True,
+        "status": 200,
+        "message": "",
+        "live_exists": live_exists,
+    }
+
+
 def infer_catalog_modality_from_sample_query(sample_query):
     sample_query_obj = sample_query if isinstance(sample_query, dict) else {}
     api_type = normalize_catalog_api_type(sample_query_obj.get("apiType"))
@@ -3844,6 +4264,35 @@ def role_grants_dashboard_resource_access(role):
     obj_type = str(role.get("objType", "") or "").strip().lower()
     role_name = str(role.get("role", "") or "").strip().lower()
     return obj_type in ("tenant", "namespace") and role_name in ("admin", "user")
+
+
+def user_can_access_dashboard_resource(roles, tenant_name: str, namespace_name: str = ""):
+    normalized_tenant = str(tenant_name or "").strip()
+    normalized_namespace = str(namespace_name or "").strip()
+    if normalized_tenant == "":
+        return False
+
+    if has_inferx_admin_role(roles):
+        return True
+
+    for role in roles if isinstance(roles, list) else []:
+        if not isinstance(role, dict):
+            continue
+        if not role_grants_dashboard_resource_access(role):
+            continue
+
+        role_tenant = str(role.get("tenant", "") or "").strip()
+        role_namespace = str(role.get("namespace", "") or "").strip()
+        obj_type = str(role.get("objType", "") or "").strip().lower()
+
+        if role_tenant != normalized_tenant:
+            continue
+        if obj_type == "tenant":
+            return True
+        if obj_type == "namespace" and normalized_namespace != "" and role_namespace == normalized_namespace:
+            return True
+
+    return False
 
 
 def get_accessible_tenant_names_from_roles_for_create(roles):
@@ -6105,7 +6554,7 @@ def build_sample_rest_call_for_ui(tenant: str, namespace: str, funcname: str, sa
 
     prompt = sample_query.get("prompt")
     api_type = str(sample_query.get("apiType", "") or "").strip().lower()
-    if api_type == "text2text":
+    if api_type in ("text2text", "knowledgebase"):
         path = "v1/chat/completions"
         body_for_ui = build_text2text_chat_body_for_ui(body_for_ui, prompt)
         body_for_ui.setdefault("stream", True)
@@ -6960,13 +7409,6 @@ def CatalogDeployNow(catalog_id: int):
         if not isinstance(req, dict):
             return json_error("Request body must be a JSON object when selecting a deploy target.", 400)
 
-        catalog_source = {
-            "catalog_id": int(entry["id"]),
-            "catalog_version": int(entry["catalog_version"]),
-        }
-        full_spec = validate_catalog_template_spec(entry.get("default_func_spec"))
-        full_spec["catalog_source"] = dict(catalog_source)
-
         tenant, namespace = resolve_catalog_deploy_target_selection(
             deploy_target,
             requested_tenant=req.get("tenant", ""),
@@ -6975,23 +7417,12 @@ def CatalogDeployNow(catalog_id: int):
         )
         name = build_catalog_default_func_name(entry)
 
-        gateway_req = {
-            "type": "function",
-            "tenant": tenant,
-            "namespace": namespace,
-            "name": name,
-            "object": {
-                "spec": full_spec
-            }
-        }
-
         try:
-            resp = requests.request(
-                "PUT",
-                f"{apihostaddr}/object/",
-                headers=gateway_headers(include_json=True),
-                json=gateway_req,
-                timeout=60,
+            resp = deploy_catalog_entry_to_function_target(
+                entry,
+                tenant=tenant,
+                namespace=namespace,
+                name=name,
             )
         except requests.exceptions.RequestException as e:
             return json_error(f"Error connecting to gateway: {e}", 502)
@@ -7398,6 +7829,41 @@ def fetch_remote_audio_for_transcriptions():
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Content-Length"] = str(len(audio_bytes))
     return response
+
+
+@prefix_bp.route('/proxy/object/function/<tenant>/<namespace>/<name>/', methods=['DELETE'])
+@not_require_login
+def proxy_delete_function(tenant, namespace, name):
+    access_token = session.get('access_token', '')
+    headers = {key: value for key, value in request.headers if key.lower() != 'host'}
+    has_client_auth = any(key.lower() == 'authorization' for key in headers)
+    if access_token != "" and not has_client_auth:
+        headers["Authorization"] = f'Bearer {access_token}'
+
+    function_row = find_function_row(tenant, namespace, name)
+    if function_row is not None:
+        try:
+            roles = listroles()
+        except Exception:
+            roles = []
+        if not has_admin_role_for_model(roles, tenant, namespace) and not can_view_public_tenant(roles):
+            return Response("No permission", status=403)
+        result = delete_function_via_dashboard(tenant, namespace, name)
+        return Response(result["message"], status=result["status"], mimetype='text/plain')
+
+    url = f"{apihostaddr}/object/function/{tenant}/{namespace}/{name}/"
+    try:
+        resp = requests.delete(url, headers=headers, timeout=60)
+    except requests.exceptions.RequestException as e:
+        return Response(f"Error connecting to backend server: {e}", status=502)
+
+    excluded_headers = ['content-encoding', 'transfer-encoding', 'connection']
+    response_headers = [
+        (header_name, header_value)
+        for header_name, header_value in resp.headers.items()
+        if header_name.lower() not in excluded_headers
+    ]
+    return Response(resp.content, resp.status_code, response_headers)
 
 @prefix_bp.route('/proxy/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @not_require_login
@@ -7997,12 +8463,26 @@ def upload_knowledgebase_file(tenant, namespace, name):
         return deny_resp
 
     try:
+        validate_function_name_or_raise(name)
+    except ValueError as e:
+        return json_error(str(e), 400)
+
+    try:
         roles = listroles()
     except Exception as e:
         return json_error(f"failed to load roles: {e}", 502)
 
     if not has_admin_role_for_model(roles, tenant, namespace):
         return Response("No permission", status=403)
+
+    try:
+        if find_function_row(tenant, namespace, name) is not None:
+            return json_error(
+                f"function `{tenant}/{namespace}/{name}` already exists; KB upload is only allowed for new functions",
+                409,
+            )
+    except Exception as e:
+        return json_error(f"failed to check existing function: {e}", 500)
 
     uploaded = request.files.get("file")
     if uploaded is None:
@@ -8020,6 +8500,478 @@ def upload_knowledgebase_file(tenant, namespace, name):
         return json_error(f"failed to store KB file: {e}", 500)
 
     return jsonify({"ok": True, "path": str(stage_file)})
+
+
+@prefix_bp.route("/kb/delete/<tenant>/<namespace>/<name>", methods=["POST"])
+@require_login
+def delete_knowledgebase_file(tenant, namespace, name):
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        validate_function_name_or_raise(name)
+    except ValueError as e:
+        return json_error(str(e), 400)
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not has_admin_role_for_model(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    stage_file = knowledgebase_stage_file_path(tenant, namespace, name)
+    stage_dir = knowledgebase_root_dir_path(tenant, namespace, name)
+    try:
+        if stage_file.exists():
+            stage_file.unlink()
+        if stage_dir.exists():
+            stage_dir.rmdir()
+    except Exception as e:
+        return json_error(f"failed to delete KB file: {e}", 500)
+
+    return jsonify({"ok": True})
+
+
+@prefix_bp.route("/kb/download/<tenant>/<namespace>/<name>", methods=["GET"])
+@require_login
+def DownloadKnowledgebaseFile(tenant, namespace, name):
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        validate_function_name_or_raise(name)
+    except ValueError as e:
+        return json_error(str(e), 400)
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not user_can_access_dashboard_resource(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    live_func = None
+    try:
+        func_resp, func_payload = getfunc_response(tenant, namespace, name)
+        if func_resp.ok and isinstance(func_payload, dict):
+            live_func = func_payload
+    except Exception:
+        live_func = None
+
+    kb_file = resolve_knowledgebase_file_path(tenant, namespace, name, live_func=live_func)
+    if kb_file is None:
+        return json_error("knowledge base file not found", 404)
+
+    return send_from_directory(
+        str(kb_file.parent),
+        kb_file.name,
+        as_attachment=True,
+        download_name=kb_file.name,
+    )
+
+
+@prefix_bp.route("/listfunctions", methods=["GET"])
+@require_login
+def ListFunctions():
+    tenant = str(request.args.get("tenant", "") or "").strip()
+    namespace = str(request.args.get("namespace", "") or "").strip()
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    is_inferx_admin = can_view_public_tenant(roles)
+    can_manage_functions = user_can_manage_models(roles)
+
+    if tenant != "" and not user_can_access_dashboard_resource(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    try:
+        rows = list_function_rows(tenant=tenant, namespace=namespace)
+    except Exception as e:
+        return json_error(str(e), 500)
+
+    visible_rows = []
+    for row in rows:
+        if deny_public_tenant_request(row["tenant"]) is not None:
+            continue
+        if not user_can_access_dashboard_resource(roles, row["tenant"], row["namespace"]):
+            continue
+
+        live_func = None
+        live_unavailable = True
+        try:
+            func_resp, func_payload = getfunc_response(row["tenant"], row["namespace"], row["name"])
+            if func_resp.ok and isinstance(func_payload, dict):
+                live_func = func_payload
+                live_unavailable = False
+            else:
+                live_unavailable = True
+        except Exception:
+            live_unavailable = True
+
+        detail = build_function_detail_view(row, live_func=live_func, live_unavailable=live_unavailable)
+        state_label = detail["state"]
+        if not live_unavailable and isinstance(live_func, dict):
+            func_health_state = str((((live_func.get("func") or {}).get("object") or {}).get("status") or {}).get("state") or "").strip()
+            state_label = infer_model_status(live_func.get("pods", []), func_health_state).get("label", state_label)
+        visible_rows.append({
+            "tenant": row["tenant"],
+            "namespace": row["namespace"],
+            "name": row["name"],
+            "preset": row["preset"],
+            "token_length": row["token_length"],
+            "state": state_label,
+            "gpu_count": detail["gpu_count"],
+            "is_live_available": detail["is_live_available"],
+            "can_manage": has_admin_role_for_model(roles, row["tenant"], row["namespace"]),
+            "detail_href": dashboard_href(
+                "prefix.FunctionDetail",
+                tenant=row["tenant"],
+                namespace=row["namespace"],
+                name=row["name"],
+            ),
+        })
+
+    return render_template(
+        "function_list.html",
+        functions=visible_rows,
+        can_manage_functions=can_manage_functions,
+    )
+
+
+def render_function_create_page(*, error_message="", conflict_href="", preset_value="", target_tenant="", target_namespace="", function_name=""):
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not user_can_manage_models(roles):
+        return Response("No permission", status=403)
+
+    try:
+        deploy_target = build_catalog_deploy_target_selector_context(roles=roles, inferx_admin=is_inferx_admin_user())
+        preset_options = resolve_function_preset_options()
+    except RuntimeError as e:
+        return json_error(str(e), 502)
+    except Exception as e:
+        return json_error(f"failed to load function presets: {e}", 500)
+
+    return render_template(
+        "function_create.html",
+        preset_options=preset_options,
+        deploy_target=deploy_target,
+        error_message=str(error_message or "").strip(),
+        conflict_href=str(conflict_href or "").strip(),
+        preset_value=str(preset_value or "").strip(),
+        function_name=str(function_name or "").strip(),
+        target_tenant=str(target_tenant or "").strip(),
+        target_namespace=str(target_namespace or "").strip(),
+    )
+
+
+@prefix_bp.route("/function_create", methods=["GET"])
+@require_login
+def FunctionCreate():
+    return render_function_create_page()
+
+
+@prefix_bp.route("/function_create", methods=["POST"])
+@require_login
+def FunctionCreatePost():
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not user_can_manage_models(roles):
+        return Response("No permission", status=403)
+
+    preset = str(request.form.get("preset", "") or "").strip()
+    function_name = str(request.form.get("name", "") or "").strip()
+    requested_tenant = str(request.form.get("tenant", "") or "").strip()
+    requested_namespace = str(request.form.get("namespace", "") or "").strip()
+
+    try:
+        deploy_target = build_catalog_deploy_target_selector_context(roles=roles, inferx_admin=is_inferx_admin_user())
+        tenant, namespace = resolve_catalog_deploy_target_selection(
+            deploy_target,
+            requested_tenant=requested_tenant,
+            requested_namespace=requested_namespace,
+            allow_implicit=True,
+        )
+        validate_function_name_or_raise(function_name)
+    except ValueError as e:
+        return render_function_create_page(
+            error_message=str(e),
+            preset_value=preset,
+            target_tenant=requested_tenant,
+            target_namespace=requested_namespace,
+            function_name=function_name,
+        ), 400
+    except Exception as e:
+        return render_function_create_page(
+            error_message=str(e),
+            preset_value=preset,
+            target_tenant=requested_tenant,
+            target_namespace=requested_namespace,
+            function_name=function_name,
+        ), 500
+
+    if not has_admin_role_for_model(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    preset_option = find_function_preset_option(preset)
+    if preset_option is None:
+        return render_function_create_page(
+            error_message="Selected preset is unavailable.",
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 400
+
+    if find_function_row(tenant, namespace, function_name) is not None:
+        conflict_href = dashboard_href("prefix.FunctionDetail", tenant=tenant, namespace=namespace, name=function_name)
+        return render_function_create_page(
+            error_message="That function name is already in use.",
+            conflict_href=conflict_href,
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 409
+
+    stage_file = knowledgebase_stage_file_path(tenant, namespace, function_name)
+    if not stage_file.exists():
+        return render_function_create_page(
+            error_message="Upload a knowledge base file before creating the function.",
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 400
+
+    try:
+        insert_function_row(
+            tenant=tenant,
+            namespace=namespace,
+            name=function_name,
+            preset=preset_option["preset"],
+            catalog=preset_option["catalog"],
+            token_length=preset_option["token_length"],
+        )
+    except psycopg2.Error as e:
+        if getattr(e, "pgcode", "") == "23505":
+            conflict_href = dashboard_href("prefix.FunctionDetail", tenant=tenant, namespace=namespace, name=function_name)
+            return render_function_create_page(
+                error_message="That function name is already in use.",
+                conflict_href=conflict_href,
+                preset_value=preset,
+                target_tenant=tenant,
+                target_namespace=namespace,
+                function_name=function_name,
+            ), 409
+        return json_error(f"failed to create function row: {e}", 500)
+    except Exception as e:
+        return json_error(str(e), 500)
+
+    try:
+        entry = query_function_mapping_catalog_entry(preset_option["catalog_slug"])
+        deploy_catalog_entry_to_function_target(
+            entry,
+            tenant=tenant,
+            namespace=namespace,
+            name=function_name,
+        )
+    except Exception as e:
+        app.logger.warning(
+            "function create deploy request failed tenant=%s namespace=%s name=%s: %s",
+            tenant,
+            namespace,
+            function_name,
+            e,
+        )
+
+    return redirect(dashboard_href("prefix.FunctionDetail", tenant=tenant, namespace=namespace, name=function_name))
+
+
+@prefix_bp.route("/function", methods=["GET"])
+@require_login
+def FunctionDetail():
+    tenant = str(request.args.get("tenant", "") or "").strip()
+    namespace = str(request.args.get("namespace", "") or "").strip()
+    name = str(request.args.get("name", "") or "").strip()
+
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not user_can_access_dashboard_resource(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    is_inferx_admin = can_view_public_tenant(roles)
+    can_manage = has_admin_role_for_model(roles, tenant, namespace) or is_inferx_admin
+
+    try:
+        function_row = query_function_row(tenant, namespace, name)
+    except LookupError:
+        return render_resource_unavailable_page(
+            resource_kind="Function",
+            resource_name=name,
+            tenant=tenant,
+            namespace=namespace,
+            message="This function is no longer available in the dashboard.",
+            suggestion="It may already have been cleaned up.",
+            primary_href=dashboard_href("prefix.ListFunctions"),
+            primary_label="Back to Functions",
+            status=404,
+        )
+    except Exception as e:
+        return json_error(str(e), 500)
+
+    live_func = None
+    live_unavailable = True
+    try:
+        func_resp, func_payload = getfunc_response(tenant, namespace, name)
+        if func_resp.ok and isinstance(func_payload, dict):
+            live_func = func_payload
+            live_unavailable = False
+    except Exception:
+        live_unavailable = True
+
+    function_detail = build_function_detail_view(function_row, live_func=live_func, live_unavailable=live_unavailable)
+
+    funcspec = "{}"
+    full_funcspec = "{}"
+    func_edit_data = None
+    api_type = "knowledgebase"
+    map_body = {}
+    path = ""
+    funcpolicy = "{}"
+    fails = []
+    snapshotaudit = []
+    initial_model_status = MODEL_STATUS_PENDING
+    client_setup = {}
+    opencode_download_href = ""
+    if function_detail["is_live_available"]:
+        try:
+            sample = live_func["func"]["object"]["spec"]["sample_query"]
+            map_body = sample["body"]
+            api_type = sample["apiType"]
+            path = sample["path"]
+            full_funcspec = json.dumps(live_func["func"]["object"]["spec"], indent=4)
+            func_edit_data = project_func_for_edit(live_func)
+            funcspec = json.dumps(func_edit_data["spec"], indent=4)
+            funcpolicy = live_func.get("policy", "{}")
+            version = live_func["func"]["object"]["spec"]["version"]
+            fails = GetFailLogs(tenant, namespace, name, version)
+            snapshotaudit = GetSnapshotAudit(tenant, namespace, name, version)
+            format_dashboard_timestamps(snapshotaudit, "updatetime")
+            format_dashboard_timestamps(fails, "createtime")
+            func_health_state = str((((live_func.get("func") or {}).get("object") or {}).get("status") or {}).get("state") or "").strip()
+            initial_model_status = infer_model_status(live_func.get("pods", []), func_health_state, fails)
+            onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(tenant)
+            client_setup = build_client_setup_for_ui(
+                tenant=tenant,
+                namespace=namespace,
+                funcname=name,
+                sample_query=sample,
+                apikey=onboarding_apikey,
+                apikey_name=onboarding_apikey_name,
+                spec=((live_func.get("func") or {}).get("object") or {}).get("spec"),
+            )
+            sample_rest_call_for_ui = build_sample_rest_call_for_ui(
+                tenant=tenant,
+                namespace=namespace,
+                funcname=name,
+                sample_query=sample,
+                apikey=onboarding_apikey,
+            )
+            if sample_rest_call_for_ui != "":
+                live_func["sampleRestCall"] = sample_rest_call_for_ui
+                live_func["sampleRestCallDisplay"] = mask_sample_rest_call_for_ui(
+                    sample_rest_call_for_ui,
+                    onboarding_apikey,
+                )
+            if session.get('access_token', '') != '' and client_setup.get("api_base_url"):
+                opencode_download_href = url_for(
+                    "prefix.DownloadModelOpenCodeConfig",
+                    tenant=tenant,
+                    namespace=namespace,
+                    name=name,
+                )
+        except Exception:
+            pass
+
+    return render_template(
+        "func.html",
+        tenant=tenant,
+        namespace=namespace,
+        name=name,
+        func=live_func,
+        fails=fails,
+        snapshotaudit=snapshotaudit,
+        funcspec=funcspec,
+        full_funcspec=full_funcspec,
+        func_edit_data=func_edit_data,
+        apiType=api_type,
+        map=map_body,
+        isAdmin=True,
+        is_inferx_admin=is_inferx_admin,
+        funcpolicy=funcpolicy,
+        path=path,
+        initial_model_status=initial_model_status,
+        client_setup=client_setup,
+        opencode_download_href=opencode_download_href,
+        func_admin_href="",
+        func_user_href="",
+        func_edit_href="",
+        tenant_models_href=dashboard_href("prefix.ListFunctions", tenant=tenant),
+        models_list_href=dashboard_href("prefix.ListFunctions", tenant=tenant, namespace=namespace),
+        is_function=True,
+        function_detail=function_detail,
+        can_manage=can_manage,
+    )
+
+
+@prefix_bp.route("/function/delete/<tenant>/<namespace>/<name>", methods=["POST"])
+@require_login
+def FunctionDelete(tenant, namespace, name):
+    deny_resp = deny_public_tenant_request(tenant)
+    if deny_resp is not None:
+        return deny_resp
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not has_admin_role_for_model(roles, tenant, namespace):
+        return Response("No permission", status=403)
+
+    result = delete_function_via_dashboard(tenant, namespace, name)
+    if not result["ok"]:
+        return json_error(result["message"], result["status"])
+
+    return redirect(dashboard_href("prefix.ListFunctions"))
+
+
+@prefix_bp.route("/function/cleanup/<tenant>/<namespace>/<name>", methods=["POST"])
+@require_login
+def FunctionCleanup(tenant, namespace, name):
+    return FunctionDelete(tenant, namespace, name)
 
 
 @prefix_bp.route("/")
@@ -8059,6 +9011,22 @@ def ListFunc():
         include_public=can_access_public_tenant_in_dashboard(roles),
     )
 
+    try:
+        function_keys = {
+            (str(r.get('tenant', '')), str(r.get('namespace', '')), str(r.get('name', '')))
+            for r in list_function_rows()
+        }
+    except Exception:
+        function_keys = set()
+    funcs = [
+        f for f in funcs
+        if (
+            str((f.get('func') or {}).get('tenant', '')),
+            str((f.get('func') or {}).get('namespace', '')),
+            str((f.get('func') or {}).get('name', '')),
+        ) not in function_keys
+    ]
+
     count = 0
     gpucount = 0
     vram = 0
@@ -8096,11 +9064,7 @@ def ListFunc():
     summary["memory"] = memory
     
 
-    can_manage_models = any(
-        str(role.get('role', '')).lower() == 'admin'
-        and str(role.get('objType', '')).lower() in ('tenant', 'namespace')
-        for role in roles
-    )
+    can_manage_models = user_can_manage_models(roles)
     return render_template(
         "func_list.html",
         funcs=funcs,
@@ -8292,6 +9256,8 @@ def GetFunc():
         func_edit_href=func_edit_href,
         tenant_models_href=tenant_models_href,
         models_list_href=models_list_href,
+        is_function=False,
+        function_detail=None,
     )
 
 

@@ -42,6 +42,12 @@ spec:
                 vllm/vllm-omni:v0.14.0
                 inferx/vibevoice:v0.1.0
                 inferx/inferx-ocr:v0.1.0
+            - name: INFERX_FUNCTION_MAPPINGS
+              value: |
+                [
+                  { "preset": "260K", "token_length": 30000, "catalog": "qwen--qwen2.5-coder-7b-instruct-gptq-int4" },
+                  { "preset": "1M", "token_length": 30000, "catalog": "qwen--qwen2.5-coder-7b-instruct-gptq-int4-v1" }
+                ]
             - name: DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
               value: "false"
             - name: SECRDB_ADDR

@@ -114,3 +114,17 @@ CREATE INDEX idx_endpoints_tags ON Endpoints USING GIN (tags);
 
 CREATE TRIGGER endpoints_updatetime BEFORE UPDATE ON Endpoints
 FOR EACH ROW EXECUTE FUNCTION set_updatetime();
+
+CREATE TABLE functions (
+    id           BIGSERIAL PRIMARY KEY,
+    tenant       VARCHAR NOT NULL,
+    namespace    VARCHAR NOT NULL,
+    name         VARCHAR NOT NULL,
+    preset       VARCHAR NOT NULL,
+    catalog      VARCHAR NOT NULL,
+    token_length INTEGER NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant, namespace, name)
+);
+
+CREATE INDEX idx_functions_tenant_namespace ON functions (tenant, namespace);

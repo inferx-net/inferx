@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .function-list-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .function-empty-state {
+        max-width: 560px;
+        margin: 72px auto;
+        padding: 40px 32px;
+        text-align: center;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fbff;
+    }
+
+    .function-empty-state h2 {
+        margin: 0 0 10px;
+        color: #0f172a;
+    }
+
+    .function-empty-state p {
+        margin: 0 0 18px;
+        color: #475569;
+    }
+
+    .state-unavailable {
+        color: #b91c1c;
+        font-weight: 700;
+    }
+
+    .row-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .row-actions form {
+        margin: 0;
+    }
+</style>
+
+{% if functions and can_manage_functions %}
+<div class="function-list-toolbar">
+    <div>
+        <h2 style="margin: 0;">Functions</h2>
+        <p style="margin: 6px 0 0 0; color: #475569;">
+            Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data.
+        </p>
+    </div>
+    <a class="ix-btn" href="{{ hosturl }}function_create">Create Function</a>
+</div>
+{% elif functions %}
+<div style="margin-bottom: 14px;">
+    <h2 style="margin: 0;">Functions</h2>
+    <p style="margin: 6px 0 0 0; color: #475569;">
+        Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data.
+    </p>
+</div>
+{% endif %}
+
+{% if functions %}
+<table class="ix-table" style="width:100%; text-align:center;">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>GPU Count</th>
+            <th>Preset</th>
+            <th>State</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in functions %}
+        <tr>
+            <td><a href="{{ item.detail_href }}">{{ item.name }}</a></td>
+            <td>{{ item.gpu_count if item.gpu_count is not none else '-' }}</td>
+            <td>{{ item.preset }}</td>
+            <td>
+                {% if not item.is_live_available %}
+                <span class="state-unavailable">unavailable</span>
+                {% else %}
+                {{ item.state }}
+                {% endif %}
+            </td>
+            <td>
+                <div class="row-actions">
+                    <a class="ix-btn secondary" href="{{ item.detail_href }}">Open</a>
+                    {% if item.can_manage %}
+                    <form method="post" action="{{ hosturl }}function/delete/{{ item.tenant | urlencode }}/{{ item.namespace | urlencode }}/{{ item.name | urlencode }}" onsubmit="return confirm('Delete {{ item.name }}?');">
+                        <button type="submit" class="ix-btn danger">Delete</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<section class="function-empty-state">
+    <h2>No functions yet</h2>
+    {% if can_manage_functions %}
+    <p>Create a function from a preset and knowledge base file.</p>
+    <a class="ix-btn" href="{{ hosturl }}function_create">Create Function</a>
+    {% else %}
+    <p>No functions are available for this account yet.</p>
+    {% endif %}
+</section>
+{% endif %}
+{% endblock %}

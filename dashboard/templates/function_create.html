@@ -1,0 +1,453 @@
+{% extends 'base.html' %}
+{% import '_catalog_deploy_target.html' as catalog_deploy_target %}
+{% set fc_tenant_options = deploy_target.tenant_options if deploy_target and deploy_target.tenant_options is defined else [] %}
+{% set fc_selected_tenant = target_tenant or (deploy_target.selected_tenant if deploy_target and deploy_target.selected_tenant is defined else '') %}
+{% set fc_selected_namespace = target_namespace or (deploy_target.selected_namespace if deploy_target and deploy_target.selected_namespace is defined else '') %}
+{% set fc_namespace_options_by_tenant = deploy_target.namespace_options_by_tenant if deploy_target and deploy_target.namespace_options_by_tenant is defined else {} %}
+{% set fc_current_namespace_options = fc_namespace_options_by_tenant.get(fc_selected_tenant, []) if fc_selected_tenant else [] %}
+{% if not fc_selected_namespace and fc_current_namespace_options %}
+    {% for option in fc_current_namespace_options %}
+        {% if option.value == 'default' %}
+            {% set fc_selected_namespace = 'default' %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+{% set fc_single_fixed_namespace = (fc_tenant_options | length) == 1 and (fc_current_namespace_options | length) == 1 %}
+{% set fc_deploy_target = deploy_target.copy() if deploy_target else {} %}
+{% if fc_deploy_target %}
+    {% set _ = fc_deploy_target.update({'resolved_summary_label': 'Target:', 'unresolved_summary_label': 'Deploy target is not specified:', 'action_label': 'Create Function', 'preferred_namespace_value': 'default', 'selected_namespace': fc_selected_namespace, 'resolved': (fc_selected_tenant != '' and fc_selected_namespace != '')}) %}
+{% endif %}
+{% if fc_deploy_target and not fc_deploy_target.resolved and fc_deploy_target.message == 'Select a namespace to enable Deploy Now.' %}
+    {% set _ = fc_deploy_target.update({'message': 'select a namespace'}) %}
+{% endif %}
+
+{% block content %}
+<style>
+    .function-create-page {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+    }
+
+    .function-panel {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .function-panel h2 {
+        margin: 0 0 10px;
+    }
+
+    .function-panel .catalog-deploy-target {
+        max-width: 580px;
+    }
+
+    .catalog-deploy-target-summary {
+        color: #334155;
+        margin-bottom: 10px;
+    }
+
+    .catalog-deploy-target-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(180px, 280px));
+        gap: 12px;
+        align-items: end;
+    }
+
+    .catalog-deploy-target-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #475569;
+    }
+
+    .catalog-deploy-target-field select,
+    .catalog-deploy-target-readonly {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #fff;
+        padding: 8px 10px;
+        font-size: 14px;
+        color: #0f172a;
+        min-height: 38px;
+    }
+
+    .catalog-deploy-target-readonly {
+        display: flex;
+        align-items: center;
+        background: #f8fafc;
+    }
+
+    .function-form-grid {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 10px 14px;
+        align-items: start;
+    }
+
+    .function-form-grid label {
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .function-form-grid input[type="text"] {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    .preset-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .preset-table th,
+    .preset-table td {
+        border: 1px solid #d7dee8;
+        padding: 10px 12px;
+        text-align: left;
+    }
+
+    .preset-table th {
+        background: #f8fafc;
+    }
+
+    .error-box {
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        border: 1px solid #fecaca;
+        background: #fef2f2;
+        color: #991b1b;
+        border-radius: 6px;
+    }
+
+    .hint {
+        color: #475569;
+        font-size: 13px;
+    }
+
+    .name-error {
+        color: #b91c1c;
+        font-size: 13px;
+        min-height: 18px;
+        margin-top: 6px;
+    }
+
+    .upload-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .upload-status {
+        min-height: 20px;
+        font-size: 13px;
+        color: #475569;
+        margin-top: 8px;
+    }
+
+    .page-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        align-items: center;
+    }
+
+    @media (max-width: 720px) {
+        .catalog-deploy-target-controls {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+</style>
+
+<div class="function-create-page">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px;">
+        <div>
+            <h1 style="margin:0;">Create Function</h1>
+            <div class="hint">Choose a preset, name the function, and upload a knowledge base file.</div>
+        </div>
+        <a class="ix-btn secondary" href="{{ hosturl }}listfunctions">Back to Functions</a>
+    </div>
+
+    {% if error_message %}
+    <div class="error-box">
+        {{ error_message }}
+        {% if conflict_href %}
+        <a href="{{ conflict_href }}">Open existing function</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if preset_options %}
+    <form id="function-create-form" method="post" action="{{ hosturl }}function_create">
+        <div class="function-panel">
+            <h2>Deploy Target</h2>
+            {% if fc_single_fixed_namespace %}
+            <div class="catalog-deploy-target-summary" style="margin-bottom:0;">
+                <strong>Deploy Namespace:</strong>
+                <span>{{ fc_selected_namespace or fc_current_namespace_options[0].value }}</span>
+            </div>
+            {% else %}
+            {{ catalog_deploy_target.render_catalog_deploy_target('function-create-deploy-target', fc_deploy_target) }}
+            {% endif %}
+            <input id="target-tenant-input" type="hidden" name="tenant" value="{{ fc_selected_tenant }}">
+            <input id="target-namespace-input" type="hidden" name="namespace" value="{{ fc_selected_namespace or (fc_current_namespace_options[0].value if fc_single_fixed_namespace else '') }}">
+        </div>
+
+        <div class="function-panel">
+            <h2>1. Select Preset</h2>
+            <table class="preset-table">
+                <thead>
+                    <tr>
+                        <th style="width:56px;">Use</th>
+                        <th>Preset</th>
+                        <th>Model Name</th>
+                        <th>Token Length</th>
+                        <th>GPU Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for option in preset_options %}
+                    <tr>
+                        <td style="text-align:center;">
+                            <input type="radio" name="preset" value="{{ option.preset }}" {% if preset_value == option.preset or (not preset_value and loop.first) %}checked{% endif %}>
+                        </td>
+                        <td>{{ option.preset }}</td>
+                        <td>{{ option.model_name }}</td>
+                        <td>{{ option.token_length }}</td>
+                        <td>{{ option.gpu_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="function-panel">
+            <h2>2. Name Function</h2>
+            <div class="function-form-grid">
+                <label for="function-name-input">Function Name</label>
+                <div>
+                    <input id="function-name-input" type="text" name="name" value="{{ function_name }}" autocomplete="off" spellcheck="false" placeholder="example-kb-function">
+                    <div class="hint">Letters, numbers, hyphens, underscores, and periods only.</div>
+                    <div id="function-name-error" class="name-error"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="function-panel">
+            <h2>3. Upload Knowledge Base File</h2>
+            <div class="function-form-grid">
+                <label for="kb-file-input">KB File</label>
+                <div>
+                    <input id="kb-file-input" type="file" disabled>
+                    <div class="hint">The function name is locked after upload. Clear the upload to change it.</div>
+                    <div class="upload-actions" style="margin-top:10px;">
+                        <button id="upload-kb-btn" type="button" class="ix-btn secondary" disabled>Upload KB File</button>
+                        <button id="clear-kb-btn" type="button" class="ix-btn danger" disabled>Clear Upload</button>
+                    </div>
+                    <div id="kb-upload-status" class="upload-status"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page-actions">
+            <a class="ix-btn secondary" href="{{ hosturl }}listfunctions">Cancel</a>
+            <button id="submit-function-btn" type="submit" class="ix-btn" disabled>Create Function</button>
+        </div>
+    </form>
+    {% else %}
+    <div class="function-panel">
+        <h2>No presets available</h2>
+        <p class="hint" style="margin:0;">No configured function preset currently resolves to a visible catalog entry.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% include '_catalog_deploy_target_script.html' %}
+<script>
+    (function () {
+        const form = document.getElementById('function-create-form');
+        if (!form) {
+            return;
+        }
+
+        const NAME_RE = /^[A-Za-z0-9._-]+$/;
+        const root = document.getElementById('function-create-deploy-target');
+        const hiddenTenantInput = document.getElementById('target-tenant-input');
+        const hiddenNamespaceInput = document.getElementById('target-namespace-input');
+        const nameInput = document.getElementById('function-name-input');
+        const nameError = document.getElementById('function-name-error');
+        const kbFileInput = document.getElementById('kb-file-input');
+        const uploadBtn = document.getElementById('upload-kb-btn');
+        const clearBtn = document.getElementById('clear-kb-btn');
+        const uploadStatus = document.getElementById('kb-upload-status');
+        const submitBtn = document.getElementById('submit-function-btn');
+        const deployTargetState = {{ fc_deploy_target | tojson }};
+
+        let uploaded = false;
+        let lockedName = '';
+
+        function selectedPreset() {
+            const checked = form.querySelector('input[name="preset"]:checked');
+            return checked ? String(checked.value || '').trim() : '';
+        }
+
+        function currentTenant() {
+            return String(hiddenTenantInput.value || '').trim();
+        }
+
+        function currentNamespace() {
+            return String(hiddenNamespaceInput.value || '').trim();
+        }
+
+        function currentName() {
+            return String(nameInput.value || '').trim();
+        }
+
+        function validName() {
+            return NAME_RE.test(currentName());
+        }
+
+        function setUploadStatus(message, isError) {
+            uploadStatus.textContent = message || '';
+            uploadStatus.style.color = isError ? '#b91c1c' : '#475569';
+        }
+
+        function extractResponseError(text, fallback) {
+            if (!text) {
+                return fallback;
+            }
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed && typeof parsed.error === 'string' && parsed.error.trim() !== '') {
+                    return parsed.error.trim();
+                }
+            } catch (_err) {
+            }
+            return text;
+        }
+
+        function syncNameState() {
+            const valid = validName();
+            nameInput.readOnly = uploaded;
+            nameError.textContent = valid || currentName() === '' ? '' : 'Use letters, numbers, hyphens, underscores, and periods only.';
+            return valid;
+        }
+
+        function syncButtons() {
+            const targetReady = currentTenant() !== '' && currentNamespace() !== '';
+            const presetReady = selectedPreset() !== '';
+            const nameReady = syncNameState();
+            kbFileInput.disabled = uploaded || !targetReady || !presetReady || !nameReady;
+            uploadBtn.disabled = uploaded || !targetReady || !presetReady || !nameReady || !kbFileInput.files || kbFileInput.files.length === 0;
+            clearBtn.disabled = !uploaded;
+            submitBtn.disabled = !uploaded || !targetReady || !presetReady;
+        }
+
+        const controller = window.createCatalogDeployTargetController({
+            root,
+            initialState: deployTargetState,
+        });
+        if (controller && typeof controller.refresh === 'function') {
+            const originalRefresh = controller.refresh;
+            controller.refresh = function () {
+                const summary = originalRefresh();
+                const selection = controller.getSelection ? controller.getSelection() : { tenant: '', namespace: '' };
+                hiddenTenantInput.value = selection.tenant || '';
+                hiddenNamespaceInput.value = selection.namespace || '';
+                syncButtons();
+                return summary;
+            };
+            controller.refresh();
+        }
+
+        nameInput.addEventListener('input', syncButtons);
+        kbFileInput.addEventListener('change', syncButtons);
+        form.querySelectorAll('input[name="preset"]').forEach((radio) => {
+            radio.addEventListener('change', syncButtons);
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            const file = kbFileInput.files && kbFileInput.files[0] ? kbFileInput.files[0] : null;
+            if (!file) {
+                setUploadStatus('Select a file to upload.', true);
+                syncButtons();
+                return;
+            }
+            if (!validName()) {
+                setUploadStatus('Enter a valid function name before upload. Use letters, numbers, hyphens, underscores, and periods only.', true);
+                syncButtons();
+                return;
+            }
+
+            const tenant = currentTenant();
+            const namespace = currentNamespace();
+            const name = currentName();
+            const formData = new FormData();
+            formData.append('file', file);
+
+            uploadBtn.disabled = true;
+            setUploadStatus('Uploading KB file...', false);
+            try {
+                const resp = await fetch(`/kb/upload/${encodeURIComponent(tenant)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const text = await resp.text();
+                if (!resp.ok) {
+                    throw new Error(extractResponseError(text, `Upload failed (HTTP ${resp.status})`));
+                }
+                uploaded = true;
+                lockedName = name;
+                kbFileInput.value = '';
+                setUploadStatus(`Uploaded ${file.name}.`, false);
+            } catch (err) {
+                setUploadStatus(err.message || String(err), true);
+            }
+            syncButtons();
+        });
+
+        clearBtn.addEventListener('click', async () => {
+            const tenant = currentTenant();
+            const namespace = currentNamespace();
+            const name = lockedName || currentName();
+            clearBtn.disabled = true;
+            setUploadStatus('Clearing uploaded KB file...', false);
+            try {
+                const resp = await fetch(`/kb/delete/${encodeURIComponent(tenant)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+                    method: 'POST'
+                });
+                const text = await resp.text();
+                if (!resp.ok) {
+                    throw new Error(extractResponseError(text, `Clear failed (HTTP ${resp.status})`));
+                }
+                uploaded = false;
+                lockedName = '';
+                setUploadStatus('Upload cleared. You can change the name now.', false);
+            } catch (err) {
+                setUploadStatus(err.message || String(err), true);
+            }
+            syncButtons();
+        });
+
+        form.addEventListener('submit', (event) => {
+            syncButtons();
+            if (!uploaded) {
+                event.preventDefault();
+                setUploadStatus('Upload a knowledge base file before creating the function.', true);
+            }
+        });
+
+        syncButtons();
+    })();
+</script>
+{% endblock %}

@@ -82,6 +82,10 @@
             let selectedNamespace = '';
             let stateMessage = '';
             let showTenantInSummary = true;
+            let resolvedSummaryLabel = 'Deploy Now target:';
+            let unresolvedSummaryLabel = 'Deploy Now unavailable:';
+            let actionLabel = 'Deploy Now';
+            let preferredNamespaceValue = '';
             let tenantHighlightedIndex = -1;
 
             function applyState(nextState) {
@@ -95,6 +99,10 @@
                 selectedNamespace = String(state.selected_namespace || '').trim();
                 stateMessage = String(state.message || '').trim();
                 showTenantInSummary = state.show_tenant_in_summary !== false;
+                resolvedSummaryLabel = String(state.resolved_summary_label || '').trim() || 'Deploy Now target:';
+                unresolvedSummaryLabel = String(state.unresolved_summary_label || '').trim() || 'Deploy Now unavailable:';
+                actionLabel = String(state.action_label || '').trim() || 'Deploy Now';
+                preferredNamespaceValue = String(state.preferred_namespace_value || '').trim();
             }
 
             function getTenantLabel(tenantValue) {
@@ -140,8 +148,19 @@
                     selectedNamespace = namespaceOptions[0].value;
                     return;
                 }
+                if (
+                    preferredNamespaceValue !== ''
+                    && namespaceOptions.some((option) => option.value === preferredNamespaceValue)
+                    && selectedNamespace === ''
+                ) {
+                    selectedNamespace = preferredNamespaceValue;
+                    return;
+                }
                 if (!namespaceOptions.some((option) => option.value === selectedNamespace)) {
-                    selectedNamespace = '';
+                    selectedNamespace = (
+                        preferredNamespaceValue !== ''
+                        && namespaceOptions.some((option) => option.value === preferredNamespaceValue)
+                    ) ? preferredNamespaceValue : '';
                 }
             }
 
@@ -149,21 +168,21 @@
                 if (tenantOptions.length === 0) {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: stateMessage || 'No accessible tenant is available for deployment.',
                     };
                 }
                 if (selectedTenant === '') {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
-                        value: 'Select a tenant to enable Deploy Now.',
+                        label: unresolvedSummaryLabel,
+                        value: `Select a tenant to enable ${actionLabel}.`,
                     };
                 }
                 if (namespaceOptions.length === 0) {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: showTenantInSummary
                             ? `No accessible namespace is available under tenant ${selectedTenant}.`
                             : 'No accessible namespace is available for deployment.',
@@ -172,15 +191,15 @@
                 if (selectedNamespace === '') {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: showTenantInSummary
-                            ? `Select a namespace under tenant ${selectedTenant} to enable Deploy Now.`
-                            : 'Select a namespace to enable Deploy Now.',
+                            ? `Select a namespace under tenant ${selectedTenant} to enable ${actionLabel}.`
+                            : `Select a namespace to enable ${actionLabel}.`,
                     };
                 }
                 return {
                     resolved: true,
-                    label: 'Deploy Now target:',
+                    label: resolvedSummaryLabel,
                     value: showTenantInSummary
                         ? `${getTenantLabel(selectedTenant)} / ${selectedNamespace}`
                         : selectedNamespace,
