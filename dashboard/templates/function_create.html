@@ -155,6 +155,12 @@
         margin-top: 8px;
     }
 
+    .token-count-note {
+        margin-top: 8px;
+        font-size: 13px;
+        color: #0f172a;
+    }
+
     .page-actions {
         display: flex;
         gap: 10px;
@@ -189,6 +195,7 @@
 
     {% if preset_options %}
     <form id="function-create-form" method="post" action="{{ hosturl }}function_create">
+        <input id="kb-token-count-input" type="hidden" value="">
         <div class="function-panel">
             <h2>Deploy Target</h2>
             {% if fc_single_fixed_namespace %}
@@ -209,9 +216,8 @@
                 <thead>
                     <tr>
                         <th style="width:56px;">Use</th>
-                        <th>Preset</th>
                         <th>Model Name</th>
-                        <th>Token Length</th>
+                        <th>Max Token Length</th>
                         <th>GPU Count</th>
                     </tr>
                 </thead>
@@ -221,7 +227,6 @@
                         <td style="text-align:center;">
                             <input type="radio" name="preset" value="{{ option.preset }}" {% if preset_value == option.preset or (not preset_value and loop.first) %}checked{% endif %}>
                         </td>
-                        <td>{{ option.preset }}</td>
                         <td>{{ option.model_name }}</td>
                         <td>{{ option.token_length }}</td>
                         <td>{{ option.gpu_count }}</td>
@@ -255,6 +260,7 @@
                         <button id="clear-kb-btn" type="button" class="ix-btn danger" disabled>Clear Upload</button>
                     </div>
                     <div id="kb-upload-status" class="upload-status"></div>
+                    <div id="kb-token-count-note" class="token-count-note"></div>
                 </div>
             </div>
         </div>
@@ -290,15 +296,27 @@
         const uploadBtn = document.getElementById('upload-kb-btn');
         const clearBtn = document.getElementById('clear-kb-btn');
         const uploadStatus = document.getElementById('kb-upload-status');
+        const kbTokenCountInput = document.getElementById('kb-token-count-input');
+        const kbTokenCountNote = document.getElementById('kb-token-count-note');
         const submitBtn = document.getElementById('submit-function-btn');
         const deployTargetState = {{ fc_deploy_target | tojson }};
+        const presetOptions = {{ preset_options | tojson }};
 
         let uploaded = false;
         let lockedName = '';
+        let lockedPreset = '';
 
         function selectedPreset() {
             const checked = form.querySelector('input[name="preset"]:checked');
             return checked ? String(checked.value || '').trim() : '';
+        }
+
+        function selectedPresetOption() {
+            const preset = selectedPreset();
+            if (!preset) {
+                return null;
+            }
+            return presetOptions.find((option) => String(option.preset || '').trim() === preset) || null;
         }
 
         function currentTenant() {
@@ -320,6 +338,16 @@
         function setUploadStatus(message, isError) {
             uploadStatus.textContent = message || '';
             uploadStatus.style.color = isError ? '#b91c1c' : '#475569';
+        }
+
+        function setKbTokenCount(count) {
+            if (count === null || count === undefined || count === '') {
+                kbTokenCountInput.value = '';
+                kbTokenCountNote.textContent = '';
+                return;
+            }
+            kbTokenCountInput.value = String(count);
+            kbTokenCountNote.textContent = `KB token count: ${Number(count).toLocaleString()}`;
         }
 
         function extractResponseError(text, fallback) {
@@ -351,6 +379,9 @@
             uploadBtn.disabled = uploaded || !targetReady || !presetReady || !nameReady || !kbFileInput.files || kbFileInput.files.length === 0;
             clearBtn.disabled = !uploaded;
             submitBtn.disabled = !uploaded || !targetReady || !presetReady;
+            form.querySelectorAll('input[name="preset"]').forEach((radio) => {
+                radio.disabled = uploaded;
+            });
         }
 
         const controller = window.createCatalogDeployTargetController({
@@ -392,8 +423,15 @@
             const tenant = currentTenant();
             const namespace = currentNamespace();
             const name = currentName();
+            const presetOption = selectedPresetOption();
+            if (!presetOption || !String(presetOption.model_id || '').trim()) {
+                setUploadStatus('The selected preset is missing a model identifier.', true);
+                syncButtons();
+                return;
+            }
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('model', String(presetOption.model_id || '').trim());
 
             uploadBtn.disabled = true;
             setUploadStatus('Uploading KB file...', false);
@@ -406,11 +444,15 @@
                 if (!resp.ok) {
                     throw new Error(extractResponseError(text, `Upload failed (HTTP ${resp.status})`));
                 }
+                const payload = text ? JSON.parse(text) : {};
                 uploaded = true;
                 lockedName = name;
+                lockedPreset = selectedPreset();
                 kbFileInput.value = '';
+                setKbTokenCount(payload.kb_token_count);
                 setUploadStatus(`Uploaded ${file.name}.`, false);
             } catch (err) {
+                setKbTokenCount(null);
                 setUploadStatus(err.message || String(err), true);
             }
             syncButtons();
@@ -432,6 +474,8 @@
                 }
                 uploaded = false;
                 lockedName = '';
+                lockedPreset = '';
+                setKbTokenCount(null);
                 setUploadStatus('Upload cleared. You can change the name now.', false);
             } catch (err) {
                 setUploadStatus(err.message || String(err), true);
@@ -444,9 +488,19 @@
             if (!uploaded) {
                 event.preventDefault();
                 setUploadStatus('Upload a knowledge base file before creating the function.', true);
+                return;
             }
+            if (lockedPreset !== '' && selectedPreset() !== lockedPreset) {
+                event.preventDefault();
+                setUploadStatus('Clear and re-upload the KB file after changing presets.', true);
+                return;
+            }
+            form.querySelectorAll('input[name="preset"]').forEach((radio) => {
+                radio.disabled = false;
+            });
         });
 
+        setKbTokenCount(null);
         syncButtons();
     })();
 </script>

@@ -52,7 +52,7 @@
     <div>
         <h2 style="margin: 0;">Functions</h2>
         <p style="margin: 6px 0 0 0; color: #475569;">
-            Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data.
+            Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data. KB tokens is the knowlege base token count, max token length is the maxium token count the model can handle.
         </p>
     </div>
     <a class="ix-btn" href="{{ hosturl }}function_create">Create Function</a>
@@ -61,7 +61,7 @@
 <div style="margin-bottom: 14px;">
     <h2 style="margin: 0;">Functions</h2>
     <p style="margin: 6px 0 0 0; color: #475569;">
-        Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data.
+        Functions are models paired with a knowledge base. When users send prompts to a function, InferX uses the uploaded knowledge as context so responses are grounded in that function’s data. KB tokens is the knowlege base token count, max token length is the maxium token count the model can handle.
     </p>
 </div>
 {% endif %}
@@ -71,8 +71,10 @@
     <thead>
         <tr>
             <th>Name</th>
+            <th>Model Name</th>
+            <th>Max Token Length</th>
+            <th>KB Tokens</th>
             <th>GPU Count</th>
-            <th>Preset</th>
             <th>State</th>
             <th>Actions</th>
         </tr>
@@ -81,8 +83,10 @@
         {% for item in functions %}
         <tr>
             <td><a href="{{ item.detail_href }}">{{ item.name }}</a></td>
+            <td>{{ item.model_name if item.model_name else '-' }}</td>
+            <td>{{ item.total_token_length }}</td>
+            <td>{{ item.kb_token_count if item.kb_token_count is not none else '-' }}</td>
             <td>{{ item.gpu_count if item.gpu_count is not none else '-' }}</td>
-            <td>{{ item.preset }}</td>
             <td>
                 {% if not item.is_live_available %}
                 <span class="state-unavailable">unavailable</span>

@@ -63,7 +63,7 @@ use crate::audit::{
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
-use crate::gateway::tokenizer::ModelsFuncCall;
+use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
@@ -92,7 +92,7 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SqlSecret};
-use super::tokenizer::KnowledgeBaseRoute;
+// use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::TokenizerRoute;
 use super::tokenizer::NormalizeFuncRequest;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
@@ -588,15 +588,21 @@ impl HttpGateway {
             .route("/models/*rest", post(ModelsFuncCall))
             .route("/models/*rest", get(ModelsFuncCall))
             .route("/models/*rest", head(ModelsFuncCall))
+            .route(
+                "/kb/token-count/:tenant/:namespace/:name",
+                post(CountKnowledgeBaseTokens),
+            )
             .route("/funccall/*rest", post(FuncCall))
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
             .route("/tokenizer/*rest", post(TokenizerRoute))
             .route("/tokenizer/*rest", get(TokenizerRoute))
             .route("/tokenizer/*rest", head(TokenizerRoute))
-            .route("/kb/*rest", post(KnowledgeBaseRoute))
-            .route("/kb/*rest", get(KnowledgeBaseRoute))
-            .route("/kb/*rest", head(KnowledgeBaseRoute))
+            // Experimental KB route family. Disabled for now to avoid
+            // overlapping with `/kb/token-count/...` in the router.
+            // .route("/kb/*rest", post(KnowledgeBaseRoute))
+            // .route("/kb/*rest", get(KnowledgeBaseRoute))
+            // .route("/kb/*rest", head(KnowledgeBaseRoute))
             .route("/prompt/", post(PostPrompt))
             .route("/debug/func_agents", get(GetFuncAgentsState))
             .route(

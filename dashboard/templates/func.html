@@ -255,16 +255,18 @@
         <table class="ix-table function-meta-table">
             <tbody>
                 <tr>
-                    <th>Preset</th>
-                    <th>Token Length</th>
+                    <th>Model Name</th>
+                    <th>Max Token Length</th>
+                    <th>KB Tokens</th>
                     <th>GPU Count</th>
                     <th>Status</th>
                     <th>Created</th>
                     <th>KB File</th>
                 </tr>
                 <tr>
-                    <td>{{ function_row.preset }}</td>
-                    <td>{{ function_row.token_length }}</td>
+                    <td>{{ function_row.model_name if function_row.model_name else '-' }}</td>
+                    <td>{{ function_row.total_token_length }}</td>
+                    <td>{{ function_row.kb_token_count if function_row.kb_token_count is not none else '-' }}</td>
                     <td>{{ function_detail.gpu_count if function_detail.gpu_count is not none else '-' }}</td>
                     <td id="function-status-cell">
                         {% if function_detail.is_live_available %}

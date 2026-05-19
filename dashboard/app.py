@@ -3420,9 +3420,34 @@ def normalize_function_row(row):
         normalized["token_length"] = int(normalized.get("token_length"))
     except Exception:
         normalized["token_length"] = 0
+    kb_token_count = normalized.get("kb_token_count")
+    if kb_token_count is None:
+        normalized["kb_token_count"] = None
+    else:
+        try:
+            normalized["kb_token_count"] = int(kb_token_count)
+        except Exception:
+            normalized["kb_token_count"] = None
     normalized["created_at_display"] = format_catalog_datetime(normalized.get("created_at"))
     normalized["created_at"] = normalize_catalog_datetime_value(normalized.get("created_at"))
     return normalized
+
+
+def resolve_function_model_name(function_row) -> str:
+    row = normalize_function_row(function_row)
+    catalog_slug = str(row.get("catalog", "") or "").strip()
+    if catalog_slug == "":
+        return ""
+    try:
+        entry = query_function_mapping_catalog_entry(catalog_slug)
+        return str(entry.get("display_name", "") or catalog_slug).strip()
+    except Exception:
+        return catalog_slug
+
+
+def resolve_function_total_token_length(function_row) -> int:
+    row = normalize_function_row(function_row)
+    return int(row.get("token_length") or 0)
 
 
 def list_function_rows(*, tenant="", namespace=""):
@@ -3440,7 +3465,7 @@ def list_function_rows(*, tenant="", namespace=""):
         params.append(normalized_namespace)
 
     query = """
-        SELECT id, tenant, namespace, name, preset, catalog, token_length, created_at
+        SELECT id, tenant, namespace, name, preset, catalog, token_length, kb_token_count, created_at
         FROM functions
     """
     if where_clauses:
@@ -3461,7 +3486,7 @@ def list_function_rows(*, tenant="", namespace=""):
 def query_function_row(tenant: str, namespace: str, name: str):
     ensure_functions_db_available()
     query = """
-        SELECT id, tenant, namespace, name, preset, catalog, token_length, created_at
+        SELECT id, tenant, namespace, name, preset, catalog, token_length, kb_token_count, created_at
         FROM functions
         WHERE tenant = %s AND namespace = %s AND name = %s
     """
@@ -3485,17 +3510,17 @@ def find_function_row(tenant: str, namespace: str, name: str):
         return None
 
 
-def insert_function_row(*, tenant: str, namespace: str, name: str, preset: str, catalog: str, token_length: int):
+def insert_function_row(*, tenant: str, namespace: str, name: str, preset: str, catalog: str, token_length: int, kb_token_count: int | None):
     ensure_functions_db_available()
     query = """
-        INSERT INTO functions (tenant, namespace, name, preset, catalog, token_length)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id, tenant, namespace, name, preset, catalog, token_length, created_at
+        INSERT INTO functions (tenant, namespace, name, preset, catalog, token_length, kb_token_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id, tenant, namespace, name, preset, catalog, token_length, kb_token_count, created_at
     """
     try:
         with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute(query, (tenant, namespace, name, preset, catalog, token_length))
+                cursor.execute(query, (tenant, namespace, name, preset, catalog, token_length, kb_token_count))
                 row = cursor.fetchone()
             conn.commit()
     except psycopg2.Error as e:
@@ -3510,7 +3535,7 @@ def delete_function_row(tenant: str, namespace: str, name: str):
     query = """
         DELETE FROM functions
         WHERE tenant = %s AND namespace = %s AND name = %s
-        RETURNING id, tenant, namespace, name, preset, catalog, token_length, created_at
+        RETURNING id, tenant, namespace, name, preset, catalog, token_length, kb_token_count, created_at
     """
     try:
         with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
@@ -3549,14 +3574,27 @@ def query_function_mapping_catalog_entry(catalog_slug: str):
 
 def resolve_function_preset_options():
     options = []
-    for mapping in get_function_mapping_entries():
+    for idx, mapping in enumerate(get_function_mapping_entries()):
         catalog_slug = str(mapping.get("catalog", "") or "").strip()
         if catalog_slug == "":
             continue
         try:
             entry = query_function_mapping_catalog_entry(catalog_slug)
             spec = validate_catalog_template_spec(entry.get("default_func_spec"))
-        except Exception:
+            model_id = resolve_effective_model_target_from_spec(
+                spec,
+                commands_label="function mapping catalog default_func_spec.commands",
+                sample_query_label="function mapping catalog default_func_spec.sample_query.body.model",
+            )
+        except Exception as e:
+            app.logger.warning(
+                "skipping function preset `%s` from %s[%d] catalog=%s: %s",
+                str(mapping.get("preset", "") or "").strip(),
+                FUNCTION_MAPPINGS_ENV,
+                idx,
+                catalog_slug,
+                e,
+            )
             continue
 
         options.append({
@@ -3564,6 +3602,7 @@ def resolve_function_preset_options():
             "catalog": catalog_slug,
             "token_length": int(mapping["token_length"]),
             "model_name": str(entry.get("display_name", "") or catalog_slug).strip(),
+            "model_id": str(model_id or "").strip(),
             "gpu_count": extract_gpu_count_from_spec(spec) or 0,
             "catalog_slug": str(entry.get("slug", "") or catalog_slug).strip(),
             "catalog_id": int(entry.get("id")),
@@ -3580,8 +3619,77 @@ def find_function_preset_option(preset: str):
     return None
 
 
+def diagnose_function_preset_unavailability(preset: str) -> str:
+    normalized_preset = str(preset or "").strip()
+    if normalized_preset == "":
+        return "Preset is required."
+
+    mappings = get_function_mapping_entries()
+    matching_mapping = None
+    for idx, mapping in enumerate(mappings):
+        if str(mapping.get("preset", "") or "").strip() == normalized_preset:
+            matching_mapping = (idx, mapping)
+            break
+
+    if matching_mapping is None:
+        return f"Preset `{normalized_preset}` is not configured."
+
+    idx, mapping = matching_mapping
+    catalog_slug = str(mapping.get("catalog", "") or "").strip()
+    if catalog_slug == "":
+        return (
+            f"Preset `{normalized_preset}` is misconfigured: "
+            f"{FUNCTION_MAPPINGS_ENV}[{idx}].catalog is empty."
+        )
+
+    try:
+        entry = query_function_mapping_catalog_entry(catalog_slug)
+    except Exception as e:
+        app.logger.warning(
+            "function preset `%s` unavailable while loading catalog `%s`: %s",
+            normalized_preset,
+            catalog_slug,
+            e,
+        )
+        return f"Preset `{normalized_preset}` is unavailable: failed to load catalog `{catalog_slug}`."
+
+    try:
+        spec = validate_catalog_template_spec(entry.get("default_func_spec"))
+        model_id = resolve_effective_model_target_from_spec(
+            spec,
+            commands_label="function mapping catalog default_func_spec.commands",
+            sample_query_label="function mapping catalog default_func_spec.sample_query.body.model",
+        ).strip()
+    except Exception as e:
+        app.logger.warning(
+            "function preset `%s` unavailable while resolving model from catalog `%s`: %s",
+            normalized_preset,
+            catalog_slug,
+            e,
+        )
+        return (
+            f"Preset `{normalized_preset}` is unavailable: catalog `{catalog_slug}` "
+            f"does not resolve to a valid effective model target."
+        )
+
+    if model_id == "":
+        app.logger.warning(
+            "function preset `%s` unavailable: catalog `%s` resolved an empty model id",
+            normalized_preset,
+            catalog_slug,
+        )
+        return (
+            f"Preset `{normalized_preset}` is unavailable: catalog `{catalog_slug}` "
+            f"resolved an empty effective model target."
+        )
+
+    return f"Preset `{normalized_preset}` is unavailable."
+
+
 def build_function_detail_view(function_row, *, live_func=None, live_unavailable=False):
     row = normalize_function_row(function_row)
+    row["model_name"] = resolve_function_model_name(row)
+    row["total_token_length"] = resolve_function_total_token_length(row)
     live_spec = ((((live_func or {}).get("func") or {}).get("object") or {}).get("spec")) or {}
     live_status = ((((live_func or {}).get("func") or {}).get("object") or {}).get("status")) or {}
     is_live_available = isinstance(live_func, dict) and not live_unavailable
@@ -3649,6 +3757,46 @@ def deploy_catalog_entry_to_function_target(entry, *, tenant: str, namespace: st
         json=gateway_req,
         timeout=60,
     )
+
+
+class KbTokenCountGatewayError(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = int(status_code)
+
+
+def count_kb_tokens_via_gateway(*, tenant: str, namespace: str, name: str, model: str):
+    normalized_model = str(model or "").strip()
+    if normalized_model == "":
+        raise ValueError("model is required")
+
+    encoded_tenant = quote(tenant, safe="")
+    encoded_namespace = quote(namespace, safe="")
+    encoded_name = quote(name, safe="")
+    url = f"{get_gateway_url()}/kb/token-count/{encoded_tenant}/{encoded_namespace}/{encoded_name}"
+
+    try:
+        resp = requests.post(
+            url,
+            headers=gateway_headers(include_json=True),
+            json={"model": normalized_model},
+            timeout=60,
+        )
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"failed to reach gateway: {e}")
+
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload) or f"gateway returned HTTP {resp.status_code}"
+        raise KbTokenCountGatewayError(detail, resp.status_code)
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("gateway returned an invalid KB token count response")
+
+    try:
+        return int(payload.get("kb_token_count"))
+    except Exception:
+        raise RuntimeError("gateway response is missing `kb_token_count`")
 
 
 def delete_function_dashboard_artifacts(tenant: str, namespace: str, name: str):
@@ -8491,6 +8639,9 @@ def upload_knowledgebase_file(tenant, namespace, name):
     filename = str(getattr(uploaded, "filename", "") or "").strip()
     if filename == "":
         return json_error("no file selected", 400)
+    model = str(request.form.get("model", "") or "").strip()
+    if model == "":
+        return json_error("missing `model`", 400)
 
     try:
         stage_file = knowledgebase_stage_file_path(tenant, namespace, name)
@@ -8499,7 +8650,39 @@ def upload_knowledgebase_file(tenant, namespace, name):
     except Exception as e:
         return json_error(f"failed to store KB file: {e}", 500)
 
-    return jsonify({"ok": True, "path": str(stage_file)})
+    try:
+        kb_token_count = count_kb_tokens_via_gateway(
+            tenant=tenant,
+            namespace=namespace,
+            name=name,
+            model=model,
+        )
+    except ValueError as e:
+        try:
+            stage_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return json_error(str(e), 400)
+    except KbTokenCountGatewayError as e:
+        try:
+            stage_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return json_error(str(e), e.status_code)
+    except RuntimeError as e:
+        try:
+            stage_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return json_error(str(e), 502)
+    except Exception as e:
+        try:
+            stage_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return json_error(f"failed to count KB tokens: {e}", 500)
+
+    return jsonify({"ok": True, "path": str(stage_file), "kb_token_count": kb_token_count, "model": model})
 
 
 @prefix_bp.route("/kb/delete/<tenant>/<namespace>/<name>", methods=["POST"])
@@ -8625,8 +8808,10 @@ def ListFunctions():
             "tenant": row["tenant"],
             "namespace": row["namespace"],
             "name": row["name"],
-            "preset": row["preset"],
-            "token_length": row["token_length"],
+            "model_name": detail["row"]["model_name"],
+            "token_length": detail["row"]["token_length"],
+            "kb_token_count": detail["row"]["kb_token_count"],
+            "total_token_length": detail["row"]["total_token_length"],
             "state": state_label,
             "gpu_count": detail["gpu_count"],
             "is_live_available": detail["is_live_available"],
@@ -8729,8 +8914,9 @@ def FunctionCreatePost():
 
     preset_option = find_function_preset_option(preset)
     if preset_option is None:
+        error_message = diagnose_function_preset_unavailability(preset)
         return render_function_create_page(
-            error_message="Selected preset is unavailable.",
+            error_message=error_message,
             preset_value=preset,
             target_tenant=tenant,
             target_namespace=namespace,
@@ -8759,6 +8945,46 @@ def FunctionCreatePost():
         ), 400
 
     try:
+        kb_token_count = count_kb_tokens_via_gateway(
+            tenant=tenant,
+            namespace=namespace,
+            name=function_name,
+            model=preset_option["model_id"],
+        )
+    except ValueError as e:
+        return render_function_create_page(
+            error_message=str(e),
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 400
+    except KbTokenCountGatewayError as e:
+        return render_function_create_page(
+            error_message=f"Failed to count KB tokens: {e}",
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), e.status_code
+    except RuntimeError as e:
+        return render_function_create_page(
+            error_message=f"Failed to count KB tokens: {e}",
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 502
+    except Exception as e:
+        return render_function_create_page(
+            error_message=f"Failed to count KB tokens: {e}",
+            preset_value=preset,
+            target_tenant=tenant,
+            target_namespace=namespace,
+            function_name=function_name,
+        ), 500
+
+    try:
         insert_function_row(
             tenant=tenant,
             namespace=namespace,
@@ -8766,6 +8992,7 @@ def FunctionCreatePost():
             preset=preset_option["preset"],
             catalog=preset_option["catalog"],
             token_length=preset_option["token_length"],
+            kb_token_count=kb_token_count,
         )
     except psycopg2.Error as e:
         if getattr(e, "pgcode", "") == "23505":

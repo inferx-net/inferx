@@ -123,6 +123,7 @@ CREATE TABLE functions (
     preset       VARCHAR NOT NULL,
     catalog      VARCHAR NOT NULL,
     token_length INTEGER NOT NULL,
+    kb_token_count INTEGER,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant, namespace, name)
 );
