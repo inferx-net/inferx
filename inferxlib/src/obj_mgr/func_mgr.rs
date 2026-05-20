@@ -214,8 +214,8 @@ pub enum ApiType {
     Text2Image,
     #[serde(rename = "text2audio")]
     Text2Audio,
-    #[serde(rename = "knowledgebase", alias = "knowledagebase")]
-    KnowledageBase,
+    #[serde(rename = "knowledgebase")]
+    KnowledgeBase,
 }
 
 impl Default for ApiType {

@@ -547,7 +547,7 @@ async fn ResolveRouteContext(
 
     let apiType = func.object.spec.SampleCallType();
     let kbPrompt = match apiType {
-        ApiType::KnowledageBase => {
+        ApiType::KnowledgeBase => {
             let promptfilename = format!(
                 "{}/{}.{}.{}/{}/kb.data",
                 KB_DIR,
@@ -1007,7 +1007,7 @@ pub async fn NormalizeFuncRequest(
     remain_path: &str,
     body_bytes: &[u8],
 ) -> SResult<Option<NormalizedFuncRequest>, StatusCode> {
-    if route.func.object.spec.SampleCallType() != ApiType::KnowledageBase {
+    if route.func.object.spec.SampleCallType() != ApiType::KnowledgeBase {
         return Ok(None);
     }
 
