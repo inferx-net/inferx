@@ -13,7 +13,7 @@
 // limitations under the License
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{Json, Path as AxumPath, Request, State};
 use axum::http::{StatusCode, Uri};
 use axum::response::Response;
 use axum::Extension;
@@ -632,6 +632,101 @@ pub struct PromptReq {
     pub funcName: String,
     pub prompt: String,
     pub image: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KbTokenCountRequest {
+    pub model: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KbTokenCountResponse {
+    pub kb_token_count: usize,
+}
+
+fn JsonResp<T: Serialize>(status: StatusCode, body: &T) -> SResult<Response<Body>, StatusCode> {
+    let bytes = serde_json::to_vec(body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
+fn PlainResp(status: StatusCode, body: &str) -> Response<Body> {
+    Response::builder()
+        .status(status)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+pub async fn CountKnowledgeBaseTokens(
+    Extension(token): Extension<Arc<AccessToken>>,
+    AxumPath((tenant, namespace, name)): AxumPath<(String, String, String)>,
+    Json(req): Json<KbTokenCountRequest>,
+) -> SResult<Response<Body>, StatusCode> {
+    if !token.IsNamespaceAdmin(&tenant, &namespace) {
+        return Ok(PlainResp(StatusCode::FORBIDDEN, "service failure: No permission"));
+    }
+
+    let model = req.model.trim();
+    if model.is_empty() {
+        return Ok(PlainResp(
+            StatusCode::BAD_REQUEST,
+            "service failure: missing model",
+        ));
+    }
+
+    let kb_file = format!("{}/{}.{}.{}/kb.data", KB_DIR, tenant, namespace, name);
+    let kb_prompt = match std::fs::read_to_string(&kb_file) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PlainResp(
+                StatusCode::NOT_FOUND,
+                "service failure: kb.data not found",
+            ));
+        }
+        Err(_) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: failed to read kb.data",
+            ));
+        }
+    };
+
+    let tok = match GetOrLoadTokenizer(model).await {
+        Ok(tok) => tok,
+        Err(StatusCode::NOT_FOUND) => {
+            return Ok(PlainResp(
+                StatusCode::BAD_REQUEST,
+                "service failure: model resolution failed",
+            ));
+        }
+        Err(StatusCode::INTERNAL_SERVER_ERROR) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: tokenizer loading failed",
+            ));
+        }
+        Err(status) => return Ok(PlainResp(status, "service failure: tokenizer failed")),
+    };
+
+    let count = match tok.tokenizer.encode(&*kb_prompt, true) {
+        Ok(encoded) => encoded.len(),
+        Err(_) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: tokenization failed",
+            ));
+        }
+    };
+
+    JsonResp(
+        StatusCode::OK,
+        &KbTokenCountResponse {
+            kb_token_count: count,
+        },
+    )
 }
 
 pub async fn ModelsFuncCall(

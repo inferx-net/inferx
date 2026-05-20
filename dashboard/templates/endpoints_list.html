@@ -391,7 +391,12 @@
                         <div class="ix-row-actions">
                             {% if state.code == 'published' %}
                             <a class="ix-btn secondary" href="{{ url_for('prefix.EndpointAdminEdit', slug=slug) }}">Edit</a>
-                            <button type="button" class="ix-btn danger" onclick="toggleEndpointPublish(this, {{ slug|tojson }}, false)">Unpublish</button>
+                            <button
+                                type="button"
+                                class="ix-btn danger endpoint-unpublish-btn"
+                                data-unpublish-url="{{ url_for('prefix.EndpointAdminUnpublish', slug=slug) }}"
+                                data-endpoint-slug="{{ slug }}"
+                            >Unpublish</button>
                             {% elif state.code in ('ready', 'unpublished') %}
                             <a class="ix-btn secondary" href="{{ url_for('prefix.EndpointAdminEdit', slug=slug) }}">Edit</a>
                             <a class="ix-btn" href="{{ url_for('prefix.EndpointAdminEdit', slug=slug) }}?mode=publish">Publish</a>
@@ -507,15 +512,15 @@
         });
     }
 
-    async function toggleEndpointPublish(button, slug, publish) {
-        if (!slug || publish) return;
+    async function toggleEndpointPublish(button, url, slug, publish) {
+        if (!url || !slug || publish) return;
         const confirmed = window.confirm(`Unpublish ${slug}?`);
         if (!confirmed) return;
         const original = button.textContent;
         button.disabled = true;
         button.textContent = 'Working...';
         try {
-            const resp = await fetch({{ url_for('prefix.EndpointAdminUnpublish', slug='__slug__')|tojson }}.replace('__slug__', encodeURIComponent(slug)), {
+            const resp = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -528,6 +533,17 @@
             button.textContent = original;
         }
     }
+
+    document.querySelectorAll('.endpoint-unpublish-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            toggleEndpointPublish(
+                button,
+                button.getAttribute('data-unpublish-url') || '',
+                button.getAttribute('data-endpoint-slug') || '',
+                false,
+            );
+        });
+    });
 
     ['endpoint-search', 'endpoint-provider-filter', 'endpoint-tag-filter', 'endpoint-use-case-filter'].forEach((id) => {
         const el = document.getElementById(id);

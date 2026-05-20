@@ -656,15 +656,16 @@
         </div>
     </div>
 
-    <div id="kb-upload-panel" class="panel" style="display:none;">
-        <h3>Knowledge Base File</h3>
-        <input id="kb-file-input" type="file">
-        <div class="hint">Upload a single file. The dashboard stores it as <code>kb.data</code> in shared staging before deploy/update.</div>
-        <div class="inline-row" style="margin-top: 10px;">
-            <button id="kb-upload-btn" type="button" class="ix-btn secondary">Upload KB File</button>
-            <span id="kb-upload-status" class="hint"></span>
+        <div id="kb-upload-panel" class="panel" style="display:none;">
+            <h3>Knowledge Base File</h3>
+            <input id="kb-file-input" type="file">
+            <div class="hint">Upload a single file. The dashboard stores it as <code>kb.data</code> in shared staging before deploy/update.</div>
+            <div class="inline-row" style="margin-top: 10px;">
+                <button id="kb-upload-btn" type="button" class="ix-btn secondary">Upload KB File</button>
+                <span id="kb-upload-status" class="hint"></span>
+            </div>
+            <div id="kb-token-count-status" class="hint" style="margin-top: 8px;"></div>
         </div>
-    </div>
 
     <div class="actions-footer">
         <a
@@ -775,6 +776,7 @@
         const kbFileInput = document.getElementById('kb-file-input');
         const kbUploadBtn = document.getElementById('kb-upload-btn');
         const kbUploadStatus = document.getElementById('kb-upload-status');
+        const kbTokenCountStatus = document.getElementById('kb-token-count-status');
         const modelSaveModal = document.getElementById('model-save-modal');
         const modelSaveModalTitle = document.getElementById('model-save-modal-title');
         const modelSaveModalSummary = document.getElementById('model-save-modal-summary');
@@ -807,6 +809,17 @@
             }
             kbUploadStatus.textContent = message || '';
             kbUploadStatus.style.color = isError ? '#b91c1c' : '#475569';
+        }
+
+        function setKbTokenCountStatus(count) {
+            if (!kbTokenCountStatus) {
+                return;
+            }
+            if (count === null || count === undefined || count === '') {
+                kbTokenCountStatus.textContent = '';
+                return;
+            }
+            kbTokenCountStatus.textContent = `KB token count: ${Number(count).toLocaleString()}`;
         }
 
         function setKbUiBusy(busy) {
@@ -845,7 +858,109 @@
             kbUploadPanel.style.display = visible ? 'block' : 'none';
             if (!visible) {
                 setKbStatus('');
+                setKbTokenCountStatus(null);
             }
+        }
+
+        function normalizeModelTarget(value) {
+            return typeof value === 'string' ? value.trim() : '';
+        }
+
+        function addUniqueModelTarget(targets, seen, value) {
+            const normalized = normalizeModelTarget(value);
+            if (normalized === '' || seen.has(normalized)) {
+                return;
+            }
+            targets.push(normalized);
+            seen.add(normalized);
+        }
+
+        function normalizeCommandList(commands) {
+            return Array.isArray(commands)
+                ? commands.filter((item) => typeof item === 'string').map((item) => item.trim()).filter((item) => item !== '')
+                : [];
+        }
+
+        function collectModelTargetsFromNormalizedCommands(normalizedCommands, label) {
+            const targets = [];
+            const seen = new Set();
+
+            if (normalizedCommands.length >= 2 && normalizedCommands[0] === 'vllm' && normalizedCommands[1] === 'serve') {
+                if (normalizedCommands.length < 3) {
+                    throw new Error(`${label} contains \`vllm serve\` without a model value.`);
+                }
+                const omniModel = normalizedCommands[2];
+                if (omniModel === '') {
+                    throw new Error(`${label} contains \`vllm serve\` without a valid model value.`);
+                }
+                if (!omniModel.startsWith('-')) {
+                    addUniqueModelTarget(targets, seen, omniModel);
+                }
+            }
+
+            for (let i = 0; i < normalizedCommands.length; i += 1) {
+                const token = normalizedCommands[i];
+                if (token === '--model') {
+                    if (i + 1 >= normalizedCommands.length) {
+                        throw new Error(`${label} contains \`--model\` without a value.`);
+                    }
+                    const modelValue = normalizedCommands[i + 1];
+                    if (modelValue === '') {
+                        throw new Error(`${label} contains \`--model\` without a value.`);
+                    }
+                    addUniqueModelTarget(targets, seen, modelValue);
+                    i += 1;
+                    continue;
+                }
+                if (token.startsWith('--model=')) {
+                    const modelValue = token.split('=', 2)[1];
+                    if (modelValue === '') {
+                        throw new Error(`${label} contains \`--model=\` without a value.`);
+                    }
+                    addUniqueModelTarget(targets, seen, modelValue);
+                }
+            }
+
+            return targets;
+        }
+
+        function resolveKnowledgebaseUploadModel(payload) {
+            const directModel = normalizeModelTarget(payload?.hf_model);
+            if (directModel !== '') {
+                return directModel;
+            }
+
+            const spec = payload?.spec;
+            if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+                throw new Error('Knowledge base upload requires a model target.');
+            }
+
+            const commands = normalizeCommandList(spec.commands);
+            let commandTargets = collectModelTargetsFromNormalizedCommands(commands, 'spec.commands');
+            if (commandTargets.length === 0) {
+                const entrypoint = spec.entrypoint;
+                if (Array.isArray(entrypoint) && entrypoint.every((item) => typeof item === 'string')) {
+                    const combinedCommands = [...entrypoint.map((item) => String(item)), ...commands];
+                    commandTargets = collectModelTargetsFromNormalizedCommands(
+                        normalizeCommandList(combinedCommands),
+                        'spec.commands with entrypoint'
+                    );
+                }
+            }
+
+            if (commandTargets.length > 1) {
+                throw new Error('Knowledge base upload requires exactly one effective model target.');
+            }
+            if (commandTargets.length === 1) {
+                return commandTargets[0];
+            }
+
+            const sampleQueryModel = normalizeModelTarget((((spec.sample_query || {}).body) || {}).model);
+            if (sampleQueryModel !== '') {
+                return sampleQueryModel;
+            }
+
+            throw new Error('Knowledge base upload requires a model target.');
         }
 
         async function ensureCreateKbTargetDoesNotExist(payload) {
@@ -883,8 +998,11 @@
 
         async function uploadKnowledgebaseFile(payload, required) {
             if (!isKnowledgebaseSpec(payload?.spec)) {
+                setKbTokenCountStatus(null);
                 return false;
             }
+
+            setKbTokenCountStatus(null);
 
             const selectedFile = kbFileInput?.files && kbFileInput.files.length > 0 ? kbFileInput.files[0] : null;
             if (!selectedFile) {
@@ -898,8 +1016,10 @@
                 await ensureCreateKbTargetDoesNotExist(payload);
             }
 
+            const model = resolveKnowledgebaseUploadModel(payload);
             const formData = new FormData();
             formData.append('file', selectedFile);
+            formData.append('model', model);
 
             setKbStatus('Uploading KB file...');
             const resp = await fetch(`/kb/upload/${encodeURIComponent(payload.tenant)}/${encodeURIComponent(payload.namespace)}/${encodeURIComponent(payload.name)}`, {
@@ -924,6 +1044,14 @@
                 throw new Error(detail);
             }
 
+            let parsed = null;
+            try {
+                parsed = text ? JSON.parse(text) : null;
+            } catch (_err) {
+                parsed = null;
+            }
+
+            setKbTokenCountStatus(parsed && Object.prototype.hasOwnProperty.call(parsed, 'kb_token_count') ? parsed.kb_token_count : null);
             setKbStatus(`Uploaded ${selectedFile.name} as kb.data.`);
             return true;
         }
@@ -2055,6 +2183,7 @@
                     setKbUiBusy(true);
                     await uploadKnowledgebaseFile(payload, true);
                 } catch (err) {
+                    setKbTokenCountStatus(null);
                     setKbStatus(err.message || String(err), true);
                     showError(err.message || String(err));
                 } finally {

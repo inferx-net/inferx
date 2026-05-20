@@ -995,7 +995,7 @@
             if (overrides && overrides.requestUrl) {
                 return String(overrides.requestUrl);
             }
-            const sampleQueryPath = context.apiType === 'text2text'
+            const sampleQueryPath = (context.apiType === 'text2text' || context.apiType === 'knowledgebase')
                 ? 'v1/chat/completions'
                 : context.sampleQueryPath;
             return buildUrlFromSegments(context.proxyBasePath, [
@@ -1238,6 +1238,7 @@
                         .toLowerCase()
                         .replace(/^\/+/, '');
                     const useChatShape = context.apiType === 'text2text'
+                        || context.apiType === 'knowledgebase'
                         || normalizedPath === 'v1/chat/completions'
                         || Array.isArray(requestMap.messages);
                     body = JSON.stringify(

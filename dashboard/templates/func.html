@@ -1,8 +1,922 @@
 {% extends 'base.html' %}
 
 {% block content %}
+{% if is_function %}
+{% set function_row = function_detail.row %}
+<style>
+    .function-detail-page {
+        display: grid;
+        max-width: var(--ix-page-max-width);
+        margin: 0 auto 32px auto;
+        gap: 14px;
+    }
 
-<h2>Model {{ name }}</h2>
+    .function-card {
+        border: 1px solid #cbd5e1;
+        border-radius: var(--ix-panel-radius);
+        background: #fff;
+        padding: var(--ix-panel-padding);
+    }
+
+    .function-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .function-header h1,
+    .function-card h2,
+    .function-card h3 {
+        margin: 0;
+    }
+
+    .function-subtitle {
+        margin: 4px 0 0 0;
+        color: #64748b;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .function-subtitle a {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    .function-header-actions,
+    .function-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .function-meta-table {
+        width: 100%;
+    }
+
+    .function-meta-table th,
+    .function-meta-table td {
+        text-align: left;
+    }
+
+    .function-meta-table th {
+        width: 16.666%;
+        white-space: nowrap;
+        text-align: left;
+    }
+
+    .function-meta-table td {
+        width: 16.666%;
+        vertical-align: top;
+    }
+
+    .function-meta-table td.kb-file-cell {
+        white-space: nowrap;
+    }
+
+    .function-status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 110px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-size: var(--ix-font-size-subtle);
+        font-weight: 700;
+    }
+
+    .function-status-badge.transient {
+        gap: 8px;
+    }
+
+    .function-status-badge-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 999px;
+        box-sizing: border-box;
+        animation: function-status-badge-spin 0.8s linear infinite;
+        flex: 0 0 auto;
+        opacity: 0.75;
+    }
+
+    @keyframes function-status-badge-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .function-status-badge.ready {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .function-status-badge.resuming {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .function-status-badge.standby {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .function-status-badge.restoring {
+        background: #e0f2fe;
+        color: #075985;
+    }
+
+    .function-status-badge.pending {
+        background: #e2e8f0;
+        color: #475569;
+    }
+
+    .function-status-badge.snapshotting {
+        background: #ede9fe;
+        color: #6d28d9;
+    }
+
+    .function-status-badge.failed {
+        background: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .function-status-badge.unavailable {
+        background: #e2e8f0;
+        color: #334155;
+    }
+
+    .function-state-hint {
+        color: #475569;
+        font-size: var(--ix-font-size-caption);
+        margin-top: 6px;
+    }
+
+    .function-poll-feedback {
+        margin: 12px 0 0 0;
+        padding: 10px 12px;
+        border-radius: 4px;
+        font-size: var(--ix-font-size-subtle);
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+    }
+
+    .function-card textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: var(--ix-font-size-body);
+        background: #ffffff;
+        line-height: 1.35;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .function-playground-grid {
+        display: grid;
+        gap: 12px;
+    }
+
+    .function-playground-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .function-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+    }
+
+    .function-metric-grid > div {
+        min-height: 44px;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .function-empty-row {
+        color: #64748b;
+        text-align: center;
+        font-style: italic;
+    }
+
+    .function-diagnostics details + details {
+        margin-top: 12px;
+    }
+
+    .function-spec-block {
+        margin: 12px 0 0 0;
+        padding: 12px;
+        border-radius: 4px;
+        border: 1px solid #dbe3ef;
+        background: #f8fafc;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: var(--ix-font-size-subtle);
+        line-height: 1.45;
+    }
+</style>
+
+<div class="function-detail-page">
+    <div class="function-header">
+        <div>
+            <h1>Function {{ name }}</h1>
+            <p class="function-subtitle">
+                Tenant: <a href="{{ tenant_models_href }}">{{ tenant }}</a>
+                <span aria-hidden="true">·</span>
+                Namespace: <a href="{{ models_list_href }}">{{ namespace }}</a>
+            </p>
+        </div>
+        <div class="function-header-actions">
+            <a class="ix-btn secondary" href="{{ models_list_href }}">Back to Functions</a>
+            {% if can_manage %}
+            <form method="post" action="{{ hosturl }}function/delete/{{ tenant | urlencode }}/{{ namespace | urlencode }}/{{ name | urlencode }}" onsubmit="return confirm('Delete {{ name }}?');">
+                <button type="submit" class="ix-btn danger">Delete Function</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <section class="function-card">
+        <h2>Function Info</h2>
+        <table class="ix-table function-meta-table">
+            <tbody>
+                <tr>
+                    <th>Model Name</th>
+                    <th>Max Token Length</th>
+                    <th>KB Tokens</th>
+                    <th>GPU Count</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>KB File</th>
+                </tr>
+                <tr>
+                    <td>{{ function_row.model_name if function_row.model_name else '-' }}</td>
+                    <td>{{ function_row.total_token_length }}</td>
+                    <td>{{ function_row.kb_token_count if function_row.kb_token_count is not none else '-' }}</td>
+                    <td>{{ function_detail.gpu_count if function_detail.gpu_count is not none else '-' }}</td>
+                    <td id="function-status-cell">
+                        {% if function_detail.is_live_available %}
+                        <span class="function-status-badge {{ initial_model_status.code }}{% if initial_model_status.code in ('resuming', 'restoring', 'pending', 'snapshotting') %} transient{% endif %}">
+                            {% if initial_model_status.code in ('resuming', 'restoring', 'pending', 'snapshotting') %}
+                            <span class="function-status-badge-spinner" aria-hidden="true"></span>
+                            {% endif %}
+                            <span>{{ initial_model_status.label }}</span>
+                        </span>
+                        {% else %}
+                        <span class="function-status-badge unavailable">Unavailable</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ function_detail.created_at_summary }}</td>
+                    <td class="kb-file-cell">
+                        <button class="ix-btn secondary" type="button" onclick="downloadKbFile()">Download</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="function-state-hint" id="function-state-note">{% if not function_detail.is_live_available %}Function details are temporarily unavailable.{% endif %}</div>
+        <p class="function-poll-feedback" id="function-poll-feedback" hidden></p>
+    </section>
+
+    {% if not function_detail.is_live_available %}
+    <section class="function-card">
+        <h2>Availability</h2>
+        <p class="function-state-hint">
+            This function is unavailable. Delete removes the dashboard row and KB directory without calling the API.
+        </p>
+    </section>
+    {% else %}
+    {% set section_class = 'function-card' %}
+    {% include '_client_setup.html' %}
+
+    <section class="function-card">
+        <h2>Function Playground</h2>
+        <div class="function-playground-grid">
+            {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "image2text" %}
+            {% set image_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
+            <div>
+                <label style="display: block; margin-bottom: 8px;"><strong>Image</strong></label>
+                <label style="display: inline-flex; align-items: center; gap: 8px; margin-right: 16px;">
+                    <input id="imageSourceTypeFile" type="radio" name="imageSourceType" value="file" {% if not image_sample_url %}checked{% endif %}>
+                    <span>Upload file</span>
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 8px;">
+                    <input id="imageSourceTypeUrl" type="radio" name="imageSourceType" value="url" {% if image_sample_url %}checked{% endif %}>
+                    <span>Use remote URL</span>
+                </label>
+                <div id="imageUploadSection" style="margin-top: 8px;">
+                    <input id="imageFileInput" type="file" accept="image/jpeg,image/png,image/webp" style="display:block; width:100%;">
+                </div>
+                <div id="imageUrlSection">
+                    <label for="urlInput" style="display: block; margin-top: 12px;"><strong>Remote URL</strong></label>
+                    <textarea id="urlInput" rows="2" placeholder="https://example.com/image.jpg">{{ image_sample_url }}</textarea>
+                </div>
+                <div id="imageSourceStatus" style="margin-top: 8px; min-height: 1.4em; color: #475467;"></div>
+                <button class="ix-btn secondary" type="button" onclick="loadImage()">Preview</button>
+                <img id="preview" src="" alt="Image will appear here" style="max-width: 100%; display: none; margin-top: 12px;">
+            </div>
+            {% elif path|lower == "v1/audio/transcriptions" or func["func"]["object"]["spec"]["sample_query"]["apiType"] == "transcriptions" %}
+            {% set audio_sample_url = func["func"]["object"]["spec"]["sample_query"].get("dataUrl", "") %}
+            <div>
+                <label style="display: block; margin-bottom: 8px;"><strong>Audio</strong></label>
+                <label style="display: inline-flex; align-items: center; gap: 8px; margin-right: 16px;">
+                    <input id="audioSourceTypeFile" type="radio" name="audioSourceType" value="file" {% if not audio_sample_url %}checked{% endif %}>
+                    <span>Upload file</span>
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 8px;">
+                    <input id="audioSourceTypeUrl" type="radio" name="audioSourceType" value="url" {% if audio_sample_url %}checked{% endif %}>
+                    <span>Use remote URL</span>
+                </label>
+                <div id="audioUploadSection" style="margin-top: 8px;">
+                    <input id="audioFileInput" type="file" accept="audio/*,.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac" style="display:block; width:100%;">
+                </div>
+                <div id="audioUrlSection">
+                    <label for="urlInput" style="display: block; margin-top: 12px;"><strong>Remote Audio URL</strong></label>
+                    <textarea id="urlInput" rows="2" placeholder="https://example.com/audio.wav">{{ audio_sample_url }}</textarea>
+                </div>
+                <div id="audioSourceStatus" style="margin-top: 8px; min-height: 1.4em; color: #475467;"></div>
+                <button class="ix-btn secondary" type="button" onclick="loadAudio()">Preview</button>
+                <audio id="audioPreview" controls style="display: none; margin-top: 12px; width: 100%;">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+            {% elif func["func"]["object"]["spec"]["sample_query"]["apiType"] == "audio2text" %}
+            <div>
+                <label for="urlInput" style="display: block; margin-bottom: 8px;"><strong>Audio URL</strong></label>
+                <textarea id="urlInput" rows="2">{{ func["func"]["object"]["spec"]["sample_query"]["dataUrl"] }}</textarea>
+                <button class="ix-btn secondary" type="button" onclick="loadAudio()">Preview</button>
+                <audio id="audioPreview" controls style="display: none; margin-top: 12px; width: 100%;">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+            {% else %}
+            <textarea id="urlInput" rows="2" style="display:none;"></textarea>
+            {% endif %}
+
+            <div>
+                <label for="prompt" style="display: block; margin-bottom: 8px;"><strong>Prompt</strong></label>
+                <textarea id="prompt" rows="2">{{ func["func"]["object"]["spec"]["sample_query"]["prompt"] }}</textarea>
+            </div>
+
+            <div class="function-playground-actions">
+                <button class="ix-btn" id="button" type="button" onclick="streamOutput()" {% if initial_model_status.code not in ('standby', 'ready') %}disabled{% endif %}>
+                    <img id="processing" style="display:none;" src="{{ url_for('static', filename='button.gif') }}" alt="">
+                    <div id="run-label">Run</div>
+                </button>
+                <button class="ix-btn secondary" id="cancel" type="button" onclick="cancel()" disabled>Cancel</button>
+            </div>
+
+            <div class="function-metric-grid">
+                <div id="startDiv"></div>
+                <div id="ttftDiv"></div>
+                <div id="tpsDiv"></div>
+            </div>
+
+            {% if func["func"]["object"]["spec"]["sample_query"]["apiType"] == "text2audio" %}
+            <audio id="myAudio" controls hidden></audio>
+            {% endif %}
+
+            <img id="myImage" style="display:none; max-width: 100%;" alt="API Image">
+            <textarea id="output" rows="3"></textarea>
+            <textarea id="debug" rows="8" hidden></textarea>
+        </div>
+    </section>
+
+    {% if func.get("sampleRestCall") %}
+    <section class="function-card">
+        <h2>Sample REST Call</h2>
+        <div class="copyable-area">
+            <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('restcall-copy')">Copy</button>
+            <textarea id="restcall" rows="4">{{ func.get("sampleRestCallDisplay", func["sampleRestCall"]) }}</textarea>
+            <textarea id="restcall-copy" rows="4" hidden>{{ func["sampleRestCall"] }}</textarea>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="function-card">
+        <h2>Instances</h2>
+        <table class="ix-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Instance Name</th>
+                    <th>State</th>
+                </tr>
+            </thead>
+            <tbody id="function-pods-table-body">
+                {% if func["pods"] %}
+                {% for pod in func["pods"] %}
+                <tr>
+                    <td><a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&namespace={{ pod['namespace'] }}&name={{ pod['name'] }}">{{ pod["name"] }}</a></td>
+                    <td>{{ pod["object"]["status"]["state"] }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td class="function-empty-row" colspan="2">No instances found for this function yet.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="function-card">
+        <h2>Logs</h2>
+        <table class="ix-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Create Time</th>
+                    <th>Exit Info</th>
+                    <th>Log</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if fails %}
+                {% for fail in fails %}
+                <tr>
+                    <td>{{ fail["createtime"] }}</td>
+                    <td>{{ fail["exit_info"] }}</td>
+                    <td><a href="{{ hosturl }}failpod?tenant={{ fail['tenant'] }}&namespace={{ fail['namespace'] }}&name={{ fail['fpname'] }}&version={{ fail['fprevision'] }}&id={{ fail['id'] }}&funcname={{ name }}">log</a></td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td class="function-empty-row" colspan="3">No failure logs yet.</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    {% if is_inferx_admin %}
+    <section class="function-card function-diagnostics">
+        <h2>Underlying Model Diagnostics</h2>
+        <details>
+            <summary><strong>Function Spec</strong></summary>
+            <pre class="function-spec-block">{{ funcspec }}</pre>
+        </details>
+        <details>
+            <summary><strong>Underlying Model Full Spec</strong></summary>
+            <pre class="function-spec-block">{{ full_funcspec }}</pre>
+        </details>
+        <details>
+            <summary><strong>Policy</strong></summary>
+            <pre class="function-spec-block">{{ funcpolicy }}</pre>
+        </details>
+    </section>
+    {% endif %}
+
+    <script src="{{ url_for('static', filename='inference.js') }}"></script>
+    <script>
+        const tenant = {{ tenant | tojson }};
+        const namespace = {{ namespace | tojson }};
+        const name = {{ name | tojson }};
+        const apiType = {{ apiType | tojson }};
+        const map = {{ map | tojson }};
+        const sampleQueryPath = {{ path | tojson }};
+        const funcData = {{ func | tojson }};
+        const hosturl = {{ hosturl | tojson }};
+        const kbDownloadUrl = {{ function_detail.stage_file_download_href | tojson }};
+        const kbDownloadName = {{ function_detail.stage_file_name | tojson }};
+        const proxyFunctionBasePath = {{ (hosturl ~ 'proxy/function') | tojson }};
+        const SNAPSHOT_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'Snapshoting']);
+        const RESTORE_ACTIVE_STATES = new Set(['Init', 'PullingImage', 'Creating', 'Created', 'Loading', 'LoadingTimeout', 'Restoring']);
+        const READY_SETTLED_POD_STATES = new Set(['Ready', 'Standby', 'MemHibernated', 'Failed', 'Terminated', 'Deleted']);
+        const TERMINAL_POLL_STATUS_CODES = new Set(['failed', 'unavailable']);
+        const TRANSIENT_STATUS_CODES = new Set(['resuming', 'restoring', 'pending', 'snapshotting']);
+        const RESUME_POLL_GRACE_MS = 20000;
+        const POST_GO_INITIAL_POLL_DELAY_MS = 1000;
+        let currentPods = Array.isArray(funcData?.pods) ? funcData.pods : [];
+        let currentHealth = String(funcData?.func?.object?.status?.state || '').trim();
+        let currentStatus = {{ initial_model_status | tojson }};
+        let pollTimerId = null;
+        let pollInFlight = false;
+        let inferenceInFlight = false;
+        let resumePollingRequested = false;
+        let resumePollingDeadlineMs = 0;
+        let pollFeedbackMessage = '';
+        let trackWakeStatusForCurrentRequest = false;
+        let queuedFirstOutputStatusPoll = false;
+
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function buildPathUrl(basePath, segments, trailingSlash = true) {
+            const prefix = String(basePath || '').replace(/\/+$/, '');
+            const encodedPath = segments
+                .flatMap((segment) => String(segment || '').split('/'))
+                .filter((segment) => segment !== '')
+                .map((segment) => encodeURIComponent(segment))
+                .join('/');
+            const suffix = trailingSlash ? '/' : '';
+            return new URL(prefix + '/' + encodedPath + suffix, window.location.origin).toString();
+        }
+
+        function buildQueryUrl(path, params) {
+            const url = new URL(path, window.location.origin);
+            Object.entries(params).forEach(([key, value]) => {
+                url.searchParams.set(key, value);
+            });
+            return url.toString();
+        }
+
+        function triggerKbDownloadFallback() {
+            const link = document.createElement('a');
+            link.href = kbDownloadUrl;
+            link.download = kbDownloadName || 'kb.data';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        async function downloadKbFile() {
+            if (!kbDownloadUrl) {
+                return;
+            }
+
+            if (typeof window.showSaveFilePicker !== 'function') {
+                triggerKbDownloadFallback();
+                return;
+            }
+
+            try {
+                const response = await fetch(kbDownloadUrl, {
+                    credentials: 'same-origin',
+                });
+                if (!response.ok) {
+                    throw new Error('Download failed (HTTP ' + response.status + ')');
+                }
+
+                const suggestedName = kbDownloadName || 'kb.data';
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: suggestedName,
+                    types: [{
+                        description: 'Knowledge base file',
+                        accept: {
+                            'application/octet-stream': ['.data', '.txt', '.md', '.json'],
+                        },
+                    }],
+                });
+
+                const writable = await handle.createWritable();
+                await writable.write(await response.blob());
+                await writable.close();
+            } catch (error) {
+                if (error && error.name === 'AbortError') {
+                    return;
+                }
+                console.error('KB download via save picker failed:', error);
+                triggerKbDownloadFallback();
+            }
+        }
+
+        function getPodState(pod) {
+            return String(pod?.object?.status?.state || '').trim();
+        }
+
+        function getPodCreateType(pod) {
+            return String(pod?.object?.spec?.create_type || '').trim();
+        }
+
+        function buildPodsSignature(pods) {
+            if (!Array.isArray(pods) || pods.length === 0) {
+                return '__empty__';
+            }
+            return pods.map((pod) => [
+                String(pod?.tenant || ''),
+                String(pod?.namespace || ''),
+                String(pod?.name || ''),
+                getPodState(pod),
+            ].join('|')).join('\n');
+        }
+
+        function inferModelStatus(pods, funcStatusState) {
+            if (funcStatusState === 'Fail') {
+                return { code: 'failed', label: 'Failed' };
+            }
+            if (pods.some((pod) => getPodState(pod) === 'Ready')) {
+                return { code: 'ready', label: 'Ready' };
+            }
+            if (pods.some((pod) => ['Resuming', 'ResumeDone'].includes(getPodState(pod)))) {
+                return { code: 'resuming', label: 'Resuming...' };
+            }
+            if (pods.some((pod) => ['Standby', 'MemHibernated'].includes(getPodState(pod)))) {
+                return { code: 'standby', label: 'Standby' };
+            }
+            if (pods.some((pod) => getPodCreateType(pod) === 'Restore' && RESTORE_ACTIVE_STATES.has(getPodState(pod)))) {
+                return { code: 'restoring', label: 'Restoring' };
+            }
+            if (pods.some((pod) => getPodCreateType(pod) === 'Snapshot' && SNAPSHOT_ACTIVE_STATES.has(getPodState(pod)))) {
+                return { code: 'snapshotting', label: 'Creating Snapshot...' };
+            }
+            return { code: 'pending', label: 'Pending' };
+        }
+
+        function getModelStateNote(statusCode) {
+            switch (statusCode) {
+                case 'ready':
+                    return 'Function is ready to serve inference requests.';
+                case 'resuming':
+                    return 'Function is waking from standby. Inference will begin when resume completes.';
+                case 'standby':
+                    return 'Function is in standby. First request will wake it up. Expect resume latency before tokens begin streaming.';
+                case 'restoring':
+                    return 'Restoring the underlying model to standby from a snapshot.';
+                case 'snapshotting':
+                    return 'Creating a snapshot for faster future startup.';
+                case 'failed':
+                    return 'Function failed. Check the logs below for details.';
+                case 'unavailable':
+                    return 'Function details are temporarily unavailable.';
+                case 'pending':
+                default:
+                    return 'Function status is pending. Waiting for instance details to settle.';
+            }
+        }
+
+        function renderStatusCell(status) {
+            const statusCell = document.getElementById('function-status-cell');
+            if (!statusCell) {
+                return;
+            }
+            const nextKey = String(status.code || '') + '|' + String(status.label || '');
+            if (statusCell.dataset.statusKey === nextKey) {
+                return;
+            }
+            statusCell.dataset.statusKey = nextKey;
+            const isTransient = TRANSIENT_STATUS_CODES.has(status.code);
+            const badgeClass = 'function-status-badge ' + escapeHtml(status.code) + (isTransient ? ' transient' : '');
+            const badgeContent = (isTransient ? '<span class="function-status-badge-spinner" aria-hidden="true"></span>' : '')
+                + '<span>' + escapeHtml(status.label) + '</span>';
+            statusCell.innerHTML = '<span class="' + badgeClass + '">' + badgeContent + '</span>';
+        }
+
+        function renderModelStateNote() {
+            const note = document.getElementById('function-state-note');
+            if (!note) {
+                return;
+            }
+            const nextText = getModelStateNote(currentStatus.code);
+            if (note.textContent !== nextText) {
+                note.textContent = nextText;
+            }
+        }
+
+        function renderPlaygroundAvailability() {
+            const goButton = document.getElementById('button');
+            const cancelButton = document.getElementById('cancel');
+            const canServeInference = currentStatus.code === 'standby' || currentStatus.code === 'ready';
+
+            if (goButton) {
+                const shouldDisableGo = inferenceInFlight || !canServeInference;
+                if (goButton.disabled !== shouldDisableGo) {
+                    goButton.disabled = shouldDisableGo;
+                }
+            }
+
+            if (cancelButton) {
+                const shouldDisableCancel = !inferenceInFlight;
+                if (cancelButton.disabled !== shouldDisableCancel) {
+                    cancelButton.disabled = shouldDisableCancel;
+                }
+            }
+        }
+
+        function renderPollFeedback() {
+            const note = document.getElementById('function-poll-feedback');
+            if (!note) {
+                return;
+            }
+            const shouldHide = !pollFeedbackMessage;
+            if (note.hidden !== shouldHide) {
+                note.hidden = shouldHide;
+            }
+            if (note.textContent !== pollFeedbackMessage) {
+                note.textContent = pollFeedbackMessage;
+            }
+        }
+
+        function renderPodsTable(pods) {
+            const tbody = document.getElementById('function-pods-table-body');
+            if (!tbody) {
+                return;
+            }
+            const nextSignature = buildPodsSignature(pods);
+            if (tbody.dataset.podsSignature === nextSignature) {
+                return;
+            }
+            tbody.dataset.podsSignature = nextSignature;
+            if (!Array.isArray(pods) || pods.length === 0) {
+                tbody.innerHTML = '<tr><td class="function-empty-row" colspan="2">No instances found for this function yet.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = pods.map((pod) => {
+                const href = buildQueryUrl(hosturl + 'pod', {
+                    tenant: pod.tenant,
+                    namespace: pod.namespace,
+                    name: pod.name,
+                });
+                return '<tr>'
+                    + '<td><a href="' + escapeHtml(href) + '">' + escapeHtml(pod.name) + '</a></td>'
+                    + '<td>' + escapeHtml(getPodState(pod)) + '</td>'
+                    + '</tr>';
+            }).join('');
+        }
+
+        function hasTransientPods(pods) {
+            return Array.isArray(pods) && pods.some((pod) => !READY_SETTLED_POD_STATES.has(getPodState(pod)));
+        }
+
+        function clearPollTimer() {
+            if (pollTimerId != null) {
+                window.clearTimeout(pollTimerId);
+                pollTimerId = null;
+            }
+        }
+
+        function shouldContinuePolling() {
+            if (currentHealth === 'Fail' || TERMINAL_POLL_STATUS_CODES.has(currentStatus.code)) {
+                return false;
+            }
+            if (currentStatus.code === 'ready') {
+                return hasTransientPods(currentPods);
+            }
+            if (currentStatus.code === 'standby' && !inferenceInFlight) {
+                return resumePollingRequested && Date.now() < resumePollingDeadlineMs;
+            }
+            return true;
+        }
+
+        function schedulePoll(delayMs) {
+            clearPollTimer();
+            if (!shouldContinuePolling()) {
+                return;
+            }
+            pollTimerId = window.setTimeout(() => {
+                pollFunctionDetail();
+            }, delayMs);
+        }
+
+        function handleTerminalPollError(status, message) {
+            currentStatus = { code: 'unavailable', label: 'Unavailable' };
+            currentHealth = 'Unavailable';
+            resumePollingRequested = false;
+            resumePollingDeadlineMs = 0;
+            pollFeedbackMessage = message || ('Function detail polling stopped (HTTP ' + status + ').');
+            renderStatusCell(currentStatus);
+            renderModelStateNote();
+            renderPlaygroundAvailability();
+            renderPollFeedback();
+            clearPollTimer();
+        }
+
+        function applyFunctionUpdate(payload) {
+            currentPods = Array.isArray(payload?.pods) ? payload.pods : [];
+            currentHealth = String(payload?.func?.object?.status?.state || '').trim();
+            currentStatus = inferModelStatus(currentPods, currentHealth);
+            if (currentHealth === 'Fail' || TERMINAL_POLL_STATUS_CODES.has(currentStatus.code)) {
+                resumePollingRequested = false;
+                resumePollingDeadlineMs = 0;
+            } else if (!inferenceInFlight && currentStatus.code === 'standby' && Date.now() >= resumePollingDeadlineMs) {
+                resumePollingRequested = false;
+                resumePollingDeadlineMs = 0;
+            }
+            pollFeedbackMessage = '';
+            renderStatusCell(currentStatus);
+            renderModelStateNote();
+            renderPlaygroundAvailability();
+            renderPodsTable(currentPods);
+            renderPollFeedback();
+            schedulePoll(5000);
+        }
+
+        async function pollFunctionDetail() {
+            if (pollInFlight || !shouldContinuePolling()) {
+                return;
+            }
+
+            pollInFlight = true;
+            try {
+                const response = await fetch(buildPathUrl(proxyFunctionBasePath, [tenant, namespace, name]), {
+                    headers: {
+                        'Accept': 'application/json',
+                    },
+                });
+                if (!response.ok) {
+                    if ([401, 403, 404, 410].includes(response.status)) {
+                        const message = response.status === 401
+                            ? 'Your session expired while polling this function. Reload the page and sign in again.'
+                            : response.status === 403
+                                ? 'You no longer have access to this function. Polling stopped.'
+                                : 'This function is no longer available in the dashboard. Polling stopped.';
+                        handleTerminalPollError(response.status, message);
+                        return;
+                    }
+                    throw new Error('Failed to poll function detail (HTTP ' + response.status + ')');
+                }
+                const payload = await response.json();
+                applyFunctionUpdate(payload);
+            } catch (error) {
+                console.error('Failed to poll function detail:', error);
+                schedulePoll(5000);
+            } finally {
+                pollInFlight = false;
+                if (queuedFirstOutputStatusPoll) {
+                    queuedFirstOutputStatusPoll = false;
+                    pollFunctionDetail();
+                }
+            }
+        }
+
+        function handleFirstOutputStatusPoll() {
+            if (!trackWakeStatusForCurrentRequest) {
+                return;
+            }
+            if (pollInFlight) {
+                queuedFirstOutputStatusPoll = true;
+                return;
+            }
+            pollFunctionDetail();
+        }
+
+        const inferenceController = window.createInferxInferenceController({
+            tenant: tenant,
+            namespace: namespace,
+            name: name,
+            apiType: apiType,
+            map: map,
+            samplePrompt: {{ func["func"]["object"]["spec"]["sample_query"]["prompt"] | tojson }},
+            sampleQueryPath: sampleQueryPath,
+            proxyBasePath: {{ (hosturl ~ 'proxy') | tojson }},
+            remoteImageFetchPath: {{ (hosturl ~ 'image2text/fetch-remote') | tojson }},
+            remoteAudioFetchPath: {{ (hosturl ~ 'audio/fetch-remote') | tojson }},
+            text2imgPath: {{ (hosturl ~ 'text2img') | tojson }},
+            text2audioPath: {{ (hosturl ~ 'text2audio') | tojson }},
+            onRequestStart: function () {
+                inferenceInFlight = true;
+                trackWakeStatusForCurrentRequest = currentStatus.code === 'standby';
+                queuedFirstOutputStatusPoll = false;
+                if (!trackWakeStatusForCurrentRequest) {
+                    resumePollingRequested = false;
+                    resumePollingDeadlineMs = 0;
+                    clearPollTimer();
+                    pollFunctionDetail();
+                    return;
+                }
+                resumePollingRequested = true;
+                resumePollingDeadlineMs = Date.now() + RESUME_POLL_GRACE_MS;
+                schedulePoll(POST_GO_INITIAL_POLL_DELAY_MS);
+            },
+            onFirstOutput: function () {
+                handleFirstOutputStatusPoll();
+            },
+            onRequestFinish: function () {
+                inferenceInFlight = false;
+                if (trackWakeStatusForCurrentRequest) {
+                    schedulePoll(5000);
+                } else {
+                    pollFunctionDetail();
+                }
+                trackWakeStatusForCurrentRequest = false;
+            },
+        });
+
+        window.loadImage = inferenceController.loadImage;
+        window.loadAudio = inferenceController.loadAudio;
+        window.streamOutput = inferenceController.streamOutput;
+        window.cancel = inferenceController.cancel;
+        renderStatusCell(currentStatus);
+        renderModelStateNote();
+        renderPlaygroundAvailability();
+        renderPodsTable(currentPods);
+        renderPollFeedback();
+        schedulePoll(5000);
+    </script>
+    {% endif %}
+</div>
+{% else %}
+
+<h2>{% if is_function %}Function{% else %}Model{% endif %} {{ name }}</h2>
 {% if is_inferx_admin %}
 <div style="margin: 0 0 12px 0;">
     <a class="ix-btn secondary" href="{{ func_user_href }}">User View</a>
@@ -89,7 +1003,7 @@
         <td>{{ func["func"]["object"]["spec"]["resources"]["GPU"]["vRam"] }}</td>
         <td>{{ func['func']['object']["spec"]["resources"]["CPU"]/1000 }}</td>
         <td>{{ func['func']['object']["spec"]["resources"]["Mem"] }}</td>
-        <td>{{ func["func"]["object"]["status"]["state"] }}</td>
+        <td>{% if is_function %}{{ function_detail.state }}{% else %}{{ func["func"]["object"]["status"]["state"] }}{% endif %}</td>
         <td>{{ func["func"]["object"]["spec"]["version"] }}</td>
     </tr>
 </table>
@@ -655,4 +1569,5 @@
 
     }
 </script>
+{% endif %}
 {% endblock %}
