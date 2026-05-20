@@ -417,7 +417,7 @@ impl GwObjRepo {
         let name = spec.name.clone();
         let version = spec.Version();
         self.funcMgr.Remove(spec)?;
-        if api_type == ApiType::KnowledageBase {
+        if api_type == ApiType::KnowledgeBase {
             let kb_dir = std::path::Path::new(KB_DIR)
                 .join(format!("{}.{}.{}", tenant, namespace, name))
                 .join(version.to_string());

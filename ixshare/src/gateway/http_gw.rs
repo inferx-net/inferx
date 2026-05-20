@@ -1285,7 +1285,7 @@ impl HttpGateway {
         dataobj = func.DataObject();
 
         let kb_paths =
-            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledageBase
+            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledgeBase
             {
                 Some(Self::prepare_kb_stage_promotion(
                     &tenant, &namespace, &func.name, id,
@@ -1349,7 +1349,7 @@ impl HttpGateway {
         func.object.status = FuncStatus::default();
         dataobj = func.DataObject();
         let kb_promotion =
-            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledageBase
+            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledgeBase
             {
                 let stage_file = kb_stage_file_path(&tenant, &namespace, &name);
                 if stage_file.exists() {
