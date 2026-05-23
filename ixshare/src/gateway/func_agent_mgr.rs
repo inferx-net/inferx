@@ -1136,7 +1136,14 @@ impl ClientReqQueue {
     pub async fn Send(&self, req: FuncClientReq) -> bool {
         let mut q = self.reqQueue.lock().await;
         if q.len() >= self.queueLen.load(Ordering::Relaxed) {
-            req.tx.send(Err(Error::QueueFull)).unwrap();
+            if req.tx.send(Err(Error::QueueFull)).is_err() {
+                error!(
+                    "ClientReqQueue::Send receiver dropped before QueueFull reply tenant={} namespace={} func={}",
+                    req.tenant,
+                    req.namespace,
+                    req.funcName
+                );
+            }
             return false;
         }
 
