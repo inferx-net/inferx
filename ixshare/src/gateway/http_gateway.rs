@@ -1504,6 +1504,15 @@ pub async fn FuncCall1(
     if parts.method == axum::http::Method::POST {
         match NormalizeFuncRequest(&gw, &route, &remainPath, &bytes).await {
             Err(status) => {
+                error!(
+                    "FuncCall1 normalization failed tenant={}/{} func={} path={} method={} status={}",
+                    route.physical.tenant,
+                    route.physical.namespace,
+                    route.physical.funcname,
+                    remainPath,
+                    parts.method,
+                    status
+                );
                 let resp = Response::builder()
                     .status(status)
                     .body(Body::from("service failure: normalization failed"))
