@@ -195,6 +195,8 @@ pub struct LeaseWorkerReq {
     pub fprevision: i64,
     #[prost(int64, tag = "5")]
     pub gateway_id: i64,
+    #[prost(string, tag = "6")]
+    pub consumer_tenant: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

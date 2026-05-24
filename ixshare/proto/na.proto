@@ -140,6 +140,7 @@ message LeaseWorkerReq {
   string funcname = 3;
   int64  fprevision = 4;
   int64  gateway_id = 5;
+  string consumer_tenant = 6;
 }
 
 message LeaseWorkerResp {

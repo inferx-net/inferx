@@ -65,6 +65,68 @@ fn kb_version_file_path(tenant: &str, namespace: &str, name: &str, version: i64)
 }
 
 impl HttpGateway {
+    fn HasInferxTenantPolicyOverrides(policy: &crate::node_config::InferxTenantPolicy) -> bool {
+        policy.quota_exempt.is_some()
+            || policy.allowMemStandby.is_some()
+            || policy.maxFuncCnt.is_some()
+            || policy.maxReplica.is_some()
+            || policy.maxGpu.is_some()
+            || policy.maxStandby.is_some()
+            || policy.maxQueueLen.is_some()
+    }
+
+    fn ApplyInferxTenantPolicy(
+        tenant_obj: &mut Tenant,
+        policy: &crate::node_config::InferxTenantPolicy,
+    ) -> bool {
+        let mut changed = false;
+
+        if let Some(v) = policy.quota_exempt {
+            if tenant_obj.object.spec.quota_exempt != v {
+                tenant_obj.object.spec.quota_exempt = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.allowMemStandby {
+            if tenant_obj.object.spec.resourceLimit.allocMemStandby != v {
+                tenant_obj.object.spec.resourceLimit.allocMemStandby = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxFuncCnt {
+            if tenant_obj.object.spec.resourceLimit.maxFuncCnt != v {
+                tenant_obj.object.spec.resourceLimit.maxFuncCnt = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxReplica {
+            if tenant_obj.object.spec.resourceLimit.maxReplica != v {
+                tenant_obj.object.spec.resourceLimit.maxReplica = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxGpu {
+            if tenant_obj.object.spec.resourceLimit.maxGpu != v {
+                tenant_obj.object.spec.resourceLimit.maxGpu = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxStandby {
+            if tenant_obj.object.spec.resourceLimit.maxStandby != v {
+                tenant_obj.object.spec.resourceLimit.maxStandby = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxQueueLen {
+            if tenant_obj.object.spec.resourceLimit.maxQueueLen != v {
+                tenant_obj.object.spec.resourceLimit.maxQueueLen = v;
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     fn ensure_kb_file_readable(path: &Path) -> Result<()> {
         std::fs::File::open(path).map_err(|e| {
             Error::CommonError(format!(
@@ -911,13 +973,7 @@ impl HttpGateway {
 
     async fn ReconcileInferxTenantPolicy(&self) -> Result<()> {
         let policy = &GATEWAY_CONFIG.inferxTenantPolicy;
-        if policy.quota_exempt.is_none()
-            && policy.allowMemStandby.is_none()
-            && policy.maxFuncCnt.is_none()
-            && policy.maxReplica.is_none()
-            && policy.maxStandby.is_none()
-            && policy.maxQueueLen.is_none()
-        {
+        if !Self::HasInferxTenantPolicyOverrides(policy) {
             return Ok(());
         }
 
@@ -938,44 +994,7 @@ impl HttpGateway {
                 }
             };
             let mut tenant_obj = Tenant::FromDataObject(tenant_obj)?;
-            let mut changed = false;
-
-            if let Some(v) = policy.quota_exempt {
-                if tenant_obj.object.spec.quota_exempt != v {
-                    tenant_obj.object.spec.quota_exempt = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.allowMemStandby {
-                if tenant_obj.object.spec.resourceLimit.allocMemStandby != v {
-                    tenant_obj.object.spec.resourceLimit.allocMemStandby = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxFuncCnt {
-                if tenant_obj.object.spec.resourceLimit.maxFuncCnt != v {
-                    tenant_obj.object.spec.resourceLimit.maxFuncCnt = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxReplica {
-                if tenant_obj.object.spec.resourceLimit.maxReplica != v {
-                    tenant_obj.object.spec.resourceLimit.maxReplica = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxStandby {
-                if tenant_obj.object.spec.resourceLimit.maxStandby != v {
-                    tenant_obj.object.spec.resourceLimit.maxStandby = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxQueueLen {
-                if tenant_obj.object.spec.resourceLimit.maxQueueLen != v {
-                    tenant_obj.object.spec.resourceLimit.maxQueueLen = v;
-                    changed = true;
-                }
-            }
+            let changed = Self::ApplyInferxTenantPolicy(&mut tenant_obj, policy);
 
             if !changed {
                 return Ok(());
@@ -2015,6 +2034,50 @@ impl HttpGateway {
             .ReadPodFailLog(&tenant, &namespace, &funcname, version, id)
             .await?;
         return Ok(s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inferxlib::obj_mgr::tenant_mgr::{TenantObject, TenantSpec};
+
+    fn make_tenant(name: &str) -> Tenant {
+        Tenant {
+            objType: Tenant::KEY.to_owned(),
+            tenant: SYSTEM_TENANT.to_owned(),
+            namespace: SYSTEM_NAMESPACE.to_owned(),
+            name: name.to_owned(),
+            object: TenantObject {
+                spec: TenantSpec::default(),
+                status: Default::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inferx_tenant_policy_overrides_detects_max_gpu_only() {
+        let policy = crate::node_config::InferxTenantPolicy {
+            maxGpu: Some(4),
+            ..Default::default()
+        };
+
+        assert!(HttpGateway::HasInferxTenantPolicyOverrides(&policy));
+    }
+
+    #[test]
+    fn apply_inferx_tenant_policy_updates_max_gpu() {
+        let mut tenant = make_tenant("inferx");
+        let policy = crate::node_config::InferxTenantPolicy {
+            maxGpu: Some(5),
+            ..Default::default()
+        };
+
+        let changed = HttpGateway::ApplyInferxTenantPolicy(&mut tenant, &policy);
+
+        assert!(changed);
+        assert_eq!(tenant.object.spec.resourceLimit.maxGpu, 5);
     }
 }
 

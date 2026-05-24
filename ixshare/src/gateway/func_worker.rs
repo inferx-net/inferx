@@ -342,12 +342,19 @@ impl FuncWorker {
 
     // return: (workerId, IPAddr, Keepalive)
     pub async fn LeaseWorker(&self) -> Result<LeaseWorkerResp> {
+        let consumer_tenant = if self.physical_namespace == "endpoint" {
+            self.tenant.as_str()
+        } else {
+            ""
+        };
+
         return SCHEDULER_CLIENT
             .LeaseWorker(
                 &self.physical_tenant,
                 &self.physical_namespace,
                 &self.physical_funcname,
                 self.fprevision,
+                consumer_tenant,
             )
             .await;
     }

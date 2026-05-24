@@ -53,6 +53,8 @@ pub struct InferxTenantPolicy {
     pub maxFuncCnt: Option<u64>,
     #[serde(default, rename = "max_replica")]
     pub maxReplica: Option<u64>,
+    #[serde(default, rename = "max_gpu")]
+    pub maxGpu: Option<u64>,
     #[serde(default, rename = "max_standby")]
     pub maxStandby: Option<u64>,
     #[serde(default, rename = "max_queue_len")]
@@ -1160,7 +1162,7 @@ mod tests {
     fn resolve_inferx_tenant_policy_merges_env_json() {
         std::env::set_var(
             "INFERX_TENANT_POLICY",
-            r#"{"quota_exempt":true,"max_replica":8,"max_queue_len":1000}"#,
+            r#"{"quota_exempt":true,"max_replica":8,"max_gpu":6,"max_queue_len":1000}"#,
         );
         let mut config = test_node_config();
         config.inferx_tenant_policy.allowMemStandby = Some(false);
@@ -1172,6 +1174,7 @@ mod tests {
         assert_eq!(resolved.quota_exempt, Some(true));
         assert_eq!(resolved.allowMemStandby, Some(false));
         assert_eq!(resolved.maxReplica, Some(8));
+        assert_eq!(resolved.maxGpu, Some(6));
         assert_eq!(resolved.maxStandby, Some(2));
         assert_eq!(resolved.maxQueueLen, Some(1000));
     }
