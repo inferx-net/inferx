@@ -30,6 +30,7 @@ fn default_resourcelimit() -> ResourceLimit {
         maxFuncCnt: 6,
         allocMemStandby: false,
         minReplicaCap: 0,
+        maxGpu: 2,
         maxReplica: 2,
         maxStandby: 1,
         maxQueueLen: 100,
@@ -51,6 +52,8 @@ pub struct ResourceLimit {
     pub allocMemStandby: bool,
     #[serde(default = "default_min_replica_cap", rename = "min_replica_cap")]
     pub minReplicaCap: u64,
+    #[serde(default = "default_max_gpu", rename = "max_gpu")]
+    pub maxGpu: u64,
     #[serde(default = "default_max_replica", rename = "max_replica")]
     pub maxReplica: u64,
     #[serde(default = "default_max_standby", rename = "max_standby")]
@@ -78,6 +81,10 @@ fn default_min_replica_cap() -> u64 {
 }
 
 fn default_max_replica() -> u64 {
+    2
+}
+
+fn default_max_gpu() -> u64 {
     2
 }
 

@@ -140,6 +140,7 @@ impl SchedulerClient {
         namespace: &str,
         funcname: &str,
         fprevision: i64,
+        consumer_tenant: &str,
     ) -> Result<LeaseWorkerResp> {
         let mut client = self.GetClient().await?;
 
@@ -149,6 +150,7 @@ impl SchedulerClient {
             funcname: funcname.to_owned(),
             fprevision: fprevision,
             gateway_id: GatewayId(),
+            consumer_tenant: consumer_tenant.to_owned(),
         };
 
         let request = tonic::Request::new(req);

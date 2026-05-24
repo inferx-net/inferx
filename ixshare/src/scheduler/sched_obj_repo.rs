@@ -32,6 +32,7 @@ use inferxlib::obj_mgr::namespace_mgr::*;
 use inferxlib::obj_mgr::node_mgr::Node;
 use inferxlib::obj_mgr::pod_mgr::FuncPod;
 use inferxlib::obj_mgr::pod_mgr::PodMgr;
+use inferxlib::obj_mgr::tenant_mgr::{Tenant, TenantMgr};
 
 use super::scheduler::SCHEDULER;
 
@@ -42,6 +43,7 @@ pub struct SchedObjRepoInner {
     pub funcMgr: FuncMgr,
     pub podMgr: PodMgr,
     pub funcpolicyMgr: FuncPolicyMgr,
+    pub tenantMgr: TenantMgr,
 
     pub factory: InformerFactory,
     pub listDone: bool,
@@ -77,6 +79,7 @@ impl SchedObjRepo {
 
         // funcpolicy
         factory.AddInformer(FuncPolicy::KEY, &ListOption::default())?;
+        factory.AddInformer(Tenant::KEY, &ListOption::default())?;
 
         let notify = Arc::new(Notify::new());
 
@@ -85,6 +88,7 @@ impl SchedObjRepo {
             funcMgr: FuncMgr::default(),
             podMgr: PodMgr::default(),
             funcpolicyMgr: FuncPolicyMgr::default(),
+            tenantMgr: TenantMgr::default(),
             factory: factory,
             listDone: false,
         };
@@ -166,6 +170,10 @@ impl SchedObjRepo {
                     let p = FuncPolicy::FromDataObject(obj)?;
                     self.funcpolicyMgr.Add(p)?;
                 }
+                Tenant::KEY => {
+                    let tenant = Tenant::FromDataObject(obj)?;
+                    self.tenantMgr.Add(tenant)?;
+                }
                 Node::KEY => {}
                 ContainerSnapshot::KEY => {
                     // let snapshot = FuncSnapshot::FromDataObject(obj)?;
@@ -191,6 +199,10 @@ impl SchedObjRepo {
                     let p = FuncPolicy::FromDataObject(obj)?;
                     self.funcpolicyMgr.Update(p)?;
                 }
+                Tenant::KEY => {
+                    let tenant = Tenant::FromDataObject(obj)?;
+                    self.tenantMgr.Update(tenant)?;
+                }
                 Node::KEY => {}
                 _ => {
                     return Err(Error::CommonError(format!(
@@ -211,6 +223,10 @@ impl SchedObjRepo {
                 FuncPolicy::KEY => {
                     let p = FuncPolicy::FromDataObject(obj)?;
                     self.funcpolicyMgr.Remove(p)?;
+                }
+                Tenant::KEY => {
+                    let tenant = Tenant::FromDataObject(obj)?;
+                    self.tenantMgr.Remove(tenant)?;
                 }
                 Node::KEY => {}
                 _ => {
