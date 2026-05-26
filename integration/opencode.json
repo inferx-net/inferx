@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "myprovider": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "inferx",
+      "options": {
+        "baseURL": "https://model.inferx.net/funccall/{tenant}/{namespace}/{funcname}/v1",
+        "apiKey": "{apiKey}"
+      },
+      "models": {
+        "{ModelName}": {
+          "name": "{ModelName}",
+          "limit": {
+            "context": {contextLength},
+            "output": {outputLength}
+          }
+        }
+      }
+    }
+  }
+}

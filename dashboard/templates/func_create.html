@@ -412,7 +412,7 @@
         <h3>Top-level Fields</h3>
         <div class="form-grid">
             <div id="tenant-row" class="field-row">
-                <label for="tenant-select" class="label-with-help">
+                <label {% if page_mode != 'update' %}for="tenant-combo-input"{% endif %} class="label-with-help">
                     <span>Tenant<span class="req-mark">*</span></span>
                     <span class="field-help" tabindex="0" aria-label="Tenant help" data-tooltip="Owner tenant for this model. This controls tenant-level permissions and limits." title="Owner tenant for this model. This controls tenant-level permissions and limits.">i</span>
                 </label>
@@ -422,7 +422,16 @@
                     <select id="tenant-select" hidden></select>
                     {% else %}
                     <div id="tenant-display" class="readonly-value" style="display: none;"></div>
-                    <select id="tenant-select"></select>
+                    <div id="tenant-combo-wrap" style="position:relative; display:inline-block;">
+                        <input type="text" id="tenant-combo-input" placeholder="Select or type to search..."
+                               autocomplete="off" spellcheck="false"
+                               style="padding:7px 34px 7px 8px; font-size:14px; cursor:pointer; min-width:180px; border:1px solid #ccc; border-radius:3px;">
+                        <span style="position:absolute; right:8px; top:50%; transform:translateY(-50%); pointer-events:none; color:#475569; font-size:16px; line-height:1; font-weight:700;">▾</span>
+                        <div id="tenant-combo-dropdown"
+                             onmousedown="event.preventDefault()"
+                             style="display:none; position:absolute; left:0; top:100%; background:#fff; border:1px solid #ccc; border-top:none; max-height:260px; overflow-y:auto; z-index:1000; min-width:100%; box-shadow:0 2px 6px rgba(0,0,0,.15);"></div>
+                    </div>
+                    <select id="tenant-select" style="display:none;"></select>
                     {% endif %}
                 </div>
             </div>
@@ -647,6 +656,17 @@
         </div>
     </div>
 
+        <div id="kb-upload-panel" class="panel" style="display:none;">
+            <h3>Knowledge Base File</h3>
+            <input id="kb-file-input" type="file">
+            <div class="hint">Upload a single file. The dashboard stores it as <code>kb.data</code> in shared staging before deploy/update.</div>
+            <div class="inline-row" style="margin-top: 10px;">
+                <button id="kb-upload-btn" type="button" class="ix-btn secondary">Upload KB File</button>
+                <span id="kb-upload-status" class="hint"></span>
+            </div>
+            <div id="kb-token-count-status" class="hint" style="margin-top: 8px;"></div>
+        </div>
+
     <div class="actions-footer">
         <a
             class="ix-btn secondary"
@@ -706,6 +726,9 @@
         );
 
         const tenantSelect = document.getElementById('tenant-select');
+        const tenantComboWrap = document.getElementById('tenant-combo-wrap');
+        const tenantComboInput = document.getElementById('tenant-combo-input');
+        const tenantComboDropdown = document.getElementById('tenant-combo-dropdown');
         const namespaceSelect = document.getElementById('namespace-select');
         const tenantRow = document.getElementById('tenant-row');
         const namespaceRow = document.getElementById('namespace-row');
@@ -749,6 +772,11 @@
         const errorBanner = document.getElementById('error-banner');
         const successBanner = document.getElementById('success-banner');
         const saveBtn = document.getElementById('save-model-btn');
+        const kbUploadPanel = document.getElementById('kb-upload-panel');
+        const kbFileInput = document.getElementById('kb-file-input');
+        const kbUploadBtn = document.getElementById('kb-upload-btn');
+        const kbUploadStatus = document.getElementById('kb-upload-status');
+        const kbTokenCountStatus = document.getElementById('kb-token-count-status');
         const modelSaveModal = document.getElementById('model-save-modal');
         const modelSaveModalTitle = document.getElementById('model-save-modal-title');
         const modelSaveModalSummary = document.getElementById('model-save-modal-summary');
@@ -758,6 +786,7 @@
 
         let activeTab = 'basic';
         let targetTenantOptions = [];
+        let tenantComboHighlightedIndex = -1;
         let targetNamespaceOptionsByTenant = {};
         let targetSelectedTenant = '';
         let targetSelectedNamespace = '';
@@ -773,6 +802,259 @@
         const HF_MODEL_BASIC_TOOLTIP = 'Hugging Face model ID (for example namespace/model). Required in Basic mode. Used to build the runtime model target.';
         const HF_MODEL_ADVANCED_TOOLTIP = 'Hugging Face model ID (for example namespace/model). Optional in Advanced mode if the submitted spec already encodes the runtime model target.';
         const HF_MODEL_READONLY_TOOLTIP = 'Runtime model target for this existing or catalog-backed model.';
+
+        function setKbStatus(message, isError = false) {
+            if (!kbUploadStatus) {
+                return;
+            }
+            kbUploadStatus.textContent = message || '';
+            kbUploadStatus.style.color = isError ? '#b91c1c' : '#475569';
+        }
+
+        function setKbTokenCountStatus(count) {
+            if (!kbTokenCountStatus) {
+                return;
+            }
+            if (count === null || count === undefined || count === '') {
+                kbTokenCountStatus.textContent = '';
+                return;
+            }
+            kbTokenCountStatus.textContent = `KB token count: ${Number(count).toLocaleString()}`;
+        }
+
+        function setKbUiBusy(busy) {
+            if (kbUploadBtn) {
+                kbUploadBtn.disabled = busy;
+            }
+            if (saveBtn) {
+                saveBtn.disabled = busy;
+            }
+        }
+
+        function getCurrentKbSpec() {
+            try {
+                return activeTab === 'basic' ? buildBasicSpecFromUi() : parseAdvancedSpec();
+            } catch (_err) {
+                return null;
+            }
+        }
+
+        function isKnowledgebaseSpec(spec) {
+            return !!(
+                spec
+                && typeof spec === 'object'
+                && !Array.isArray(spec)
+                && spec.sample_query
+                && typeof spec.sample_query === 'object'
+                && String(spec.sample_query.apiType || '').trim().toLowerCase() === 'knowledgebase'
+            );
+        }
+
+        function updateKbUploadVisibility() {
+            if (!kbUploadPanel) {
+                return;
+            }
+            const visible = isKnowledgebaseSpec(getCurrentKbSpec());
+            kbUploadPanel.style.display = visible ? 'block' : 'none';
+            if (!visible) {
+                setKbStatus('');
+                setKbTokenCountStatus(null);
+            }
+        }
+
+        function normalizeModelTarget(value) {
+            return typeof value === 'string' ? value.trim() : '';
+        }
+
+        function addUniqueModelTarget(targets, seen, value) {
+            const normalized = normalizeModelTarget(value);
+            if (normalized === '' || seen.has(normalized)) {
+                return;
+            }
+            targets.push(normalized);
+            seen.add(normalized);
+        }
+
+        function normalizeCommandList(commands) {
+            return Array.isArray(commands)
+                ? commands.filter((item) => typeof item === 'string').map((item) => item.trim()).filter((item) => item !== '')
+                : [];
+        }
+
+        function collectModelTargetsFromNormalizedCommands(normalizedCommands, label) {
+            const targets = [];
+            const seen = new Set();
+
+            if (normalizedCommands.length >= 2 && normalizedCommands[0] === 'vllm' && normalizedCommands[1] === 'serve') {
+                if (normalizedCommands.length < 3) {
+                    throw new Error(`${label} contains \`vllm serve\` without a model value.`);
+                }
+                const omniModel = normalizedCommands[2];
+                if (omniModel === '') {
+                    throw new Error(`${label} contains \`vllm serve\` without a valid model value.`);
+                }
+                if (!omniModel.startsWith('-')) {
+                    addUniqueModelTarget(targets, seen, omniModel);
+                }
+            }
+
+            for (let i = 0; i < normalizedCommands.length; i += 1) {
+                const token = normalizedCommands[i];
+                if (token === '--model') {
+                    if (i + 1 >= normalizedCommands.length) {
+                        throw new Error(`${label} contains \`--model\` without a value.`);
+                    }
+                    const modelValue = normalizedCommands[i + 1];
+                    if (modelValue === '') {
+                        throw new Error(`${label} contains \`--model\` without a value.`);
+                    }
+                    addUniqueModelTarget(targets, seen, modelValue);
+                    i += 1;
+                    continue;
+                }
+                if (token.startsWith('--model=')) {
+                    const modelValue = token.split('=', 2)[1];
+                    if (modelValue === '') {
+                        throw new Error(`${label} contains \`--model=\` without a value.`);
+                    }
+                    addUniqueModelTarget(targets, seen, modelValue);
+                }
+            }
+
+            return targets;
+        }
+
+        function resolveKnowledgebaseUploadModel(payload) {
+            const directModel = normalizeModelTarget(payload?.hf_model);
+            if (directModel !== '') {
+                return directModel;
+            }
+
+            const spec = payload?.spec;
+            if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+                throw new Error('Knowledge base upload requires a model target.');
+            }
+
+            const commands = normalizeCommandList(spec.commands);
+            let commandTargets = collectModelTargetsFromNormalizedCommands(commands, 'spec.commands');
+            if (commandTargets.length === 0) {
+                const entrypoint = spec.entrypoint;
+                if (Array.isArray(entrypoint) && entrypoint.every((item) => typeof item === 'string')) {
+                    const combinedCommands = [...entrypoint.map((item) => String(item)), ...commands];
+                    commandTargets = collectModelTargetsFromNormalizedCommands(
+                        normalizeCommandList(combinedCommands),
+                        'spec.commands with entrypoint'
+                    );
+                }
+            }
+
+            if (commandTargets.length > 1) {
+                throw new Error('Knowledge base upload requires exactly one effective model target.');
+            }
+            if (commandTargets.length === 1) {
+                return commandTargets[0];
+            }
+
+            const sampleQueryModel = normalizeModelTarget((((spec.sample_query || {}).body) || {}).model);
+            if (sampleQueryModel !== '') {
+                return sampleQueryModel;
+            }
+
+            throw new Error('Knowledge base upload requires a model target.');
+        }
+
+        async function ensureCreateKbTargetDoesNotExist(payload) {
+            if (PAGE_MODE !== 'create') {
+                return;
+            }
+
+            const resp = await fetch(`/api/funcs/${encodeURIComponent(payload.tenant)}/${encodeURIComponent(payload.namespace)}/${encodeURIComponent(payload.name)}`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (resp.status === 404) {
+                return;
+            }
+
+            if (resp.ok) {
+                throw new Error('This function already exists. Use the update flow instead.');
+            }
+
+            let detail = `Function existence check failed (HTTP ${resp.status})`;
+            try {
+                const parsed = await resp.json();
+                if (parsed && parsed.error) {
+                    detail = parsed.error;
+                }
+            } catch (_err) {
+                const text = await resp.text();
+                if (text) {
+                    detail = text;
+                }
+            }
+            throw new Error(detail);
+        }
+
+        async function uploadKnowledgebaseFile(payload, required) {
+            if (!isKnowledgebaseSpec(payload?.spec)) {
+                setKbTokenCountStatus(null);
+                return false;
+            }
+
+            setKbTokenCountStatus(null);
+
+            const selectedFile = kbFileInput?.files && kbFileInput.files.length > 0 ? kbFileInput.files[0] : null;
+            if (!selectedFile) {
+                if (required) {
+                    throw new Error('Knowledge base file is required for knowledgebase deployments.');
+                }
+                return false;
+            }
+
+            if (PAGE_MODE === 'create') {
+                await ensureCreateKbTargetDoesNotExist(payload);
+            }
+
+            const model = resolveKnowledgebaseUploadModel(payload);
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('model', model);
+
+            setKbStatus('Uploading KB file...');
+            const resp = await fetch(`/kb/upload/${encodeURIComponent(payload.tenant)}/${encodeURIComponent(payload.namespace)}/${encodeURIComponent(payload.name)}`, {
+                method: 'POST',
+                body: formData
+            });
+            const text = await resp.text();
+            if (!resp.ok) {
+                let detail = `KB upload failed (HTTP ${resp.status})`;
+                try {
+                    const parsed = JSON.parse(text);
+                    if (parsed && parsed.error) {
+                        detail = parsed.error;
+                    } else if (text) {
+                        detail = `${detail}: ${text}`;
+                    }
+                } catch (_err) {
+                    if (text) {
+                        detail = `${detail}: ${text}`;
+                    }
+                }
+                throw new Error(detail);
+            }
+
+            let parsed = null;
+            try {
+                parsed = text ? JSON.parse(text) : null;
+            } catch (_err) {
+                parsed = null;
+            }
+
+            setKbTokenCountStatus(parsed && Object.prototype.hasOwnProperty.call(parsed, 'kb_token_count') ? parsed.kb_token_count : null);
+            setKbStatus(`Uploaded ${selectedFile.name} as kb.data.`);
+            return true;
+        }
 
         function updateHfModelFieldRequirementUi() {
             const manualCreate = PAGE_MODE === 'create' && !IS_CATALOG_MODE;
@@ -1441,7 +1723,11 @@
                 const tenantOptionCount = tenantSelect.options.length;
                 const singleTenant = tenantOptionCount === 1;
                 tenantRow.classList.toggle('hidden', tenantOptionCount === 0);
-                tenantSelect.hidden = singleTenant;
+                if (tenantComboWrap) tenantComboWrap.style.display = singleTenant ? 'none' : 'inline-block';
+                if (!singleTenant && tenantComboInput) {
+                    const match = targetTenantOptions.find((t) => t.value === tenantSelect.value);
+                    tenantComboInput.value = match ? match.label : '';
+                }
                 if (tenantDisplay) {
                     tenantDisplay.style.display = singleTenant ? 'block' : 'none';
                     tenantDisplay.textContent = singleTenant ? (getTargetTenantLabel(tenantSelect.value) || tenantSelect.value || '') : '';
@@ -1549,6 +1835,7 @@
             panelBasic.classList.toggle('active', basicActive);
             panelAdvanced.classList.toggle('active', !basicActive);
             updateHfModelFieldRequirementUi();
+            updateKbUploadVisibility();
         }
 
         function parseAdvancedSpec() {
@@ -1622,10 +1909,12 @@
                 return;
             }
 
-            saveBtn.disabled = true;
+            setKbUiBusy(true);
             showSuccess(payload.mode === 'update' ? 'Updating model...' : 'Deploying model...');
 
             try {
+                await uploadKnowledgebaseFile(payload, PAGE_MODE === 'create');
+
                 console.log('[func_create] submit payload', {
                     activeTab,
                     mode: payload.mode,
@@ -1668,9 +1957,10 @@
                 return;
             } catch (err) {
                 showSuccess('');
+                setKbStatus(err.message || String(err), true);
                 showError(err.message || String(err));
             } finally {
-                saveBtn.disabled = false;
+                setKbUiBusy(false);
             }
         }
 
@@ -1777,6 +2067,91 @@
                 setPolicyEnabled(policyEnabledCheckbox.checked);
             });
             tenantSelect.addEventListener('change', () => rebuildNamespaceOptions({ preserveCurrent: false }));
+
+            function setTenantComboHighlight(items, index) {
+                items.forEach((item, i) => { item.style.background = i === index ? '#e8f0fe' : ''; });
+                tenantComboHighlightedIndex = index;
+                if (index >= 0 && items[index]) items[index].scrollIntoView({ block: 'nearest' });
+            }
+
+            function renderTenantComboItems(search) {
+                if (!tenantComboDropdown) return;
+                tenantComboHighlightedIndex = -1;
+                const matches = targetTenantOptions.filter((t) =>
+                    !search || t.label.toLowerCase().includes(search) || t.value.toLowerCase().includes(search)
+                );
+                tenantComboDropdown.innerHTML = '';
+                if (matches.length === 0) {
+                    const noMatch = document.createElement('div');
+                    noMatch.textContent = 'No matches';
+                    noMatch.style.cssText = 'padding:6px 10px; color:#888; font-size:14px;';
+                    tenantComboDropdown.appendChild(noMatch);
+                } else {
+                    matches.forEach((t) => {
+                        const item = document.createElement('div');
+                        item.textContent = t.label;
+                        item.dataset.comboValue = t.value;
+                        item.style.cssText = 'padding:6px 10px; cursor:pointer; font-size:14px; white-space:nowrap;';
+                        item.addEventListener('mouseover', () => { item.style.background = '#e8f0fe'; });
+                        item.addEventListener('mouseout', () => { item.style.background = ''; });
+                        item.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            if (tenantComboInput) tenantComboInput.value = t.label;
+                            tenantSelect.value = t.value;
+                            closeTenantCombo();
+                            rebuildNamespaceOptions({ preserveCurrent: false });
+                        });
+                        tenantComboDropdown.appendChild(item);
+                    });
+                }
+                tenantComboDropdown.style.display = '';
+            }
+            function openTenantCombo() {
+                if (tenantComboInput) tenantComboInput.select();
+                renderTenantComboItems('');
+            }
+            function closeTenantCombo() {
+                if (tenantComboDropdown) tenantComboDropdown.style.display = 'none';
+                const match = targetTenantOptions.find((t) => t.value === tenantSelect.value);
+                if (tenantComboInput) tenantComboInput.value = match ? match.label : '';
+            }
+            function filterTenantCombo() {
+                renderTenantComboItems(tenantComboInput ? tenantComboInput.value.toLowerCase() : '');
+            }
+            tenantComboInput?.addEventListener('focus', openTenantCombo);
+            tenantComboInput?.addEventListener('input', filterTenantCombo);
+            tenantComboInput?.addEventListener('blur', closeTenantCombo);
+            tenantComboInput?.addEventListener('keydown', (e) => {
+                const isOpen = tenantComboDropdown && tenantComboDropdown.style.display !== 'none';
+                if (!isOpen) {
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openTenantCombo(); }
+                    return;
+                }
+                const items = Array.from(tenantComboDropdown.querySelectorAll('[data-combo-value]'));
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setTenantComboHighlight(items, Math.min(tenantComboHighlightedIndex + 1, items.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setTenantComboHighlight(items, Math.max(tenantComboHighlightedIndex - 1, 0));
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const highlighted = items[tenantComboHighlightedIndex];
+                    if (highlighted) {
+                        const t = targetTenantOptions.find((o) => o.value === highlighted.dataset.comboValue);
+                        if (t) {
+                            if (tenantComboInput) tenantComboInput.value = t.label;
+                            tenantSelect.value = t.value;
+                            closeTenantCombo();
+                            rebuildNamespaceOptions({ preserveCurrent: false });
+                        }
+                    }
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeTenantCombo();
+                    if (tenantComboInput) tenantComboInput.blur();
+                }
+            });
             tabBasic.addEventListener('click', () => setActiveTab('basic'));
             tabAdvanced.addEventListener('click', () => setActiveTab('advanced'));
             saveBtn.addEventListener('click', submitModel);
@@ -1796,6 +2171,24 @@
                     return;
                 }
                 _advancedSpecUserEdited = true;
+                updateKbUploadVisibility();
+            });
+            kbUploadBtn?.addEventListener('click', async () => {
+                clearMessages();
+                let payload;
+                try {
+                    payload = buildTopLevelPayload();
+                    payload.editor_mode = activeTab;
+                    payload.spec = activeTab === 'basic' ? buildBasicSpecFromUi() : parseAdvancedSpec();
+                    setKbUiBusy(true);
+                    await uploadKnowledgebaseFile(payload, true);
+                } catch (err) {
+                    setKbTokenCountStatus(null);
+                    setKbStatus(err.message || String(err), true);
+                    showError(err.message || String(err));
+                } finally {
+                    setKbUiBusy(false);
+                }
             });
             imageSelect?.addEventListener('change', markBasicSpecDirty);
             commandsJson.addEventListener('input', markBasicSpecDirty);
@@ -1833,6 +2226,7 @@
             applyInitialModelIfPresent();
             updateHfModelFieldRequirementUi();
             applyBasicCompatibilityState();
+            updateKbUploadVisibility();
 
             const resolvedInitialTab = (PAGE_MODE === 'update' && !BASIC_MODE_SUPPORTED)
                 ? 'advanced'
@@ -1867,6 +2261,7 @@
                     // Keep empty and validate on submit.
                 }
             }
+            updateKbUploadVisibility();
         }
 
         init();

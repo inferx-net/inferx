@@ -39,7 +39,7 @@ use hyper_util::rt::TokioIo;
 use inferxlib::data_obj::DeltaEvent;
 
 use crate::common::*;
-use crate::gateway::metrics::{FunccallLabels, GATEWAY_METRICS};
+use crate::gateway::metrics::{FunccallLabels, GATEWAY_METRICS, GpuCountLabels};
 use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
@@ -165,6 +165,7 @@ pub struct FuncWorkerInner {
 
     // GPU tracking for billing
     pub gpuTrackingInfo: Mutex<GpuTrackingInfo>,
+    pub publishedGpuCountLabels: Mutex<Option<GpuCountLabels>>,
 }
 
 impl Drop for FuncWorkerInner {
@@ -266,6 +267,7 @@ impl FuncWorker {
             failCount: AtomicUsize::new(0),
             perfStat: PerfStat::default(),
             gpuTrackingInfo: Mutex::new(GpuTrackingInfo::default()),
+            publishedGpuCountLabels: Mutex::new(None),
         };
 
         let worker = Self(Arc::new(inner));
@@ -340,12 +342,19 @@ impl FuncWorker {
 
     // return: (workerId, IPAddr, Keepalive)
     pub async fn LeaseWorker(&self) -> Result<LeaseWorkerResp> {
+        let consumer_tenant = if self.physical_namespace == "endpoint" {
+            self.tenant.as_str()
+        } else {
+            ""
+        };
+
         return SCHEDULER_CLIENT
             .LeaseWorker(
                 &self.physical_tenant,
                 &self.physical_namespace,
                 &self.physical_funcname,
                 self.fprevision,
+                consumer_tenant,
             )
             .await;
     }
@@ -361,6 +370,7 @@ impl FuncWorker {
 
         // Insert final billing tick for remaining time
         self.insert_final_billing_tick().await;
+        self.remove_gpu_count_metric().await;
 
         self.funcAgent
             .activeReqCnt
@@ -398,6 +408,59 @@ impl FuncWorker {
         if self.funcAgent.workers.lock().unwrap().len() == 1 {
             assert!(activeReqCnt == waitReqCnt);
         }
+    }
+
+    fn gpu_count_labels(&self) -> Option<(GpuCountLabels, i32)> {
+        let tracking_info = self.gpuTrackingInfo.lock().unwrap();
+        let gpu_count = tracking_info.gpu_count;
+        if gpu_count <= 0 || tracking_info.nodename.is_empty() {
+            return None;
+        }
+
+        let pod_id = self.id.load(Ordering::Relaxed);
+        if pod_id < 0 {
+            return None;
+        }
+
+        let labels = GpuCountLabels {
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
+            funcname: self.funcname.clone(),
+            kind: if self.namespace == "endpoints" {
+                "endpoint".to_owned()
+            } else {
+                "function".to_owned()
+            },
+            node_name: tracking_info.nodename.clone(),
+            pod_id: pod_id.to_string(),
+        };
+
+        Some((labels, gpu_count))
+    }
+
+    async fn publish_gpu_count_metric(&self) {
+        let (labels, gpu_count) = match self.gpu_count_labels() {
+            Some(v) => v,
+            None => return,
+        };
+
+        GATEWAY_METRICS
+            .lock()
+            .await
+            .gpuCount
+            .get_or_create(&labels)
+            .set(gpu_count as i64);
+
+        *self.publishedGpuCountLabels.lock().unwrap() = Some(labels);
+    }
+
+    async fn remove_gpu_count_metric(&self) {
+        let labels = match self.publishedGpuCountLabels.lock().unwrap().take() {
+            Some(v) => v,
+            None => return,
+        };
+
+        GATEWAY_METRICS.lock().await.gpuCount.remove(&labels);
     }
 
     // return is_fail
@@ -572,6 +635,7 @@ impl FuncWorker {
 
         // Insert start billing tick (interval_ms = 0) to mark session beginning
         self.insert_start_billing_tick();
+        self.publish_gpu_count_metric().await;
 
         self.connPool
             .Init(id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)

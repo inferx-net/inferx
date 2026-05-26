@@ -89,6 +89,16 @@ pub struct FunccallLabels {
     pub status: u16, // track success/failure
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct GpuCountLabels {
+    pub tenant: String,
+    pub namespace: String,
+    pub funcname: String,
+    pub kind: String,
+    pub node_name: String,
+    pub pod_id: String,
+}
+
 #[derive(Debug)]
 pub struct GatewayMetrics {
     // request count
@@ -99,6 +109,7 @@ pub struct GatewayMetrics {
     pub funccallCsTtft: Family<FunccallLabels, Histogram>,
     pub funccallTtft: Family<FunccallLabels, Histogram>,
     pub requests: Family<MethodLabels, Counter>,
+    pub gpuCount: Family<GpuCountLabels, Gauge>,
 }
 
 impl GatewayMetrics {
@@ -112,6 +123,7 @@ impl GatewayMetrics {
             funccallCsTtft: Family::new_with_constructor(csHg),
             funccallTtft: Family::new_with_constructor(ttftHg),
             requests: Family::default(),
+            gpuCount: Family::default(),
         };
 
         return ret;
@@ -146,6 +158,12 @@ impl GatewayMetrics {
             "requests",
             "http request count",
             self.requests.clone(),
+        );
+
+        METRICS_REGISTRY.lock().await.register(
+            "gpu_count",
+            "leased gpu count by logical workload and pod",
+            self.gpuCount.clone(),
         );
     }
 }

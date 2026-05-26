@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use core::ops::Deref;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -233,6 +233,12 @@ pub struct FuncAgentMgrInner {
 #[derive(Debug, Clone)]
 pub struct FuncAgentMgr(Arc<FuncAgentMgrInner>);
 
+#[derive(Debug, Clone, Default)]
+pub struct PodLeaseInfo {
+    pub leased: bool,
+    pub endpoint_consumer_tenant: Option<String>,
+}
+
 impl Deref for FuncAgentMgr {
     type Target = Arc<FuncAgentMgrInner>;
 
@@ -341,6 +347,55 @@ impl FuncAgentMgr {
         }
 
         json!({ "funcs": infos })
+    }
+
+    pub fn PodLeaseState(&self) -> HashMap<String, PodLeaseInfo> {
+        let agents: Vec<FuncAgent> = {
+            let lock = self.agents.lock().unwrap();
+            lock.values().cloned().collect()
+        };
+
+        let mut leases = HashMap::new();
+        for agent in agents {
+            let workers: Vec<FuncWorker> = {
+                let lock = agent.workers.lock().unwrap();
+                lock.values().cloned().collect()
+            };
+
+            for worker in workers {
+                let pod_id = worker.id.load(Ordering::Relaxed);
+                if pod_id < 0 {
+                    continue;
+                }
+
+                let pod_key = format!(
+                    "{}/{}/{}/{}/{}",
+                    &worker.physical_tenant,
+                    &worker.physical_namespace,
+                    &worker.physical_funcname,
+                    worker.fprevision,
+                    pod_id
+                );
+
+                let endpoint_consumer_tenant =
+                    if worker.physical_tenant == "inferx" && worker.physical_namespace == "endpoint"
+                    {
+                        Some(worker.tenant.clone())
+                    } else {
+                        None
+                    };
+
+                leases.insert(
+                    pod_key,
+                    PodLeaseInfo {
+                        leased: true,
+                        endpoint_consumer_tenant,
+                    },
+                );
+            }
+        }
+
+        leases
     }
 }
 
@@ -873,7 +928,7 @@ impl FuncAgent {
     pub fn SendWorkerStatusUpdate(&self, update: WorkerUpdate) {
         let statusUpdateTx = self.workerStateUpdateTx.clone();
         if let Err(e) = statusUpdateTx.try_send(update) {
-            trace!(
+            error!(
                 "SendWorkerStatusUpdate: {}/{}/{} channel closed or full, dropping update: {:?}",
                 self.tenant, self.namespace, self.funcName, e
             );
@@ -1081,7 +1136,14 @@ impl ClientReqQueue {
     pub async fn Send(&self, req: FuncClientReq) -> bool {
         let mut q = self.reqQueue.lock().await;
         if q.len() >= self.queueLen.load(Ordering::Relaxed) {
-            req.tx.send(Err(Error::QueueFull)).unwrap();
+            if req.tx.send(Err(Error::QueueFull)).is_err() {
+                error!(
+                    "ClientReqQueue::Send receiver dropped before QueueFull reply tenant={} namespace={} func={}",
+                    req.tenant,
+                    req.namespace,
+                    req.funcName
+                );
+            }
             return false;
         }
 

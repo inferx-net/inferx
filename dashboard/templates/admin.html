@@ -721,6 +721,32 @@
         box-sizing: border-box;
     }
 
+    #Billing .billing-tenant-combo-wrap {
+        position: relative;
+        display: none;
+    }
+
+    #Billing .billing-tenant-combo-input {
+        padding: 7px 34px 7px 8px;
+        font-size: 14px;
+        min-width: 240px;
+        cursor: pointer;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+    }
+
+    #Billing .billing-tenant-combo-caret {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        pointer-events: none;
+        color: #475569;
+        font-size: 16px;
+        line-height: 1;
+        font-weight: 700;
+    }
+
     .billing-admin-tenant-link {
         border: 0;
         padding: 0;
@@ -744,6 +770,7 @@
     <button class="tablinks" onclick="openTab(event, 'Apikeys')">Apikeys</button>
     <button class="tablinks" onclick="openTab(event, 'Billing')">Billing</button>
     <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="display: none;">Billing Admin</button>
+    <button class="tablinks" id="endpoint-usage-tab-btn" onclick="openTab(event, 'EndpointUsage')">Endpoint Usage</button>
 </div>
 
 <div id="Apikeys" class="tabcontent">
@@ -966,8 +993,21 @@
 
     <!-- Tenant Selector -->
     <div style="margin-bottom: 20px;">
-        <label for="billing_tenant_select" style="font-size: 16px; font-weight: bold;">Tenant: </label>
-        <select id="billing_tenant_select" onchange="loadBillingData()" style="padding: 5px; font-size: 14px;">
+        <label for="billing_tenant_combo_input" style="font-size: 16px; font-weight: bold;">Tenant: </label>
+        <span id="billing-tenant-combo-wrap" class="billing-tenant-combo-wrap">
+            <input type="text" id="billing_tenant_combo_input" placeholder="Select or type to search..."
+                   autocomplete="off" spellcheck="false"
+                   class="billing-tenant-combo-input"
+                   onfocus="openBillingTenantDropdown()"
+                   oninput="filterBillingTenants()"
+                   onblur="closeBillingTenantDropdown()"
+                   onkeydown="onBillingTenantKeydown(event)">
+            <span class="billing-tenant-combo-caret">▾</span>
+            <div id="billing-tenant-dropdown" onmousedown="event.preventDefault()"
+                 style="display:none; position:absolute; left:0; top:100%; background:#fff; border:1px solid #ccc; border-top:none; max-height:260px; overflow-y:auto; z-index:1000; min-width:100%; box-shadow:0 2px 6px rgba(0,0,0,.15);"></div>
+        </span>
+        <!-- hidden select holds the selected value; all existing JS reads .value from here -->
+        <select id="billing_tenant_select" style="display:none;">
             <option value="" disabled selected>Select a tenant</option>
         </select>
         <span id="billing-tenant-readonly" class="billing-tenant-readonly"></span>
@@ -1066,10 +1106,10 @@
                                     Period <span id="usage-sort-period-icon">▼</span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
-                                    Inference (hrs) <span id="usage-sort-inf-hours-icon"></span>
+                                    Inference GPU time <span id="usage-sort-inf-hours-icon"></span>
                                 </th>
                                 <th class="usage-standby-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
-                                    Snapshot Retention (hrs) <span id="usage-sort-sby-hours-icon"></span>
+                                    Snapshot Retention time <span id="usage-sort-sby-hours-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
                                     Inference (USD) <span id="usage-sort-inf-cost-icon"></span>
@@ -1159,10 +1199,10 @@
                     </h4>
                     <table id="analytics-hourly-table" class="billing-analytics-table">
                         <thead>
-                            <tr>
-                                <th style="text-align: left; padding: 8px;">Period</th>
-                                <th style="text-align: right; padding: 8px;">GPU-Hours</th>
-                            </tr>
+                                <tr>
+                                    <th style="text-align: left; padding: 8px;">Period</th>
+                                    <th style="text-align: right; padding: 8px;">GPU time</th>
+                                </tr>
                         </thead>
                         <tbody></tbody>
                         <tfoot>
@@ -1186,10 +1226,10 @@
                                                 Model <span id="regular-sort-name-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                                Inference (hrs) <span id="regular-sort-inf-hours-icon"></span>
+                                                Inference GPU time <span id="regular-sort-inf-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
-                                                Snapshot Retention (hrs) <span id="regular-sort-sby-hours-icon"></span>
+                                                Snapshot Retention time <span id="regular-sort-sby-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
                                                 Inference (USD) <span id="regular-sort-inf-cost-icon"></span>
@@ -1231,7 +1271,7 @@
                                                 Endpoint <span id="endpoint-sort-name-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                                Inference (hrs) <span id="endpoint-sort-inf-hours-icon"></span>
+                                                Inference GPU time <span id="endpoint-sort-inf-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
                                                 Inference (USD) <span id="endpoint-sort-inf-cost-icon"></span>
@@ -1267,10 +1307,10 @@
                                         Group <span id="sort-name-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                        Inference (hrs) <span id="sort-inf-hours-icon"></span>
+                                        Inference GPU time <span id="sort-inf-hours-icon"></span>
                                     </th>
                                     <th class="analytics-summary-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
-                                        Snapshot Retention (hrs) <span id="sort-sby-hours-icon"></span>
+                                        Snapshot Retention time <span id="sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
                                         Inference (USD) <span id="sort-inf-cost-icon"></span>
@@ -1322,10 +1362,10 @@
                                         Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
-                                        Inference (hrs) <span id="detail-sort-inf-hours-icon"></span>
+                                        Inference GPU time <span id="detail-sort-inf-hours-icon"></span>
                                     </th>
                                     <th class="analytics-detail-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
-                                        Snapshot Retention (hrs) <span id="detail-sort-sby-hours-icon"></span>
+                                        Snapshot Retention time <span id="detail-sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
                                         Inference (USD) <span id="detail-sort-inf-cost-icon"></span>
@@ -1572,6 +1612,89 @@
     </div>
 </div>
 
+<div id="EndpointUsage" class="tabcontent">
+    <div id="endpoint-usage-no-access" style="display: none; color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Endpoint Usage is only available to Inferx administrators.
+    </div>
+
+    <div id="endpoint-usage-content" style="display: none;">
+        <div id="endpoint-usage-message" style="display: none; margin-bottom: 15px; padding: 10px; border-radius: 4px; position: sticky; top: 10px; z-index: 10;"></div>
+        
+        <!-- Time Range Controls -->
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
+            <label style="margin: 0;">Time Range:</label>
+            <select id="endpoint-usage-time-range" onchange="onEndpointUsageTimeRangeChange()">
+                <option value="24">Last 24 Hours</option>
+                <option value="168">Last 7 Days</option>
+                <option value="720">Last 30 Days</option>
+                <option value="custom">Custom Range</option>
+            </select>
+            <div id="endpoint-usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button type="button" onclick="setEndpointUsageRangeHours(24)" id="endpoint-usage-range-24h">24h</button>
+                <button type="button" onclick="setEndpointUsageRangeHours(24 * 7)" id="endpoint-usage-range-7d">7d</button>
+                <button type="button" onclick="setEndpointUsageRangeHours(24 * 30)" id="endpoint-usage-range-30d">30d</button>
+                <button type="button" onclick="showEndpointUsageCustomRange()" id="endpoint-usage-range-custom">Custom</button>
+            </div>
+        </div>
+        <div id="endpoint-usage-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+            <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+            <input type="datetime-local" id="endpoint-usage-start" style="font-size: 12px;">
+            <span style="font-size: 12px;">to</span>
+            <input type="datetime-local" id="endpoint-usage-end" style="font-size: 12px;">
+            <button type="button" onclick="applyEndpointUsageCustomRange()">Apply</button>
+        </div>
+        
+        <!-- View Controls -->
+        <div id="endpoint-usage-view-controls" style="margin-bottom: 15px;">
+            <label>View By:</label>
+            <input type="radio" name="endpoint-usage-view" value="by-endpoint" onchange="onEndpointUsageViewChange()" checked> Endpoint
+            <input type="radio" name="endpoint-usage-view" value="by-tenant" onchange="onEndpointUsageViewChange()"> Tenant
+        </div>
+        
+        <!-- Main Table -->
+        <div id="endpoint-usage-table-container" style="overflow-x: auto;">
+            <table id="endpoint-usage-table" class="ix-table admin-data-table billing-analytics-table" style="width:100%">
+                <thead>
+                    <tr id="endpoint-usage-thead">
+                        <!-- Columns will be populated dynamically -->
+                    </tr>
+                </thead>
+                <tbody id="endpoint-usage-tbody">
+                    <tr><td colspan="8" style="text-align: center; color: #888;">Loading endpoint usage...</td></tr>
+                </tbody>
+                <tfoot>
+                    <tr id="endpoint-usage-tfoot">
+                        <!-- Summary row -->
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="endpoint-usage-pagination-controls" style="display: flex; align-items: center; gap: 12px; margin-top: 15px;">
+            <button id="endpoint-usage-prev-page-btn" onclick="endpointUsagePrevPage()" disabled>&laquo; Prev</button>
+            <span id="endpoint-usage-page-info">Page 1 of 1</span>
+            <button id="endpoint-usage-next-page-btn" onclick="endpointUsageNextPage()" disabled>Next &raquo;</button>
+        </div>
+        
+        <div id="endpoint-usage-detail-area" style="display: none; margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                <h4 id="endpoint-usage-detail-title" style="margin: 0;">Breakdown</h4>
+                <div id="endpoint-usage-granularity-controls" style="display: none; align-items: center; gap: 6px;">
+                    <span style="font-size: 12px; color: #666;">Granularity:</span>
+                    <button type="button" onclick="setEndpointUsageGranularity('hourly')" id="endpoint-usage-granularity-hourly">Hourly</button>
+                    <button type="button" onclick="setEndpointUsageGranularity('daily')" id="endpoint-usage-granularity-daily">Daily</button>
+                    <button type="button" onclick="setEndpointUsageGranularity('weekly')" id="endpoint-usage-granularity-weekly">Weekly</button>
+                </div>
+                <span id="endpoint-usage-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                <button type="button" onclick="closeEndpointUsageDrilldown()" style="margin-left: auto;">Close</button>
+            </div>
+            <div id="endpoint-usage-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
+            <div id="endpoint-usage-detail-content"></div>
+        </div>
+    </div>
+</div>
+
 <script>
     async function fetchWithAuth(url, options) {
         const resp = await fetch(url, options);
@@ -1656,7 +1779,118 @@
         window.updateTenantDisplayMap(map);
     }
 
-    function openTab(evt, tabName) {
+    const ADMIN_TAB_NAMES = new Set([
+        'Tenants',
+        'Namespaces',
+        'Roles',
+        'Apikeys',
+        'Billing',
+        'BillingAdmin',
+        'EndpointUsage',
+    ]);
+
+    function normalizeAdminTabName(tabName) {
+        const normalized = String(tabName || '').trim();
+        return ADMIN_TAB_NAMES.has(normalized) ? normalized : '';
+    }
+
+    function getAdminUrlState() {
+        const url = new URL(window.location.href);
+        let tab = normalizeAdminTabName(url.searchParams.get('tab'));
+        let hashTarget = null;
+
+        const hashId = String(window.location.hash || '').replace(/^#/, '').trim();
+        if (hashId !== '') {
+            hashTarget = document.getElementById(hashId);
+            if (!tab && hashTarget) {
+                if (hashTarget.classList.contains('tabcontent')) {
+                    tab = normalizeAdminTabName(hashTarget.id);
+                } else {
+                    const parentTab = hashTarget.closest('.tabcontent');
+                    if (parentTab) {
+                        tab = normalizeAdminTabName(parentTab.id);
+                    }
+                }
+            }
+        }
+
+        return {
+            tab,
+            tenant: String(url.searchParams.get('tenant') || '').trim(),
+            hashTarget,
+        };
+    }
+
+    function getCurrentActiveAdminTab() {
+        return normalizeAdminTabName(document.querySelector('.tabcontent.active')?.id);
+    }
+
+    function getAdminTabButton(tabName) {
+        const normalized = normalizeAdminTabName(tabName);
+        if (!normalized) return null;
+        return document.querySelector(`button[onclick*="'${normalized}'"]`);
+    }
+
+    function updateAdminUrlState(tabName, { tenant = '', historyMode = 'push' } = {}) {
+        const normalizedTab = normalizeAdminTabName(tabName);
+        if (!normalizedTab) return;
+
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', normalizedTab);
+
+        const normalizedTenant = String(tenant || '').trim();
+        if (normalizedTab === 'Billing' && normalizedTenant !== '') {
+            url.searchParams.set('tenant', normalizedTenant);
+        } else {
+            url.searchParams.delete('tenant');
+        }
+
+        if (normalizedTab !== '') {
+            url.hash = '';
+        }
+
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (nextUrl === currentUrl) {
+            return;
+        }
+
+        if (historyMode === 'replace') {
+            window.history.replaceState({}, '', nextUrl);
+        } else {
+            window.history.pushState({}, '', nextUrl);
+        }
+    }
+
+    async function syncBillingTenantFromUrl(preferredTenant = '', { historyMode = 'replace' } = {}) {
+        const dropdown = document.getElementById('billing_tenant_select');
+        if (!dropdown) return;
+
+        const desiredTenant = String(preferredTenant || '').trim();
+        const hasExplicitChoice = desiredTenant !== '';
+        if (hasExplicitChoice) {
+            const exists = Array.from(dropdown.options || []).some((opt) => opt.value === desiredTenant);
+            if (exists) {
+                dropdown.value = desiredTenant;
+            } else if (dropdown.options.length > 1) {
+                dropdown.value = '';
+            }
+        } else if (dropdown.options.length > 1) {
+            dropdown.value = '';
+        }
+        syncBillingTenantComboLabel();
+
+        if (dropdown.value) {
+            await loadBillingData({ historyMode });
+            return;
+        }
+
+        if (getCurrentActiveAdminTab() === 'Billing') {
+            updateAdminUrlState('Billing', { tenant: '', historyMode });
+        }
+    }
+
+    function openTab(evt, tabName, options = {}) {
         const targetTab = document.getElementById(tabName);
         if (!targetTab) {
             return;
@@ -1675,28 +1909,28 @@
         evt.currentTarget.classList.add("active");
 
         localStorage.setItem('currentTab', tabName);
+        if (options.updateHistory !== false) {
+            updateAdminUrlState(tabName, {
+                tenant: tabName === 'Billing' ? (document.getElementById('billing_tenant_select')?.value || '') : '',
+                historyMode: options.historyMode === 'replace' ? 'replace' : 'push',
+            });
+        }
+
+        if (tabName === 'EndpointUsage') {
+            maybeLoadEndpointUsageData();
+        }
+
+        if (['Apikeys', 'Roles', 'Namespaces', 'Tenants'].includes(tabName)) {
+            ensureAdminTabData(tabName).catch(error => {
+                console.error(`Failed to load ${tabName} tab data:`, error);
+            });
+        }
     }
 
     window.onload = async function () {
-        const hashId = String(window.location.hash || '').replace(/^#/, '').trim();
-        let hashTab = '';
-        let hashTarget = null;
-        if (hashId !== '') {
-            hashTarget = document.getElementById(hashId);
-            if (hashTarget) {
-                if (hashTarget.classList.contains('tabcontent')) {
-                    hashTab = hashTarget.id;
-                } else {
-                    const parentTab = hashTarget.closest('.tabcontent');
-                    if (parentTab) {
-                        hashTab = parentTab.id;
-                    }
-                }
-            }
-        }
-
+        const initialUrlState = getAdminUrlState();
         const savedTab = localStorage.getItem('currentTab') || 'Apikeys';
-        const initialTab = hashTab || savedTab;
+        const initialTab = initialUrlState.tab || savedTab;
         let targetBtn = document.querySelector(`button[onclick*="'${initialTab}'"]`);
         let targetTab = initialTab;
         if (!targetBtn) {
@@ -1704,15 +1938,41 @@
             targetTab = 'Apikeys';
         }
         if (targetBtn) {
-            openTab({ currentTarget: targetBtn }, targetTab);
+            openTab({ currentTarget: targetBtn }, targetTab, { updateHistory: false });
         }
-        if (hashTarget && typeof hashTarget.scrollIntoView === 'function') {
+        if (initialUrlState.hashTarget && typeof initialUrlState.hashTarget.scrollIntoView === 'function') {
             window.setTimeout(function () {
-                hashTarget.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                initialUrlState.hashTarget.scrollIntoView({ block: 'start', behavior: 'smooth' });
             }, 0);
         }
         await initBillingAdminAccess();
+        await initEndpointUsageAccess();
+        if (targetTab === 'Billing') {
+            await populateBillingTenants();
+            await syncBillingTenantFromUrl(initialUrlState.tenant, { historyMode: 'replace' });
+        } else {
+            updateAdminUrlState(getCurrentActiveAdminTab() || 'Apikeys', { historyMode: 'replace' });
+        }
     };
+
+    window.addEventListener('popstate', async function () {
+        const state = getAdminUrlState();
+        const savedTab = localStorage.getItem('currentTab') || 'Apikeys';
+        const targetTab = state.tab || savedTab;
+        const targetBtn = getAdminTabButton(targetTab) || getAdminTabButton('Apikeys');
+        const resolvedTab = targetBtn
+            ? normalizeAdminTabName((targetBtn.getAttribute('onclick').match(/'([^']+)'/) || [])[1])
+            : 'Apikeys';
+        if (!targetBtn || !resolvedTab) {
+            return;
+        }
+
+        openTab({ currentTarget: targetBtn }, resolvedTab, { updateHistory: false });
+        if (resolvedTab === 'Billing') {
+            await populateBillingTenants();
+            await syncBillingTenantFromUrl(state.tenant, { historyMode: 'replace' });
+        }
+    });
 
     // =====================================================
     // Billing Tab Functions
@@ -1735,6 +1995,9 @@
     let billingTenantsPopulated = false;
     let billingTenantsLoadingPromise = null;
     let billingTenantOwnerNames = {};
+    let billingTenantOwnerNamesLoadingPromise = null;
+    let billingAllTenants = [];
+    let billingTenantHighlightedIndex = -1;
     let billingAdminTenantsPopulated = false;
     let billingAdminAccessReady = false;
     let billingAdminAccessPromise = null;
@@ -1760,6 +2023,44 @@
     let apikeyRestrictNamespacesByTenant = {};
     let apikeyCreatorIsInferxAdmin = false;
 
+    async function loadBillingTenantOwnerNames(roles) {
+        if (!IsInferxAdmin(roles)) {
+            return billingTenantOwnerNames;
+        }
+        if (Object.keys(billingTenantOwnerNames).length > 0) {
+            return billingTenantOwnerNames;
+        }
+        if (billingTenantOwnerNamesLoadingPromise) {
+            return billingTenantOwnerNamesLoadingPromise;
+        }
+
+        billingTenantOwnerNamesLoadingPromise = (async () => {
+            try {
+                const ownerResp = await fetchWithAuth('/proxy1/admin/tenants');
+                if (ownerResp.ok) {
+                    const ownerRows = await ownerResp.json();
+                    if (Array.isArray(ownerRows)) {
+                        ownerRows.forEach((row) => {
+                            const tenantName = String(row?.tenant_name || '').trim();
+                            const ownerName = String(row?.display_name || '').trim();
+                            if (tenantName !== '' && ownerName !== '') {
+                                billingTenantOwnerNames[tenantName] = ownerName;
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to load Billing tenant owner names:', error);
+            } finally {
+                billingTenantOwnerNamesLoadingPromise = null;
+            }
+
+            return billingTenantOwnerNames;
+        })();
+
+        return billingTenantOwnerNamesLoadingPromise;
+    }
+
     // Called when Billing tab is opened
     async function populateBillingTenants() {
         if (billingTenantsPopulated) return;
@@ -1775,50 +2076,33 @@
                 fetchWithAuth('/generate_tenants').then(r => r.json())
             ]);
             billingTenantOwnerNames = {};
-
-            if (IsInferxAdmin(roles)) {
-                try {
-                    const ownerResp = await fetchWithAuth('/proxy1/admin/tenants');
-                    if (ownerResp.ok) {
-                        const ownerRows = await ownerResp.json();
-                        if (Array.isArray(ownerRows)) {
-                            ownerRows.forEach((row) => {
-                                const tenantName = String(row?.tenant_name || '').trim();
-                                const ownerName = String(row?.display_name || '').trim();
-                                if (tenantName !== '' && ownerName !== '') {
-                                    billingTenantOwnerNames[tenantName] = ownerName;
-                                }
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Failed to load Billing tenant owner names:', error);
-                }
-            }
+            await loadBillingTenantOwnerNames(roles);
 
             upsertTenantDisplayMapFromList(tenants);
-            const allowedTenants = [];
+            billingAllTenants = [];
+            dropdown.innerHTML = '<option value="" disabled selected>Select a tenant</option>';
             tenants.forEach(t => {
                 if (IsAdmin(roles, t.name, "") || IsUser(roles, t.name, "")) {
                     const label = billingTenantOptionLabel(t, billingTenantOwnerNames[t.name]);
+                    billingAllTenants.push({ value: t.name, label });
                     const option = document.createElement('option');
                     option.value = t.name;
                     option.textContent = label;
                     dropdown.appendChild(option);
-                    allowedTenants.push({ value: t.name, label });
                 }
             });
 
-            if (allowedTenants.length === 1) {
-                dropdown.value = allowedTenants[0].value;
-                dropdown.style.display = 'none';
+            const comboWrap = document.getElementById('billing-tenant-combo-wrap');
+            if (billingAllTenants.length === 1) {
+                dropdown.value = billingAllTenants[0].value;
+                if (comboWrap) comboWrap.style.display = 'none';
                 if (readonlyEl) {
-                    readonlyEl.textContent = allowedTenants[0].label;
+                    readonlyEl.textContent = billingAllTenants[0].label;
                     readonlyEl.style.display = 'inline-block';
                 }
                 await loadBillingData();
             } else {
-                dropdown.style.display = '';
+                if (comboWrap) comboWrap.style.display = 'inline-block';
                 if (readonlyEl) {
                     readonlyEl.textContent = '';
                     readonlyEl.style.display = 'none';
@@ -1835,6 +2119,112 @@
             });
 
         return billingTenantsLoadingPromise;
+    }
+
+    function setBillingTenantHighlight(items, index) {
+        items.forEach((item, i) => { item.style.background = i === index ? '#e8f0fe' : ''; });
+        billingTenantHighlightedIndex = index;
+        if (index >= 0 && items[index]) items[index].scrollIntoView({ block: 'nearest' });
+    }
+
+    function renderBillingTenantDropdownItems(search) {
+        const dropdownEl = document.getElementById('billing-tenant-dropdown');
+        if (!dropdownEl) return;
+        billingTenantHighlightedIndex = -1;
+        const matches = billingAllTenants.filter(t =>
+            !search || t.label.toLowerCase().includes(search) || t.value.toLowerCase().includes(search)
+        );
+        dropdownEl.innerHTML = '';
+        if (matches.length === 0) {
+            const noMatch = document.createElement('div');
+            noMatch.textContent = 'No matches';
+            noMatch.style.cssText = 'padding:6px 10px; color:#888; font-size:14px;';
+            dropdownEl.appendChild(noMatch);
+        } else {
+            matches.forEach(t => {
+                const item = document.createElement('div');
+                item.textContent = t.label;
+                item.dataset.comboValue = t.value;
+                item.style.cssText = 'padding:6px 10px; cursor:pointer; font-size:14px; white-space:nowrap;';
+                item.addEventListener('mouseover', () => item.style.background = '#e8f0fe');
+                item.addEventListener('mouseout', () => item.style.background = '');
+                item.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    selectBillingTenant(t.value, t.label);
+                });
+                dropdownEl.appendChild(item);
+            });
+        }
+        dropdownEl.style.display = '';
+    }
+
+    function openBillingTenantDropdown() {
+        const input = document.getElementById('billing_tenant_combo_input');
+        if (input) input.select();
+        renderBillingTenantDropdownItems('');
+    }
+
+    function closeBillingTenantDropdown() {
+        const el = document.getElementById('billing-tenant-dropdown');
+        if (el) el.style.display = 'none';
+        const input = document.getElementById('billing_tenant_combo_input');
+        const hiddenSelect = document.getElementById('billing_tenant_select');
+        if (input && hiddenSelect) {
+            const match = billingAllTenants.find(t => t.value === hiddenSelect.value);
+            input.value = match ? match.label : '';
+        }
+    }
+
+    function filterBillingTenants() {
+        const input = document.getElementById('billing_tenant_combo_input');
+        renderBillingTenantDropdownItems(input ? input.value.toLowerCase() : '');
+    }
+
+    function onBillingTenantKeydown(e) {
+        const dropdownEl = document.getElementById('billing-tenant-dropdown');
+        const input = document.getElementById('billing_tenant_combo_input');
+        const isOpen = dropdownEl && dropdownEl.style.display !== 'none';
+        if (!isOpen) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openBillingTenantDropdown(); }
+            return;
+        }
+        const items = Array.from(dropdownEl.querySelectorAll('[data-combo-value]'));
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setBillingTenantHighlight(items, Math.min(billingTenantHighlightedIndex + 1, items.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setBillingTenantHighlight(items, Math.max(billingTenantHighlightedIndex - 1, 0));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const highlighted = items[billingTenantHighlightedIndex];
+            if (highlighted) {
+                const t = billingAllTenants.find(o => o.value === highlighted.dataset.comboValue);
+                if (t) selectBillingTenant(t.value, t.label);
+            }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeBillingTenantDropdown();
+            if (input) input.blur();
+        }
+    }
+
+    function selectBillingTenant(value, label) {
+        const input = document.getElementById('billing_tenant_combo_input');
+        const hiddenSelect = document.getElementById('billing_tenant_select');
+        if (input) input.value = label;
+        if (hiddenSelect) hiddenSelect.value = value;
+        closeBillingTenantDropdown();
+        loadBillingData();
+    }
+
+    function syncBillingTenantComboLabel() {
+        const hiddenSelect = document.getElementById('billing_tenant_select');
+        const input = document.getElementById('billing_tenant_combo_input');
+        if (!hiddenSelect || !input) return;
+        const val = hiddenSelect.value;
+        const match = billingAllTenants.find(t => t.value === val);
+        input.value = match ? match.label : '';
     }
 
     function showBillingAdminMessage(message, isError) {
@@ -2181,22 +2571,32 @@
     }
 
     async function billingAdminOpenTenantBilling(tenantName) {
+        await openBillingForTenant(tenantName, {
+            showError: (message) => showBillingAdminMessage(message, true),
+        });
+    }
+
+    async function openBillingForTenant(tenantName, { showError = null } = {}) {
         const tenant = String(tenantName || '').trim();
         if (!tenant) return;
 
         await initBillingAdminAccess();
         if (!billingAdminIsInferxAdmin) {
-            showBillingAdminMessage('Permission denied. Only Inferx administrators can open tenant billing from Billing Admin.', true);
+            if (showError) {
+                showError('Permission denied. Only Inferx administrators can open tenant billing.');
+            }
             return;
         }
 
         const billingTabBtn = document.querySelector(`button[onclick*="'Billing'"]`);
         if (!billingTabBtn) {
-            showBillingAdminMessage('Billing tab is unavailable.', true);
+            if (showError) {
+                showError('Billing tab is unavailable.');
+            }
             return;
         }
 
-        openTab({ currentTarget: billingTabBtn }, 'Billing');
+        openTab({ currentTarget: billingTabBtn }, 'Billing', { updateHistory: false });
         await populateBillingTenants();
 
         const dropdown = document.getElementById('billing_tenant_select');
@@ -2204,12 +2604,15 @@
 
         const exists = Array.from(dropdown.options || []).some((opt) => opt.value === tenant);
         if (!exists) {
-            showBillingAdminMessage(`Tenant '${tenant}' is not available in the Billing tab.`, true);
+            if (showError) {
+                showError(`Tenant '${tenant}' is not available in the Billing tab.`);
+            }
             return;
         }
 
         dropdown.value = tenant;
-        await loadBillingData();
+        syncBillingTenantComboLabel();
+        await loadBillingData({ historyMode: 'push' });
 
         const billingTab = document.getElementById('Billing');
         if (billingTab && billingTab.scrollIntoView) {
@@ -2296,7 +2699,11 @@
             const fallback = document.querySelector(`button[onclick*="'Billing'"]`) ||
                 document.querySelector(`button[onclick*="'Apikeys'"]`);
             if (fallback) {
-                openTab({ currentTarget: fallback }, fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Apikeys');
+                openTab(
+                    { currentTarget: fallback },
+                    fallback.getAttribute('onclick').includes("'Billing'") ? 'Billing' : 'Apikeys',
+                    { historyMode: 'replace' }
+                );
             }
         }
 
@@ -2312,6 +2719,63 @@
 
         billingAdminAccessReady = true;
     }
+
+    async function initEndpointUsageAccess() {
+        try {
+            const resp = await fetchWithAuth('/generate_roles');
+            const roles = await resp.json();
+            const isAdmin = is_inferx_admin_user(roles);
+            
+            const noAccess = document.getElementById('endpoint-usage-no-access');
+            const content = document.getElementById('endpoint-usage-content');
+            const tabBtn = document.getElementById('endpoint-usage-tab-btn');
+            
+            if (!isAdmin) {
+                if (noAccess) noAccess.style.display = 'block';
+                if (content) content.style.display = 'none';
+                if (tabBtn) tabBtn.style.display = 'none';
+                
+                // Fallback to another tab if this was the currently selected one
+                const savedTab = localStorage.getItem('currentTab');
+                if (savedTab === 'EndpointUsage') {
+                    const fallback = document.querySelector(`button[onclick*="'Billing'"]`);
+                    if (fallback) {
+                        openTab({ currentTarget: fallback }, 'Billing', { historyMode: 'replace' });
+                    }
+                }
+            } else {
+                if (noAccess) noAccess.style.display = 'none';
+                if (content) content.style.display = 'block';
+                if (tabBtn) tabBtn.style.display = '';
+                endpointUsageAccessReady = true;
+                maybeLoadEndpointUsageData();
+            }
+            
+            if (!isAdmin) {
+                endpointUsageAccessReady = true;
+            }
+        } catch (e) {
+            console.error('Error initializing Endpoint Usage access:', e);
+        }
+    }
+
+    function is_inferx_admin_user(roles) {
+        // Match dashboard/app.py::has_inferx_admin_role().
+        if (!Array.isArray(roles)) {
+            return document.getElementById('billing-admin-content') !== null;
+        }
+
+        return roles.some((role) => {
+            if (!role || typeof role !== 'object') return false;
+            const objType = String(role.objType || '').trim().toLowerCase();
+            const roleName = String(role.role || '').trim().toLowerCase();
+            const tenant = String(role.tenant || '').trim().toLowerCase();
+            return objType === 'tenant' && roleName === 'admin' && tenant === 'system';
+        });
+    }
+
+    // Endpoint Usage Access State
+    let endpointUsageAccessReady = false;
 
     function updateUsageRangeButtons() {
         const btn24 = document.getElementById('usage-range-24h');
@@ -2458,6 +2922,796 @@
         }
     }
 
+    // Endpoint Usage Global State
+    let endpointUsageRange = { mode: 'hours', hours: 24 };
+    let endpointUsageGranularity = 'hourly';
+    let endpointUsageViewMode = 'by-endpoint';
+    let endpointUsageCurrentTenant = null;
+    let endpointUsageCurrentEndpoint = null;
+    let endpointUsagePage = 0;
+    let endpointUsagePageSize = 100;
+    let endpointUsageCurrentTotal = 0;
+    let endpointUsageData = [];
+    let endpointUsageRawRows = [];
+    let endpointUsageSortColumn = 'last_seen_at';
+    let endpointUsageSortDirection = 'desc';
+    let endpointUsageTenantDetailTenant = '';
+    let endpointUsageTenantDetailRows = [];
+    let endpointUsageTenantDetailSortColumn = 'total_cents';
+    let endpointUsageTenantDetailSortDirection = 'desc';
+    let endpointUsageDrilldownData = null;
+    let endpointUsageDrilldownSortColumn = 'period_start';
+    let endpointUsageDrilldownSortDirection = 'desc';
+    let endpointUsageInitialized = false;
+
+    function getEndpointUsageColumns() {
+        if (endpointUsageViewMode === 'by-endpoint') {
+            return [
+                { key: 'tenant', label: 'Tenant', sortable: true, type: 'string' },
+                { key: 'endpoint_slug', label: 'Endpoint', sortable: true, type: 'string' },
+                { key: 'inference_ms', label: 'Inference GPU time', sortable: true, format: 'gpuTime', type: 'number' },
+                { key: 'inference_cents', label: 'Inference cost', sortable: true, format: 'currency', type: 'number' },
+                { key: 'total_cents', label: 'Total cost', sortable: true, format: 'currency', type: 'number' },
+                { key: 'last_seen_at', label: 'Last seen', sortable: true, format: 'datetime', type: 'datetime' }
+            ];
+        }
+
+        return [
+            { key: 'tenant', label: 'Tenant', sortable: true, type: 'string' },
+            { key: 'endpoint_count', label: 'Endpoints', sortable: true, type: 'number' },
+            { key: 'inference_ms', label: 'Inference GPU time', sortable: true, format: 'gpuTime', type: 'number' },
+            { key: 'inference_cents', label: 'Inference cost', sortable: true, format: 'currency', type: 'number' },
+            { key: 'total_cents', label: 'Total cost', sortable: true, format: 'currency', type: 'number' },
+            { key: 'last_seen_at', label: 'Last seen', sortable: true, format: 'datetime', type: 'datetime' }
+        ];
+    }
+
+    function getEndpointUsageSortValue(row, column) {
+        if (!row || !column) return '';
+        const value = row[column.key];
+        if (column.key === 'tenant') {
+            return billingAnalyticsTenantLabel(value).toLowerCase();
+        }
+        if (column.type === 'datetime') {
+            const ts = Date.parse(value || '');
+            return Number.isNaN(ts) ? 0 : ts;
+        }
+        if (column.type === 'number') {
+            return Number(value || 0);
+        }
+        return String(value || '').toLowerCase();
+    }
+
+    function sortRowsByColumn(rows, columns, sortColumn, sortDirection) {
+        const column = Array.isArray(columns) ? columns.find((col) => col.key === sortColumn) : null;
+        if (!column) return Array.isArray(rows) ? rows.slice() : [];
+
+        const dir = sortDirection === 'asc' ? 1 : -1;
+        return (Array.isArray(rows) ? rows.slice() : []).sort((a, b) => {
+            const aValue = getEndpointUsageSortValue(a, column);
+            const bValue = getEndpointUsageSortValue(b, column);
+
+            if (typeof aValue === 'number' && typeof bValue === 'number') {
+                if (aValue === bValue) return 0;
+                return aValue > bValue ? dir : -dir;
+            }
+
+            const cmp = String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: 'base' });
+            return cmp * dir;
+        });
+    }
+
+    function getSortIcon(activeColumn, activeDirection, columnKey) {
+        if (activeColumn !== columnKey) return '';
+        return activeDirection === 'asc' ? '▲' : '▼';
+    }
+
+    function maybeLoadEndpointUsageData(force = false) {
+        if (!endpointUsageAccessReady) return;
+        const tabEl = document.getElementById('EndpointUsage');
+        if (!tabEl || !tabEl.classList.contains('active')) return;
+        if (force || !endpointUsageInitialized) {
+            loadEndpointUsageData();
+        }
+    }
+
+    function updateEndpointUsageRangeButtons() {
+        const btn24 = document.getElementById('endpoint-usage-range-24h');
+        const btn7d = document.getElementById('endpoint-usage-range-7d');
+        const btn30d = document.getElementById('endpoint-usage-range-30d');
+        const btnCustom = document.getElementById('endpoint-usage-range-custom');
+        if (!btn24 || !btn7d || !btn30d || !btnCustom) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+        btnCustom.classList.remove('active-range');
+
+        if (endpointUsageRange.mode === 'hours') {
+            if (endpointUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (endpointUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (endpointUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        } else if (endpointUsageRange.mode === 'custom') {
+            btnCustom.classList.add('active-range');
+        }
+    }
+
+    function updateEndpointUsageTimeRangeSelect() {
+        const rangeSelect = document.getElementById('endpoint-usage-time-range');
+        if (!rangeSelect) return;
+
+        if (endpointUsageRange.mode === 'custom') {
+            rangeSelect.value = 'custom';
+            return;
+        }
+
+        rangeSelect.value = String(endpointUsageRange.hours || 24);
+    }
+
+    function onEndpointUsageTimeRangeChange() {
+        const rangeSelect = document.getElementById('endpoint-usage-time-range');
+        if (!rangeSelect) return;
+
+        if (rangeSelect.value !== 'custom') {
+            const hours = parseInt(rangeSelect.value, 10);
+            if (!Number.isNaN(hours)) {
+                setEndpointUsageRangeHours(hours);
+            }
+            return;
+        }
+
+        showEndpointUsageCustomRange();
+    }
+
+    function setEndpointUsageRangeHours(hours) {
+        endpointUsageRange = { mode: 'hours', hours: hours };
+        endpointUsagePage = 0;
+        endpointUsageCurrentTenant = null;
+        endpointUsageCurrentEndpoint = null;
+        closeEndpointUsageDrilldown();
+        const customEl = document.getElementById('endpoint-usage-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
+        updateEndpointUsageTimeRangeSelect();
+        updateEndpointUsageRangeButtons();
+        loadEndpointUsageData();
+    }
+
+    function syncEndpointUsageCustomRangeFromInputs(showAlerts = false) {
+        const startInput = document.getElementById('endpoint-usage-start');
+        const endInput = document.getElementById('endpoint-usage-end');
+        if (!startInput || !endInput) return false;
+
+        if (!startInput.value || !endInput.value) {
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            if (showAlerts) alert('Invalid date range');
+            return false;
+        }
+
+        if (end <= start) {
+            if (showAlerts) alert('End time must be after start time');
+            return false;
+        }
+
+        const maxRangeMs = 30 * 24 * 60 * 60 * 1000; // 30 days
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            if (showAlerts) alert('Custom range is limited to 30 days');
+            return false;
+        }
+
+        endpointUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+        return true;
+    }
+
+    function showEndpointUsageCustomRange() {
+        const customEl = document.getElementById('endpoint-usage-custom-range');
+        const rangeSelect = document.getElementById('endpoint-usage-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = 'custom';
+        }
+        if (customEl) {
+            customEl.style.display = 'flex';
+            // Set default values for date inputs
+            const endInput = document.getElementById('endpoint-usage-end');
+            const startInput = document.getElementById('endpoint-usage-start');
+            if (endpointUsageRange.mode === 'custom' && endpointUsageRange.start && endpointUsageRange.end) {
+                if (startInput) startInput.value = toLocalDatetimeValue(new Date(endpointUsageRange.start));
+                if (endInput) endInput.value = toLocalDatetimeValue(new Date(endpointUsageRange.end));
+                return;
+            }
+
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 1);
+            if (endInput) endInput.value = toLocalDatetimeValue(endDate);
+            if (startInput) startInput.value = toLocalDatetimeValue(startDate);
+        }
+    }
+
+    function applyEndpointUsageCustomRange() {
+        if (!syncEndpointUsageCustomRangeFromInputs(true)) return;
+
+        endpointUsagePage = 0;
+        endpointUsageCurrentTenant = null;
+        endpointUsageCurrentEndpoint = null;
+        closeEndpointUsageDrilldown();
+        const customEl = document.getElementById('endpoint-usage-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateEndpointUsageTimeRangeSelect();
+        updateEndpointUsageRangeButtons();
+        loadEndpointUsageData();
+    }
+
+    function updateEndpointUsageGranularityButtons() {
+        const hourlyBtn = document.getElementById('endpoint-usage-granularity-hourly');
+        const dailyBtn = document.getElementById('endpoint-usage-granularity-daily');
+        const weeklyBtn = document.getElementById('endpoint-usage-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.remove('active-range');
+        dailyBtn.classList.remove('active-range');
+        weeklyBtn.classList.remove('active-range');
+
+        hourlyBtn.classList.toggle('active-range', endpointUsageGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', endpointUsageGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', endpointUsageGranularity === 'weekly');
+    }
+
+    function setEndpointUsageGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        endpointUsageGranularity = granularity;
+        updateEndpointUsageGranularityButtons();
+        if (endpointUsageCurrentTenant && endpointUsageCurrentEndpoint) {
+            loadEndpointUsageDrilldown(endpointUsageCurrentTenant, endpointUsageCurrentEndpoint);
+        }
+    }
+
+    function updateEndpointUsageViewButtons() {
+        const radio = document.querySelector(`input[name="endpoint-usage-view"][value="${endpointUsageViewMode}"]`);
+        if (radio) {
+            radio.checked = true;
+        }
+    }
+
+    function onEndpointUsageViewChange() {
+        const selected = document.querySelector('input[name="endpoint-usage-view"]:checked');
+        setEndpointUsageViewMode(selected ? selected.value : 'by-endpoint');
+    }
+
+    function setEndpointUsageViewMode(mode) {
+        endpointUsageViewMode = mode === 'by-tenant' ? 'by-tenant' : 'by-endpoint';
+        endpointUsagePage = 0;
+        endpointUsageCurrentTenant = null;
+        endpointUsageCurrentEndpoint = null;
+        closeEndpointUsageDrilldown();
+        updateEndpointUsageViewButtons();
+        const granularityControls = document.getElementById('endpoint-usage-granularity-controls');
+        if (granularityControls) granularityControls.style.display = 'none';
+        loadEndpointUsageData();
+    }
+
+    function getEndpointUsageGranularityLabel(granularity) {
+        switch (granularity) {
+            case 'daily':
+                return 'Daily';
+            case 'weekly':
+                return 'Weekly';
+            case 'hourly':
+            default:
+                return 'Hourly';
+        }
+    }
+
+    function showEndpointUsageDetailArea(titleText, { showGranularity = false, loading = false, message = '', messageColor = '#888' } = {}) {
+        const areaEl = document.getElementById('endpoint-usage-detail-area');
+        const titleEl = document.getElementById('endpoint-usage-detail-title');
+        const loadingEl = document.getElementById('endpoint-usage-detail-loading');
+        const messageEl = document.getElementById('endpoint-usage-detail-message');
+        const granularityControls = document.getElementById('endpoint-usage-granularity-controls');
+        const contentEl = document.getElementById('endpoint-usage-detail-content');
+        if (!areaEl || !titleEl || !loadingEl || !messageEl || !granularityControls || !contentEl) return null;
+
+        areaEl.style.display = 'block';
+        titleEl.textContent = titleText;
+        granularityControls.style.display = showGranularity ? 'flex' : 'none';
+        loadingEl.style.display = loading ? 'inline' : 'none';
+        messageEl.style.display = message ? 'block' : 'none';
+        messageEl.textContent = message;
+        messageEl.style.color = messageColor;
+        if (!message) {
+            messageEl.textContent = '';
+        }
+        return contentEl;
+    }
+
+    async function loadEndpointUsageData() {
+        const messageEl = document.getElementById('endpoint-usage-message');
+        try {
+            if (messageEl) {
+                messageEl.style.display = 'none';
+                messageEl.textContent = '';
+                messageEl.className = '';
+            }
+
+            const rolesResp = await fetchWithAuth('/generate_roles');
+            if (rolesResp.ok) {
+                const roles = await rolesResp.json();
+                await loadBillingTenantOwnerNames(roles);
+            }
+
+            let params = new URLSearchParams();
+            if (endpointUsageRange.mode === 'hours') {
+                params.set('hours', endpointUsageRange.hours);
+            } else if (endpointUsageRange.mode === 'custom') {
+                params.set('start', endpointUsageRange.start);
+                params.set('end', endpointUsageRange.end);
+            }
+            params.set('limit', endpointUsagePageSize);
+            params.set('offset', endpointUsagePage * endpointUsagePageSize);
+            params.set('group_by', endpointUsageViewMode === 'by-tenant' ? 'tenant' : 'endpoint');
+
+            const url = `/admin/usage/endpoints?${params.toString()}`;
+            const resp = await fetchWithAuth(url);
+
+            if (!resp.ok) {
+                throw new Error(`API error: ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            endpointUsageData = sortRowsByColumn(
+                data.usage || [],
+                getEndpointUsageColumns(),
+                endpointUsageSortColumn,
+                endpointUsageSortDirection
+            );
+            endpointUsageRawRows = data;
+            endpointUsageCurrentTotal = data.total || 0;
+            const totalPages = Math.max(1, Math.ceil(endpointUsageCurrentTotal / endpointUsagePageSize));
+            if (endpointUsagePage >= totalPages && endpointUsagePage > 0) {
+                endpointUsagePage = totalPages - 1;
+                return loadEndpointUsageData();
+            }
+            endpointUsageInitialized = true;
+            updateEndpointUsagePaginationControls(endpointUsageCurrentTotal);
+
+            renderEndpointUsageTable();
+        } catch (error) {
+            console.error('Error loading endpoint usage:', error);
+            if (messageEl) {
+                messageEl.textContent = 'Failed to load endpoint usage data';
+                messageEl.className = 'error-message';
+                messageEl.style.display = 'block';
+                messageEl.style.background = '#fee2e2';
+                messageEl.style.color = '#b91c1c';
+            }
+        }
+    }
+
+    function renderEndpointUsageTable() {
+        const tbody = document.getElementById('endpoint-usage-tbody');
+        const thead = document.getElementById('endpoint-usage-thead');
+        const tfoot = document.getElementById('endpoint-usage-tfoot');
+
+        if (!tbody || !thead || !tfoot) return;
+
+        const columns = getEndpointUsageColumns();
+
+        // Render header
+        thead.innerHTML = columns.map(col => 
+            `<th style="cursor: pointer;" onclick="endpointUsageSort('${col.key}')">
+                ${col.label} <span id="endpoint-usage-sort-${col.key}-icon">${getSortIcon(endpointUsageSortColumn, endpointUsageSortDirection, col.key)}</span>
+            </th>`
+        ).join('');
+
+        // Render body
+        tbody.innerHTML = '';
+        if (endpointUsageData.length === 0) {
+            const totalCols = columns.length;
+            tbody.innerHTML = `<tr><td colspan="${totalCols}" style="text-align: center; color: #888;">No endpoint usage data</td></tr>`;
+            renderEndpointUsageTableFooter([]);
+            return;
+        }
+
+        endpointUsageData.forEach((row, idx) => {
+            const tr = document.createElement('tr');
+            tr.style.cursor = 'pointer';
+            tr.onclick = () => endpointUsageRowClick(row);
+            
+            columns.forEach((col) => {
+                const td = document.createElement('td');
+                let value = row[col.key];
+                if (col.key === 'tenant') {
+                    value = billingAnalyticsTenantLabel(value);
+                    const tenantName = String(row[col.key] || '').trim();
+                    if (tenantName !== '') {
+                        const tenantLink = document.createElement('button');
+                        tenantLink.type = 'button';
+                        tenantLink.className = 'billing-admin-tenant-link';
+                        tenantLink.textContent = value;
+                        tenantLink.addEventListener('click', async (event) => {
+                            event.stopPropagation();
+                            await openBillingForTenant(tenantName);
+                        });
+                        td.appendChild(tenantLink);
+                    } else {
+                        td.textContent = '--';
+                    }
+                } else if (col.format === 'gpuTime') {
+                    value = formatGpuTimeMs(value);
+                    td.textContent = value;
+                } else if (col.format === 'currency') {
+                    value = '$' + (value / 100).toFixed(2);
+                    td.textContent = value;
+                } else if (col.format === 'datetime') {
+                    value = formatLocalDateTime(value);
+                    td.textContent = value;
+                } else if (value === null || value === undefined || value === '') {
+                    td.textContent = '--';
+                } else {
+                    td.textContent = value;
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+
+        // Render footer with totals
+        renderEndpointUsageTableFooter(endpointUsageData);
+    }
+
+    function renderEndpointUsageTableFooter(data) {
+        const tfoot = document.getElementById('endpoint-usage-tfoot');
+        if (!tfoot) return;
+
+        let totalInferenceMs = 0;
+        let totalInferenceCents = 0;
+        let totalCents = 0;
+
+        data.forEach(row => {
+            totalInferenceMs += row.inference_ms || 0;
+            totalInferenceCents += row.inference_cents || 0;
+            totalCents += row.total_cents || 0;
+        });
+
+        tfoot.innerHTML = `
+            <td colspan="2" style="font-weight: bold; text-align: right;">Total:</td>
+            <td style="font-weight: bold;">${formatGpuTimeMs(totalInferenceMs)}</td>
+            <td style="font-weight: bold;">$${(totalInferenceCents / 100).toFixed(2)}</td>
+            <td style="font-weight: bold;">$${(totalCents / 100).toFixed(2)}</td>
+            <td></td>
+        `;
+    }
+
+    function endpointUsageRowClick(row) {
+        if (endpointUsageViewMode === 'by-endpoint') {
+            endpointUsageCurrentTenant = row.tenant;
+            endpointUsageCurrentEndpoint = row.endpoint_slug;
+            loadEndpointUsageDrilldown(endpointUsageCurrentTenant, endpointUsageCurrentEndpoint);
+        } else {
+            loadEndpointUsageTenantEndpointList(row.tenant);
+        }
+    }
+
+    async function loadEndpointUsageDrilldown(tenant, endpointSlug) {
+        const messageEl = document.getElementById('endpoint-usage-message');
+        try {
+            if (messageEl) {
+                messageEl.style.display = 'none';
+                messageEl.textContent = '';
+            }
+            showEndpointUsageDetailArea(
+                `Breakdown: ${tenant} / ${endpointSlug} (${getEndpointUsageGranularityLabel(endpointUsageGranularity)})`,
+                { showGranularity: true, loading: true }
+            );
+
+            let params = new URLSearchParams();
+            if (endpointUsageRange.mode === 'hours') {
+                params.set('hours', endpointUsageRange.hours);
+            } else if (endpointUsageRange.mode === 'custom') {
+                params.set('start', endpointUsageRange.start);
+                params.set('end', endpointUsageRange.end);
+            }
+            params.set('granularity', endpointUsageGranularity);
+
+            const url = `/admin/usage/endpoints/${encodeURIComponent(tenant)}/${encodeURIComponent(endpointSlug)}?${params.toString()}`;
+            const resp = await fetchWithAuth(url);
+
+            if (!resp.ok) {
+                throw new Error(`API error: ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            renderEndpointUsageDrilldown(data);
+        } catch (error) {
+            console.error('Error loading drilldown:', error);
+            showEndpointUsageDetailArea(
+                `Breakdown: ${tenant} / ${endpointSlug}`,
+                { showGranularity: true, loading: false, message: `Failed to load detail: ${error}`, messageColor: '#b91c1c' }
+            );
+            if (messageEl) {
+                messageEl.textContent = 'Failed to load drilldown data';
+                messageEl.className = 'error-message';
+                messageEl.style.display = 'block';
+                messageEl.style.background = '#fee2e2';
+                messageEl.style.color = '#b91c1c';
+            }
+        }
+    }
+
+    async function loadEndpointUsageTenantEndpointList(tenant) {
+        const messageEl = document.getElementById('endpoint-usage-message');
+        try {
+            if (messageEl) {
+                messageEl.style.display = 'none';
+                messageEl.textContent = '';
+            }
+            showEndpointUsageDetailArea(`Breakdown: ${tenant}`, { showGranularity: false, loading: true });
+
+            let params = new URLSearchParams();
+            if (endpointUsageRange.mode === 'hours') {
+                params.set('hours', endpointUsageRange.hours);
+            } else if (endpointUsageRange.mode === 'custom') {
+                params.set('start', endpointUsageRange.start);
+                params.set('end', endpointUsageRange.end);
+            }
+            params.set('group_by', 'endpoint');
+            params.set('tenant', tenant);
+            params.set('limit', '1000');
+            params.set('offset', '0');
+
+            const resp = await fetchWithAuth(`/admin/usage/endpoints?${params.toString()}`);
+            if (!resp.ok) {
+                throw new Error(`API error: ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            renderEndpointUsageTenantEndpointList(tenant, data.usage || []);
+        } catch (error) {
+            console.error('Error loading tenant endpoint list:', error);
+            showEndpointUsageDetailArea(
+                `Breakdown: ${tenant}`,
+                { showGranularity: false, loading: false, message: `Failed to load detail: ${error}`, messageColor: '#b91c1c' }
+            );
+            if (messageEl) {
+                messageEl.textContent = 'Failed to load tenant endpoint list';
+                messageEl.className = 'error-message';
+                messageEl.style.display = 'block';
+                messageEl.style.background = '#fee2e2';
+                messageEl.style.color = '#b91c1c';
+            }
+        }
+    }
+
+    function renderEndpointUsageTenantEndpointList(tenant, usageRows) {
+        endpointUsageTenantDetailTenant = tenant;
+        endpointUsageTenantDetailRows = Array.isArray(usageRows) ? usageRows.slice() : [];
+
+        const content = showEndpointUsageDetailArea(`Breakdown: ${tenant}`, { showGranularity: false, loading: false });
+        if (!content) return;
+
+        if (!Array.isArray(endpointUsageTenantDetailRows) || endpointUsageTenantDetailRows.length === 0) {
+            content.innerHTML = '<p style="color: #888; padding: 20px;">No endpoint usage data for this tenant in the selected period</p>';
+            return;
+        }
+
+        const columns = [
+            { key: 'endpoint_slug', label: 'Endpoint', type: 'string' },
+            { key: 'inference_ms', label: 'Inference GPU time', type: 'number' },
+            { key: 'inference_cents', label: 'Inference cost', type: 'number' },
+            { key: 'total_cents', label: 'Total cost', type: 'number' },
+            { key: 'last_seen_at', label: 'Last seen', type: 'datetime' }
+        ];
+        const sortedRows = sortRowsByColumn(
+            endpointUsageTenantDetailRows,
+            columns,
+            endpointUsageTenantDetailSortColumn,
+            endpointUsageTenantDetailSortDirection
+        );
+
+        const rowsHtml = sortedRows.map(row => `
+            <tr data-tenant="${tenant}" data-endpoint="${row.endpoint_slug || ''}" style="cursor: pointer;">
+                <td>${row.endpoint_slug || '--'}</td>
+                <td>${formatGpuTimeMs(row.inference_ms || 0)}</td>
+                <td>$${(((row.inference_cents || 0)) / 100).toFixed(2)}</td>
+                <td>$${(((row.total_cents || 0)) / 100).toFixed(2)}</td>
+                <td>${formatLocalDateTime(row.last_seen_at)}</td>
+            </tr>
+        `).join('');
+
+        content.innerHTML = `
+            <div style="margin-bottom: 8px; color: #666; font-size: 12px;">Click an endpoint row to view time-based usage.</div>
+            <table class="ix-table billing-analytics-table" style="width:100%">
+                <thead>
+                    <tr>
+                        <th style="cursor: pointer;" onclick="endpointUsageTenantDetailSort('endpoint_slug')">Endpoint <span>${getSortIcon(endpointUsageTenantDetailSortColumn, endpointUsageTenantDetailSortDirection, 'endpoint_slug')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageTenantDetailSort('inference_ms')">Inference GPU time <span>${getSortIcon(endpointUsageTenantDetailSortColumn, endpointUsageTenantDetailSortDirection, 'inference_ms')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageTenantDetailSort('inference_cents')">Inference cost <span>${getSortIcon(endpointUsageTenantDetailSortColumn, endpointUsageTenantDetailSortDirection, 'inference_cents')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageTenantDetailSort('total_cents')">Total cost <span>${getSortIcon(endpointUsageTenantDetailSortColumn, endpointUsageTenantDetailSortDirection, 'total_cents')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageTenantDetailSort('last_seen_at')">Last seen <span>${getSortIcon(endpointUsageTenantDetailSortColumn, endpointUsageTenantDetailSortDirection, 'last_seen_at')}</span></th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        `;
+
+        content.querySelectorAll('tr[data-endpoint]').forEach((rowEl) => {
+            rowEl.addEventListener('click', () => {
+                const selectedTenant = rowEl.getAttribute('data-tenant') || tenant;
+                const endpointSlug = rowEl.getAttribute('data-endpoint') || '';
+                if (endpointSlug !== '') {
+                    loadEndpointUsageDrilldown(selectedTenant, endpointSlug);
+                }
+            });
+        });
+    }
+
+    function renderEndpointUsageDrilldown(data) {
+        endpointUsageDrilldownData = data;
+
+        const content = showEndpointUsageDetailArea(
+            `Breakdown: ${data.tenant} / ${data.endpoint_slug} (${getEndpointUsageGranularityLabel(data.granularity)})`,
+            { showGranularity: true, loading: false }
+        );
+        if (!content) return;
+        
+        const usage = data.usage || [];
+        if (usage.length === 0) {
+            content.innerHTML = '<p style="color: #888; padding: 20px;">No usage data for this period</p>';
+        } else {
+            const columns = [
+                { key: 'period_start', label: 'Period Start (Local)', type: 'datetime' },
+                { key: 'period_end', label: 'Period End (Local)', type: 'datetime' },
+                { key: 'inference_ms', label: 'Inference GPU time', type: 'number' },
+                { key: 'inference_cents', label: 'Inference cost', type: 'number' },
+                { key: 'total_cents', label: 'Total cost', type: 'number' }
+            ];
+            const sortedUsage = sortRowsByColumn(
+                usage,
+                columns,
+                endpointUsageDrilldownSortColumn,
+                endpointUsageDrilldownSortDirection
+            );
+            let html = `<table id="endpoint-usage-drilldown-table" class="ix-table billing-analytics-table" style="width:100%">
+                <thead>
+                    <tr>
+                        <th style="cursor: pointer;" onclick="endpointUsageDrilldownSort('period_start')">Period Start (Local) <span>${getSortIcon(endpointUsageDrilldownSortColumn, endpointUsageDrilldownSortDirection, 'period_start')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageDrilldownSort('period_end')">Period End (Local) <span>${getSortIcon(endpointUsageDrilldownSortColumn, endpointUsageDrilldownSortDirection, 'period_end')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageDrilldownSort('inference_ms')">Inference GPU time <span>${getSortIcon(endpointUsageDrilldownSortColumn, endpointUsageDrilldownSortDirection, 'inference_ms')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageDrilldownSort('inference_cents')">Inference cost <span>${getSortIcon(endpointUsageDrilldownSortColumn, endpointUsageDrilldownSortDirection, 'inference_cents')}</span></th>
+                        <th style="cursor: pointer;" onclick="endpointUsageDrilldownSort('total_cents')">Total cost <span>${getSortIcon(endpointUsageDrilldownSortColumn, endpointUsageDrilldownSortDirection, 'total_cents')}</span></th>
+                    </tr>
+                </thead>
+                <tbody>`;
+            
+            let totalMs = 0;
+            let totalInferenceCents = 0;
+            let totalCents = 0;
+            
+            sortedUsage.forEach(row => {
+                totalMs += row.inference_ms || 0;
+                totalInferenceCents += row.inference_cents || 0;
+                totalCents += row.total_cents || 0;
+                html += `
+                    <tr>
+                        <td>${formatLocalDateTime(row.period_start)}</td>
+                        <td>${formatLocalDateTime(row.period_end)}</td>
+                        <td>${formatGpuTimeMs(row.inference_ms || 0)}</td>
+                        <td>$${(row.inference_cents / 100).toFixed(2)}</td>
+                        <td>$${(row.total_cents / 100).toFixed(2)}</td>
+                    </tr>`;
+            });
+            
+            html += `</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2" style="font-weight: bold; text-align: right;">Total:</td>
+                        <td style="font-weight: bold;">${formatGpuTimeMs(totalMs)}</td>
+                        <td style="font-weight: bold;">$${(totalInferenceCents / 100).toFixed(2)}</td>
+                        <td style="font-weight: bold;">$${(totalCents / 100).toFixed(2)}</td>
+                    </tr>
+                </tfoot>
+            </table>`;
+            
+            content.innerHTML = html;
+        }
+    }
+
+    function closeEndpointUsageDrilldown() {
+        const areaEl = document.getElementById('endpoint-usage-detail-area');
+        const loadingEl = document.getElementById('endpoint-usage-detail-loading');
+        const messageEl = document.getElementById('endpoint-usage-detail-message');
+        const contentEl = document.getElementById('endpoint-usage-detail-content');
+        if (areaEl) areaEl.style.display = 'none';
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (messageEl) {
+            messageEl.style.display = 'none';
+            messageEl.textContent = '';
+        }
+        if (contentEl) contentEl.innerHTML = '';
+        const granularityControls = document.getElementById('endpoint-usage-granularity-controls');
+        if (granularityControls) granularityControls.style.display = 'none';
+    }
+
+    function endpointUsagePrevPage() {
+        if (endpointUsagePage > 0) {
+            endpointUsagePage--;
+            loadEndpointUsageData();
+        }
+    }
+
+    function endpointUsageNextPage() {
+        const totalPages = Math.max(1, Math.ceil(endpointUsageCurrentTotal / endpointUsagePageSize));
+        if (endpointUsagePage < totalPages - 1) {
+            endpointUsagePage++;
+            loadEndpointUsageData();
+        }
+    }
+
+    function updateEndpointUsagePaginationControls(total) {
+        const totalPages = Math.max(1, Math.ceil(total / endpointUsagePageSize));
+        const prevBtn = document.getElementById('endpoint-usage-prev-page-btn');
+        const nextBtn = document.getElementById('endpoint-usage-next-page-btn');
+        const pageInfo = document.getElementById('endpoint-usage-page-info');
+
+        if (prevBtn && nextBtn && pageInfo) {
+            prevBtn.disabled = endpointUsagePage === 0;
+            nextBtn.disabled = endpointUsagePage >= totalPages - 1;
+            pageInfo.textContent = `Page ${endpointUsagePage + 1} of ${totalPages}`;
+        }
+    }
+
+    function endpointUsageSort(key) {
+        if (endpointUsageSortColumn === key) {
+            endpointUsageSortDirection = endpointUsageSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            endpointUsageSortColumn = key;
+            endpointUsageSortDirection = 'asc';
+        }
+        endpointUsageData = sortRowsByColumn(
+            endpointUsageData,
+            getEndpointUsageColumns(),
+            endpointUsageSortColumn,
+            endpointUsageSortDirection
+        );
+        renderEndpointUsageTable();
+    }
+
+    function endpointUsageTenantDetailSort(key) {
+        if (endpointUsageTenantDetailSortColumn === key) {
+            endpointUsageTenantDetailSortDirection = endpointUsageTenantDetailSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            endpointUsageTenantDetailSortColumn = key;
+            endpointUsageTenantDetailSortDirection = 'asc';
+        }
+        renderEndpointUsageTenantEndpointList(endpointUsageTenantDetailTenant, endpointUsageTenantDetailRows);
+    }
+
+    function endpointUsageDrilldownSort(key) {
+        if (endpointUsageDrilldownSortColumn === key) {
+            endpointUsageDrilldownSortDirection = endpointUsageDrilldownSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            endpointUsageDrilldownSortColumn = key;
+            endpointUsageDrilldownSortDirection = 'asc';
+        }
+        if (endpointUsageDrilldownData) {
+            renderEndpointUsageDrilldown(endpointUsageDrilldownData);
+        }
+    }
+
     function updateUsageGranularityButtons() {
         const hourlyBtn = document.getElementById('usage-granularity-hourly');
         const dailyBtn = document.getElementById('usage-granularity-daily');
@@ -2594,13 +3848,19 @@
     }
 
     // Called when tenant selection changes
-    async function loadBillingData() {
+    async function loadBillingData(options = {}) {
         const tenant = document.getElementById('billing_tenant_select').value;
 
         // Handle no selection
         if (!tenant) {
             document.getElementById('billing-no-tenant').style.display = 'block';
             document.getElementById('billing-content').style.display = 'none';
+            if (getCurrentActiveAdminTab() === 'Billing') {
+                updateAdminUrlState('Billing', {
+                    tenant: '',
+                    historyMode: options.historyMode === 'replace' ? 'replace' : 'push',
+                });
+            }
             return;
         }
 
@@ -2630,6 +3890,13 @@
         // Keep analytics panel in sync when tenant changes.
         if (analyticsExpanded) {
             loadAnalytics();
+        }
+
+        if (getCurrentActiveAdminTab() === 'Billing') {
+            updateAdminUrlState('Billing', {
+                tenant,
+                historyMode: options.historyMode === 'replace' ? 'replace' : 'push',
+            });
         }
     }
 
@@ -2876,12 +4143,12 @@
 
             const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
             const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
-            const infHrs = (infMs / 3600000).toFixed(2);
-            const sbyHrs = (sbyMs / 3600000).toFixed(2);
+            const infTime = formatGpuTimeMs(infMs);
+            const sbyTime = formatGpuTimeMs(sbyMs);
             const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
             const tooltip = showStandby
-                ? `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Snapshot Retention: ${formatUsd(sbyCents)} (${sbyHrs} hrs) | Total: ${formatUsd(totalCents)}`
-                : `${periodLabel} | Inference: ${formatUsd(infCents)} (${infHrs} hrs) | Total: ${formatUsd(totalCents)}`;
+                ? `${periodLabel} | Inference: ${formatUsd(infCents)} (${infTime}) | Snapshot Retention: ${formatUsd(sbyCents)} (${sbyTime}) | Total: ${formatUsd(totalCents)}`
+                : `${periodLabel} | Inference: ${formatUsd(infCents)} (${infTime}) | Total: ${formatUsd(totalCents)}`;
 
             return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
                 `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
@@ -3009,14 +4276,14 @@
 
         let totalInfCents = 0;
         let totalSbyCents = 0;
-        let totalInfHours = 0;
-        let totalSbyHours = 0;
+        let totalInfMs = 0;
+        let totalSbyMs = 0;
 
         usageTableBodyEl.innerHTML = sortedRows.map(u => {
             const infCents = u.inference_cents || 0;
             const sbyCents = u.standby_cents || 0;
-            const infHours = (u.inference_ms || 0) / 3600000;
-            const sbyHours = (u.standby_ms || 0) / 3600000;
+            const infMs = u.inference_ms || 0;
+            const sbyMs = u.standby_ms || 0;
             const totalCents = infCents + sbyCents;
             const periodLabel = formatBillingUsagePeriodLabel(
                 u,
@@ -3026,14 +4293,14 @@
 
             totalInfCents += infCents;
             totalSbyCents += sbyCents;
-            totalInfHours += infHours;
-            totalSbyHours += sbyHours;
+            totalInfMs += infMs;
+            totalSbyMs += sbyMs;
 
             return `
                 <tr>
                     <td style="text-align: left;">${periodLabel}</td>
-                    <td style="text-align: right;">${infHours.toFixed(2)}</td>
-                    <td class="usage-standby-col" style="text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="text-align: right;">${formatGpuTimeMs(infMs)}</td>
+                    <td class="usage-standby-col" style="text-align: right;">${formatGpuTimeMs(sbyMs)}</td>
                     <td style="text-align: right;">${formatUsd(infCents)}</td>
                     <td class="usage-standby-col" style="text-align: right;">${formatUsd(sbyCents)}</td>
                     <td style="text-align: right;">${formatUsd(totalCents)}</td>
@@ -3041,8 +4308,8 @@
             `;
         }).join('');
 
-        document.getElementById('usage-table-total-inf-hours').textContent = totalInfHours.toFixed(2);
-        document.getElementById('usage-table-total-sby-hours').textContent = totalSbyHours.toFixed(2);
+        document.getElementById('usage-table-total-inf-hours').textContent = formatGpuTimeMs(totalInfMs);
+        document.getElementById('usage-table-total-sby-hours').textContent = formatGpuTimeMs(totalSbyMs);
         document.getElementById('usage-table-total-inf-cost').textContent = formatUsd(totalInfCents);
         document.getElementById('usage-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
         document.getElementById('usage-table-total-cost').textContent = formatUsd(totalInfCents + totalSbyCents);
@@ -3596,8 +4863,8 @@
 
     // Hook into tab switching to populate tenant lists when Billing tabs open
     const originalOpenTab = openTab;
-    openTab = function(evt, tabName) {
-        originalOpenTab(evt, tabName);
+    openTab = function(evt, tabName, options = {}) {
+        originalOpenTab(evt, tabName, options);
         if (tabName === 'Billing') {
             ensureAnalyticsDefaultViewMode();
             populateBillingTenants();
@@ -3626,6 +4893,7 @@
     let analyticsGroupDetailRequestId = 0;
     let analyticsGroupDetailRawRows = [];
     let analyticsGroupDetailRows = [];
+    let analyticsGroupDetailIsEndpoint = false;
     let analyticsDetailGranularity = 'hourly';
     let analyticsDetailSortColumn = 'period';
     let analyticsDetailSortDirection = 'desc';
@@ -3919,6 +5187,7 @@
         if (clearSelection) analyticsSelectedGroupKey = null;
         analyticsGroupDetailRawRows = [];
         analyticsGroupDetailRows = [];
+        analyticsGroupDetailIsEndpoint = false;
         analyticsGroupDetailRequestId += 1;
     }
 
@@ -3955,6 +5224,7 @@
         if (!areaEl || !loadingEl || !messageEl || !tableEl || !titleEl || !tbody) return;
 
         const params = new URLSearchParams(timeParams);
+        analyticsGroupDetailIsEndpoint = viewMode === 'model' && isEndpointAnalyticsItem(item);
         let endpoint = '';
         if (viewMode === 'tenant') {
             endpoint = `/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`;
@@ -3963,7 +5233,7 @@
             params.set('namespace', item.namespace || '');
             params.set('funcname', item.funcname || '');
             endpoint = `/proxy1/tenant/${tenant}/usage/hourly-by-model?${params.toString()}`;
-            titleEl.textContent = isEndpointAnalyticsItem(item)
+            titleEl.textContent = analyticsGroupDetailIsEndpoint
                 ? `Breakdown: Endpoint ${item.funcname || '--'}`
                 : `Breakdown: ${item.funcname || '--'} (${item.namespace || '--'})`;
         } else {
@@ -4076,34 +5346,33 @@
             totalInfNumer += getAnalyticsInferenceNumer(u);
             totalSbyNumer += getAnalyticsStandbyNumer(u);
         });
-        setAnalyticsDetailStandbyVisibility(totalSbyMs > 0 || totalSbyNumer > 0);
+        const showStandbyColumns = !analyticsGroupDetailIsEndpoint && (totalSbyMs > 0 || totalSbyNumer > 0);
 
         tbody.innerHTML = sortedRows.map(u => {
             const infMs = u.inference_ms || 0;
             const sbyMs = u.standby_ms || 0;
             const infCents = getAnalyticsInferenceCents(u);
             const sbyCents = getAnalyticsStandbyCents(u);
-            const infHours = infMs / 3600000;
-            const sbyHours = sbyMs / 3600000;
             const totalCents = getAnalyticsChargeCents(u);
             const periodLabel = formatAnalyticsDetailPeriodLabel(u);
 
             return `
                 <tr style="border-bottom: 1px solid #eee;">
                     <td style="padding: 8px; text-align: left;">${periodLabel}</td>
-                    <td style="padding: 8px; text-align: right;">${infHours.toFixed(2)}</td>
-                    <td class="analytics-detail-standby-col" style="padding: 8px; text-align: right;">${sbyHours.toFixed(2)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatGpuTimeMs(infMs)}</td>
+                    <td class="analytics-detail-standby-col" style="padding: 8px; text-align: right;">${formatGpuTimeMs(sbyMs)}</td>
                     <td style="padding: 8px; text-align: right;">${formatUsd(infCents)}</td>
                     <td class="analytics-detail-standby-col" style="padding: 8px; text-align: right;">${formatUsd(sbyCents)}</td>
                     <td style="padding: 8px; text-align: right;">${formatUsd(totalCents)}</td>
                 </tr>
             `;
         }).join('');
+        setAnalyticsDetailStandbyVisibility(showStandbyColumns);
 
         const totalInfCents = Math.trunc(totalInfNumer / 3600000);
         const totalSbyCents = Math.trunc(totalSbyNumer / 3600000);
-        document.getElementById('analytics-group-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
-        document.getElementById('analytics-group-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-group-total-inf-hours').textContent = formatGpuTimeMs(totalInfMs);
+        document.getElementById('analytics-group-total-sby-hours').textContent = formatGpuTimeMs(totalSbyMs);
         document.getElementById('analytics-group-total-inf-cost').textContent = formatUsd(totalInfCents);
         document.getElementById('analytics-group-total-sby-cost').textContent = formatUsd(totalSbyCents);
         document.getElementById('analytics-group-total-cost').textContent = formatUsd(Math.trunc((totalInfNumer + totalSbyNumer) / 3600000));
@@ -4438,8 +5707,6 @@
             const infCents = item.inference_cents || 0;
             const sbyCents = item.standby_cents || 0;
             const chargeCents = (typeof item.charge_cents === 'number') ? item.charge_cents : (infCents + sbyCents);
-            const infHours = (infMs / 3600000).toFixed(2);
-            const sbyHours = (sbyMs / 3600000).toFixed(2);
             const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : '0.0';
             const rowKey = getAnalyticsGroupKey('model', item);
 
@@ -4474,15 +5741,15 @@
             row.innerHTML = kind === 'endpoint'
                 ? `
                     <td style="padding: 8px;" title="${safeGroupTitle}">${groupCellHtml}</td>
-                    <td style="text-align: right; padding: 8px;">${infHours}</td>
+                    <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(infMs)}</td>
                     <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
                     <td style="text-align: right; padding: 8px;">${formatUsd(chargeCents)}</td>
                     <td style="text-align: right; padding: 8px;">${bar}${percent}%</td>
                 `
                 : `
                     <td style="padding: 8px;" title="${safeGroupTitle}">${groupCellHtml}</td>
-                    <td style="text-align: right; padding: 8px;">${infHours}</td>
-                    <td style="text-align: right; padding: 8px;">${sbyHours}</td>
+                    <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(infMs)}</td>
+                    <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(sbyMs)}</td>
                     <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
                     <td style="text-align: right; padding: 8px;">${formatUsd(sbyCents)}</td>
                     <td style="text-align: right; padding: 8px;">${formatUsd(chargeCents)}</td>
@@ -4530,8 +5797,8 @@
         if (showRegular) {
             const regularSummary = renderAnalyticsModelSplitTableSection('analytics-regular-model-table', regularItems, totalCents, 'regular');
             if (regularSummary) {
-                document.getElementById('analytics-regular-total-inf-hours').textContent = (regularSummary.infMs / 3600000).toFixed(2);
-                document.getElementById('analytics-regular-total-sby-hours').textContent = (regularSummary.sbyMs / 3600000).toFixed(2);
+                document.getElementById('analytics-regular-total-inf-hours').textContent = formatGpuTimeMs(regularSummary.infMs);
+                document.getElementById('analytics-regular-total-sby-hours').textContent = formatGpuTimeMs(regularSummary.sbyMs);
                 document.getElementById('analytics-regular-total-inf-cost').textContent = formatUsd(regularSummary.infCents);
                 document.getElementById('analytics-regular-total-sby-cost').textContent = formatUsd(regularSummary.sbyCents);
                 document.getElementById('analytics-regular-total-cost').textContent = formatUsd(regularSummary.totalCents);
@@ -4544,7 +5811,7 @@
         if (showEndpoint) {
             const endpointSummary = renderAnalyticsModelSplitTableSection('analytics-endpoint-model-table', endpointItems, totalCents, 'endpoint');
             if (endpointSummary) {
-                document.getElementById('analytics-endpoint-total-inf-hours').textContent = (endpointSummary.infMs / 3600000).toFixed(2);
+                document.getElementById('analytics-endpoint-total-inf-hours').textContent = formatGpuTimeMs(endpointSummary.infMs);
                 document.getElementById('analytics-endpoint-total-inf-cost').textContent = formatUsd(endpointSummary.infCents);
                 document.getElementById('analytics-endpoint-total-cost').textContent = formatUsd(endpointSummary.totalCents);
                 document.getElementById('analytics-endpoint-total-percent').textContent =
@@ -4641,8 +5908,6 @@
             const infCents = item.inference_cents || 0;
             const sbyCents = item.standby_cents || 0;
             const chargeCents = (typeof item.charge_cents === 'number') ? item.charge_cents : (infCents + sbyCents);
-            const infHours = (infMs / 3600000).toFixed(2);
-            const sbyHours = (sbyMs / 3600000).toFixed(2);
             const percent = totalCents > 0 ? ((chargeCents / totalCents) * 100).toFixed(1) : 0;
             const safeGroupLabel = escapeAnalyticsHtml(truncateText(groupLabel, 40));
             const safeGroupTitle = escapeAnalyticsHtml(groupLabel);
@@ -4669,8 +5934,8 @@
 
             row.innerHTML = `
                 <td style="padding: 8px;" title="${safeGroupTitle}">${groupCellHtml}</td>
-                <td style="text-align: right; padding: 8px;">${infHours}</td>
-                <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${sbyHours}</td>
+                <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(infMs)}</td>
+                <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${formatGpuTimeMs(sbyMs)}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(infCents)}</td>
                 <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${formatUsd(sbyCents)}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(chargeCents)}</td>
@@ -4698,8 +5963,8 @@
 
             row.innerHTML = `
                 <td style="padding: 8px;">Other (${data.other.count} ${viewMode === 'model' ? 'models' : 'namespaces'})</td>
-                <td style="text-align: right; padding: 8px;">${(otherInfMs / 3600000).toFixed(2)}</td>
-                <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${(otherSbyMs / 3600000).toFixed(2)}</td>
+                <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(otherInfMs)}</td>
+                <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${formatGpuTimeMs(otherSbyMs)}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(otherInfCents)}</td>
                 <td class="analytics-summary-standby-col" style="text-align: right; padding: 8px;">${formatUsd(otherSbyCents)}</td>
                 <td style="text-align: right; padding: 8px;">${formatUsd(otherCents)}</td>
@@ -4709,8 +5974,8 @@
         }
 
         // Update totals
-        document.getElementById('analytics-table-total-inf-hours').textContent = (totalInfMs / 3600000).toFixed(2);
-        document.getElementById('analytics-table-total-sby-hours').textContent = (totalSbyMs / 3600000).toFixed(2);
+        document.getElementById('analytics-table-total-inf-hours').textContent = formatGpuTimeMs(totalInfMs);
+        document.getElementById('analytics-table-total-sby-hours').textContent = formatGpuTimeMs(totalSbyMs);
         document.getElementById('analytics-table-total-inf-cost').textContent = formatUsd(totalInfCents);
         document.getElementById('analytics-table-total-sby-cost').textContent = formatUsd(totalSbyCents);
         document.getElementById('analytics-table-total-cost').textContent = formatUsd(totalCents);
@@ -4789,12 +6054,11 @@
                 ${displayData.map(u => {
                     const usageMs = getAnalyticsUsageMs(u);
                     const height = Math.max(2, (usageMs / maxUsageMs) * 100);
-                    const usageHours = (usageMs / 3600000).toFixed(2);
                     const label = aggregateToDaily
                         ? new Date(u.hour).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
                         : new Date(u.hour).getHours().toString().padStart(2, '0') + ':00';
                     return `<div class="usage-bar" style="height: ${height}%; flex: 1;"
-                                title="${label}: ${usageHours} GPU-hours"></div>`;
+                                title="${label}: ${formatGpuTimeMs(usageMs)} GPU time"></div>`;
                 }).join('')}
             </div>
             <div style="display: flex; gap: 2px; font-size: 10px; color: #666;">
@@ -4838,7 +6102,6 @@
         tableBodyEl.innerHTML = sortedRows.map(u => {
             const usageMs = getAnalyticsUsageMs(u);
             totalMs += usageMs;
-            const usageHours = usageMs / 3600000;
             const periodLabel = aggregateToDaily
                 ? new Date(u.hour).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
                 : new Date(u.hour).toLocaleString(undefined, {
@@ -4852,12 +6115,12 @@
             return `
                 <tr style="border-bottom: 1px solid #eee;">
                     <td style="text-align: left; padding: 8px;">${periodLabel}</td>
-                    <td style="text-align: right; padding: 8px;">${usageHours.toFixed(2)}</td>
+                    <td style="text-align: right; padding: 8px;">${formatGpuTimeMs(usageMs)}</td>
                 </tr>
             `;
         }).join('');
 
-        totalEl.textContent = (totalMs / 3600000).toFixed(2);
+        totalEl.textContent = formatGpuTimeMs(totalMs);
     }
 
     function aggregateHourlyUsageByGranularity(hourlyData, granularity) {
@@ -5207,6 +6470,24 @@
         return dt.toLocaleString();
     }
 
+    function formatGpuTimeMs(value) {
+        const totalMs = Number(value) || 0;
+        const totalSeconds = Math.max(0, Math.round(totalMs / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        if (hours > 0) {
+            return seconds > 0
+                ? `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`
+                : `${hours}h ${String(minutes).padStart(2, '0')}m`;
+        }
+        if (minutes > 0) {
+            return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+        }
+        return `${seconds}s`;
+    }
+
     function maskApikey(rawKey) {
         if (!rawKey) return '';
         const s = String(rawKey);
@@ -5345,66 +6626,46 @@
         }
     }
 
-    async function fetchItems() {
-        const apikeys_resp = await fetchWithAuth('/generate_apikeys');
-        const apikeys = await apikeys_resp.json();
-        const apikey_tbody = document.querySelector('#items-table tbody');
-        apikey_tbody.innerHTML = '';
-        apikeys.forEach(key => {
-            const row = document.createElement('tr');
-            const created = formatLocalDateTime(key.createtime);
-            const expires = formatLocalDateTime(key.expires_at);
-            const rawKey = key.apikey || '';
-            const maskedRawKey = maskApikey(rawKey);
-            const rawKeyCell = rawKey
-                ? `<span class="apikey-raw-value" data-apikey="${rawKey}">${maskedRawKey}</span><button type="button" class="apikey-copy-cell-btn" data-tooltip="Copy key" aria-label="Copy key" onclick="copyApikeyFromRow(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10"></rect><rect x="5" y="5" width="10" height="10"></rect></svg></button>`
-                : '';
-            row.innerHTML = `
-                <td style="text-align: center;"><input type="checkbox" data-keyname="${key.keyname}" data-username="${key.username}" onchange="updateDeleteApikeyButtonState()"></td>
-                <td style="text-align: center;">${key.keyname}</td>
-                <td style="text-align: center;">${key.username}</td>
-                <td style="text-align: center;">${rawKeyCell}</td>
-                <td style="text-align: center;">${key.access_level || key.scope || ''}</td>
-                <td style="text-align: center;">${key.restrict_tenant || ''}</td>
-                <td style="text-align: center;">${key.restrict_namespace || ''}</td>
-                <td style="text-align: center;">${created}</td>
-                <td style="text-align: center;">${expires}</td>
-            `;
-            apikey_tbody.appendChild(row);
-        });
-        updateDeleteApikeyButtonState();
+    const adminTabDataState = {
+        roles: null,
+        rolesPromise: null,
+        apikeysPromise: null,
+        apikeyChoicesPromise: null,
+        rolesRendered: false,
+        apikeyChoicesLoaded: false,
+        namespacesLoaded: false,
+        tenantsLoaded: false,
+    };
 
-        const tenant_dropdown = document.getElementById("tenant_dropdown");
-        const namespace_dropdown = document.getElementById("namespace_dropdown");
-        const namespaceCreateCard = document.getElementById("namespace-create-card");
-        const namespaceTenantSelectField = document.getElementById("namespace-tenant-select-field");
-        const namespaceTenantReadonlyField = document.getElementById("namespace-tenant-readonly-field");
-        const namespaceTenantReadonlyValue = document.getElementById("namespace-tenant-readonly-value");
-        const apikeyRestrictTenantSelect = document.getElementById("apikey_restrict_tenant");
-        const apikeyRestrictNamespaceSelect = document.getElementById("apikey_restrict_namespace");
-        const apikeyTenantChoices = new Set();
-        const apikeyNamespaceChoices = {};
-        const namespaceCreateTenantChoices = [];
-
-        if (tenant_dropdown) {
-            tenant_dropdown.innerHTML = '';
-            const placeholderOption = document.createElement("option");
-            placeholderOption.disabled = true;
-            placeholderOption.selected = true;
-            placeholderOption.textContent = "Select a tenant";
-            tenant_dropdown.appendChild(placeholderOption);
+    async function getAdminRoles(force = false) {
+        if (!force && Array.isArray(adminTabDataState.roles)) {
+            return adminTabDataState.roles;
+        }
+        if (!force && adminTabDataState.rolesPromise) {
+            return adminTabDataState.rolesPromise;
         }
 
-        const roles_resp = await fetchWithAuth('/generate_roles');
-        const roles = await roles_resp.json();
+        adminTabDataState.rolesPromise = (async () => {
+            const roles_resp = await fetchWithAuth('/generate_roles');
+            const roles = await roles_resp.json();
+            adminTabDataState.roles = Array.isArray(roles) ? roles : [];
+            return adminTabDataState.roles;
+        })();
 
-        // Target both table bodies
+        try {
+            return await adminTabDataState.rolesPromise;
+        } finally {
+            adminTabDataState.rolesPromise = null;
+        }
+    }
+
+    function renderRoleTables(roles) {
         const tenant_tbody = document.querySelector('#tenant-roles-table tbody');
         const namespace_tbody = document.querySelector('#namespace-roles-table tbody');
+        if (!tenant_tbody || !namespace_tbody) return;
 
         const consolidated = roles.reduce((acc, curr) => {
             const type = String(curr.objType).toLowerCase();
-            // Create a unique key for grouping
             const key = type === 'tenant' ? curr.tenant : `${curr.tenant}/${curr.namespace}`;
 
             if (!acc[key]) {
@@ -5418,15 +6679,12 @@
             return acc;
         }, {});
 
-        // Clear existing content
         tenant_tbody.innerHTML = '';
         namespace_tbody.innerHTML = '';
 
         Object.values(consolidated).forEach(item => {
             const type = String(item.objType).toLowerCase();
             const row = document.createElement('tr');
-
-            // helper to render a checkmark or dash
             const check = (val) => val ? '<span style="color: green; font-weight: bold;">✓</span>' : '<span style="color: #ccc;">-</span>';
 
             if (type === 'tenant') {
@@ -5447,65 +6705,67 @@
             }
         });
 
-        const funcs_tbody = document.querySelector('#models-table tbody');
-        if (funcs_tbody) {
-            const funcs_resp = await fetchWithAuth('/generate_funcs');
-            const funcs = await funcs_resp.json();
-            funcs_tbody.innerHTML = '';
-            funcs.forEach(key => {
-                const isAdmin = IsAdmin(roles, key.func.tenant, key.func.namespace);
-                const isUser = IsUser(roles, key.func.tenant, key.func.namespace);
+        adminTabDataState.rolesRendered = true;
+    }
 
-                if (isAdmin || isUser) {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                    <td style="text-align: center;">
-                        <input type="checkbox" 
-                            data-id="${key.tenant}/system/${key.name}"
-                            ${!isAdmin ? 'disabled' : ''} 
-                            style="${!isAdmin ? 'cursor: not-allowed; opacity: 0.5;' : 'cursor: pointer;'}">
-                    </td>
-                    <td style="text-align: center;">
-                        <a href="{{ hosturl }}listfunc?tenant=${key.func.tenant}">
-                            ${tenantLinkLabelHtml(key.func.tenant)}
-                        </a>
-                    </td>
-                    <td style="text-align: center;">
-                        <a
-                            href="{{ hosturl }}listfunc?tenant=${key.func.tenant}&&namespace=${key.func.namespace}">
-                            ${key.func.namespace}
-                        </a>
-                    </td>
-                    <td style="text-align: center;">
-                        <a
-                            href="{{ hosturl }}func?tenant=${key.func.tenant}&&namespace=${key.func.namespace}&&name=${key.func.name}">
-                            ${key.func.name}
-                        </a>
-                    </td>
-                    <td style="text-align: center;">${isAdmin
-                            ? '<span style="color: green; font-weight: bold;">✓</span>'
-                            : '<span style="color: #666;">-</span>'}
-                    </td>
-                    <td style="text-align: center;">${isUser
-                            ? '<span style="color: green; font-weight: bold;">✓</span>'
-                            : '<span style="color: #666;">-</span>'}
-                    </td>
-                `;
-                    funcs_tbody.appendChild(row);
-                }
-            });
+    function populateNamespaceCreateTenantChoices(tenantChoices) {
+        const tenant_dropdown = document.getElementById("tenant_dropdown");
+        const namespaceCreateCard = document.getElementById("namespace-create-card");
+        const namespaceTenantSelectField = document.getElementById("namespace-tenant-select-field");
+        const namespaceTenantReadonlyField = document.getElementById("namespace-tenant-readonly-field");
+        const namespaceTenantReadonlyValue = document.getElementById("namespace-tenant-readonly-value");
+        if (!tenant_dropdown || !namespaceCreateCard) return;
+
+        tenant_dropdown.innerHTML = '';
+        const placeholderOption = document.createElement("option");
+        placeholderOption.disabled = true;
+        placeholderOption.selected = true;
+        placeholderOption.textContent = "Select a tenant";
+        tenant_dropdown.appendChild(placeholderOption);
+
+        tenantChoices.forEach(tenant => {
+            const option = document.createElement("option");
+            option.value = tenant;
+            option.textContent = tenantDisplayLabel(tenant);
+            tenant_dropdown.appendChild(option);
+        });
+
+        if (tenantChoices.length === 0) {
+            namespaceCreateCard.style.display = "none";
+            return;
         }
 
+        if (tenantChoices.length === 1) {
+            const onlyTenant = tenantChoices[0];
+            tenant_dropdown.value = onlyTenant;
+            namespaceCreateCard.style.display = "";
+            if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "none";
+            if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "";
+            if (namespaceTenantReadonlyValue) {
+                namespaceTenantReadonlyValue.textContent = tenantDisplayLabel(onlyTenant);
+            }
+            return;
+        }
 
-        const namespaces_resp = await fetchWithAuth('/generate_namespaces');
-        const namespaces = await namespaces_resp.json();
-        const namespaces_tbody = document.querySelector('#namespaces-table tbody');
-        namespaces_tbody.innerHTML = '';
-        for (const key of namespaces) {
-            const row = document.createElement('tr');
+        namespaceCreateCard.style.display = "";
+        tenant_dropdown.selectedIndex = 0;
+        if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "";
+        if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "none";
+        if (namespaceTenantReadonlyValue) namespaceTenantReadonlyValue.textContent = "";
+    }
+
+    function populateApikeyRestrictionChoices({ roles, namespaces, tenants }) {
+        const apikeyRestrictTenantSelect = document.getElementById("apikey_restrict_tenant");
+        const apikeyRestrictNamespaceSelect = document.getElementById("apikey_restrict_namespace");
+        if (!apikeyRestrictTenantSelect || !apikeyRestrictNamespaceSelect) return;
+
+        const apikeyTenantChoices = new Set();
+        const apikeyNamespaceChoices = {};
+        const namespaceCreateTenantChoices = [];
+
+        namespaces.forEach((key) => {
             const isAdmin = IsAdmin(roles, key.tenant, key.name);
             const isUser = IsUser(roles, key.tenant, key.name);
-
             if (isAdmin || isUser) {
                 apikeyTenantChoices.add(key.tenant);
                 if (!apikeyNamespaceChoices[key.tenant]) {
@@ -5513,9 +6773,182 @@
                 }
                 apikeyNamespaceChoices[key.tenant].add(key.name);
             }
+        });
 
-            const adminList = await getNamespaceUsers("admin", key.tenant, key.name);
-            const userList = await getNamespaceUsers("user", key.tenant, key.name);
+        upsertTenantDisplayMapFromList(tenants);
+        tenants.forEach((key) => {
+            const isAdmin = IsAdmin(roles, key.name, "");
+            const isUser = IsUser(roles, key.name, "");
+            if (isAdmin || isUser) {
+                apikeyTenantChoices.add(key.name);
+            }
+            if (isAdmin) {
+                namespaceCreateTenantChoices.push(key.name);
+            }
+        });
+
+        const prevTenant = apikeyRestrictTenantSelect.value;
+        setSelectDefaultOption(apikeyRestrictTenantSelect, 'Select tenant');
+
+        const tenantList = Array.from(apikeyTenantChoices).sort((a, b) => a.localeCompare(b));
+        tenantList.forEach(tenant => {
+            const option = document.createElement('option');
+            option.value = tenant;
+            option.textContent = tenantDisplayLabel(tenant);
+            apikeyRestrictTenantSelect.appendChild(option);
+        });
+
+        apikeyRestrictNamespacesByTenant = {};
+        Object.keys(apikeyNamespaceChoices).forEach(tenant => {
+            apikeyRestrictNamespacesByTenant[tenant] = Array.from(apikeyNamespaceChoices[tenant])
+                .sort((a, b) => a.localeCompare(b));
+        });
+
+        if (prevTenant && tenantList.includes(prevTenant)) {
+            apikeyRestrictTenantSelect.value = prevTenant;
+        }
+
+        onApikeyRestrictTenantChange();
+        populateNamespaceCreateTenantChoices(namespaceCreateTenantChoices);
+        adminTabDataState.apikeyChoicesLoaded = true;
+    }
+
+    async function ensureApikeyRestrictionChoices(force = false, roles = null, prefetchedData = null) {
+        if (!force && adminTabDataState.apikeyChoicesLoaded) {
+            return;
+        }
+        if (!force && adminTabDataState.apikeyChoicesPromise) {
+            return adminTabDataState.apikeyChoicesPromise;
+        }
+
+        adminTabDataState.apikeyChoicesPromise = (async () => {
+            const resolvedRoles = Array.isArray(roles) ? roles : await getAdminRoles();
+            let namespaces = prefetchedData?.namespaces;
+            let tenants = prefetchedData?.tenants;
+
+            if (!Array.isArray(namespaces) && !Array.isArray(tenants)) {
+                const [namespaces_resp, tenants_resp] = await Promise.all([
+                    fetchWithAuth('/generate_namespaces'),
+                    fetchWithAuth('/generate_tenants'),
+                ]);
+                [namespaces, tenants] = await Promise.all([
+                    namespaces_resp.json(),
+                    tenants_resp.json(),
+                ]);
+            } else {
+                if (!Array.isArray(namespaces)) {
+                    const namespaces_resp = await fetchWithAuth('/generate_namespaces');
+                    namespaces = await namespaces_resp.json();
+                }
+                if (!Array.isArray(tenants)) {
+                    const tenants_resp = await fetchWithAuth('/generate_tenants');
+                    tenants = await tenants_resp.json();
+                }
+            }
+
+            populateApikeyRestrictionChoices({
+                roles: resolvedRoles,
+                namespaces: Array.isArray(namespaces) ? namespaces : [],
+                tenants: Array.isArray(tenants) ? tenants : [],
+            });
+        })();
+
+        try {
+            return await adminTabDataState.apikeyChoicesPromise;
+        } finally {
+            adminTabDataState.apikeyChoicesPromise = null;
+        }
+    }
+
+    async function loadApikeyTab(force = false) {
+        const roles = await getAdminRoles(force);
+        configureApikeyCreateForm(roles);
+        ensureApikeyRestrictionChoices(force, roles).catch(error => {
+            console.error('Failed to populate API key restriction choices:', error);
+        });
+
+        if (!force && adminTabDataState.apikeysPromise) {
+            return adminTabDataState.apikeysPromise;
+        }
+
+        adminTabDataState.apikeysPromise = (async () => {
+            const apikeys_resp = await fetchWithAuth('/generate_apikeys');
+            const apikeys = await apikeys_resp.json();
+            const apikey_tbody = document.querySelector('#items-table tbody');
+            if (!apikey_tbody) return;
+
+            apikey_tbody.innerHTML = '';
+            apikeys.forEach(key => {
+                const row = document.createElement('tr');
+                const created = formatLocalDateTime(key.createtime);
+                const expires = formatLocalDateTime(key.expires_at);
+                const rawKey = key.apikey || '';
+                const maskedRawKey = maskApikey(rawKey);
+                const rawKeyCell = rawKey
+                    ? `<span class="apikey-raw-value" data-apikey="${rawKey}">${maskedRawKey}</span><button type="button" class="apikey-copy-cell-btn" data-tooltip="Copy key" aria-label="Copy key" onclick="copyApikeyFromRow(this)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10"></rect><rect x="5" y="5" width="10" height="10"></rect></svg></button>`
+                    : '';
+                row.innerHTML = `
+                <td style="text-align: center;"><input type="checkbox" data-keyname="${key.keyname}" data-username="${key.username}" onchange="updateDeleteApikeyButtonState()"></td>
+                <td style="text-align: center;">${key.keyname}</td>
+                <td style="text-align: center;">${key.username}</td>
+                <td style="text-align: center;">${rawKeyCell}</td>
+                <td style="text-align: center;">${key.access_level || key.scope || ''}</td>
+                <td style="text-align: center;">${key.restrict_tenant || ''}</td>
+                <td style="text-align: center;">${key.restrict_namespace || ''}</td>
+                <td style="text-align: center;">${created}</td>
+                <td style="text-align: center;">${expires}</td>
+            `;
+                apikey_tbody.appendChild(row);
+            });
+            updateDeleteApikeyButtonState();
+
+            if (window.applyTenantDisplayNames) {
+                window.applyTenantDisplayNames(document);
+            }
+        })();
+
+        try {
+            return await adminTabDataState.apikeysPromise;
+        } finally {
+            adminTabDataState.apikeysPromise = null;
+        }
+    }
+
+    async function loadRolesTab(force = false) {
+        if (!force && adminTabDataState.rolesRendered) {
+            return;
+        }
+
+        const roles = await getAdminRoles(force);
+        renderRoleTables(roles);
+    }
+
+    async function loadNamespacesTab(force = false) {
+        if (!force && adminTabDataState.namespacesLoaded) {
+            return;
+        }
+
+        const roles = await getAdminRoles(force);
+        const namespaces_resp = await fetchWithAuth('/generate_namespaces');
+        const namespaces = await namespaces_resp.json();
+        await ensureApikeyRestrictionChoices(force, roles, { namespaces });
+        const namespaces_tbody = document.querySelector('#namespaces-table tbody');
+        const namespace_dropdown = document.getElementById("namespace_dropdown");
+        if (!namespaces_tbody || !Array.isArray(namespaces)) return;
+
+        namespaces_tbody.innerHTML = '';
+        if (namespace_dropdown) {
+            namespace_dropdown.innerHTML = '';
+        }
+
+        for (const key of namespaces) {
+            const row = document.createElement('tr');
+            const isAdmin = IsAdmin(roles, key.tenant, key.name);
+            const isUser = IsUser(roles, key.tenant, key.name);
+            const [adminList, userList] = await Promise.all([
+                getNamespaceUsers("admin", key.tenant, key.name),
+                getNamespaceUsers("user", key.tenant, key.name),
+            ]);
 
             const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
             const userNames = userList.length > 0 ? userList.join(', ') : '-';
@@ -5557,25 +6990,33 @@
                 option.textContent = `${tenantDisplayLabel(key.tenant)}/${key.name}`;
                 namespace_dropdown.appendChild(option);
             }
+        }
 
-        };
+        adminTabDataState.namespacesLoaded = true;
+    }
 
+    async function loadTenantsTab(force = false) {
+        if (!force && adminTabDataState.tenantsLoaded) {
+            return;
+        }
+
+        const roles = await getAdminRoles(force);
         const tenants_resp = await fetchWithAuth('/generate_tenants');
         const tenants = await tenants_resp.json();
-        upsertTenantDisplayMapFromList(tenants);
         const tenants_tbody = document.querySelector('#tenants-table tbody');
+        if (!tenants_tbody || !Array.isArray(tenants)) return;
+
+        upsertTenantDisplayMapFromList(tenants);
         tenants_tbody.innerHTML = '';
+
         for (const key of tenants) {
             const row = document.createElement('tr');
             const isAdmin = IsAdmin(roles, key.name, "");
             const isUser = IsUser(roles, key.name, "");
-
-            if (isAdmin || isUser) {
-                apikeyTenantChoices.add(key.name);
-            }
-
-            const adminList = await getTenantUsers("admin", key.name);
-            const userList = await getTenantUsers("user", key.name);
+            const [adminList, userList] = await Promise.all([
+                getTenantUsers("admin", key.name),
+                getTenantUsers("user", key.name),
+            ]);
 
             const adminNames = adminList.length > 0 ? adminList.join(', ') : '-';
             const userNames = userList.length > 0 ? userList.join(', ') : '-';
@@ -5600,65 +7041,60 @@
                 
             `;
             tenants_tbody.appendChild(row);
-
-            if (isAdmin) {
-                namespaceCreateTenantChoices.push(key.name);
-                const option = document.createElement("option");
-                option.value = key.name;
-                option.textContent = tenantDisplayLabel(key.name);
-                tenant_dropdown.appendChild(option);
-            }
-        };
-
-        if (namespaceCreateCard && tenant_dropdown) {
-            if (namespaceCreateTenantChoices.length === 0) {
-                namespaceCreateCard.style.display = "none";
-            } else if (namespaceCreateTenantChoices.length === 1) {
-                const onlyTenant = namespaceCreateTenantChoices[0];
-                tenant_dropdown.value = onlyTenant;
-                namespaceCreateCard.style.display = "";
-                if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "none";
-                if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "";
-                if (namespaceTenantReadonlyValue) {
-                    namespaceTenantReadonlyValue.textContent = tenantDisplayLabel(onlyTenant);
-                }
-            } else {
-                namespaceCreateCard.style.display = "";
-                tenant_dropdown.selectedIndex = 0;
-                if (namespaceTenantSelectField) namespaceTenantSelectField.style.display = "";
-                if (namespaceTenantReadonlyField) namespaceTenantReadonlyField.style.display = "none";
-                if (namespaceTenantReadonlyValue) namespaceTenantReadonlyValue.textContent = "";
-            }
         }
 
-        // Populate API key restriction tenant/namespace dropdowns.
-        if (apikeyRestrictTenantSelect && apikeyRestrictNamespaceSelect) {
-            const prevTenant = apikeyRestrictTenantSelect.value;
-            setSelectDefaultOption(apikeyRestrictTenantSelect, 'Select tenant');
+        adminTabDataState.tenantsLoaded = true;
+    }
 
-            const tenantList = Array.from(apikeyTenantChoices).sort((a, b) => a.localeCompare(b));
-            tenantList.forEach(tenant => {
-                const option = document.createElement('option');
-                option.value = tenant;
-                option.textContent = tenantDisplayLabel(tenant);
-                apikeyRestrictTenantSelect.appendChild(option);
-            });
-
-            apikeyRestrictNamespacesByTenant = {};
-            Object.keys(apikeyNamespaceChoices).forEach(tenant => {
-                apikeyRestrictNamespacesByTenant[tenant] = Array.from(apikeyNamespaceChoices[tenant])
-                    .sort((a, b) => a.localeCompare(b));
-            });
-
-            if (prevTenant && tenantList.includes(prevTenant)) {
-                apikeyRestrictTenantSelect.value = prevTenant;
-            }
-
-            onApikeyRestrictTenantChange();
+    async function ensureAdminTabData(tabName, force = false) {
+        switch (tabName) {
+            case 'Apikeys':
+                await loadApikeyTab(force);
+                break;
+            case 'Roles':
+                await loadRolesTab(force);
+                break;
+            case 'Namespaces':
+                await Promise.all([
+                    loadRolesTab(force),
+                    loadNamespacesTab(force),
+                ]);
+                break;
+            case 'Tenants':
+                await loadTenantsTab(force);
+                break;
+            default:
+                break;
         }
-        configureApikeyCreateForm(roles);
-        if (window.applyTenantDisplayNames) {
-            window.applyTenantDisplayNames(document);
+    }
+
+    async function fetchItems() {
+        return ensureAdminTabData('Apikeys', true);
+    }
+
+    async function loadCurrentAdminTabData(force = false) {
+        const activeTab = getCurrentActiveAdminTab() || 'Apikeys';
+        await ensureAdminTabData(activeTab, force);
+    }
+
+    function invalidateAdminTabData(...keys) {
+        const resetAll = keys.length === 0;
+        if (resetAll || keys.includes('roles')) {
+            adminTabDataState.roles = null;
+            adminTabDataState.rolesRendered = false;
+        }
+        if (resetAll || keys.includes('apikeys')) {
+            adminTabDataState.apikeysPromise = null;
+        }
+        if (resetAll || keys.includes('choices')) {
+            adminTabDataState.apikeyChoicesLoaded = false;
+            adminTabDataState.apikeyChoicesPromise = null;
+        }
+        if (resetAll || keys.includes('namespaces')) {
+            adminTabDataState.namespacesLoaded = false;
+        }
+        if (resetAll || keys.includes('tenants')) {
+            adminTabDataState.tenantsLoaded = false;
         }
     }
 
@@ -5735,7 +7171,7 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/proxy/object/function/' + key + "/", {
+                    return fetchWithAuth('/proxy/object/function/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
@@ -5797,6 +7233,8 @@
 
             if (apikeys_resp.status === 200) {
                 alert("Create Namespace successfully! ");
+                invalidateAdminTabData('choices', 'namespaces');
+                await loadCurrentAdminTabData(true);
             } else {
                 alert("Create Namespace fail with error" + text);
             }
@@ -5813,10 +7251,12 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/proxy/object/namespace/' + key + "/", {
+                    return fetchWithAuth('/proxy/object/namespace/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
+                invalidateAdminTabData('choices', 'namespaces');
+                await loadCurrentAdminTabData(true);
             }
         } catch (error) {
             alert("get error " + error);
@@ -5862,6 +7302,8 @@
 
             if (resp.status === 200) {
                 alert("Create Tenant successfully! ");
+                invalidateAdminTabData('choices', 'tenants', 'namespaces');
+                await loadCurrentAdminTabData(true);
             } else {
                 alert("Create Tenant fail with error" + text);
             }
@@ -5878,10 +7320,12 @@
             const keys = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
             if (keys.length > 0) {
                 await Promise.all(keys.map(key => {
-                    fetchWithAuth('/proxy/object/tenant/' + key + "/", {
+                    return fetchWithAuth('/proxy/object/tenant/' + key + "/", {
                         method: 'DELETE'
                     });
                 }));
+                invalidateAdminTabData('choices', 'tenants', 'namespaces');
+                await loadCurrentAdminTabData(true);
             }
         } catch (error) {
             alert("get error " + error);
@@ -6030,8 +7474,6 @@
         }
     }
 
-    // Initial fetch
-    fetchItems();
 </script>
 
 {% endblock %}

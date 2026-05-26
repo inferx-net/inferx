@@ -7,6 +7,8 @@
 {% set tenant_count = tenant_options | length %}
 {% set has_single_namespace = selected_tenant and (current_namespace_options | length) == 1 %}
 {% set show_tenant_in_summary = deploy_target.show_tenant_in_summary if deploy_target and deploy_target.show_tenant_in_summary is defined else true %}
+{% set resolved_summary_label = deploy_target.resolved_summary_label if deploy_target and deploy_target.resolved_summary_label is defined else 'Deploy Now target:' %}
+{% set unresolved_summary_label = deploy_target.unresolved_summary_label if deploy_target and deploy_target.unresolved_summary_label is defined else 'Deploy Now unavailable:' %}
 {% set selector_ns = namespace(selected_tenant_label=selected_tenant) %}
 {% for option in tenant_options %}
     {% if option.value == selected_tenant %}
@@ -16,24 +18,29 @@
 <div id="{{ component_id }}" class="catalog-deploy-target">
     <div class="catalog-deploy-target-summary">
         {% if deploy_target and deploy_target.resolved %}
-        <strong data-role="summary-label">Deploy Now target:</strong>
+        <strong data-role="summary-label">{{ resolved_summary_label }}</strong>
         <span data-role="summary-value">
             {% if show_tenant_in_summary %}{{ selector_ns.selected_tenant_label }} / {% endif %}{{ selected_namespace }}
         </span>
         {% else %}
-        <strong data-role="summary-label">Deploy Now unavailable:</strong>
+        <strong data-role="summary-label">{{ unresolved_summary_label }}</strong>
         <span data-role="summary-value">{{ deploy_target.message if deploy_target and deploy_target.message is defined else 'Deploy Now is unavailable.' }}</span>
         {% endif %}
     </div>
     <div class="catalog-deploy-target-controls">
         <div class="catalog-deploy-target-field" data-role="tenant-field"{% if tenant_count <= 1 %} hidden{% endif %}>
-            <label for="{{ component_id }}-tenant">Tenant</label>
-            <select id="{{ component_id }}-tenant" data-role="tenant-select">
-                <option value="">Select tenant</option>
-                {% for option in tenant_options %}
-                <option value="{{ option.value }}"{% if option.value == selected_tenant %} selected{% endif %}>{{ option.label }}</option>
-                {% endfor %}
-            </select>
+            <label for="{{ component_id }}-tenant-combo-input">Tenant</label>
+            <div data-role="tenant-combo-wrap" style="position:relative; display:inline-block;">
+                <input type="text" id="{{ component_id }}-tenant-combo-input"
+                       data-role="tenant-combo-input"
+                       placeholder="Select or type to search..."
+                       autocomplete="off" spellcheck="false"
+                       style="width:100%; min-width:180px; min-height:38px; box-sizing:border-box; padding:8px 34px 8px 10px; font-size:14px; color:#0f172a; cursor:pointer; border:1px solid #cbd5e1; border-radius:4px; background:#fff;">
+                <span style="position:absolute; right:8px; top:50%; transform:translateY(-50%); pointer-events:none; color:#475569; font-size:16px; line-height:1; font-weight:700;">▾</span>
+                <div data-role="tenant-combo-dropdown"
+                     onmousedown="event.preventDefault()"
+                     style="display:none; position:absolute; left:0; top:100%; background:#fff; border:1px solid #ccc; border-top:none; max-height:260px; overflow-y:auto; z-index:1000; min-width:100%; box-shadow:0 2px 6px rgba(0,0,0,.15);"></div>
+            </div>
         </div>
 
         <div class="catalog-deploy-target-field" data-role="namespace-select-field"{% if has_single_namespace %} hidden{% endif %}>
