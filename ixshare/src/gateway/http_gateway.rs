@@ -567,8 +567,7 @@ impl HttpGateway {
         //////////////////////////////////////////////////////////////////////////////////////
         // have to put the mpc code in this area for compiliation issue
         let config = StreamableHttpServerConfig::default()
-            // remove to allow any hosts
-            // .with_allowed_hosts(vec!["localhost".to_string(), "192.168.0.44".to_string()])
+            .disable_allowed_hosts()
             .with_sse_keep_alive(Some(std::time::Duration::from_secs(30)));
 
         let session_manager = LocalSessionManager::default();

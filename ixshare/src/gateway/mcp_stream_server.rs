@@ -2,7 +2,6 @@ use anyhow::Result as AResult;
 use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
 use serde_json::json;
 use std::collections::BTreeMap;
-use http::request::Parts;
 
 pub struct McpStreamServer;
 
@@ -33,7 +32,7 @@ impl McpStreamServer {
             ToolConfig {
                 description: "Get pricing strategy from the pricing endpoint via HTTP streaming"
                     .to_string(),
-                url: "https://model.inferx.net/funccall/tn-a3t79iogb2/endpoints/Qwen3.6-35B-A3B-FP8/v1/chat/completions".to_string(),
+                url: "http://192.168.0.44:8000/price/v1/chat/completions".to_string(),
             },
         );
         configs
@@ -43,7 +42,7 @@ impl McpStreamServer {
 impl ServerHandler for McpStreamServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_protocol_version(ProtocolVersion::V_2024_11_05)
+            .with_protocol_version(ProtocolVersion::V_2025_03_26)
             .with_server_info(Implementation::new("mcp-stream-server", "1.0.0"))
             .with_instructions("vLLM MCP HTTP streaming server with multiple tools")
     }
