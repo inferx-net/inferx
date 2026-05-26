@@ -21,6 +21,7 @@ use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
 use crate::obj_mgr::func_mgr::MountFile;
 use crate::obj_mgr::nodestatus_mgr::Quantity;
 use crate::obj_mgr::pod_mgr::{FuncPod, PodState};
+use crate::selector::Labels;
 
 use super::resource::*;
 use crate::common::*;
@@ -135,6 +136,7 @@ pub struct ContainerPort {
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct ContainerDef {
+    pub annotations: Labels,
     pub name: String,
     pub image: String,
     pub envs: BTreeMap<String, String>,

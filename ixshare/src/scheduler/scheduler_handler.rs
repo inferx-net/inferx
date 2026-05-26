@@ -2221,10 +2221,16 @@ impl SchedulerHandler {
         let funckey = snapshot.object.funckey.clone();
         let nodename = snapshot.object.nodename.clone();
 
-        info!("AddSnapshot: adding snapshot for func {} on node {}", funckey, nodename);
+        info!(
+            "AddSnapshot: adding snapshot for func {} on node {}",
+            funckey, nodename
+        );
 
         self.RemovePendingSnapshot(&funckey, &nodename);
-        info!("AddSnapshot: removed from pending snapshots for func {} on node {}", funckey, nodename);
+        info!(
+            "AddSnapshot: removed from pending snapshots for func {} on node {}",
+            funckey, nodename
+        );
 
         if !self.snapshots.contains_key(&funckey) {
             self.snapshots.insert(funckey.clone(), BTreeMap::new());
@@ -2235,7 +2241,10 @@ impl SchedulerHandler {
             .unwrap()
             .insert(nodename.clone(), snapshot.object.clone());
 
-        info!("AddSnapshot: snapshot added to snapshots map for func {} on node {}", funckey, nodename);
+        info!(
+            "AddSnapshot: snapshot added to snapshots map for func {} on node {}",
+            funckey, nodename
+        );
 
         // Start standby billing only when snapshot is Ready (loaded on GPU)
         if snapshot.object.state == SnapshotState::Ready {
@@ -2278,10 +2287,7 @@ impl SchedulerHandler {
             return Ok(());
         }
 
-        self.snapshots
-            .get_mut(&funckey)
-            .unwrap()
-            .remove(&nodename);
+        self.snapshots.get_mut(&funckey).unwrap().remove(&nodename);
 
         return Ok(());
     }
@@ -2366,7 +2372,10 @@ impl SchedulerHandler {
         };
 
         USAGE_TICK_AGENT.Audit(tick);
-        info!("start_snapshot_pod_billing: started billing for pod {} with session_id {}", pod_key, session_id);
+        info!(
+            "start_snapshot_pod_billing: started billing for pod {} with session_id {}",
+            pod_key, session_id
+        );
 
         self.snapshot_billing_sessions.insert(pod_key, session);
     }
@@ -2498,7 +2507,10 @@ impl SchedulerHandler {
         let func = match self.funcs.get(funckey) {
             Some(f) => f,
             None => {
-                info!("start_standby_billing: func {} not found, skipping standby billing", funckey);
+                info!(
+                    "start_standby_billing: func {} not found, skipping standby billing",
+                    funckey
+                );
                 return;
             }
         };
@@ -2525,7 +2537,10 @@ impl SchedulerHandler {
         let fprevision: i64 = match parts[3].parse() {
             Ok(v) => v,
             Err(_) => {
-                error!("start_standby_billing: invalid fprevision in funckey: {}", funckey);
+                error!(
+                    "start_standby_billing: invalid fprevision in funckey: {}",
+                    funckey
+                );
                 return;
             }
         };
@@ -2571,9 +2586,13 @@ impl SchedulerHandler {
         };
 
         USAGE_TICK_AGENT.Audit(tick);
-        info!("start_standby_billing: started for {} with session_id {}", funckey, session_id);
+        info!(
+            "start_standby_billing: started for {} with session_id {}",
+            funckey, session_id
+        );
 
-        self.standby_billing_sessions.insert(funckey.to_string(), session);
+        self.standby_billing_sessions
+            .insert(funckey.to_string(), session);
     }
 
     /// End standby billing for a model (funckey).
@@ -2610,8 +2629,10 @@ impl SchedulerHandler {
 
         USAGE_TICK_AGENT.Audit(tick);
         let total_duration_ms = now.duration_since(session.start_time).as_millis() as i64;
-        info!("end_standby_billing: ended for {}, interval {}ms, total duration {}ms",
-            funckey, interval_ms, total_duration_ms);
+        info!(
+            "end_standby_billing: ended for {}, interval {}ms, total duration {}ms",
+            funckey, interval_ms, total_duration_ms
+        );
     }
 
     /// Emit periodic standby billing ticks for all active standby sessions.
@@ -2669,9 +2690,13 @@ impl SchedulerHandler {
     fn recover_standby_billing(&mut self) {
         let mut count = 0;
         // Collect funckeys that have at least one Ready snapshot
-        let funckeys: Vec<String> = self.snapshots.iter()
+        let funckeys: Vec<String> = self
+            .snapshots
+            .iter()
             .filter(|(_, node_map)| {
-                node_map.values().any(|snapshot| snapshot.state == SnapshotState::Ready)
+                node_map
+                    .values()
+                    .any(|snapshot| snapshot.state == SnapshotState::Ready)
             })
             .map(|(funckey, _)| funckey.clone())
             .collect();
@@ -2682,7 +2707,10 @@ impl SchedulerHandler {
         }
 
         if count > 0 {
-            info!("recover_standby_billing: recovered {} standby billing sessions", count);
+            info!(
+                "recover_standby_billing: recovered {} standby billing sessions",
+                count
+            );
         }
     }
 
@@ -4775,6 +4803,13 @@ impl SchedulerHandler {
             key: FUNCPOD_FUNCNAME.to_owned(),
             val: funcname.clone(),
         });
+
+        for (k, v) in func.annotations.iter() {
+            annotations.push(Kv {
+                key: k.to_owned(),
+                val: v.to_owned(),
+            })
+        }
 
         // Get function spec
         let mut spec = func.object.spec.clone();
