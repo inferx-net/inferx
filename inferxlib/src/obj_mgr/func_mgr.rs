@@ -26,7 +26,7 @@ use super::funcpolicy_mgr::FuncPolicy;
 use super::funcpolicy_mgr::FuncPolicySpec;
 
 pub const FUNCPOD_TYPE: &str = "funcpod_type.inferx.io";
-pub const FUNCPOD_FUNCNAME: &str = "fun_name.inferx.io";
+pub const FUNCPOD_FUNCNAME: &str = "func_name.inferx.io";
 pub const FUNCPOD_PROMPT: &str = "prompt";
 
 #[derive(Serialize, Deserialize, Debug, Default)]
