@@ -47,6 +47,7 @@ use inferxlib::obj_mgr::pod_mgr::FuncPod;
 use crate::common::*;
 use crate::etcd::etcd_store::EtcdStore;
 use crate::scheduler::scheduler_register::SchedulerInfo;
+use crate::node_config::KB_DIR;
 use inferxlib::obj_mgr::func_mgr::*;
 use inferxlib::obj_mgr::namespace_mgr::*;
 use inferxlib::obj_mgr::pod_mgr::PodMgr;
@@ -410,7 +411,26 @@ impl GwObjRepo {
     }
 
     pub fn RemoveFunc(&self, spec: Function) -> Result<()> {
+        let api_type = spec.object.spec.SampleCallType();
+        let tenant = spec.tenant.clone();
+        let namespace = spec.namespace.clone();
+        let name = spec.name.clone();
+        let version = spec.Version();
         self.funcMgr.Remove(spec)?;
+        if api_type == ApiType::KnowledgeBase {
+            let kb_dir = std::path::Path::new(KB_DIR)
+                .join(format!("{}.{}.{}", tenant, namespace, name))
+                .join(version.to_string());
+            if let Err(e) = std::fs::remove_dir_all(&kb_dir) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    error!(
+                        "failed to remove KB version dir {}: {:?}",
+                        kb_dir.display(),
+                        e
+                    );
+                }
+            }
+        }
         return Ok(());
     }
 

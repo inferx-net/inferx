@@ -104,7 +104,7 @@
         font-size: var(--ix-font-size-subtle);
     }
     .client-setup-guidance {
-        margin: 0 0 12px 0;
+        margin: 0;
         border: 1px solid #dbeafe;
         border-radius: 4px;
         background: #f8fbff;
@@ -112,7 +112,7 @@
     .client-setup-guidance summary {
         cursor: pointer;
         list-style: none;
-        padding: 10px 12px;
+        padding: 9px 12px;
         color: #1e3a8a;
         font-size: var(--ix-font-size-subtle);
         font-weight: 600;
@@ -121,19 +121,51 @@
         display: none;
     }
     .client-setup-guidance summary::before {
-        content: "Show setup steps";
+        content: "Show common setup steps";
     }
     .client-setup-guidance[open] summary::before {
-        content: "Hide setup steps";
+        content: "Hide common setup steps";
     }
     .client-setup-guidance-body {
         padding: 0 12px 12px 12px;
     }
+    .client-setup-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 0 0 12px 0;
+        align-items: flex-start;
+    }
+    .client-setup-actions {
+        display: flex;
+        flex: 0 0 auto;
+    }
+    .client-setup-download-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+    }
+    .client-setup-download-btn:hover {
+        border-color: #afc2db;
+        background: #f6faff;
+    }
+    .client-setup-toolbar .client-setup-guidance {
+        flex: 0 0 auto;
+    }
 </style>
 {% macro client_setup_value_field(label, display_value, copy_value, tooltip='Copy', value_class='') -%}
-<div>
-    <label style="display: block; margin: 0 0 6px 0;">{{ label }}</label>
-    <div class="client-setup-value-shell">
+<div style="display: flex; align-items: center; gap: 10px;">
+    <label style="flex: 0 0 110px; font-size: 13px; color: #374151;">{{ label }}</label>
+    <div class="client-setup-value-shell" style="flex: 1 1 auto; min-width: 0;">
         <span class="client-setup-value{% if value_class %} {{ value_class }}{% endif %}" data-copy-value="{{ copy_value }}">{{ display_value }}</span>
         <button
             type="button"
@@ -156,16 +188,28 @@
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
         Use these values in Dify, OpenWebUI, Continue, OpenCode, or any OpenAI-compatible client that asks for a base URL, API key, and model name.
     </p>
-    <details class="client-setup-guidance">
-        <summary></summary>
-        <div class="client-setup-guidance-body">
+    <div class="client-setup-toolbar">
+        {% if opencode_download_href and client_setup.api_base_url %}
+        <div class="client-setup-actions">
+            <a class="client-setup-download-btn" href="{{ opencode_download_href }}">Download OpenCode config</a>
+        </div>
+        {% endif %}
+        <details class="client-setup-guidance">
+            <summary></summary>
+            <div class="client-setup-guidance-body">
             <ol class="client-setup-steps">
                 <li>Copy the API base URL into your client endpoint field.</li>
                 <li>Copy the model name exactly as shown.</li>
-                <li>{% if client_setup.auth_required %}Copy the inference API key, then run the sample request below to confirm the setup.{% else %}No API key is required for this endpoint. Run the sample request below to confirm the setup.{% endif %}</li>
+                <li>{% if client_setup.auth_required %}Copy the inference API key.{% else %}No API key is required for this endpoint. Run the sample request below to confirm the setup.{% endif %}</li>
             </ol>
+            {% if opencode_download_href and client_setup.api_base_url %}
+            <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle); line-height: 1.5;">
+                For OpenCode, download the config and place it at <code>~/.config/opencode/opencode.config</code>.
+            </p>
+            {% endif %}
         </div>
     </details>
+    </div>
     <div style="display: grid; gap: 12px;">
         {% if client_setup.api_base_url %}
         {{ client_setup_value_field(

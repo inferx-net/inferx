@@ -49,6 +49,8 @@ spec:
           volumeMounts:
             - name: cert-volume
               mountPath: /etc/letsencrypt/
+            - name: inferx-kb
+              mountPath: /opt/inferx/kb
           livenessProbe:
             httpGet:
               path: /healthz
@@ -59,6 +61,9 @@ spec:
         - name: cert-volume
           hostPath:
             path: /etc/letsencrypt/
+        - name: inferx-kb
+          persistentVolumeClaim:
+            claimName: inferx-kb-pvc
 ---
 apiVersion: v1
 kind: Service

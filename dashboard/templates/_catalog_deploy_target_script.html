@@ -67,7 +67,8 @@
             }
 
             const tenantField = root.querySelector('[data-role="tenant-field"]');
-            const tenantSelect = root.querySelector('[data-role="tenant-select"]');
+            const tenantComboInput = root.querySelector('[data-role="tenant-combo-input"]');
+            const tenantComboDropdown = root.querySelector('[data-role="tenant-combo-dropdown"]');
             const namespaceSelectField = root.querySelector('[data-role="namespace-select-field"]');
             const namespaceSelect = root.querySelector('[data-role="namespace-select"]');
             const namespaceReadonlyField = root.querySelector('[data-role="namespace-readonly-field"]');
@@ -81,6 +82,11 @@
             let selectedNamespace = '';
             let stateMessage = '';
             let showTenantInSummary = true;
+            let resolvedSummaryLabel = 'Deploy Now target:';
+            let unresolvedSummaryLabel = 'Deploy Now unavailable:';
+            let actionLabel = 'Deploy Now';
+            let preferredNamespaceValue = '';
+            let tenantHighlightedIndex = -1;
 
             function applyState(nextState) {
                 const state = (nextState && typeof nextState === 'object') ? nextState : {};
@@ -93,6 +99,10 @@
                 selectedNamespace = String(state.selected_namespace || '').trim();
                 stateMessage = String(state.message || '').trim();
                 showTenantInSummary = state.show_tenant_in_summary !== false;
+                resolvedSummaryLabel = String(state.resolved_summary_label || '').trim() || 'Deploy Now target:';
+                unresolvedSummaryLabel = String(state.unresolved_summary_label || '').trim() || 'Deploy Now unavailable:';
+                actionLabel = String(state.action_label || '').trim() || 'Deploy Now';
+                preferredNamespaceValue = String(state.preferred_namespace_value || '').trim();
             }
 
             function getTenantLabel(tenantValue) {
@@ -138,8 +148,19 @@
                     selectedNamespace = namespaceOptions[0].value;
                     return;
                 }
+                if (
+                    preferredNamespaceValue !== ''
+                    && namespaceOptions.some((option) => option.value === preferredNamespaceValue)
+                    && selectedNamespace === ''
+                ) {
+                    selectedNamespace = preferredNamespaceValue;
+                    return;
+                }
                 if (!namespaceOptions.some((option) => option.value === selectedNamespace)) {
-                    selectedNamespace = '';
+                    selectedNamespace = (
+                        preferredNamespaceValue !== ''
+                        && namespaceOptions.some((option) => option.value === preferredNamespaceValue)
+                    ) ? preferredNamespaceValue : '';
                 }
             }
 
@@ -147,21 +168,21 @@
                 if (tenantOptions.length === 0) {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: stateMessage || 'No accessible tenant is available for deployment.',
                     };
                 }
                 if (selectedTenant === '') {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
-                        value: 'Select a tenant to enable Deploy Now.',
+                        label: unresolvedSummaryLabel,
+                        value: `Select a tenant to enable ${actionLabel}.`,
                     };
                 }
                 if (namespaceOptions.length === 0) {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: showTenantInSummary
                             ? `No accessible namespace is available under tenant ${selectedTenant}.`
                             : 'No accessible namespace is available for deployment.',
@@ -170,15 +191,15 @@
                 if (selectedNamespace === '') {
                     return {
                         resolved: false,
-                        label: 'Deploy Now unavailable:',
+                        label: unresolvedSummaryLabel,
                         value: showTenantInSummary
-                            ? `Select a namespace under tenant ${selectedTenant} to enable Deploy Now.`
-                            : 'Select a namespace to enable Deploy Now.',
+                            ? `Select a namespace under tenant ${selectedTenant} to enable ${actionLabel}.`
+                            : `Select a namespace to enable ${actionLabel}.`,
                     };
                 }
                 return {
                     resolved: true,
-                    label: 'Deploy Now target:',
+                    label: resolvedSummaryLabel,
                     value: showTenantInSummary
                         ? `${getTenantLabel(selectedTenant)} / ${selectedNamespace}`
                         : selectedNamespace,
@@ -203,11 +224,9 @@
                 if (tenantField) {
                     tenantField.hidden = tenantOptions.length <= 1;
                 }
-                if (tenantSelect) {
-                    setSelectOptions(tenantSelect, tenantOptions, selectedTenant, tenantOptions.length > 1 ? 'Select tenant' : '');
-                    if (tenantOptions.length <= 1) {
-                        tenantSelect.value = selectedTenant;
-                    }
+                if (tenantComboInput) {
+                    const match = tenantOptions.find((t) => t.value === selectedTenant);
+                    tenantComboInput.value = match ? match.label : '';
                 }
 
                 const hasSingleNamespace = selectedTenant !== '' && namespaceOptions.length === 1;
@@ -254,10 +273,88 @@
                 return render();
             }
 
-            tenantSelect?.addEventListener('change', () => {
-                selectedTenant = String(tenantSelect.value || '').trim();
-                selectedNamespace = '';
-                render();
+            function setTenantHighlight(items, index) {
+                items.forEach((item, i) => { item.style.background = i === index ? '#e8f0fe' : ''; });
+                tenantHighlightedIndex = index;
+                if (index >= 0 && items[index]) items[index].scrollIntoView({ block: 'nearest' });
+            }
+
+            function renderTenantDropdownItems(search) {
+                if (!tenantComboDropdown) return;
+                tenantHighlightedIndex = -1;
+                const matches = tenantOptions.filter((t) =>
+                    !search || t.label.toLowerCase().includes(search) || t.value.toLowerCase().includes(search)
+                );
+                tenantComboDropdown.innerHTML = '';
+                if (matches.length === 0) {
+                    const noMatch = document.createElement('div');
+                    noMatch.textContent = 'No matches';
+                    noMatch.style.cssText = 'padding:6px 10px; color:#888; font-size:14px;';
+                    tenantComboDropdown.appendChild(noMatch);
+                } else {
+                    matches.forEach((t) => {
+                        const item = document.createElement('div');
+                        item.textContent = t.label;
+                        item.dataset.comboValue = t.value;
+                        item.style.cssText = 'padding:6px 10px; cursor:pointer; font-size:14px; white-space:nowrap;';
+                        item.addEventListener('mouseover', () => { item.style.background = '#e8f0fe'; });
+                        item.addEventListener('mouseout', () => { item.style.background = ''; });
+                        item.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            selectedTenant = t.value;
+                            selectedNamespace = '';
+                            closeTenantDropdown();
+                            render();
+                        });
+                        tenantComboDropdown.appendChild(item);
+                    });
+                }
+                tenantComboDropdown.style.display = '';
+            }
+
+            function openTenantDropdown() {
+                if (tenantComboInput) tenantComboInput.select();
+                renderTenantDropdownItems('');
+            }
+
+            function closeTenantDropdown() {
+                if (tenantComboDropdown) tenantComboDropdown.style.display = 'none';
+                const match = tenantOptions.find((t) => t.value === selectedTenant);
+                if (tenantComboInput) tenantComboInput.value = match ? match.label : '';
+            }
+
+            function filterTenantDropdown() {
+                renderTenantDropdownItems(tenantComboInput ? tenantComboInput.value.toLowerCase() : '');
+            }
+
+            tenantComboInput?.addEventListener('focus', openTenantDropdown);
+            tenantComboInput?.addEventListener('input', filterTenantDropdown);
+            tenantComboInput?.addEventListener('blur', closeTenantDropdown);
+            tenantComboInput?.addEventListener('keydown', (e) => {
+                const isOpen = tenantComboDropdown && tenantComboDropdown.style.display !== 'none';
+                if (!isOpen) {
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openTenantDropdown(); }
+                    return;
+                }
+                const items = Array.from(tenantComboDropdown.querySelectorAll('[data-combo-value]'));
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setTenantHighlight(items, Math.min(tenantHighlightedIndex + 1, items.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setTenantHighlight(items, Math.max(tenantHighlightedIndex - 1, 0));
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const highlighted = items[tenantHighlightedIndex];
+                    if (highlighted) {
+                        const t = tenantOptions.find((o) => o.value === highlighted.dataset.comboValue);
+                        if (t) { selectedTenant = t.value; selectedNamespace = ''; closeTenantDropdown(); render(); }
+                    }
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeTenantDropdown();
+                    tenantComboInput.blur();
+                }
             });
 
             namespaceSelect?.addEventListener('change', () => {

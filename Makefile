@@ -1,9 +1,9 @@
 ARCH := ${shell uname -m}
-PLATFORM_VERSION ?= v0.4.1
-DB_VERSION ?= v0.4.0
-DASHBOARD_VERSION ?= v0.4.1
-RUNTIME_VERSION ?= v0.4.0
-NA_VERSION ?= v0.4.0
+PLATFORM_VERSION ?= v0.5.0beta3
+DB_VERSION ?= v0.5.0beta2
+DASHBOARD_VERSION ?= v0.5.0beta2
+RUNTIME_VERSION ?= v0.5.0beta2
+NA_VERSION ?= v0.5.0beta2
 RUNMODEL_VERSION ?= v0.2.6
 SPDK_VERSION ?= v0.2.6
 
@@ -385,6 +385,7 @@ runall:
 	kubectl apply -f k8s1/etcd.yaml
 	kubectl apply -f k8s1/keycloak_postgres.yaml
 	kubectl apply -f k8s1/keycloak.yaml
+	kubectl apply -f k8s1/inferx-kb-pvc.yaml
 	VERSION=$(RUNTIME_VERSION) envsubst < k8s1/binary-updater.yaml | kubectl apply -f -
 	VERSION=$(DB_VERSION) envsubst < k8s1/db-secret.yaml | kubectl apply -f -
 	VERSION=$(DB_VERSION) envsubst < k8s1/db-audit.yaml | kubectl apply -f -

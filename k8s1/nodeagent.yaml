@@ -114,8 +114,8 @@ spec:
           hostPath:
             path: /opt/inferx/bin
         - name: opt-inferx-cache
-          persistentVolumeClaim:
-            claimName: inferx-cache-pvc
+          hostPath:
+            path: /opt/inferx/cache
         - name: opt-inferx-data
           hostPath:
             path: /opt/inferx/data
@@ -259,8 +259,8 @@ spec:
               mountPath: /var/lib/docker
             - name: opt-inferx-run
               mountPath: /opt/inferx/run
-            - mountPath: /opt/inferx/kbprompt
-              name: opt-inferx-kbprompt
+            - mountPath: /opt/inferx/kb
+              name: opt-inferx-kb
       volumes:
         - name: run-udev
           hostPath:
@@ -310,7 +310,7 @@ spec:
         - name: opt-inferx-run
           hostPath:
             path: /opt/inferx/run
-        - name: opt-inferx-kbprompt
+        - name: opt-inferx-kb
           hostPath:
-            path: /opt/inferx/kbprompt
+            path: /opt/inferx/kb
       restartPolicy: Always

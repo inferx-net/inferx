@@ -112,6 +112,62 @@
         return JSON.parse(JSON.stringify(value));
     }
 
+    function normalizeOpenAIRequestMap(value) {
+        const nextMap = cloneMapValue(value) || {};
+        if (!nextMap || typeof nextMap !== 'object' || Array.isArray(nextMap)) {
+            return nextMap;
+        }
+
+        function parseBooleanString(raw) {
+            if (typeof raw === 'boolean') {
+                return raw;
+            }
+            if (typeof raw !== 'string') {
+                return raw;
+            }
+            const normalized = raw.trim().toLowerCase();
+            if (normalized === 'true') {
+                return true;
+            }
+            if (normalized === 'false') {
+                return false;
+            }
+            return raw;
+        }
+
+        function parseNumberString(raw) {
+            if (typeof raw === 'number') {
+                return Number.isFinite(raw) ? raw : raw;
+            }
+            if (typeof raw !== 'string') {
+                return raw;
+            }
+            const normalized = raw.trim();
+            if (normalized === '') {
+                return raw;
+            }
+            if (!/^-?(?:\d+|\d+\.\d+|\.\d+)$/.test(normalized)) {
+                return raw;
+            }
+            const parsed = Number(normalized);
+            return Number.isFinite(parsed) ? parsed : raw;
+        }
+
+        ['stream'].forEach(function (key) {
+            if (Object.prototype.hasOwnProperty.call(nextMap, key)) {
+                nextMap[key] = parseBooleanString(nextMap[key]);
+            }
+        });
+
+        ['max_tokens', 'maxTokens', 'temperature', 'top_p', 'topP', 'n'].forEach(function (key) {
+            if (Object.prototype.hasOwnProperty.call(nextMap, key)) {
+                nextMap[key] = parseNumberString(nextMap[key]);
+            }
+        });
+
+        return nextMap;
+    }
+
     function mergeHeaders(baseHeaders, extraHeaders) {
         const merged = Object.assign({}, baseHeaders || {});
         if (!extraHeaders || typeof extraHeaders !== 'object') {
@@ -939,7 +995,7 @@
             if (overrides && overrides.requestUrl) {
                 return String(overrides.requestUrl);
             }
-            const sampleQueryPath = context.apiType === 'text2text'
+            const sampleQueryPath = (context.apiType === 'text2text' || context.apiType === 'knowledgebase')
                 ? 'v1/chat/completions'
                 : context.sampleQueryPath;
             return buildUrlFromSegments(context.proxyBasePath, [
@@ -952,7 +1008,7 @@
         }
 
         function applyPromptToRequestMap(requestMap, promptText) {
-            const nextMap = cloneMapValue(requestMap) || {};
+            const nextMap = normalizeOpenAIRequestMap(requestMap);
 
             if (Array.isArray(nextMap.messages)) {
                 const patched = buildText2TextChatRequestMap(nextMap, promptText);
@@ -971,7 +1027,7 @@
         }
 
         function buildText2TextChatRequestMap(requestMap, prompt) {
-            const chatRequest = cloneMapValue(requestMap) || {};
+            const chatRequest = normalizeOpenAIRequestMap(requestMap);
             const promptText = String(prompt || '');
             delete chatRequest.prompt;
 
@@ -1168,7 +1224,7 @@
             resetVisualOutputs();
 
             try {
-                const requestMap = cloneMapValue(context.map) || {};
+                const requestMap = normalizeOpenAIRequestMap(context.map);
                 let body = '';
                 let requestHeaders = {
                     'Accept': 'application/json',
@@ -1176,8 +1232,20 @@
                 let timeoutPayloadBytes = 0;
                 const isTranscription = isTranscriptionRequest();
 
-                if (context.apiType === 'text2text') {
-                    body = JSON.stringify(buildText2TextChatRequestMap(requestMap, prompt));
+                if (context.apiType === 'text2text' || context.apiType === 'knowledgebase') {
+                    const normalizedPath = String(context.sampleQueryPath || '')
+                        .trim()
+                        .toLowerCase()
+                        .replace(/^\/+/, '');
+                    const useChatShape = context.apiType === 'text2text'
+                        || context.apiType === 'knowledgebase'
+                        || normalizedPath === 'v1/chat/completions'
+                        || Array.isArray(requestMap.messages);
+                    body = JSON.stringify(
+                        useChatShape
+                            ? buildText2TextChatRequestMap(requestMap, prompt)
+                            : applyPromptToRequestMap(requestMap, prompt)
+                    );
                     requestHeaders['Content-Type'] = 'application/json';
                 } else if (context.apiType === 'image2text') {
                     const imageData = await prepareImageData(signal);

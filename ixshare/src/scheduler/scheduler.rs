@@ -315,6 +315,7 @@ pub async fn SchedulerProcess() -> Result<()> {
 pub struct WorkerPodInner {
     pub pod: FuncPod,
     pub workerState: Mutex<WorkerPodState>,
+    pub consumer_tenant: Mutex<Option<String>>,
 }
 
 #[derive(Debug)]
@@ -345,6 +346,7 @@ impl WorkerPod {
             self.State(),
             src
         );
+        *self.consumer_tenant.lock().unwrap() = None;
         self.SetState(WorkerPodState::Idle);
     }
 
@@ -373,6 +375,7 @@ impl WorkerPod {
         let inner = WorkerPodInner {
             pod: pod,
             workerState: Mutex::new(WorkerPodState::Init),
+            consumer_tenant: Mutex::new(None),
         };
         let ret: WorkerPod = Self(Arc::new(inner));
 

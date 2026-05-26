@@ -41,6 +41,7 @@ use axum::{
 use chrono::{DateTime, Timelike, Utc};
 use hyper::header::CONTENT_TYPE;
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
+use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 use opentelemetry::Context;
 use prometheus_client::encoding::text::encode;
@@ -67,6 +68,7 @@ use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
 use crate::gateway::tokenizer::ModelsFuncCall;
+use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
@@ -95,8 +97,9 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SqlSecret};
-use super::tokenizer::KnowledgeBaseRoute;
+// use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::TokenizerRoute;
+use super::tokenizer::NormalizeFuncRequest;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
 const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 const VIRTUAL_ENDPOINTS_NAMESPACE: &str = "endpoints";
@@ -193,7 +196,10 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 
 #[cfg(test)]
 mod tests {
-    use super::{funccall_route_error_response, summarize_funccall_body_for_log};
+    use super::{
+        funccall_route_error_response, is_blocked_public_endpoint_inference,
+        summarize_funccall_body_for_log,
+    };
     use crate::common::Error;
     use axum::http::StatusCode;
     use hyper::body::Bytes;
@@ -231,6 +237,19 @@ mod tests {
             funccall_route_error_response("Qwen", &Error::NotExist("missing func".to_owned()));
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(message, "service failure: function not found");
+    }
+
+    #[test]
+    fn blocks_public_endpoint_inference_namespace() {
+        assert!(is_blocked_public_endpoint_inference(
+            "public",
+            super::VIRTUAL_ENDPOINTS_NAMESPACE
+        ));
+        assert!(!is_blocked_public_endpoint_inference("public", "models"));
+        assert!(!is_blocked_public_endpoint_inference(
+            "tenant-a",
+            super::VIRTUAL_ENDPOINTS_NAMESPACE
+        ));
     }
 }
 
@@ -308,6 +327,10 @@ fn quota_lookup_failed_response(tenant: &str) -> Response<Body> {
         .status(StatusCode::SERVICE_UNAVAILABLE)
         .body(body)
         .unwrap()
+}
+
+fn is_blocked_public_endpoint_inference(tenant: &str, namespace: &str) -> bool {
+    tenant == "public" && namespace == VIRTUAL_ENDPOINTS_NAMESPACE
 }
 
 fn endpoint_policy_for_request(gw: &HttpGateway, tenant: &str, slug: &str) -> FuncPolicySpec {
@@ -587,15 +610,21 @@ impl HttpGateway {
             .route("/models/*rest", post(ModelsFuncCall))
             .route("/models/*rest", get(ModelsFuncCall))
             .route("/models/*rest", head(ModelsFuncCall))
+            .route(
+                "/kb/token-count/:tenant/:namespace/:name",
+                post(CountKnowledgeBaseTokens),
+            )
             .route("/funccall/*rest", post(FuncCall))
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
             .route("/tokenizer/*rest", post(TokenizerRoute))
             .route("/tokenizer/*rest", get(TokenizerRoute))
             .route("/tokenizer/*rest", head(TokenizerRoute))
-            .route("/kb/*rest", post(KnowledgeBaseRoute))
-            .route("/kb/*rest", get(KnowledgeBaseRoute))
-            .route("/kb/*rest", head(KnowledgeBaseRoute))
+            // Experimental KB route family. Disabled for now to avoid
+            // overlapping with `/kb/token-count/...` in the router.
+            // .route("/kb/*rest", post(KnowledgeBaseRoute))
+            // .route("/kb/*rest", get(KnowledgeBaseRoute))
+            // .route("/kb/*rest", head(KnowledgeBaseRoute))
             .route("/prompt/", post(PostPrompt))
             .route("/debug/func_agents", get(GetFuncAgentsState))
             .route(
@@ -680,6 +709,8 @@ impl HttpGateway {
                 get(GetTenantUsageByNamespace),
             )
             .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
+            .route("/admin/usage/endpoints", get(GetAdminEndpointUsage))
+            .route("/admin/usage/endpoints/:tenant/:endpoint_slug", get(GetAdminEndpointTenantUsageByPeriod))
             .route("/metrics", get(GetMetrics))
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
@@ -838,6 +869,10 @@ async fn GetSampleRestCall(
     State(gw): State<HttpGateway>,
     Path((tenant, namespace, funcname)): Path<(String, String, String)>,
 ) -> SResult<String, StatusCode> {
+    if is_blocked_public_endpoint_inference(&tenant, &namespace) {
+        return Ok("service failure: unsupported".to_owned());
+    }
+
     let func = match gw.objRepo.GetFunc(&tenant, &namespace, &funcname) {
         Err(e) => {
             return Ok(format!("service failure {:?}", e));
@@ -1177,6 +1212,15 @@ async fn DirectFuncCall(
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
 
+    if is_blocked_public_endpoint_inference(&tenant, &namespace) {
+        let body = Body::from("service failure: unsupported");
+        let resp = Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     if !token.CheckScope("inference") {
         let body = Body::from(format!("service failure: insufficient scope"));
         let resp = Response::builder()
@@ -1389,6 +1433,15 @@ pub async fn FuncCall1(
     let namespace = parts[3].to_owned();
     let funcname = parts[4].to_owned();
 
+    if is_blocked_public_endpoint_inference(&tenant, &namespace) {
+        let body = Body::from("service failure: unsupported");
+        let resp = Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
     if !token.CheckScope("inference") {
         let body = Body::from(format!("service failure: insufficient scope"));
         let resp = Response::builder()
@@ -1453,10 +1506,10 @@ pub async fn FuncCall1(
 
     let mut res;
 
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
 
     // Collect the body bytes
-    let bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
+    let mut bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
         Err(_e) => {
             let resp = FailureResponse(
                 Error::BAD_REQUEST(StatusCode::BAD_REQUEST),
@@ -1468,6 +1521,39 @@ pub async fn FuncCall1(
         }
         Ok(b) => b,
     };
+
+    // Normalize the request once before the retry loop (KB: chat→completions rewrite)
+    if parts.method == axum::http::Method::POST {
+        match NormalizeFuncRequest(&gw, &route, &remainPath, &bytes).await {
+            Err(status) => {
+                error!(
+                    "FuncCall1 normalization failed tenant={}/{} func={} path={} method={} status={}",
+                    route.physical.tenant,
+                    route.physical.namespace,
+                    route.physical.funcname,
+                    remainPath,
+                    parts.method,
+                    status
+                );
+                let resp = Response::builder()
+                    .status(status)
+                    .body(Body::from("service failure: normalization failed"))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Ok(None) => {}
+            Ok(Some(norm)) => {
+                parts.uri = Uri::try_from(norm.target_path.as_str())
+                    .unwrap_or(parts.uri);
+                bytes = Bytes::from(norm.body_bytes);
+                parts.headers.remove(hyper::header::CONTENT_LENGTH);
+                parts.headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_static(norm.content_type),
+                );
+            }
+        }
+    }
 
     let trace_enabled = trace_logging_enabled();
     let redacted_json_req = summarize_funccall_body_for_log(&bytes, trace_enabled);
@@ -2638,11 +2724,79 @@ struct HourlyUsageByModelQuery {
     funcname: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct AdminEndpointUsageQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    group_by: Option<String>,
+    tenant: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AdminEndpointUsageByPeriodQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+    granularity: Option<String>,
+}
+
 fn BadRequest(msg: impl Into<String>) -> Response {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
         .body(Body::from(msg.into()))
         .unwrap()
+}
+
+fn ParseAdminEndpointRange(
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>, i32), Response> {
+    if start.is_some() || end.is_some() {
+        let start_str = match start {
+            Some(s) => s,
+            None => return Err(BadRequest("Missing start parameter")),
+        };
+        let end_str = match end {
+            Some(s) => s,
+            None => return Err(BadRequest("Missing end parameter")),
+        };
+
+        let start = match DateTime::parse_from_rfc3339(&start_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => return Err(BadRequest("Invalid start format (use RFC3339)")),
+        };
+        let end = match DateTime::parse_from_rfc3339(&end_str) {
+            Ok(v) => v.with_timezone(&Utc),
+            Err(_) => return Err(BadRequest("Invalid end format (use RFC3339)")),
+        };
+
+        if end <= start {
+            return Err(BadRequest("Invalid range: end must be after start"));
+        }
+
+        let max_range = chrono::Duration::hours(720);
+        if end - start > max_range {
+            return Err(BadRequest("Range too large (max 720 hours / 30 days)"));
+        }
+
+        let start_hour_naive = start.date_naive().and_hms_opt(start.hour(), 0, 0).unwrap();
+        let end_hour_naive = end.date_naive().and_hms_opt(end.hour(), 0, 0).unwrap();
+        let start_hour = DateTime::<Utc>::from_naive_utc_and_offset(start_hour_naive, Utc);
+        let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+        let total_hours = ((end_hour - start_hour).num_hours() + 1).max(1) as i32;
+        return Ok((start_hour, end_hour, total_hours));
+    }
+
+    let hours = hours.unwrap_or(24).min(720).max(1);
+    let now = Utc::now();
+    let end_hour_naive = now.date_naive().and_hms_opt(now.hour(), 0, 0).unwrap();
+    let end_hour = DateTime::<Utc>::from_naive_utc_and_offset(end_hour_naive, Utc);
+    let start_hour = end_hour - chrono::Duration::hours((hours - 1) as i64);
+    Ok((start_hour, end_hour, hours))
 }
 
 fn ParseHourlyRange(
@@ -4105,6 +4259,167 @@ async fn GetTenantUsageSummary(
     }
 }
 
+async fn GetAdminEndpointUsage(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Query(params): Query<AdminEndpointUsageQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Admin access required");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let (start_hour, end_hour, _total_hours) =
+        match ParseAdminEndpointRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    let limit = params.limit.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+    let group_by = match params.group_by.as_deref() {
+        Some("tenant") => "tenant",
+        _ => "endpoint",
+    };
+
+    match gw
+        .sqlBilling
+        .GetAdminEndpointUsage(
+            start_hour,
+            end_hour,
+            limit,
+            offset,
+            group_by,
+            params.tenant.as_deref(),
+        )
+        .await
+    {
+        Ok(rows) => {
+            let total = rows.first().map(|r| r.total_count).unwrap_or(0);
+            let usage: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "tenant": r.tenant,
+                        "endpoint_slug": r.endpoint_slug,
+                        "endpoint_count": r.endpoint_count,
+                        "inference_ms": r.inference_ms,
+                        "inference_cents": r.inference_cents,
+                        "total_cents": r.total_cents,
+                        "last_seen_at": r.last_seen_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                    })
+                })
+                .collect();
+
+            let resp_body = serde_json::json!({
+                "usage": usage,
+                "total": total,
+                "group_by": group_by,
+                "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            });
+            
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get admin endpoint usage: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
+async fn GetAdminEndpointTenantUsageByPeriod(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((tenant, endpoint_slug)): Path<(String, String)>,
+    Query(params): Query<AdminEndpointUsageByPeriodQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        let body = Body::from("Admin access required");
+        let resp = Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    let (start_hour, end_hour, total_hours) =
+        match ParseAdminEndpointRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    let granularity = params.granularity.unwrap_or_else(|| {
+        if total_hours <= 24 {
+            "hourly".to_string()
+        } else if total_hours <= 168 {
+            "daily".to_string()
+        } else {
+            "weekly".to_string()
+        }
+    });
+
+    match gw
+        .sqlBilling
+        .GetAdminEndpointTenantUsageByPeriod(&tenant, &endpoint_slug, start_hour, end_hour, &granularity)
+        .await
+    {
+        Ok(rows) => {
+            let usage: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "period_start": r.period_start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        "period_end": r.period_end.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        "inference_ms": r.inference_ms,
+                        "inference_cents": r.inference_cents,
+                        "total_cents": r.total_cents
+                    })
+                })
+                .collect();
+
+            let resp_body = serde_json::json!({
+                "tenant": tenant,
+                "endpoint_slug": endpoint_slug,
+                "granularity": granularity,
+                "usage": usage,
+                "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            });
+            
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Err(e) => {
+            let body = Body::from(format!("Failed to get endpoint usage by period: {:?}", e));
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+}
+
 async fn ListFuncBrief(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -4434,7 +4749,45 @@ async fn GetFuncPods(
 ) -> SResult<Response, StatusCode> {
     match gw.GetFuncPods(&token, &tenant, &namespace, &funcname) {
         Ok(list) => {
-            let data = serde_json::to_string(&list).unwrap();
+            let lease_state = gw.funcAgentMgr.PodLeaseState();
+            let mut rows = Vec::with_capacity(list.len());
+
+            for pod in list {
+                let pod_key = format!(
+                    "{}/{}/{}/{}/{}",
+                    &pod.tenant,
+                    &pod.namespace,
+                    &pod.object.spec.funcname,
+                    pod.object.spec.fprevision,
+                    &pod.object.spec.id
+                );
+                let mut pod_value = serde_json::to_value(&pod).unwrap();
+
+                if pod.object.status.state == PodState::Ready {
+                    let leased = lease_state
+                        .get(&pod_key)
+                        .map(|info| info.leased)
+                        .unwrap_or(false);
+                    if let Some(obj) = pod_value.as_object_mut() {
+                        obj.insert("leased".to_owned(), Value::Bool(leased));
+                        if leased {
+                            if let Some(consumer_tenant) = lease_state
+                                .get(&pod_key)
+                                .and_then(|info| info.endpoint_consumer_tenant.clone())
+                            {
+                                obj.insert(
+                                    "endpoint_consumer_tenant".to_owned(),
+                                    Value::String(consumer_tenant),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                rows.push(pod_value);
+            }
+
+            let data = serde_json::to_string(&rows).unwrap();
             let body = Body::from(format!("{}", data));
             let resp = Response::builder()
                 .status(StatusCode::OK)

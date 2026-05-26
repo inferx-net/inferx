@@ -2158,6 +2158,294 @@ impl SqlAudit {
         };
         return Ok(log);
     }
+
+    /// Get admin cross-tenant endpoint usage grouped by tenant and endpoint slug.
+    /// Returns rows with tenant, endpoint_slug, inference_ms, inference_cents, total_cents, last_seen_at
+    pub async fn GetAdminEndpointUsage(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: i64,
+        offset: i64,
+        group_by: &str,
+        tenant_filter: Option<&str>,
+    ) -> Result<Vec<EndpointUsageRow>> {
+        let query_by_tenant = r#"
+            WITH
+            params AS (
+                SELECT
+                    $1::timestamptz AS start_hour,
+                    $2::timestamptz AS end_hour,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT
+                    h.tenant,
+                    h.funcname,
+                    SUM(h.inference_ms)::bigint AS inference_ms,
+                    SUM(h.inference_numer)::bigint AS inference_numer,
+                    MAX(h.hour + INTERVAL '1 hour') AS last_seen_at
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.namespace = 'endpoints'
+                  AND ($3::text IS NULL OR h.tenant = $3)
+                  AND h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
+                  AND h.hour < p.recent_start
+                GROUP BY h.tenant, h.funcname
+            ),
+            recent_ticks AS (
+                SELECT
+                    t.tenant,
+                    t.funcname,
+                    SUM(t.gpu_count::bigint * t.interval_ms::bigint)::bigint AS inference_ms,
+                    SUM(
+                        t.gpu_count::bigint
+                        * t.interval_ms::bigint
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+                    )::bigint AS inference_numer,
+                    MAX(t.tick_time) AS last_seen_at
+                FROM UsageTick t
+                JOIN params p ON true
+                WHERE t.namespace = 'endpoints'
+                  AND ($3::text IS NULL OR t.tenant = $3)
+                  AND t.tick_time >= GREATEST(p.start_hour, p.recent_start)
+                  AND t.tick_time < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
+                GROUP BY t.tenant, t.funcname
+            ),
+            endpoint_rows AS (
+                SELECT
+                    tenant,
+                    funcname,
+                    SUM(inference_ms)::bigint AS inference_ms,
+                    SUM(inference_numer)::bigint AS inference_numer,
+                    MAX(last_seen_at) AS last_seen_at
+                FROM (
+                    SELECT tenant, funcname, inference_ms, inference_numer, last_seen_at FROM historical
+                    UNION ALL
+                    SELECT tenant, funcname, inference_ms, inference_numer, last_seen_at FROM recent_ticks
+                ) combined
+                GROUP BY tenant, funcname
+            ),
+            tenant_rows AS (
+                SELECT
+                    tenant,
+                    COUNT(*)::bigint AS endpoint_count,
+                    SUM(inference_ms)::bigint AS inference_ms,
+                    SUM(inference_numer)::bigint AS inference_numer,
+                    MAX(last_seen_at) AS last_seen_at
+                FROM endpoint_rows
+                GROUP BY tenant
+            )
+            SELECT
+                tenant,
+                NULL::text AS endpoint_slug,
+                endpoint_count,
+                inference_ms,
+                inference_numer / 3600000 AS inference_cents,
+                inference_numer / 3600000 AS total_cents,
+                last_seen_at,
+                COUNT(*) OVER()::bigint AS total_count
+            FROM tenant_rows
+            ORDER BY inference_numer DESC, tenant ASC
+            LIMIT $4 OFFSET $5
+        "#;
+
+        let query_by_endpoint = r#"
+            WITH
+            params AS (
+                SELECT
+                    $1::timestamptz AS start_hour,
+                    $2::timestamptz AS end_hour,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT
+                    h.tenant,
+                    h.funcname,
+                    SUM(h.inference_ms)::bigint AS inference_ms,
+                    SUM(h.inference_numer)::bigint AS inference_numer,
+                    MAX(h.hour + INTERVAL '1 hour') AS last_seen_at
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.namespace = 'endpoints'
+                  AND ($3::text IS NULL OR h.tenant = $3)
+                  AND h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
+                  AND h.hour < p.recent_start
+                GROUP BY h.tenant, h.funcname
+            ),
+            recent_ticks AS (
+                SELECT
+                    t.tenant,
+                    t.funcname,
+                    SUM(t.gpu_count::bigint * t.interval_ms::bigint)::bigint AS inference_ms,
+                    SUM(
+                        t.gpu_count::bigint
+                        * t.interval_ms::bigint
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint
+                    )::bigint AS inference_numer,
+                    MAX(t.tick_time) AS last_seen_at
+                FROM UsageTick t
+                JOIN params p ON true
+                WHERE t.namespace = 'endpoints'
+                  AND ($3::text IS NULL OR t.tenant = $3)
+                  AND t.tick_time >= GREATEST(p.start_hour, p.recent_start)
+                  AND t.tick_time < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
+                GROUP BY t.tenant, t.funcname
+            ),
+            endpoint_rows AS (
+                SELECT
+                    tenant,
+                    funcname AS endpoint_slug,
+                    SUM(inference_ms)::bigint AS inference_ms,
+                    SUM(inference_numer)::bigint AS inference_numer,
+                    MAX(last_seen_at) AS last_seen_at
+                FROM (
+                    SELECT tenant, funcname, inference_ms, inference_numer, last_seen_at FROM historical
+                    UNION ALL
+                    SELECT tenant, funcname, inference_ms, inference_numer, last_seen_at FROM recent_ticks
+                ) combined
+                GROUP BY tenant, funcname
+            )
+            SELECT
+                tenant,
+                endpoint_slug,
+                NULL::bigint AS endpoint_count,
+                inference_ms,
+                inference_numer / 3600000 AS inference_cents,
+                inference_numer / 3600000 AS total_cents,
+                last_seen_at,
+                COUNT(*) OVER()::bigint AS total_count
+            FROM endpoint_rows
+            ORDER BY inference_numer DESC, tenant ASC, endpoint_slug ASC
+            LIMIT $4 OFFSET $5
+        "#;
+
+        let query = if group_by == "tenant" {
+            query_by_tenant
+        } else {
+            query_by_endpoint
+        };
+
+        let rows: Vec<EndpointUsageRow> = sqlx::query_as(query)
+            .bind(start)
+            .bind(end)
+            .bind(tenant_filter)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows)
+    }
+
+    /// Get endpoint usage by tenant and endpoint slug with time-based aggregation for drill-down.
+    /// Supports hourly, daily, and weekly granularity.
+    pub async fn GetAdminEndpointTenantUsageByPeriod(
+        &self,
+        tenant: &str,
+        endpoint_slug: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        granularity: &str,
+    ) -> Result<Vec<EndpointUsageByPeriodRow>> {
+        let period_expr = match granularity {
+            "hourly" => "date_trunc('hour', h.hour)",
+            "daily" => "date_trunc('day', h.hour)",
+            "weekly" => "date_trunc('week', h.hour)",
+            _ => "date_trunc('hour', h.hour)",
+        };
+
+        let period_expr_recent = match granularity {
+            "hourly" => "date_trunc('hour', t.tick_time)",
+            "daily" => "date_trunc('day', t.tick_time)",
+            "weekly" => "date_trunc('week', t.tick_time)",
+            _ => "date_trunc('hour', t.tick_time)",
+        };
+
+        let rows: Vec<EndpointUsageByPeriodRow> = sqlx::query_as(
+            &format!(
+                r#"
+            WITH
+            params AS (
+                SELECT
+                    $1::timestamptz AS start_hour,
+                    $2::timestamptz AS end_hour,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT
+                    {period_expr} AS period_start,
+                    SUM(h.inference_ms)::bigint AS inference_ms,
+                    SUM(h.inference_numer)::bigint AS inference_numer
+                FROM UsageHourlyByFunc h
+                JOIN params p ON true
+                WHERE h.tenant = $4
+                  AND h.namespace = 'endpoints'
+                  AND h.funcname = $3
+                  AND h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
+                  AND h.hour < p.recent_start
+                GROUP BY {period_expr}
+            ),
+            recent_ticks AS (
+                SELECT
+                    {period_expr_recent} AS period_start,
+                    SUM(t.gpu_count::bigint * t.interval_ms::bigint)::bigint AS inference_ms,
+                    SUM(t.gpu_count::bigint * t.interval_ms::bigint
+                        * GetBillingRateCents(t.usage_type, t.tick_time, t.tenant)::bigint)::bigint
+                        AS inference_numer
+                FROM UsageTick t
+                JOIN params p ON true
+                WHERE t.tenant = $4
+                  AND t.namespace = 'endpoints'
+                  AND t.funcname = $3
+                  AND t.tick_time >= GREATEST(p.start_hour, p.recent_start)
+                  AND t.tick_time < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
+                GROUP BY {period_expr_recent}
+            ),
+            combined AS (
+                SELECT period_start, inference_ms, inference_numer
+                FROM historical
+                UNION ALL
+                SELECT period_start, inference_ms, inference_numer
+                FROM recent_ticks
+            ),
+            aggregated AS (
+                SELECT
+                    period_start,
+                    COALESCE(SUM(inference_ms), 0)::bigint AS inference_ms,
+                    COALESCE(SUM(inference_numer), 0)::bigint AS inference_numer
+                FROM combined
+                GROUP BY period_start
+            )
+            SELECT
+                period_start,
+                CASE
+                    WHEN $5 = 'hourly' THEN period_start + INTERVAL '1 hour'
+                    WHEN $5 = 'daily' THEN period_start + INTERVAL '1 day'
+                    WHEN $5 = 'weekly' THEN period_start + INTERVAL '7 day'
+                    ELSE period_start + INTERVAL '1 hour'
+                END AS period_end,
+                inference_ms,
+                inference_numer / 3600000 AS inference_cents,
+                inference_numer / 3600000 AS total_cents
+            FROM aggregated
+            ORDER BY period_start ASC
+            "#,
+            ),
+        )
+        .bind(start)
+        .bind(end)
+        .bind(endpoint_slug)
+        .bind(tenant)
+        .bind(granularity)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, FromRow)]
@@ -2178,6 +2466,27 @@ pub struct PodFailLog {
 pub struct PodAuditLog {
     pub state: String,
     pub updatetime: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct EndpointUsageRow {
+    pub tenant: String,
+    pub endpoint_slug: Option<String>,
+    pub endpoint_count: Option<i64>,
+    pub inference_ms: i64,
+    pub inference_cents: i64,
+    pub total_cents: i64,
+    pub last_seen_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct EndpointUsageByPeriodRow {
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub inference_ms: i64,
+    pub inference_cents: i64,
+    pub total_cents: i64,
 }
 
 pub mod datetime_local {

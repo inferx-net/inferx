@@ -13,7 +13,7 @@
 // limitations under the License
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{Json, Path as AxumPath, Request, State};
 use axum::http::{StatusCode, Uri};
 use axum::response::Response;
 use axum::Extension;
@@ -21,6 +21,7 @@ use dashmap::DashMap;
 use hyper::header::HeaderValue;
 use inferxlib::obj_mgr::func_mgr::ApiType;
 use minijinja::{context, Environment};
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::result::Result as SResult;
@@ -30,7 +31,8 @@ use tokenizers::Tokenizer;
 use crate::gateway::auth_layer::AccessToken;
 use crate::gateway::http_gateway::FuncCall1;
 use crate::gateway::http_gateway::HttpGateway;
-use crate::node_config::KB_PROMPT_DIR;
+use crate::node_config::KB_DIR;
+use super::func_agent_mgr::FuncRouteTarget;
 
 const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 
@@ -45,13 +47,23 @@ pub struct ChatRequest {
     pub model: String,
     #[serde(rename = "messages")]
     pub messages: Vec<ChatMessage>,
-    #[serde(default)]
+    #[serde(
+        rename = "max_tokens",
+        alias = "maxTokens",
+        default,
+        deserialize_with = "deserialize_optional_u32_from_any"
+    )]
     pub maxTokens: Option<u32>,
-    #[serde(default = "DefaultTemperature")]
+    #[serde(default = "DefaultTemperature", deserialize_with = "deserialize_f32_from_any")]
     pub temperature: f32,
-    #[serde(rename = "stream")]
+    #[serde(rename = "stream", deserialize_with = "deserialize_bool_from_any")]
     pub stream: bool,
-    #[serde(default = "DefaultTopP")]
+    #[serde(
+        rename = "top_p",
+        alias = "topP",
+        default = "DefaultTopP",
+        deserialize_with = "deserialize_f32_from_any"
+    )]
     pub topP: f32,
 }
 
@@ -59,7 +71,7 @@ pub struct ChatRequest {
 pub struct ChatMessage {
     #[serde(rename = "role")]
     pub role: String,
-    #[serde(rename = "content")]
+    #[serde(rename = "content", deserialize_with = "deserialize_chat_content")]
     pub content: String,
 }
 
@@ -69,6 +81,127 @@ fn DefaultTemperature() -> f32 {
 
 fn DefaultTopP() -> f32 {
     1.0
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum JsonNumberOrString {
+    Number(serde_json::Number),
+    String(String),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum JsonBoolOrString {
+    Bool(bool),
+    String(String),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ChatContentValue {
+    Text(String),
+    Parts(Vec<ChatContentPart>),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ChatContentPart {
+    Text(ChatTextPart),
+    BareString(String),
+    Json(serde_json::Value),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ChatTextPart {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: String,
+}
+
+fn deserialize_optional_u32_from_any<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<JsonNumberOrString>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(JsonNumberOrString::Number(n)) => n
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| de::Error::custom("expected a non-negative integer for max_tokens")),
+        Some(JsonNumberOrString::String(s)) => s
+            .trim()
+            .parse::<u32>()
+            .map(Some)
+            .map_err(|_| de::Error::custom("expected max_tokens as integer or integer string")),
+    }
+}
+
+fn deserialize_f32_from_any<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match JsonNumberOrString::deserialize(deserializer)? {
+        JsonNumberOrString::Number(n) => n
+            .to_string()
+            .parse::<f32>()
+            .map_err(|_| de::Error::custom("expected numeric value")),
+        JsonNumberOrString::String(s) => s
+            .trim()
+            .parse::<f32>()
+            .map_err(|_| de::Error::custom("expected numeric string")),
+    }
+}
+
+fn deserialize_bool_from_any<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match JsonBoolOrString::deserialize(deserializer)? {
+        JsonBoolOrString::Bool(v) => Ok(v),
+        JsonBoolOrString::String(s) => s
+            .trim()
+            .parse::<bool>()
+            .map_err(|_| de::Error::custom("expected bool or bool string")),
+    }
+}
+
+fn deserialize_chat_content<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match ChatContentValue::deserialize(deserializer)? {
+        ChatContentValue::Text(text) => Ok(text),
+        ChatContentValue::Parts(parts) => {
+            let text = parts
+                .into_iter()
+                .filter_map(|part| match part {
+                    ChatContentPart::Text(item) if item.kind == "text" => {
+                        let text = item.text.trim().to_string();
+                        if text.is_empty() {
+                            None
+                        } else {
+                            Some(text)
+                        }
+                    }
+                    ChatContentPart::BareString(text) => {
+                        let text = text.trim().to_string();
+                        if text.is_empty() {
+                            None
+                        } else {
+                            Some(text)
+                        }
+                    }
+                    ChatContentPart::Json(_) | ChatContentPart::Text(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(text)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,6 +367,50 @@ fn DefaultLlama3Template(messages: &[ChatMessage], bosToken: &str) -> String {
     text
 }
 
+#[cfg(test)]
+mod tests {
+    use super::ParseRequestFields;
+
+    #[test]
+    fn parse_chat_request_accepts_stringified_scalars() {
+        let body = br#"{
+            "max_tokens": "1000",
+            "messages": [{"content": "what is the internal codename?", "role": "user"}],
+            "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+            "stream": "true",
+            "temperature": "0",
+            "top_p": "0.9"
+        }"#;
+
+        let fields = ParseRequestFields(body, "/v1/chat/completions", None, "").unwrap();
+        assert_eq!(fields.model, "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4");
+        assert_eq!(fields.maxTokens, Some(1000));
+        assert_eq!(fields.temperature, Some(0.0));
+        assert_eq!(fields.topP, Some(0.9));
+        assert!(fields.stream);
+        assert!(fields.promptText.contains("what is the internal codename?"));
+    }
+
+    #[test]
+    fn parse_chat_request_accepts_content_arrays() {
+        let body = br#"{
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this image"},
+                        {"type": "image_url", "image_url": {"url": "http://example.com/cat.jpg"}}
+                    ]
+                }
+            ],
+            "stream": false
+        }"#;
+
+        let fields = ParseRequestFields(body, "/v1/chat/completions", None, "").unwrap();
+        assert!(fields.promptText.contains("Describe this image"));
+    }
+}
+
 // ==================================================================
 // Shared Tokenizer State
 // ==================================================================
@@ -325,7 +502,8 @@ pub struct RouteContext {
     pub funcName: String,
     pub remainPath: String,
     pub bodyBytes: Vec<u8>,
-    pub tokenizerState: Arc<TokenizerState>,
+    pub modelPath: String,
+    pub tokenizerState: Option<Arc<TokenizerState>>,
     pub kbPrompt: Option<String>,
 }
 
@@ -333,6 +511,7 @@ async fn ResolveRouteContext(
     token: &Arc<AccessToken>,
     gw: &HttpGateway,
     req: axum::http::Request<axum::body::Body>,
+    always_load_tokenizer: bool,
 ) -> SResult<RouteContext, StatusCode> {
     let (reqParts, body) = req.into_parts();
     let pathParts: Vec<&str> = reqParts.uri.path().split('/').collect();
@@ -366,19 +545,17 @@ async fn ResolveRouteContext(
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
-    let model_path = match func.object.spec.ModelPath() {
-        Some(p) => p,
-        None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
-
     let apiType = func.object.spec.SampleCallType();
     let kbPrompt = match apiType {
-        ApiType::KnowledageBase => {
-            let funcname = func.Id().replace("/", ".");
-            // todo: delete this
-            let parts: Vec<&str> = funcname.split('.').collect();
-            let funcname = parts[..parts.len() - 1].join(".");
-            let promptfilename = format!("{}/{}.data", KB_PROMPT_DIR, funcname);
+        ApiType::KnowledgeBase => {
+            let promptfilename = format!(
+                "{}/{}.{}.{}/{}/kb.data",
+                KB_DIR,
+                func.tenant,
+                func.namespace,
+                func.name,
+                func.Version()
+            );
             match std::fs::read_to_string(&promptfilename) {
                 Ok(p) => Some(p),
                 Err(e) => {
@@ -398,9 +575,20 @@ async fn ResolveRouteContext(
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
 
-    let tokenizerState = match GetOrLoadTokenizer(&model_path).await {
-        Ok(st) => st,
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    // ModelPath and tokenizer are only needed for chat-completions (chat template rendering),
+    // unless the caller (e.g. TokenizerRoute) always requires tokenization.
+    let (model_path, tokenizerState) = if always_load_tokenizer || remainPath.starts_with("/v1/chat/completions") {
+        let mp = match func.object.spec.ModelPath() {
+            Some(p) => p,
+            None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+        let tok = match GetOrLoadTokenizer(&mp).await {
+            Ok(st) => Some(st),
+            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+        (mp, tok)
+    } else {
+        (String::new(), None)
     };
 
     Ok(RouteContext {
@@ -409,8 +597,9 @@ async fn ResolveRouteContext(
         funcName,
         remainPath,
         bodyBytes,
+        modelPath: model_path,
         tokenizerState,
-        kbPrompt: kbPrompt,
+        kbPrompt,
     })
 }
 
@@ -443,6 +632,101 @@ pub struct PromptReq {
     pub funcName: String,
     pub prompt: String,
     pub image: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KbTokenCountRequest {
+    pub model: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KbTokenCountResponse {
+    pub kb_token_count: usize,
+}
+
+fn JsonResp<T: Serialize>(status: StatusCode, body: &T) -> SResult<Response<Body>, StatusCode> {
+    let bytes = serde_json::to_vec(body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(Body::from(bytes))
+        .unwrap())
+}
+
+fn PlainResp(status: StatusCode, body: &str) -> Response<Body> {
+    Response::builder()
+        .status(status)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+pub async fn CountKnowledgeBaseTokens(
+    Extension(token): Extension<Arc<AccessToken>>,
+    AxumPath((tenant, namespace, name)): AxumPath<(String, String, String)>,
+    Json(req): Json<KbTokenCountRequest>,
+) -> SResult<Response<Body>, StatusCode> {
+    if !token.IsNamespaceAdmin(&tenant, &namespace) {
+        return Ok(PlainResp(StatusCode::FORBIDDEN, "service failure: No permission"));
+    }
+
+    let model = req.model.trim();
+    if model.is_empty() {
+        return Ok(PlainResp(
+            StatusCode::BAD_REQUEST,
+            "service failure: missing model",
+        ));
+    }
+
+    let kb_file = format!("{}/{}.{}.{}/kb.data", KB_DIR, tenant, namespace, name);
+    let kb_prompt = match std::fs::read_to_string(&kb_file) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PlainResp(
+                StatusCode::NOT_FOUND,
+                "service failure: kb.data not found",
+            ));
+        }
+        Err(_) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: failed to read kb.data",
+            ));
+        }
+    };
+
+    let tok = match GetOrLoadTokenizer(model).await {
+        Ok(tok) => tok,
+        Err(StatusCode::NOT_FOUND) => {
+            return Ok(PlainResp(
+                StatusCode::BAD_REQUEST,
+                "service failure: model resolution failed",
+            ));
+        }
+        Err(StatusCode::INTERNAL_SERVER_ERROR) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: tokenizer loading failed",
+            ));
+        }
+        Err(status) => return Ok(PlainResp(status, "service failure: tokenizer failed")),
+    };
+
+    let count = match tok.tokenizer.encode(&*kb_prompt, true) {
+        Ok(encoded) => encoded.len(),
+        Err(_) => {
+            return Ok(PlainResp(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "service failure: tokenization failed",
+            ));
+        }
+    };
+
+    JsonResp(
+        StatusCode::OK,
+        &KbTokenCountResponse {
+            kb_token_count: count,
+        },
+    )
 }
 
 pub async fn ModelsFuncCall(
@@ -652,7 +936,7 @@ pub async fn TokenizerRoute(
         return ForwardNonPostToFunc(&token, &gw, req).await;
     }
 
-    let ctx = match ResolveRouteContext(&token, &gw, req).await {
+    let ctx = match ResolveRouteContext(&token, &gw, req, true).await {
         Ok(c) => c,
         Err(status) => {
             return Ok(Response::builder()
@@ -662,21 +946,25 @@ pub async fn TokenizerRoute(
         }
     };
 
+    let tok = match ctx.tokenizerState.clone() {
+        Some(s) => s,
+        None => match GetOrLoadTokenizer(&ctx.modelPath).await {
+            Ok(s) => s,
+            Err(_) => return Ok(BadResp("service failure: tokenizer unavailable".into())),
+        },
+    };
+
     let fields = match ParseRequestFields(
         &ctx.bodyBytes,
         &ctx.remainPath,
-        ctx.tokenizerState.chatTemplate.as_deref(),
-        &ctx.tokenizerState.bosToken,
+        tok.chatTemplate.as_deref(),
+        &tok.bosToken,
     ) {
         Ok(f) => f,
         Err(_) => return Ok(BadResp("service failure: invalid JSON body".into())),
     };
 
-    let promptIds = match ctx
-        .tokenizerState
-        .tokenizer
-        .encode(&*fields.promptText, true)
-    {
+    let promptIds = match tok.tokenizer.encode(&*fields.promptText, true) {
         Ok(encoded) => encoded.get_ids().to_vec(),
         Err(e) => {
             return Ok(BadResp(format!("tokenization error: {}", e)));
@@ -704,6 +992,88 @@ pub async fn TokenizerRoute(
 }
 
 // ==================================================================
+// Request normalization layer
+// ==================================================================
+
+pub struct NormalizedFuncRequest {
+    pub target_path: String,
+    pub body_bytes: Vec<u8>,
+    pub content_type: &'static str,
+}
+
+pub async fn NormalizeFuncRequest(
+    _gw: &HttpGateway,
+    route: &FuncRouteTarget,
+    remain_path: &str,
+    body_bytes: &[u8],
+) -> SResult<Option<NormalizedFuncRequest>, StatusCode> {
+    if route.func.object.spec.SampleCallType() != ApiType::KnowledgeBase {
+        return Ok(None);
+    }
+
+    // Only load tokenizer when chat-template rendering is actually needed.
+    // For /v1/completions the prompt is plain text; no tokenizer required.
+    let tok_state = if remain_path.starts_with("/v1/chat/completions") {
+        let model_path = match route.func.object.spec.ModelPath() {
+            Some(p) => p,
+            None => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        };
+        Some(GetOrLoadTokenizer(&model_path).await?)
+    } else {
+        None
+    };
+
+    let kb_file = format!(
+        "{}/{}.{}.{}/{}/kb.data",
+        KB_DIR,
+        route.physical.tenant,
+        route.physical.namespace,
+        route.physical.funcname,
+        route.physical.version
+    );
+    let kb_prompt = match std::fs::read_to_string(&kb_file) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("NormalizeFuncRequest: cannot read kb.data {}: {:?}", kb_file, e);
+            String::new()
+        }
+    };
+
+    let fields = ParseRequestFields(
+        body_bytes,
+        remain_path,
+        tok_state.as_ref().and_then(|s| s.chatTemplate.as_deref()),
+        tok_state.as_ref().map(|s| s.bosToken.as_str()).unwrap_or(""),
+    )?;
+
+    let raw_req = RawCompletionRequest {
+        model: fields.model,
+        prompt: kb_prompt + &fields.promptText,
+        maxTokens: fields.maxTokens,
+        temperature: fields.temperature,
+        topP: fields.topP,
+        stream: fields.stream,
+        skipSpecialTokens: true,
+    };
+
+    let body_bytes = serde_json::to_vec(&raw_req).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    error!(
+        "NormalizeFuncRequest forwarding KB request tenant={}/{} func={} source_path={} target_path=/v1/completions body={}",
+        route.physical.tenant,
+        route.physical.namespace,
+        route.physical.funcname,
+        remain_path,
+        String::from_utf8_lossy(&body_bytes)
+    );
+
+    Ok(Some(NormalizedFuncRequest {
+        target_path: "/v1/completions".to_string(),
+        body_bytes,
+        content_type: "application/json",
+    }))
+}
+
+// ==================================================================
 // KnowledgeBaseRoute handler - converts chat to completion without tokenization
 // ==================================================================
 
@@ -716,7 +1086,7 @@ pub async fn KnowledgeBaseRoute(
         return ForwardNonPostToFunc(&token, &gw, req).await;
     }
 
-    let ctx = match ResolveRouteContext(&token, &gw, req).await {
+    let ctx = match ResolveRouteContext(&token, &gw, req, false).await {
         Ok(c) => c,
         Err(status) => {
             return Ok(Response::builder()
@@ -729,8 +1099,8 @@ pub async fn KnowledgeBaseRoute(
     let fields = match ParseRequestFields(
         &ctx.bodyBytes,
         &ctx.remainPath,
-        ctx.tokenizerState.chatTemplate.as_deref(),
-        &ctx.tokenizerState.bosToken,
+        ctx.tokenizerState.as_ref().and_then(|s| s.chatTemplate.as_deref()),
+        ctx.tokenizerState.as_ref().map(|s| s.bosToken.as_str()).unwrap_or(""),
     ) {
         Ok(f) => f,
         Err(_) => return Ok(BadResp("service failure: invalid JSON body".into())),
@@ -750,6 +1120,17 @@ pub async fn KnowledgeBaseRoute(
         stream: fields.stream,
         skipSpecialTokens: true,
     };
+
+    let kb_debug_body =
+        serde_json::to_vec(&rawReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    error!(
+        "KnowledgeBaseRoute forwarding KB request tenant={}/{} func={} source_path={} target_path=/v1/completions body={}",
+        ctx.tenant,
+        ctx.namespace,
+        ctx.funcName,
+        ctx.remainPath,
+        String::from_utf8_lossy(&kb_debug_body)
+    );
 
     ForwardToFuncCall(
         &token,

@@ -303,6 +303,21 @@ impl StateSvc {
         let tenant = self.tenantMgr.Get("system", "system", tenant)?;
         let limit = &tenant.object.spec.resourceLimit;
 
+        Self::ValidateTenantFuncPolicyLimit(limit, p)?;
+        return Ok(());
+    }
+
+    fn ValidateTenantFuncPolicyLimit(
+        limit: &inferxlib::obj_mgr::tenant_mgr::ResourceLimit,
+        p: &FuncPolicySpec,
+    ) -> Result<()> {
+        if p.minReplica > limit.minReplicaCap {
+            return Err(Error::CommonError(format!(
+                "policy minReplica {} exceed limit {}",
+                p.minReplica, limit.minReplicaCap
+            )));
+        }
+
         if p.maxReplica > limit.maxReplica {
             return Err(Error::CommonError(format!(
                 "policy maxReplica {} exceed limit {}",
@@ -389,6 +404,11 @@ impl StateSvc {
                 "StateSvc doesn't exist func {}",
                 &obj.Key()
             )));
+        }
+
+        match &func.object.spec.policy {
+            ObjRef::Link(_) => (),
+            ObjRef::Obj(p) => self.FuncPolicyCheck(&func.tenant, p)?,
         }
 
         return Ok(());
@@ -480,6 +500,7 @@ impl StateSvc {
 mod tests {
     use super::StateSvc;
     use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
+    use inferxlib::obj_mgr::tenant_mgr::ResourceLimit;
 
     #[test]
     fn default_function_published_for_platform_shared_is_false() {
@@ -510,5 +531,50 @@ mod tests {
         };
 
         assert!(StateSvc::ValidateEndpointsFuncPolicy("endpoints", &policy).is_err());
+    }
+
+    #[test]
+    fn tenant_policy_rejects_min_replica_when_cap_is_zero() {
+        let policy = FuncPolicySpec {
+            minReplica: 1,
+            ..Default::default()
+        };
+
+        let limit = ResourceLimit {
+            minReplicaCap: 0,
+            ..Default::default()
+        };
+
+        assert!(StateSvc::ValidateTenantFuncPolicyLimit(&limit, &policy).is_err());
+    }
+
+    #[test]
+    fn tenant_policy_accepts_min_replica_within_cap() {
+        let policy = FuncPolicySpec {
+            minReplica: 2,
+            ..Default::default()
+        };
+
+        let limit = ResourceLimit {
+            minReplicaCap: 2,
+            ..Default::default()
+        };
+
+        assert!(StateSvc::ValidateTenantFuncPolicyLimit(&limit, &policy).is_ok());
+    }
+
+    #[test]
+    fn tenant_policy_rejects_min_replica_above_cap() {
+        let policy = FuncPolicySpec {
+            minReplica: 3,
+            ..Default::default()
+        };
+
+        let limit = ResourceLimit {
+            minReplicaCap: 2,
+            ..Default::default()
+        };
+
+        assert!(StateSvc::ValidateTenantFuncPolicyLimit(&limit, &policy).is_err());
     }
 }

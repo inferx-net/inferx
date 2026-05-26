@@ -70,6 +70,7 @@ use inferxlib::obj_mgr::funcsnapshot_mgr::SnapshotState;
 use inferxlib::obj_mgr::pod_mgr::CreatePodType;
 use inferxlib::obj_mgr::pod_mgr::FuncPod;
 use inferxlib::obj_mgr::pod_mgr::PodState;
+use inferxlib::obj_mgr::tenant_mgr::Tenant;
 use inferxlib::resource::NodeResources;
 
 use crate::na;
@@ -533,6 +534,11 @@ impl FuncStatus {
                         match tx.send(resp) {
                             Ok(()) => {
                                 pod.SetWorking(req.gateway_id);
+                                *pod.consumer_tenant.lock().unwrap() = if req.consumer_tenant.is_empty() {
+                                    None
+                                } else {
+                                    Some(req.consumer_tenant.clone())
+                                };
                                 let labels = PodLabels {
                                     tenant: req.tenant.clone(),
                                     namespace: req.namespace.clone(),
@@ -685,6 +691,7 @@ pub struct SchedulerHandler {
     // funcname --> func
     pub funcs: BTreeMap<String, FuncStatus>,
     pub funcstatus: BTreeMap<String, FunctionStatus>,
+    pub tenants: BTreeMap<String, Tenant>,
 
     /*********************snapshot ******************* */
     // funcid -> [nodename->SnapshotState]
@@ -765,6 +772,7 @@ impl Default for SchedulerHandler {
             nodePods: BTreeMap::new(),
             funcs: BTreeMap::new(),
             funcstatus: BTreeMap::new(),
+            tenants: BTreeMap::new(),
             snapshots: BTreeMap::new(),
             pendingsnapshots: BTreeMap::new(),
             idlePods: LruCache::unbounded(),
@@ -815,6 +823,43 @@ impl SchedulerHandler {
 
     fn IsPlatformSharedFunc(tenant: &str, namespace: &str) -> bool {
         tenant == PLATFORM_TENANT && namespace == PLATFORM_SHARED_NAMESPACE
+    }
+
+    fn EffectiveTenant<'a>(req: &'a na::LeaseWorkerReq) -> &'a str {
+        if req.consumer_tenant.is_empty() {
+            req.tenant.as_str()
+        } else {
+            req.consumer_tenant.as_str()
+        }
+    }
+
+    fn TenantIsGpuCapExempt(tenant: &str) -> bool {
+        tenant == PLATFORM_TENANT || tenant == "public"
+    }
+
+    fn TenantGpuLimit(&self, tenant: &str) -> u64 {
+        if let Some(tenant_obj) = self.tenants.get(tenant) {
+            return tenant_obj.object.spec.resourceLimit.maxGpu;
+        }
+
+        2
+    }
+
+    pub fn TenantActiveGpu(&self, tenant: &str) -> u64 {
+        self.pods
+            .values()
+            .filter(|pod| matches!(pod.State(), WorkerPodState::Working(_) | WorkerPodState::Resuming))
+            .filter(|pod| {
+                let effective_tenant = pod
+                    .consumer_tenant
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| pod.pod.tenant.clone());
+                effective_tenant == tenant
+            })
+            .map(|pod| pod.pod.object.spec.reqResources.gpu.gpuCount)
+            .sum()
     }
 
     fn ResolveReferencedFuncPolicy(
@@ -1678,6 +1723,51 @@ impl SchedulerHandler {
         req: na::LeaseWorkerReq,
         tx: Sender<na::LeaseWorkerResp>,
     ) -> Result<()> {
+        let effective_tenant = Self::EffectiveTenant(&req).to_owned();
+
+        let funcname = format!(
+            "{}/{}/{}/{}",
+            &req.tenant, &req.namespace, &req.funcname, req.fprevision
+        );
+
+        let func = match self.funcs.get(&funcname) {
+            None => {
+                let resp = na::LeaseWorkerResp {
+                    error: format!(
+                        "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                        funcname,
+                        self.funcs.keys(),
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Err(Error::NotExist(format!(
+                    "ProcessLeaseWorkerReq can't find func with id {} {:?}",
+                    funcname,
+                    self.funcs.keys(),
+                )));
+            }
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        let req_gpu_count = func.object.spec.RunningResource().gpu.gpuCount;
+
+        if !Self::TenantIsGpuCapExempt(&effective_tenant) {
+            let active_gpu = self.TenantActiveGpu(&effective_tenant);
+            let max_gpu = self.TenantGpuLimit(&effective_tenant);
+            if active_gpu.saturating_add(req_gpu_count) > max_gpu {
+                let resp = na::LeaseWorkerResp {
+                    error: format!(
+                        "ProcessLeaseWorkerReq tenant {} exceed max_gpu limit {} active {} requested {}",
+                        effective_tenant, max_gpu, active_gpu, req_gpu_count
+                    ),
+                    ..Default::default()
+                };
+                tx.send(resp).unwrap();
+                return Ok(());
+            }
+        }
+
         let pods = self.GetFuncPods(&req.tenant, &req.namespace, &req.funcname, req.fprevision)?;
 
         for worker in &pods {
@@ -1689,6 +1779,11 @@ impl SchedulerHandler {
             );
             if pod.object.status.state == PodState::Ready && worker.State().IsIdle() {
                 worker.SetWorking(req.gateway_id);
+                *worker.consumer_tenant.lock().unwrap() = if req.consumer_tenant.is_empty() {
+                    None
+                } else {
+                    Some(req.consumer_tenant.clone())
+                };
                 let podKey = worker.pod.PodKey();
                 let remove = self.idlePods.pop(&podKey).is_some();
                 assert!(remove);
@@ -1749,31 +1844,6 @@ impl SchedulerHandler {
             }
         }
 
-        let funcname = format!(
-            "{}/{}/{}/{}",
-            &req.tenant, &req.namespace, &req.funcname, req.fprevision
-        );
-
-        let func = match self.funcs.get(&funcname) {
-            None => {
-                let resp = na::LeaseWorkerResp {
-                    error: format!(
-                        "ProcessLeaseWorkerReq can't find func with id {} {:?}",
-                        funcname,
-                        self.funcs.keys(),
-                    ),
-                    ..Default::default()
-                };
-                tx.send(resp).unwrap();
-                return Err(Error::NotExist(format!(
-                    "ProcessLeaseWorkerReq can't find func with id {} {:?}",
-                    funcname,
-                    self.funcs.keys(),
-                )));
-            }
-            Some(fpStatus) => fpStatus.func.clone(),
-        };
-
         let policy = self.FuncPolicy(
             &func.tenant,
             &func.namespace,
@@ -1804,7 +1874,7 @@ impl SchedulerHandler {
 
         // Try to resume a pod - this may fail before spawning RPC (no standby, alloc failure, etc.)
         // If it succeeds, RPC is spawned asynchronously and we queue the lease request
-        match self.ResumePod(&funcname).await {
+        match self.ResumePod(&funcname, Some(&effective_tenant)).await {
             Err(e) => {
                 // ResumePod failed before spawning RPC (no standby, alloc failure, etc.)
                 // Send error response to caller
@@ -3009,6 +3079,10 @@ impl SchedulerHandler {
                                     let key = policy.Key();
                                     self.funcpolicy.insert(key, policy.object);
                                 }
+                                Tenant::KEY => {
+                                    let tenant = Tenant::FromDataObject(obj)?;
+                                    self.tenants.insert(tenant.name.clone(), tenant);
+                                }
                                 _ => {
                                 }
                             }
@@ -3065,6 +3139,10 @@ impl SchedulerHandler {
                                     let key = policy.Key();
                                     self.funcpolicy.insert(key, policy.object);
                                 }
+                                Tenant::KEY => {
+                                    let tenant = Tenant::FromDataObject(obj)?;
+                                    self.tenants.insert(tenant.name.clone(), tenant);
+                                }
                                 _ => {
                                 }
                             }
@@ -3102,6 +3180,10 @@ impl SchedulerHandler {
                                     let key = policy.Key();
                                     self.funcpolicy.remove(&key);
                                 }
+                                Tenant::KEY => {
+                                    let tenant = Tenant::FromDataObject(obj)?;
+                                    self.tenants.remove(&tenant.name);
+                                }
                                 _ => {
                                 }
                             }
@@ -3126,6 +3208,7 @@ impl SchedulerHandler {
                                 FuncPolicy::KEY => {
                                     self.ListDone(ListType::Funcpolicy).await?;
                                 }
+                                Tenant::KEY => {}
                                 _ => {
                                     error!("SchedulerHandler get unexpect list done {}", &obj.objType);
                                 }
@@ -4436,7 +4519,7 @@ impl SchedulerHandler {
             &func.object.spec.policy,
         );
         if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
-            match self.ResumePod(&funcid).await {
+            match self.ResumePod(&funcid, None).await {
                 Err(e) => {
                     error!(
                         "ProcessAddFunc Prewarm one pod fail for func {} error {:?}",
@@ -4485,7 +4568,7 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub async fn ResumePod(&mut self, fpKey: &str) -> Result<()> {
+    pub async fn ResumePod(&mut self, fpKey: &str, consumer_tenant: Option<&str>) -> Result<()> {
         use std::ops::Bound::*;
         let start = fpKey.to_owned();
         let mut vec = Vec::new();
@@ -4566,6 +4649,13 @@ impl SchedulerHandler {
 
         // 1. Update pod states
         pod.SetState(WorkerPodState::Resuming);
+        *pod.consumer_tenant.lock().unwrap() = consumer_tenant.and_then(|tenant| {
+            if tenant.is_empty() {
+                None
+            } else {
+                Some(tenant.to_owned())
+            }
+        });
         for worker in &terminateWorkers {
             self.mark_terminating(worker);
         }
@@ -5597,6 +5687,8 @@ impl SchedulerHandler {
         match oldPod.State() {
             WorkerPodState::Working(_) => {
                 boxPod.SetState(oldPod.State());
+                *boxPod.consumer_tenant.lock().unwrap() =
+                    oldPod.consumer_tenant.lock().unwrap().clone();
             }
             _ => (),
         }
@@ -5890,6 +5982,129 @@ impl SchedulerHandler {
         self.end_standby_billing(&key);
 
         return Ok(());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inferxlib::obj_mgr::tenant_mgr::{TenantObject, TenantSpec};
+    use std::collections::BTreeMap;
+
+    fn make_tenant(name: &str, max_gpu: u64, quota_exempt: bool) -> Tenant {
+        Tenant {
+            objType: Tenant::KEY.to_owned(),
+            tenant: SYSTEM_TENANT.to_owned(),
+            namespace: "system".to_owned(),
+            name: name.to_owned(),
+            object: TenantObject {
+                spec: TenantSpec {
+                    resourceLimit: inferxlib::obj_mgr::tenant_mgr::ResourceLimit {
+                        maxGpu: max_gpu,
+                        ..Default::default()
+                    },
+                    quota_exempt,
+                },
+                status: Default::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    fn make_function(tenant: &str, namespace: &str, name: &str, version: i64) -> Function {
+        let mut func = Function::default();
+        func.objType = Function::KEY.to_owned();
+        func.tenant = tenant.to_owned();
+        func.namespace = namespace.to_owned();
+        func.name = name.to_owned();
+        func.object.spec.version = version;
+        func
+    }
+
+    fn make_pod(
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        version: i64,
+        id: &str,
+        gpu_count: u64,
+        state: PodState,
+    ) -> WorkerPod {
+        let mut pod = FuncPod::default();
+        pod.objType = FuncPod::KEY.to_owned();
+        pod.tenant = tenant.to_owned();
+        pod.namespace = namespace.to_owned();
+        pod.name = format!("{}-{}", funcname, id);
+        pod.object.spec.funcname = funcname.to_owned();
+        pod.object.spec.fprevision = version;
+        pod.object.spec.id = id.to_owned();
+        pod.object.spec.nodename = "node1".to_owned();
+        pod.object.spec.reqResources.gpu.gpuCount = gpu_count;
+        pod.object.status.state = state;
+        WorkerPod::New(pod)
+    }
+
+    fn make_lease_req(
+        tenant: &str,
+        namespace: &str,
+        funcname: &str,
+        version: i64,
+    ) -> na::LeaseWorkerReq {
+        na::LeaseWorkerReq {
+            tenant: tenant.to_owned(),
+            namespace: namespace.to_owned(),
+            funcname: funcname.to_owned(),
+            fprevision: version,
+            gateway_id: 1,
+            consumer_tenant: String::new(),
+        }
+    }
+
+    #[test]
+    fn tenant_active_gpu_uses_consumer_tenant_for_resuming_pods() {
+        let mut handler = SchedulerHandler::default();
+        let pod = make_pod("inferx", "endpoint", "shared", 1, "p1", 2, PodState::Resuming);
+        *pod.consumer_tenant.lock().unwrap() = Some("tenant-a".to_owned());
+        handler.pods.insert(pod.pod.PodKey(), pod);
+
+        assert_eq!(handler.TenantActiveGpu("tenant-a"), 2);
+        assert_eq!(handler.TenantActiveGpu("inferx"), 0);
+    }
+
+    #[test]
+    fn set_idle_clears_consumer_tenant() {
+        let pod = make_pod("inferx", "endpoint", "shared", 1, "p1", 1, PodState::Ready);
+        *pod.consumer_tenant.lock().unwrap() = Some("tenant-a".to_owned());
+
+        pod.SetIdle(SetIdleSource::UpdatePod);
+
+        assert_eq!(*pod.consumer_tenant.lock().unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn process_lease_worker_req_rejects_when_gpu_limit_would_be_exceeded() {
+        let mut handler = SchedulerHandler::default();
+        handler.tenants.insert("tenant-a".to_owned(), make_tenant("tenant-a", 2, false));
+
+        let active_pod = make_pod("tenant-a", "ns", "busy", 1, "p-busy", 2, PodState::Ready);
+        active_pod.SetWorking(7);
+        handler.pods.insert(active_pod.pod.PodKey(), active_pod.clone());
+
+        let idle_pod = make_pod("tenant-a", "ns", "target", 1, "p-idle", 1, PodState::Ready);
+        let idle_pod_key = idle_pod.pod.PodKey();
+        let mut func_pods = BTreeMap::new();
+        func_pods.insert(idle_pod_key.clone(), idle_pod.clone());
+        handler.pods.insert(idle_pod_key, idle_pod);
+        handler.funcs.insert(
+            "tenant-a/ns/target/1".to_owned(),
+            FuncStatus::New(make_function("tenant-a", "ns", "target", 1), func_pods).unwrap(),
+        );
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        handler.ProcessLeaseWorkerReq(make_lease_req("tenant-a", "ns", "target", 1), tx).await.unwrap();
+
+        let resp = rx.await.unwrap();
+        assert!(resp.error.contains("max_gpu"));
     }
 }
 

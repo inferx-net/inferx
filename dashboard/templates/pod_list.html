@@ -200,12 +200,16 @@
     {% set gpu_rows = gpu_map|length if gpu_map else 1 %}
     {% set pod_name_prefix = pod['tenant'] ~ '/' ~ pod['namespace'] ~ '/' %}
     {% set pod_display_name = pod['name'].replace(pod_name_prefix, '', 1) %}
+    {% set endpoint_consumer_tenant = pod.get('endpoint_consumer_tenant', '') %}
+    {% set pod_state_display = 'Working' if pod.get('leased') == true else pod['object']['status']['state'] %}
+    {% set pod_state_priority = 0 if pod_state_display == 'Working' else 1 if pod_state_display == 'Ready' else 2 %}
     <tbody
         class="pod-sort-group"
         data-sort-tenant="{{ pod['tenant']|lower }}"
         data-sort-namespace="{{ pod['namespace']|lower }}"
         data-sort-instance="{{ pod_display_name|lower }}"
-        data-sort-state="{{ pod['object']['status']['state']|lower }}"
+        data-sort-state="{{ pod_state_display|lower }}"
+        data-sort-state-priority="{{ pod_state_priority }}"
         data-sort-req-gpu-count="{{ req_gpu['Count'] }}"
         data-sort-req-gpu-vram="{{ req_gpu['vRam'] }}"
         data-sort-type="{{ pod_spec['create_type']|lower }}"
@@ -220,10 +224,21 @@
     {% for idx in range(gpu_rows) %}
     <tr>
         {% if idx == 0 %}
-        <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}"><span class="pod-list-tenant-label" data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span></a></td>
+        <td rowspan="{{ gpu_rows }}">
+            <a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}">
+                <span class="pod-list-tenant-label" data-tenant-name="{{ pod['tenant'] }}">{{ pod['tenant'] }}</span>
+            </a>
+            {% if endpoint_consumer_tenant %}
+            <span>
+                (
+                <span class="pod-list-tenant-label" data-tenant-name="{{ endpoint_consumer_tenant }}">{{ endpoint_consumer_tenant }}</span>
+                )
+            </span>
+            {% endif %}
+        </td>
         <td rowspan="{{ gpu_rows }}"><a href="{{ hosturl }}listpod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}">{{ pod['namespace'] }}</a></td>
         <td rowspan="{{ gpu_rows }}" class="pod-name-cell"><a href="{{ hosturl }}pod?tenant={{ pod['tenant'] }}&&namespace={{ pod['namespace'] }}&&name={{ pod['name'] }}" title="{{ pod['name'] }}">{{ pod_display_name }}</a></td>
-        <td rowspan="{{ gpu_rows }}" class="pod-state">{{ pod["object"]["status"]["state"] }}</td>
+        <td rowspan="{{ gpu_rows }}" class="pod-state">{{ pod_state_display }}</td>
         {% if is_inferx_admin %}
         <td rowspan="{{ gpu_rows }}">{{ pod["object"]["spec"]["allocResources"]["nodename"] }}</td>
         {% endif %}
@@ -318,30 +333,79 @@ window.podListSorter = (() => {
         });
     }
 
-    function sortBy(key, type, direction) {
+    function reorderGroups(getSortEntries) {
         const groups = Array.from(table.querySelectorAll('tbody.pod-sort-group'));
-        const sortedGroups = groups
-            .map((group, index) => ({
-                group,
-                index,
-                value: group.getAttribute(`data-sort-${key}`) || '',
-            }))
-            .sort((left, right) => {
-                const comparison = compareValues(left.value, right.value, type);
-                if (comparison !== 0) {
-                    return direction === 'ascending' ? comparison : -comparison;
-                }
+        const sortedGroups = groups.map((group, index) => ({
+            group,
+            index,
+            values: getSortEntries(group),
+        }));
 
-                return left.index - right.index;
-            });
+        sortedGroups.sort((left, right) => {
+            const minLength = Math.min(left.values.length, right.values.length);
+            for (let idx = 0; idx < minLength; idx += 1) {
+                const leftEntry = left.values[idx];
+                const rightEntry = right.values[idx];
+                const comparison = compareValues(leftEntry.value, rightEntry.value, leftEntry.type);
+                if (comparison !== 0) {
+                    return leftEntry.direction === 'ascending' ? comparison : -comparison;
+                }
+            }
+
+            return left.index - right.index;
+        });
 
         sortedGroups.forEach(({ group }) => {
             table.appendChild(group);
         });
+    }
+
+    function sortBy(key, type, direction) {
+        reorderGroups((group) => [
+            {
+                value: group.getAttribute(`data-sort-${key}`) || '',
+                type,
+                direction,
+            },
+        ]);
 
         activeKey = key;
         activeDirection = direction;
         updateHeaderState(key, direction);
+    }
+
+    function applyDefaultSort() {
+        reorderGroups((group) => [
+            {
+                value: group.getAttribute('data-sort-state-priority') || '2',
+                type: 'number',
+                direction: 'ascending',
+            },
+            {
+                value: group.getAttribute('data-sort-state') || '',
+                type: 'text',
+                direction: 'ascending',
+            },
+            {
+                value: group.getAttribute('data-sort-tenant') || '',
+                type: 'text',
+                direction: 'ascending',
+            },
+            {
+                value: group.getAttribute('data-sort-namespace') || '',
+                type: 'text',
+                direction: 'ascending',
+            },
+            {
+                value: group.getAttribute('data-sort-instance') || '',
+                type: 'text',
+                direction: 'ascending',
+            },
+        ]);
+
+        activeKey = '';
+        activeDirection = 'ascending';
+        updateHeaderState('', 'none');
     }
 
     function toggleSort(header) {
@@ -370,11 +434,12 @@ window.podListSorter = (() => {
         });
     });
 
-    updateHeaderState('', 'none');
+    applyDefaultSort();
 
     return {
         reapply() {
             if (!activeKey) {
+                applyDefaultSort();
                 return;
             }
 
@@ -415,6 +480,7 @@ async function terminatePod(btn) {
 
             if (podGroup) {
                 podGroup.setAttribute('data-sort-state', 'terminating');
+                podGroup.setAttribute('data-sort-state-priority', '2');
             }
 
             if (window.podListSorter) {

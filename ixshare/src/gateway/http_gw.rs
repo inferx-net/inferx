@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use inferxlib::{
     data_obj::DataObject,
@@ -20,6 +24,7 @@ use crate::{
     audit::{PodAuditLog, PodFailLog, SnapshotScheduleAudit},
     common::*,
     metastore::selection_predicate::ListOption,
+    node_config::KB_DIR,
 };
 
 use super::{
@@ -41,8 +46,176 @@ const ONBOARD_INITIAL_CREDIT_ADDED_BY: &str = "system-onboard";
 const ONBOARD_INITIAL_CREDIT_PAYMENT_REF_PREFIX: &str = "onboard-initial-credit";
 const PLATFORM_TENANT: &str = "inferx";
 const PLATFORM_SHARED_NAMESPACE: &str = "endpoint";
+const KB_FILE_NAME: &str = "kb.data";
+
+fn kb_func_root_path(tenant: &str, namespace: &str, name: &str) -> PathBuf {
+    Path::new(KB_DIR).join(format!("{}.{}.{}", tenant, namespace, name))
+}
+
+fn kb_version_dir_path(tenant: &str, namespace: &str, name: &str, version: i64) -> PathBuf {
+    kb_func_root_path(tenant, namespace, name).join(version.to_string())
+}
+
+fn kb_stage_file_path(tenant: &str, namespace: &str, name: &str) -> PathBuf {
+    kb_func_root_path(tenant, namespace, name).join(KB_FILE_NAME)
+}
+
+fn kb_version_file_path(tenant: &str, namespace: &str, name: &str, version: i64) -> PathBuf {
+    kb_version_dir_path(tenant, namespace, name, version).join(KB_FILE_NAME)
+}
 
 impl HttpGateway {
+    fn HasInferxTenantPolicyOverrides(policy: &crate::node_config::InferxTenantPolicy) -> bool {
+        policy.quota_exempt.is_some()
+            || policy.allowMemStandby.is_some()
+            || policy.maxFuncCnt.is_some()
+            || policy.maxReplica.is_some()
+            || policy.maxGpu.is_some()
+            || policy.maxStandby.is_some()
+            || policy.maxQueueLen.is_some()
+    }
+
+    fn ApplyInferxTenantPolicy(
+        tenant_obj: &mut Tenant,
+        policy: &crate::node_config::InferxTenantPolicy,
+    ) -> bool {
+        let mut changed = false;
+
+        if let Some(v) = policy.quota_exempt {
+            if tenant_obj.object.spec.quota_exempt != v {
+                tenant_obj.object.spec.quota_exempt = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.allowMemStandby {
+            if tenant_obj.object.spec.resourceLimit.allocMemStandby != v {
+                tenant_obj.object.spec.resourceLimit.allocMemStandby = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxFuncCnt {
+            if tenant_obj.object.spec.resourceLimit.maxFuncCnt != v {
+                tenant_obj.object.spec.resourceLimit.maxFuncCnt = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxReplica {
+            if tenant_obj.object.spec.resourceLimit.maxReplica != v {
+                tenant_obj.object.spec.resourceLimit.maxReplica = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxGpu {
+            if tenant_obj.object.spec.resourceLimit.maxGpu != v {
+                tenant_obj.object.spec.resourceLimit.maxGpu = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxStandby {
+            if tenant_obj.object.spec.resourceLimit.maxStandby != v {
+                tenant_obj.object.spec.resourceLimit.maxStandby = v;
+                changed = true;
+            }
+        }
+        if let Some(v) = policy.maxQueueLen {
+            if tenant_obj.object.spec.resourceLimit.maxQueueLen != v {
+                tenant_obj.object.spec.resourceLimit.maxQueueLen = v;
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
+    fn ensure_kb_file_readable(path: &Path) -> Result<()> {
+        std::fs::File::open(path).map_err(|e| {
+            Error::CommonError(format!(
+                "knowledgebase file {} is not readable: {:?}",
+                path.display(),
+                e
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn prepare_kb_stage_promotion(
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        version: i64,
+    ) -> Result<(PathBuf, PathBuf, PathBuf)> {
+        let stage_file = kb_stage_file_path(tenant, namespace, name);
+        Self::ensure_kb_file_readable(&stage_file)?;
+
+        let version_dir = kb_version_dir_path(tenant, namespace, name, version);
+        std::fs::create_dir_all(&version_dir)?;
+        let version_file = version_dir.join(KB_FILE_NAME);
+        std::fs::rename(&stage_file, &version_file)?;
+
+        Ok((stage_file, version_dir, version_file))
+    }
+
+    fn rollback_kb_stage_promotion(stage_file: &Path, version_dir: &Path, version_file: &Path) {
+        if version_file.exists() {
+            if let Some(parent) = stage_file.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    error!(
+                        "failed to recreate KB staging parent {} during rollback: {:?}",
+                        parent.display(),
+                        e
+                    );
+                }
+            }
+
+            if let Err(e) = std::fs::rename(version_file, stage_file) {
+                error!(
+                    "failed to rollback KB file {} -> {}: {:?}",
+                    version_file.display(),
+                    stage_file.display(),
+                    e
+                );
+            }
+        }
+
+        if let Err(e) = std::fs::remove_dir(version_dir) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                error!(
+                    "failed to remove KB version dir {} during rollback: {:?}",
+                    version_dir.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    fn prepare_kb_version_copy(
+        tenant: &str,
+        namespace: &str,
+        name: &str,
+        old_version: i64,
+        new_version: i64,
+    ) -> Result<PathBuf> {
+        let src_file = kb_version_file_path(tenant, namespace, name, old_version);
+        Self::ensure_kb_file_readable(&src_file)?;
+
+        let version_dir = kb_version_dir_path(tenant, namespace, name, new_version);
+        std::fs::create_dir_all(&version_dir)?;
+        let dst_file = version_dir.join(KB_FILE_NAME);
+        std::fs::copy(&src_file, &dst_file)?;
+
+        Ok(version_dir)
+    }
+
+    fn cleanup_kb_version_dir(version_dir: &Path) {
+        if let Err(e) = std::fs::remove_dir_all(version_dir) {
+            error!(
+                "failed to remove KB version dir {}: {:?}",
+                version_dir.display(),
+                e
+            );
+        }
+    }
+
     pub async fn SaveEndpointMetadata(
         &self,
         token: &Arc<AccessToken>,
@@ -800,13 +973,7 @@ impl HttpGateway {
 
     async fn ReconcileInferxTenantPolicy(&self) -> Result<()> {
         let policy = &GATEWAY_CONFIG.inferxTenantPolicy;
-        if policy.quota_exempt.is_none()
-            && policy.allowMemStandby.is_none()
-            && policy.maxFuncCnt.is_none()
-            && policy.maxReplica.is_none()
-            && policy.maxStandby.is_none()
-            && policy.maxQueueLen.is_none()
-        {
+        if !Self::HasInferxTenantPolicyOverrides(policy) {
             return Ok(());
         }
 
@@ -827,44 +994,7 @@ impl HttpGateway {
                 }
             };
             let mut tenant_obj = Tenant::FromDataObject(tenant_obj)?;
-            let mut changed = false;
-
-            if let Some(v) = policy.quota_exempt {
-                if tenant_obj.object.spec.quota_exempt != v {
-                    tenant_obj.object.spec.quota_exempt = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.allowMemStandby {
-                if tenant_obj.object.spec.resourceLimit.allocMemStandby != v {
-                    tenant_obj.object.spec.resourceLimit.allocMemStandby = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxFuncCnt {
-                if tenant_obj.object.spec.resourceLimit.maxFuncCnt != v {
-                    tenant_obj.object.spec.resourceLimit.maxFuncCnt = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxReplica {
-                if tenant_obj.object.spec.resourceLimit.maxReplica != v {
-                    tenant_obj.object.spec.resourceLimit.maxReplica = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxStandby {
-                if tenant_obj.object.spec.resourceLimit.maxStandby != v {
-                    tenant_obj.object.spec.resourceLimit.maxStandby = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = policy.maxQueueLen {
-                if tenant_obj.object.spec.resourceLimit.maxQueueLen != v {
-                    tenant_obj.object.spec.resourceLimit.maxQueueLen = v;
-                    changed = true;
-                }
-            }
+            let changed = Self::ApplyInferxTenantPolicy(&mut tenant_obj, policy);
 
             if !changed {
                 return Ok(());
@@ -1173,7 +1303,25 @@ impl HttpGateway {
         func.object.spec.version = id;
         dataobj = func.DataObject();
 
-        return self.client.Create(&dataobj).await;
+        let kb_paths =
+            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledgeBase
+            {
+                Some(Self::prepare_kb_stage_promotion(
+                    &tenant, &namespace, &func.name, id,
+                )?)
+            } else {
+                None
+            };
+
+        match self.client.Create(&dataobj).await {
+            Ok(version) => Ok(version),
+            Err(e) => {
+                if let Some((stage_file, version_dir, version_file)) = kb_paths {
+                    Self::rollback_kb_stage_promotion(&stage_file, &version_dir, &version_file);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub async fn CreateFuncPolicy(
@@ -1203,12 +1351,52 @@ impl HttpGateway {
 
         let mut dataobj = obj;
         let mut func = Function::FromDataObject(dataobj)?;
+        let tenant = func.tenant.clone();
+        let namespace = func.namespace.clone();
+        let name = func.name.clone();
+        let existing = self
+            .client
+            .Get(Function::KEY, &tenant, &namespace, &name, 0)
+            .await?
+            .ok_or_else(|| {
+                Error::NotExist(format!("function {}/{}/{} does not exist", tenant, namespace, name))
+            })?
+            .To::<inferxlib::obj_mgr::func_mgr::FuncObject>()?;
+        let old_version = existing.object.spec.version;
         let id = self.client.Uid().await?;
         func.object.spec.version = id;
         func.object.status = FuncStatus::default();
         dataobj = func.DataObject();
-        let version = self.client.Update(&dataobj, 0).await?;
-        return Ok(version);
+        let kb_promotion =
+            if func.object.spec.SampleCallType() == inferxlib::obj_mgr::func_mgr::ApiType::KnowledgeBase
+            {
+                let stage_file = kb_stage_file_path(&tenant, &namespace, &name);
+                if stage_file.exists() {
+                    let (stage_file, version_dir, version_file) =
+                        Self::prepare_kb_stage_promotion(&tenant, &namespace, &name, id)?;
+                    Some((false, stage_file, version_dir, version_file))
+                } else {
+                    let version_dir =
+                        Self::prepare_kb_version_copy(&tenant, &namespace, &name, old_version, id)?;
+                    Some((true, PathBuf::new(), version_dir, PathBuf::new()))
+                }
+            } else {
+                None
+            };
+
+        match self.client.Update(&dataobj, 0).await {
+            Ok(version) => Ok(version),
+            Err(e) => {
+                if let Some((copied, stage_file, version_dir, version_file)) = kb_promotion {
+                    if copied {
+                        Self::cleanup_kb_version_dir(&version_dir);
+                    } else {
+                        Self::rollback_kb_stage_promotion(&stage_file, &version_dir, &version_file);
+                    }
+                }
+                Err(e)
+            }
+        }
     }
 
     pub async fn UpdateFuncPolicy(
@@ -1846,6 +2034,50 @@ impl HttpGateway {
             .ReadPodFailLog(&tenant, &namespace, &funcname, version, id)
             .await?;
         return Ok(s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inferxlib::obj_mgr::tenant_mgr::{TenantObject, TenantSpec};
+
+    fn make_tenant(name: &str) -> Tenant {
+        Tenant {
+            objType: Tenant::KEY.to_owned(),
+            tenant: SYSTEM_TENANT.to_owned(),
+            namespace: SYSTEM_NAMESPACE.to_owned(),
+            name: name.to_owned(),
+            object: TenantObject {
+                spec: TenantSpec::default(),
+                status: Default::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inferx_tenant_policy_overrides_detects_max_gpu_only() {
+        let policy = crate::node_config::InferxTenantPolicy {
+            maxGpu: Some(4),
+            ..Default::default()
+        };
+
+        assert!(HttpGateway::HasInferxTenantPolicyOverrides(&policy));
+    }
+
+    #[test]
+    fn apply_inferx_tenant_policy_updates_max_gpu() {
+        let mut tenant = make_tenant("inferx");
+        let policy = crate::node_config::InferxTenantPolicy {
+            maxGpu: Some(5),
+            ..Default::default()
+        };
+
+        let changed = HttpGateway::ApplyInferxTenantPolicy(&mut tenant, &policy);
+
+        assert!(changed);
+        assert_eq!(tenant.object.spec.resourceLimit.maxGpu, 5);
     }
 }
 
