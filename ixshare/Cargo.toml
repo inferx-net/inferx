@@ -6,6 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rmcp = { path = "/home/brad/project/rust-sdk/crates/rmcp", features = ["transport-streamable-http-server"] }
+anyhow = { workspace = true }
 inferxlib = { path = "../inferxlib" }
 
 tonic = { version = "0.8" }
@@ -22,7 +24,7 @@ local-ip-address = "0.5.1"
 gethostname = "0.4.3"
 regex = "1.7.1"
 zip = { version = "0.5", feature = [ "deflate" ] }
-reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 simple-logging = "2.0.2"
 log = "0.4.17"
 log4rs = "1"

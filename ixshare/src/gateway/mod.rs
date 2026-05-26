@@ -1,4 +1,4 @@
-// Copyright (c) 2025 InferX Authors /  
+// Copyright (c) 2025 InferX Authors /
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,8 @@ pub mod func_worker;
 pub mod gw_obj_repo;
 pub mod http_gateway;
 pub mod http_gw;
+pub mod mcp_stream_server;
+pub mod metrics;
 pub mod scheduler_client;
 pub mod secret;
-pub mod metrics;
 pub mod tokenizer;
