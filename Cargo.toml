@@ -1,11 +1,3 @@
-[workspace]
-members = ["ixshare", "inferxlib"]
-resolver = "2"
-
-[workspace.dependencies]
-rmcp = { path = "/home/brad/project/rust-sdk/crates/rmcp", features = ["transport-streamable-http-server"] }
-anyhow = "1.0"
-
 [package]
 name = "qservice"
 version = "0.1.0"

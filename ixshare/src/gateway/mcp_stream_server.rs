@@ -2,8 +2,8 @@ use anyhow::Result as AResult;
 use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
 use serde_json::json;
 use std::collections::BTreeMap;
+use http::request::Parts;
 
-#[derive(Clone)]
 pub struct McpStreamServer;
 
 #[derive(Clone, Debug)]
@@ -29,11 +29,11 @@ impl McpStreamServer {
             },
         );
         configs.insert(
-            "pricing".to_string(),
+            "price".to_string(),
             ToolConfig {
                 description: "Get pricing strategy from the pricing endpoint via HTTP streaming"
                     .to_string(),
-                url: "http://192.168.0.44:8000/pricing/v1/chat/completions".to_string(),
+                url: "https://model.inferx.net/funccall/tn-a3t79iogb2/endpoints/Qwen3.6-35B-A3B-FP8/v1/chat/completions".to_string(),
             },
         );
         configs
@@ -101,11 +101,17 @@ impl ServerHandler for McpStreamServer {
         let client = reqwest::Client::new();
         let mut req = client.post(&endpoint);
 
-        let api_key = std::env::var("INFERX_API_KEY").ok();
-        if let Some(key) = &api_key {
+        let api_key = context
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.headers.get("Authorization"))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string());
+        
+        if let Some(ref key) = api_key {
             req = req.header("Authorization", format!("Bearer {}", key));
         }
-
         let response = req.json(&body).send().await.map_err(|e| {
             ErrorData::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,

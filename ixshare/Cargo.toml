@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rmcp = { path = "/home/brad/project/rust-sdk/crates/rmcp", features = ["transport-streamable-http-server"] }
-anyhow = { workspace = true }
+rmcp = { version = "1.7.0", features = ["transport-streamable-http-server"] }
+anyhow = "1.0"
 inferxlib = { path = "../inferxlib" }
 
 tonic = { version = "0.8" }
