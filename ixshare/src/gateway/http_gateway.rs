@@ -68,7 +68,6 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
-use crate::gateway::tokenizer::ModelsFuncCall;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
