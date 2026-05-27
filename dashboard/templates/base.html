@@ -222,6 +222,26 @@
             color: #7f1d1d;
         }
 
+        .flash-stack {
+            display: grid;
+            gap: 8px;
+            margin: 0 0 12px 0;
+        }
+
+        .flash-message {
+            padding: 10px 12px;
+            border-radius: 4px;
+            border: 1px solid #bfdbfe;
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .flash-message.error {
+            border-color: #fecaca;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
         .content table.ix-table {
             border-collapse: collapse;
             background: #fff;
@@ -590,6 +610,7 @@
     {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
     {% set nav_functions_active = request_path_no_slash in ('/listfunctions', '/function_create', '/function') %}
     {% set nav_models_active = request_path_no_slash in ('/listfunc', '/func_create', '/func', '/funclog') %}
+    {% set nav_skills_active = request_path_no_slash in ('/listskills',) or request_path.startswith('/skill_create') or request_path.startswith('/skill/') %}
     {% set nav_catalog_active = '/catalog' in request_path %}
     {% set nav_endpoints_active = request_path_no_slash in ('',) or '/endpoints' in request_path %}
     {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}
@@ -625,6 +646,7 @@
     <nav>
         <a href="{{ hosturl }}endpoints" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
         {% if not is_public_visitor %}
+        <a href="{{ hosturl }}listskills" class="{% if nav_skills_active %}active{% endif %}"> Skills </a>
         <a href="{{ hosturl }}listfunctions" class="{% if nav_functions_active %}active{% endif %}"> Functions </a>
         {% endif %}
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
@@ -1083,6 +1105,15 @@
         <div id="tenant-credit-banner" class="tenant-credit-banner" role="alert" hidden>
             <p id="tenant-credit-banner-text"></p>
         </div>
+        {% with flashes = get_flashed_messages(with_categories=true) %}
+        {% if flashes %}
+        <div class="flash-stack">
+            {% for category, message in flashes %}
+            <div class="flash-message {{ category if category else '' }}" role="status">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
         {% block content %} {% endblock %}
     </div>
     <!-- Start of HubSpot Embed Code -->

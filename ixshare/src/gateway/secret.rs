@@ -6,6 +6,7 @@ use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::ConnectOptions;
 use sqlx::FromRow;
+use sqlx::Row;
 
 use crate::common::*;
 
@@ -70,6 +71,114 @@ pub struct EndpointMetadata {
     pub parameter_count_b: Option<f64>,
     pub context_length: Option<i64>,
     pub concurrency: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillTemplate {
+    pub template_id: i64,
+    pub tenant: String,
+    pub namespace: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub func_tenant: String,
+    pub func_namespace: String,
+    pub normal_funcname: String,
+    pub producer_funcname: Option<String>,
+    pub producer_revision: Option<i64>,
+    pub consumer_funcname: Option<String>,
+    pub consumer_revision: Option<i64>,
+    pub is_active: bool,
+    pub created_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillRecord {
+    pub skill_id: i64,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub description: Option<String>,
+    pub serving_mode: String,
+    pub earning_type: String,
+    pub user_price_microcents: Option<i32>,
+    pub gpu_billing_target: String,
+    pub inferx_revenue_share_pct: f64,
+    pub active_revision_id: Option<i64>,
+    pub is_published: bool,
+    pub published_at: Option<chrono::NaiveDateTime>,
+    pub published_by: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillRevisionRecord {
+    pub revision_id: i64,
+    pub skill_id: i64,
+    pub version: i32,
+    pub template_id: i64,
+    pub has_cache: bool,
+    pub cache_status: String,
+    pub cache_ready_at: Option<chrono::NaiveDateTime>,
+    pub created_at: Option<chrono::NaiveDateTime>,
+    pub created_by: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillDetail {
+    pub skill_id: i64,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub description: Option<String>,
+    pub serving_mode: String,
+    pub earning_type: String,
+    pub user_price_microcents: Option<i32>,
+    pub gpu_billing_target: String,
+    pub inferx_revenue_share_pct: f64,
+    pub active_revision_id: Option<i64>,
+    pub is_published: bool,
+    pub published_at: Option<chrono::NaiveDateTime>,
+    pub published_by: Option<String>,
+    pub revision_id: i64,
+    pub version: i32,
+    pub template_id: i64,
+    pub has_cache: bool,
+    pub cache_status: String,
+    pub cache_ready_at: Option<chrono::NaiveDateTime>,
+    pub revision_created_at: Option<chrono::NaiveDateTime>,
+    pub revision_created_by: String,
+    pub template_tenant: String,
+    pub template_namespace: String,
+    pub template_display_name: String,
+    pub template_description: Option<String>,
+    pub func_tenant: String,
+    pub func_namespace: String,
+    pub normal_funcname: String,
+    pub producer_funcname: Option<String>,
+    pub producer_revision: Option<i64>,
+    pub consumer_funcname: Option<String>,
+    pub consumer_revision: Option<i64>,
+    pub template_is_active: bool,
+    pub template_created_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillSummary {
+    pub skill_id: i64,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub description: Option<String>,
+    pub serving_mode: String,
+    pub earning_type: String,
+    pub user_price_microcents: Option<i32>,
+    pub gpu_billing_target: String,
+    pub is_published: bool,
+    pub published_at: Option<chrono::NaiveDateTime>,
+    pub active_revision_id: Option<i64>,
+    pub version: i32,
+    pub has_cache: bool,
+    pub cache_status: String,
+    pub template_display_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -619,6 +728,651 @@ impl SqlSecret {
             .execute(&self.pool)
             .await?;
 
+        Ok(())
+    }
+
+    pub async fn ListActiveSkillTemplates(&self) -> Result<Vec<SkillTemplate>> {
+        let query = r#"
+            SELECT
+                template_id,
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                producer_funcname,
+                producer_revision,
+                consumer_funcname,
+                consumer_revision,
+                is_active,
+                created_at
+            FROM SkillTemplate
+            WHERE is_active = TRUE
+            ORDER BY tenant, namespace, display_name
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillTemplate>(query)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn ListSkillTemplates(&self) -> Result<Vec<SkillTemplate>> {
+        let query = r#"
+            SELECT
+                template_id,
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                producer_funcname,
+                producer_revision,
+                consumer_funcname,
+                consumer_revision,
+                is_active,
+                created_at
+            FROM SkillTemplate
+            ORDER BY tenant, namespace, display_name, template_id
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillTemplate>(query)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn ListSkillsByTenant(
+        &self,
+        owner_tenant: &str,
+        show_all: bool,
+    ) -> Result<Vec<SkillSummary>> {
+        let mut query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.is_published,
+                s.published_at,
+                s.active_revision_id,
+                sr.version,
+                sr.has_cache,
+                sr.cache_status,
+                st.display_name AS template_display_name
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+            WHERE s.owner_tenant = $1
+        "#
+        .to_string();
+
+        if !show_all {
+            query.push_str("\n              AND s.is_published = TRUE");
+        }
+        query.push_str("\n            ORDER BY s.owner_namespace, s.skillname");
+
+        Ok(sqlx::query_as::<_, SkillSummary>(&query)
+            .bind(owner_tenant)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn ListSkillsByNamespace(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        show_all: bool,
+    ) -> Result<Vec<SkillSummary>> {
+        let mut query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.is_published,
+                s.published_at,
+                s.active_revision_id,
+                sr.version,
+                sr.has_cache,
+                sr.cache_status,
+                st.display_name AS template_display_name
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+            WHERE s.owner_tenant = $1
+              AND s.owner_namespace = $2
+        "#
+        .to_string();
+
+        if !show_all {
+            query.push_str("\n              AND s.is_published = TRUE");
+        }
+        query.push_str("\n            ORDER BY s.owner_namespace, s.skillname");
+
+        Ok(sqlx::query_as::<_, SkillSummary>(&query)
+            .bind(owner_tenant)
+            .bind(owner_namespace)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn ListPublishedSkills(&self) -> Result<Vec<SkillSummary>> {
+        self.ListSkillsFiltered(true).await
+    }
+
+    pub async fn ListAllSkills(&self) -> Result<Vec<SkillSummary>> {
+        self.ListSkillsFiltered(false).await
+    }
+
+    async fn ListSkillsFiltered(&self, published_only: bool) -> Result<Vec<SkillSummary>> {
+        let mut query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.is_published,
+                s.published_at,
+                s.active_revision_id,
+                sr.version,
+                sr.has_cache,
+                sr.cache_status,
+                st.display_name AS template_display_name
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+        "#
+        .to_string();
+
+        if published_only {
+            query.push_str("\n            WHERE s.is_published = TRUE");
+        }
+        query.push_str("\n            ORDER BY s.owner_tenant, s.owner_namespace, s.skillname");
+
+        Ok(sqlx::query_as::<_, SkillSummary>(&query)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn GetSkillTemplate(&self, template_id: i64) -> Result<SkillTemplate> {
+        let query = r#"
+            SELECT
+                template_id,
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                producer_funcname,
+                producer_revision,
+                consumer_funcname,
+                consumer_revision,
+                is_active,
+                created_at
+            FROM SkillTemplate
+            WHERE template_id = $1
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillTemplate>(query)
+            .bind(template_id)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
+    pub async fn IsSkillTemplateReferenced(&self, template_id: i64) -> Result<bool> {
+        let row = sqlx::query(
+            r#"
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM SkillRevision
+                    WHERE template_id = $1
+                )
+            "#,
+        )
+        .bind(template_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.get::<bool, _>(0))
+    }
+
+    pub async fn CreateSkillTemplate(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        display_name: &str,
+        description: Option<&str>,
+        func_tenant: &str,
+        func_namespace: &str,
+        normal_funcname: &str,
+        is_active: bool,
+    ) -> Result<SkillTemplate> {
+        let query = r#"
+            INSERT INTO SkillTemplate (
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                is_active
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING
+                template_id,
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                producer_funcname,
+                producer_revision,
+                consumer_funcname,
+                consumer_revision,
+                is_active,
+                created_at
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillTemplate>(query)
+            .bind(tenant)
+            .bind(namespace)
+            .bind(display_name)
+            .bind(description)
+            .bind(func_tenant)
+            .bind(func_namespace)
+            .bind(normal_funcname)
+            .bind(is_active)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
+    pub async fn DeactivateSkillTemplate(&self, template_id: i64) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                UPDATE SkillTemplate
+                SET is_active = FALSE
+                WHERE template_id = $1
+            "#,
+        )
+        .bind(template_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "skill template {} does not exist",
+                template_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub async fn ActivateSkillTemplate(&self, template_id: i64) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                UPDATE SkillTemplate
+                SET is_active = TRUE
+                WHERE template_id = $1
+            "#,
+        )
+        .bind(template_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "skill template {} does not exist",
+                template_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub async fn UpdateSkillTemplate(
+        &self,
+        template_id: i64,
+        tenant: &str,
+        namespace: &str,
+        display_name: &str,
+        description: Option<&str>,
+        func_tenant: &str,
+        func_namespace: &str,
+        normal_funcname: &str,
+        is_active: bool,
+    ) -> Result<SkillTemplate> {
+        let query = r#"
+            UPDATE SkillTemplate
+            SET
+                tenant = $2,
+                namespace = $3,
+                display_name = $4,
+                description = $5,
+                func_tenant = $6,
+                func_namespace = $7,
+                normal_funcname = $8,
+                is_active = $9
+            WHERE template_id = $1
+            RETURNING
+                template_id,
+                tenant,
+                namespace,
+                display_name,
+                description,
+                func_tenant,
+                func_namespace,
+                normal_funcname,
+                producer_funcname,
+                producer_revision,
+                consumer_funcname,
+                consumer_revision,
+                is_active,
+                created_at
+        "#;
+
+        let row = sqlx::query_as::<_, SkillTemplate>(query)
+            .bind(template_id)
+            .bind(tenant)
+            .bind(namespace)
+            .bind(display_name)
+            .bind(description)
+            .bind(func_tenant)
+            .bind(func_namespace)
+            .bind(normal_funcname)
+            .bind(is_active)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        row.ok_or_else(|| {
+            Error::NotExist(format!("skill template {} does not exist", template_id))
+        })
+    }
+
+    pub async fn DeleteSkillTemplate(&self, template_id: i64) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                DELETE FROM SkillTemplate
+                WHERE template_id = $1
+            "#,
+        )
+        .bind(template_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "skill template {} does not exist",
+                template_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub async fn CreateSkill(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+        description: Option<&str>,
+        serving_mode: &str,
+        earning_type: &str,
+        user_price_microcents: Option<i32>,
+        gpu_billing_target: &str,
+        template_id: i64,
+        has_cache: bool,
+        created_by: &str,
+    ) -> Result<SkillDetail> {
+        let mut tx = self.pool.begin().await?;
+
+        let skill_row = sqlx::query(
+            r#"
+                INSERT INTO Skill (
+                    owner_tenant,
+                    owner_namespace,
+                    skillname,
+                    description,
+                    serving_mode,
+                    earning_type,
+                    user_price_microcents,
+                    gpu_billing_target
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING skill_id
+            "#,
+        )
+        .bind(owner_tenant)
+        .bind(owner_namespace)
+        .bind(skillname)
+        .bind(description)
+        .bind(serving_mode)
+        .bind(earning_type)
+        .bind(user_price_microcents)
+        .bind(gpu_billing_target)
+        .fetch_one(&mut *tx)
+        .await?;
+        let skill_id: i64 = skill_row.try_get("skill_id")?;
+
+        let rev_row = sqlx::query(
+            r#"
+                INSERT INTO SkillRevision (
+                    skill_id,
+                    version,
+                    template_id,
+                    has_cache,
+                    cache_status,
+                    created_by
+                ) VALUES ($1, 1, $2, $3, 'none', $4)
+                RETURNING revision_id
+            "#,
+        )
+        .bind(skill_id)
+        .bind(template_id)
+        .bind(has_cache)
+        .bind(created_by)
+        .fetch_one(&mut *tx)
+        .await?;
+        let revision_id: i64 = rev_row.try_get("revision_id")?;
+
+        sqlx::query(
+            r#"
+                UPDATE Skill
+                SET active_revision_id = $1
+                WHERE skill_id = $2
+            "#,
+        )
+        .bind(revision_id)
+        .bind(skill_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        self.GetSkill(owner_tenant, owner_namespace, skillname).await
+    }
+
+    pub async fn GetSkill(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+    ) -> Result<SkillDetail> {
+        let query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.inferx_revenue_share_pct::FLOAT8 AS inferx_revenue_share_pct,
+                s.active_revision_id,
+                s.is_published,
+                s.published_at,
+                s.published_by,
+                sr.revision_id,
+                sr.version,
+                sr.template_id,
+                sr.has_cache,
+                sr.cache_status,
+                sr.cache_ready_at,
+                sr.created_at AS revision_created_at,
+                sr.created_by AS revision_created_by,
+                st.tenant AS template_tenant,
+                st.namespace AS template_namespace,
+                st.display_name AS template_display_name,
+                st.description AS template_description,
+                st.func_tenant,
+                st.func_namespace,
+                st.normal_funcname,
+                st.producer_funcname,
+                st.producer_revision,
+                st.consumer_funcname,
+                st.consumer_revision,
+                st.is_active AS template_is_active,
+                st.created_at AS template_created_at
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+            WHERE s.owner_tenant = $1
+              AND s.owner_namespace = $2
+              AND s.skillname = $3
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillDetail>(query)
+            .bind(owner_tenant)
+            .bind(owner_namespace)
+            .bind(skillname)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
+    pub async fn PublishSkill(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+        published_by: &str,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                UPDATE Skill
+                SET is_published = TRUE,
+                    published_at = NOW(),
+                    published_by = $4
+                WHERE owner_tenant = $1
+                  AND owner_namespace = $2
+                  AND skillname = $3
+            "#,
+        )
+        .bind(owner_tenant)
+        .bind(owner_namespace)
+        .bind(skillname)
+        .bind(published_by)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "skill {}/{}/{} does not exist",
+                owner_tenant, owner_namespace, skillname
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn UnpublishSkill(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                UPDATE Skill
+                SET is_published = FALSE
+                WHERE owner_tenant = $1
+                  AND owner_namespace = $2
+                  AND skillname = $3
+            "#,
+        )
+        .bind(owner_tenant)
+        .bind(owner_namespace)
+        .bind(skillname)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "skill {}/{}/{} does not exist",
+                owner_tenant, owner_namespace, skillname
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn DeleteSkill(
+        &self,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+    ) -> Result<()> {
+        let detail = self.GetSkill(owner_tenant, owner_namespace, skillname).await?;
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            r#"
+                UPDATE Skill
+                SET active_revision_id = NULL
+                WHERE skill_id = $1
+            "#,
+        )
+        .bind(detail.skill_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM SkillRevision WHERE skill_id = $1")
+            .bind(detail.skill_id)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query("DELETE FROM Skill WHERE skill_id = $1")
+            .bind(detail.skill_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 }

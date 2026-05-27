@@ -1,0 +1,339 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+    .skill-detail-page {
+        display: grid;
+        max-width: var(--ix-page-max-width);
+        margin: 0 auto 32px auto;
+        gap: 14px;
+    }
+    .skill-detail-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .skill-detail-header h1 { margin: 0; font-size: 24px; color: #0f172a; }
+    .skill-detail-subtitle { margin: 4px 0 0 0; color: #64748b; font-size: var(--ix-font-size-subtle); }
+    .skill-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .skill-panel {
+        border: 1px solid #cbd5e1;
+        border-radius: var(--ix-panel-radius);
+        background: #fff;
+        padding: var(--ix-panel-padding);
+    }
+    .skill-panel h2 { margin: 0 0 12px 0; font-size: 18px; color: #1f2937; }
+    .skill-meta-grid {
+        display: grid;
+        grid-template-columns: 200px minmax(0, 1fr);
+        gap: 8px 12px;
+        align-items: start;
+    }
+    .skill-meta-grid strong { color: #64748b; }
+    .skill-status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    .skill-status-badge.published { background: #dcfce7; color: #166534; }
+    .skill-status-badge.draft { background: #fef3c7; color: #92400e; }
+    .playground-grid { display: grid; gap: 12px; }
+    .playground-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #334155; }
+    .playground-field textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 14px;
+        background: #fff;
+        resize: vertical;
+        line-height: 1.4;
+    }
+    .playground-field textarea[readonly] { background: #f8fafc; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .playground-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .playground-metrics { display: flex; gap: 10px; flex-wrap: wrap; }
+    .playground-metric {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 6px 12px;
+        font-size: 13px;
+        min-width: 100px;
+    }
+    .playground-status { font-size: 13px; color: #475569; min-height: 1.4em; }
+    .playground-status.error { color: #b91c1c; }
+    .copyable-area { position: relative; }
+    .copyable-area textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        background: #f8fafc;
+        resize: vertical;
+        line-height: 1.4;
+    }
+    .copyable-area-copy {
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        background: #e2e8f0;
+        border: none;
+        border-radius: 4px;
+        padding: 3px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #475569;
+    }
+    .copyable-area-copy:hover { background: #cbd5e1; }
+    @media (max-width: 720px) {
+        .skill-meta-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+<div class="skill-detail-page">
+    <div class="skill-detail-header">
+        <div>
+            <h1>{{ name }}</h1>
+            <p class="skill-detail-subtitle">{{ owner }} / {{ ns }}</p>
+        </div>
+        <div class="skill-detail-actions">
+            <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Back</a>
+            {% if can_manage %}
+            {% if skill.get('is_published') %}
+            <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=owner, ns=ns, name=name) }}" style="display:inline;">
+                <button class="ix-btn secondary" type="submit">Unpublish</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('prefix.SkillPublish', owner=owner, ns=ns, name=name) }}" style="display:inline;">
+                <button class="ix-btn" type="submit">Publish</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this skill? This cannot be undone.');" style="display:inline;">
+                <button class="ix-btn danger" type="submit">Delete</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <section class="skill-panel">
+        <h2>Configuration</h2>
+        <div class="skill-meta-grid">
+            <strong>Status</strong>
+            <div>
+                {% if skill.get('is_published') %}
+                <span class="skill-status-badge published">Published</span>
+                {% else %}
+                <span class="skill-status-badge draft">Draft</span>
+                {% endif %}
+            </div>
+            <strong>Owner</strong><div>{{ owner }} / {{ ns }}</div>
+            <strong>Description</strong>
+            <div>{{ skill.get('description') or '—' }}</div>
+            <strong>Template</strong>
+            <div>{{ skill.get('template_display_name') or '—' }}</div>
+            <strong>Backing Model</strong>
+            <div>{{ skill.get('func_tenant') }}/{{ skill.get('func_namespace') }}/{{ normal_funcname }}</div>
+            <strong>GPU Billing</strong>
+            <div>{{ skill.get('gpu_billing_target', 'caller') | capitalize }}</div>
+            <strong>Serving Mode</strong>
+            <div>{{ skill.get('serving_mode', '') | capitalize }}</div>
+            <strong>Version</strong>
+            <div>{{ skill.get('version') }}</div>
+            {% if skill.get('published_at') %}
+            <strong>Published At</strong>
+            <div>{{ skill.get('published_at') }}</div>
+            {% endif %}
+            {% if skill.get('published_by') %}
+            <strong>Published By</strong>
+            <div>{{ skill.get('published_by') }}</div>
+            {% endif %}
+            <strong>Created By</strong>
+            <div>{{ skill.get('revision_created_by') or '—' }}</div>
+            <strong>Skill Data</strong>
+            <div>
+                <a class="ix-btn secondary" href="{{ url_for('prefix.download_skill_prefix', owner=owner, ns=ns, name=name) }}">Download</a>
+            </div>
+        </div>
+    </section>
+
+    {% set section_class = 'skill-panel' %}
+    {% include '_client_setup.html' %}
+
+    <section class="skill-panel">
+        <h2>Playground</h2>
+        <div class="playground-grid">
+            <div class="playground-field">
+                <label for="skill-prompt-input">User Message</label>
+                <textarea id="skill-prompt-input" rows="4" placeholder="Type your message here…">What's in the context?</textarea>
+            </div>
+            <div class="playground-actions">
+                <button id="skill-run-btn" class="ix-btn" type="button">Run</button>
+                <button id="skill-cancel-btn" class="ix-btn secondary" type="button" disabled>Cancel</button>
+                <div id="skill-play-status" class="playground-status"></div>
+            </div>
+            <div class="playground-metrics" id="skill-metrics" style="display:none;">
+                <div class="playground-metric" id="skill-metric-ttft">TTFT: —</div>
+                <div class="playground-metric" id="skill-metric-tps">TPS: —</div>
+            </div>
+            <div class="playground-field">
+                <label for="skill-output">Output</label>
+                <textarea id="skill-output" rows="10" readonly placeholder="Response will appear here…"></textarea>
+            </div>
+        </div>
+    </section>
+
+    <section class="skill-panel">
+        <h2>Sample REST Call</h2>
+        <div class="copyable-area">
+            <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('skill-restcall-copy')">Copy</button>
+            <textarea rows="10" readonly>{{ sample_rest_call_display }}</textarea>
+            <textarea id="skill-restcall-copy" hidden>{{ sample_rest_call }}</textarea>
+        </div>
+    </section>
+</div>
+
+<script>
+(function () {
+    const owner = {{ owner | tojson }};
+    const ns = {{ ns | tojson }};
+    const name = {{ name | tojson }};
+    const normalFuncname = {{ model_name | tojson }};
+
+    const promptInput = document.getElementById('skill-prompt-input');
+    const outputEl = document.getElementById('skill-output');
+    const runBtn = document.getElementById('skill-run-btn');
+    const cancelBtn = document.getElementById('skill-cancel-btn');
+    const statusEl = document.getElementById('skill-play-status');
+    const metricsEl = document.getElementById('skill-metrics');
+    const ttftEl = document.getElementById('skill-metric-ttft');
+    const tpsEl = document.getElementById('skill-metric-tps');
+
+    let abortController = null;
+    let startTime = 0;
+    let firstTokenTime = 0;
+    let tokenCount = 0;
+
+    function setStatus(msg, isError) {
+        statusEl.textContent = msg || '';
+        statusEl.className = 'playground-status' + (isError ? ' error' : '');
+    }
+
+    function setSending(inFlight) {
+        runBtn.disabled = inFlight;
+        cancelBtn.disabled = !inFlight;
+    }
+
+    function fmtMs(ms) {
+        return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms / 1000).toFixed(2) + 's';
+    }
+
+    runBtn.addEventListener('click', async () => {
+        const prompt = (promptInput.value || '').trim();
+        if (!prompt) { setStatus('Enter a message first.', true); return; }
+
+        if (abortController) abortController.abort();
+        abortController = new AbortController();
+        outputEl.value = '';
+        metricsEl.style.display = 'none';
+        ttftEl.textContent = 'TTFT: —';
+        tpsEl.textContent = 'TPS: —';
+        tokenCount = 0;
+        startTime = performance.now();
+        firstTokenTime = 0;
+        setSending(true);
+        setStatus('Running…', false);
+
+        const proxyUrl = `/proxy/skills/${encodeURIComponent(owner)}/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/v1/chat/completions`;
+        const body = JSON.stringify({
+            model: normalFuncname,
+            messages: [{ role: 'user', content: prompt }],
+            stream: true,
+        });
+
+        try {
+            const resp = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body,
+                signal: abortController.signal,
+            });
+
+            if (!resp.ok) {
+                const text = await resp.text();
+                throw new Error(`HTTP ${resp.status}: ${text || 'request failed'}`);
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop();
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith('data:')) continue;
+                    const data = trimmed.slice(5).trim();
+                    if (data === '[DONE]') continue;
+                    try {
+                        const chunk = JSON.parse(data);
+                        const delta = chunk?.choices?.[0]?.delta?.content;
+                        if (delta) {
+                            if (firstTokenTime === 0) {
+                                firstTokenTime = performance.now();
+                                ttftEl.textContent = 'TTFT: ' + fmtMs(firstTokenTime - startTime);
+                                metricsEl.style.display = '';
+                            }
+                            outputEl.value += delta;
+                            tokenCount++;
+                            if (firstTokenTime > 0) {
+                                const elapsed = (performance.now() - firstTokenTime) / 1000;
+                                if (elapsed > 0) tpsEl.textContent = 'TPS: ' + (tokenCount / elapsed).toFixed(1);
+                            }
+                        }
+                    } catch (_) {}
+                }
+            }
+            setStatus('Done.', false);
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                setStatus('Cancelled.', false);
+            } else {
+                setStatus(err.message || String(err), true);
+            }
+        } finally {
+            abortController = null;
+            setSending(false);
+        }
+    });
+
+    cancelBtn.addEventListener('click', () => {
+        if (abortController) { abortController.abort(); abortController = null; }
+    });
+
+    function copyTextFromElement(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        navigator.clipboard.writeText(el.value).catch(() => {
+            el.removeAttribute('hidden');
+            el.select();
+            document.execCommand('copy');
+            el.setAttribute('hidden', '');
+        });
+    }
+    window.copyTextFromElement = copyTextFromElement;
+})();
+</script>
+{% endblock %}

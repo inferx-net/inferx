@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .skills-page {
+        display: grid;
+        gap: 20px;
+    }
+
+    .skills-section {
+        display: grid;
+        gap: 12px;
+    }
+
+    .skills-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .skills-header h2 {
+        margin: 0;
+        font-size: 22px;
+        color: #1f2937;
+    }
+
+    .skills-empty {
+        padding: 14px 16px;
+        border: 1px solid #d7dee8;
+        border-radius: 4px;
+        background: #f8fbff;
+        color: #475569;
+    }
+</style>
+
+<div class="skills-page">
+    <section class="skills-section">
+        <div class="skills-header">
+            <div>
+                <h2>My Skills</h2>
+            </div>
+            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
+        </div>
+
+        {% if my_skills %}
+        <table class="ix-table">
+            <thead>
+                <tr>
+                    <th>Namespace</th>
+                    <th>Name</th>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for skill in my_skills %}
+                <tr>
+                    <td>{{ skill.get('owner_namespace') }}</td>
+                    <td><a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a></td>
+                    <td>{{ skill.get('template_display_name') }}</td>
+                    <td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>
+                    <td>
+                        <div class="ix-row-actions">
+                            {% if skill.get('is_published') %}
+                            <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
+                                <button class="ix-btn secondary" type="submit">Unpublish</button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="{{ url_for('prefix.SkillPublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
+                                <button class="ix-btn secondary" type="submit">Publish</button>
+                            </form>
+                            {% endif %}
+                            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this skill?');">
+                                <button class="ix-btn danger" type="submit">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="skills-empty">You have no skills yet. Create your first skill.</div>
+        {% endif %}
+    </section>
+
+    {% if published_skills %}
+    <section class="skills-section">
+        <div class="skills-header">
+            <div>
+                <h2>{{ 'All Other Skills' if is_inferx_admin else 'Published Skills' }}</h2>
+            </div>
+        </div>
+
+        <table class="ix-table">
+            <thead>
+                <tr>
+                    <th>Owner</th>
+                    <th>Namespace</th>
+                    <th>Name</th>
+                    <th>Description</th>
+                    {% if is_inferx_admin %}<th>Status</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for skill in published_skills %}
+                <tr>
+                    <td>{{ skill.get('owner_tenant') }}</td>
+                    <td>{{ skill.get('owner_namespace') }}</td>
+                    <td><a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a></td>
+                    <td>{{ skill.get('description') }}</td>
+                    {% if is_inferx_admin %}<td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>{% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

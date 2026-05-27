@@ -5,6 +5,7 @@ CREATE TABLE UsageTick (
     id              SERIAL PRIMARY KEY,
     session_id      VARCHAR(64) NOT NULL,
     tenant          VARCHAR NOT NULL,
+    caller_tenant   VARCHAR,
     namespace       VARCHAR NOT NULL,
     funcname        VARCHAR NOT NULL,
     fprevision      BIGINT NOT NULL,        -- model version
@@ -24,6 +25,7 @@ CREATE TABLE UsageTick (
 );
 
 CREATE INDEX idx_tick_tenant ON UsageTick(tenant, tick_time);
+CREATE INDEX idx_tick_caller_tenant ON UsageTick(caller_tenant, tick_time);
 CREATE INDEX idx_tick_session ON UsageTick(session_id);
 CREATE INDEX idx_tick_unprocessed ON UsageTick(id) WHERE processed_at IS NULL;
 

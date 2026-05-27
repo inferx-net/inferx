@@ -122,6 +122,7 @@ pub struct FuncRouteTarget {
     pub physical: FuncIdentity,
     pub func: Function,
     pub policy: FuncPolicySpec,
+    pub caller_tenant: Option<String>,
 }
 
 impl FuncRouteTarget {
@@ -295,6 +296,7 @@ impl FuncAgentMgr {
             &route.logical.tenant,
             &route.logical.namespace,
             &route.logical.funcname,
+            route.caller_tenant.clone(),
             timestamp,
             timeout,
             tx,
@@ -614,6 +616,7 @@ impl FuncAgent {
         tenant: &str,
         namespace: &str,
         funcname: &str,
+        caller_tenant: Option<String>,
         timestamp: IxTimestamp,
         timeout: u64,
         tx: oneshot::Sender<Result<(QHttpCallClient, bool)>>,
@@ -622,6 +625,7 @@ impl FuncAgent {
             tenant: tenant.to_owned(),
             namespace: namespace.to_owned(),
             funcName: funcname.to_owned(),
+            caller_tenant,
             keepalive: true,
             timeout: timeout,
             enqueueTime: timestamp,

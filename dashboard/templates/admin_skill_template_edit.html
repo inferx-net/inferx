@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .skill-template-create-page {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+        display: grid;
+        gap: 16px;
+    }
+
+    .skill-template-editor-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+    }
+
+    .skill-template-editor-header h2 {
+        margin: 0;
+        font-size: 22px;
+        color: #1f2937;
+    }
+
+    .skill-template-editor-header .editor-subtitle {
+        color: #64748b;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .skill-template-form {
+        display: grid;
+        gap: 14px;
+        padding: 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 2px;
+        background: #ffffff;
+        margin-bottom: 14px;
+    }
+
+    .skill-template-form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+    }
+
+    .skill-template-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .skill-template-field input,
+    .skill-template-field textarea,
+    .skill-template-field select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        font: inherit;
+        color: #1f2937;
+        background: #fff;
+    }
+
+    .skill-template-field input:disabled,
+    .skill-template-field select:disabled,
+    .skill-template-field textarea:disabled {
+        background: #f8fafc;
+        color: #475569;
+    }
+
+    .skill-template-field textarea {
+        min-height: 110px;
+        resize: vertical;
+    }
+
+    .skill-template-error {
+        padding: 10px 12px;
+        border: 1px solid #fecdd3;
+        background: #fff1f2;
+        color: #9f1239;
+        border-radius: 4px;
+    }
+
+    .skill-template-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+</style>
+
+<div class="skill-template-create-page">
+    <div class="skill-template-editor-header">
+        <div>
+            <h2>Edit Skill Template</h2>
+            <div class="editor-subtitle">Update an admin-managed template. Changes take effect immediately for all skills backed by this template.</div>
+        </div>
+    </div>
+
+    {% if error_message %}
+    <div class="skill-template-error" role="alert">{{ error_message }}</div>
+    {% endif %}
+
+    <form class="skill-template-form" method="post" action="{{ url_for('prefix.AdminSkillTemplateUpdate', template_id=template_id) }}">
+        <div class="skill-template-form-grid">
+            <div class="skill-template-field">
+                <label for="tenant">Tenant</label>
+                <input id="tenant" name="tenant" type="text" required value="{{ form_data.get('tenant', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="namespace">Namespace</label>
+                <input id="namespace" name="namespace" type="text" required value="{{ form_data.get('namespace', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="display_name">Display name</label>
+                <input id="display_name" name="display_name" type="text" required value="{{ form_data.get('display_name', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="func_tenant">Function tenant</label>
+                <input id="func_tenant" name="func_tenant" type="text" required value="{{ form_data.get('func_tenant', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="func_namespace">Function namespace</label>
+                <input id="func_namespace" name="func_namespace" type="text" required value="{{ form_data.get('func_namespace', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="normal_funcname">Function name</label>
+                <input id="normal_funcname" name="normal_funcname" type="text" required value="{{ form_data.get('normal_funcname', '') }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="is_active">Status</label>
+                <select id="is_active" name="is_active">
+                    <option value="true" {% if form_data.get('is_active', True) %}selected{% endif %}>Active</option>
+                    <option value="false" {% if not form_data.get('is_active', True) %}selected{% endif %}>Inactive</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="skill-template-field">
+            <label for="description">Description</label>
+            <textarea id="description" name="description">{{ form_data.get('description', '') or '' }}</textarea>
+        </div>
+
+        <div class="skill-template-form-grid">
+            <div class="skill-template-field">
+                <label for="producer_funcname">Cache producer - R3</label>
+                <input id="producer_funcname" type="text" disabled value="{{ form_data.get('producer_funcname', '') or '' }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="producer_revision">Cache producer revision - R3</label>
+                <input id="producer_revision" type="text" disabled value="{{ form_data.get('producer_revision', '') or '' }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="consumer_funcname">Cache consumer - R3</label>
+                <input id="consumer_funcname" type="text" disabled value="{{ form_data.get('consumer_funcname', '') or '' }}">
+            </div>
+            <div class="skill-template-field">
+                <label for="consumer_revision">Cache consumer revision - R3</label>
+                <input id="consumer_revision" type="text" disabled value="{{ form_data.get('consumer_revision', '') or '' }}">
+            </div>
+        </div>
+
+        <div class="skill-template-actions">
+            <a class="ix-btn secondary" href="{{ url_for('prefix.apikeys') }}">Cancel</a>
+            <button class="ix-btn" type="submit">Save Changes</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
