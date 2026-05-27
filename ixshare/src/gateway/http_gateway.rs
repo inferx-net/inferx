@@ -46,6 +46,9 @@ use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 use opentelemetry::Context;
 use prometheus_client::encoding::text::encode;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::StreamableHttpServerConfig;
+use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
@@ -64,6 +67,8 @@ use crate::audit::{
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
+use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::tokenizer::ModelsFuncCall;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -783,7 +788,23 @@ impl HttpGateway {
 
         let auth_layer = GATEWAY_CONFIG.keycloakconfig.AuthLayer();
 
+        //////////////////////////////////////////////////////////////////////////////////////
+        // have to put the mpc code in this area for compiliation issue
+        let config = StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .with_sse_keep_alive(Some(std::time::Duration::from_secs(30)));
+
+        let session_manager = LocalSessionManager::default();
+        let mpcservice = StreamableHttpService::new(
+            move || Ok(McpStreamServer::new()),
+            Arc::new(session_manager),
+            config,
+        );
+
+        //////////////////////////////////////////////////////////////
+
         let app = Router::new()
+            .nest_service("/mcp", mpcservice)
             .route("/rbac/", post(RbacGrant))
             .route("/rbac/", delete(RbacRevoke))
             .route("/rbac/roles/", get(RbacRoleBindingGet))
@@ -1623,7 +1644,7 @@ async fn FuncCall(
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
-    return FuncCall1(&token, &gw, req).await
+    return FuncCall1(&token, &gw, req).await;
 }
 
 pub async fn FuncCall1(

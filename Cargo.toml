@@ -3,8 +3,6 @@ name = "qservice"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 inferxlib = { path = "./inferxlib" }
 ixshare = { path = "./ixshare" }
@@ -36,7 +34,6 @@ errno = "0.2.4"
 nix = "0.23.1"
 futures = "0.3"
 dns-lookup = "2.0.4"
-#clap = "4.5.9"
 clap = "2.33.3"
 oauth2 = "4.0"
 
@@ -47,17 +44,9 @@ http-body-util = "0.1"
 backtrace = "0.3.74"
 base64 = "0.22"
 
-[dependencies.lazy_static]
-version = "1.0"
-features = ["spin_no_std"]
-
 [dependencies.uuid]
 version = "1.3.1"
-features = [
-    "v4",                # Lets you generate random UUIDs
-    "fast-rng",          # Use a faster (but still sufficiently random) RNG
-    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
-]
+features = ["v4", "fast-rng", "macro-diagnostics"]
 
 [[bin]]
 name = "ixctl"
