@@ -373,6 +373,7 @@ impl ReqAuditAgent {
 pub struct UsageTick {
     pub session_id: String,
     pub tenant: String,
+    pub caller_tenant: Option<String>,
     pub namespace: String,
     pub funcname: String,
     pub fprevision: i64,          // model version
@@ -589,18 +590,19 @@ impl SqlAudit {
     pub async fn CreateUsageTickRecord(&self, tick: &UsageTick) -> Result<()> {
         let query = r#"
             INSERT INTO UsageTick (
-                session_id, tenant, namespace, funcname, fprevision, nodename, pod_id, gateway_id,
+                session_id, tenant, caller_tenant, namespace, funcname, fprevision, nodename, pod_id, gateway_id,
                 gpu_type, gpu_count, vram_mb, total_vram_mb,
                 tick_time, interval_ms, tick_type, usage_type, is_coldstart
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, $10, $11, $12,
-                $13, $14, $15, $16, $17
+                $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                $10, $11, $12, $13,
+                $14, $15, $16, $17, $18
             )
         "#;
         let _result = sqlx::query(query)
             .bind(&tick.session_id)
             .bind(&tick.tenant)
+            .bind(&tick.caller_tenant)
             .bind(&tick.namespace)
             .bind(&tick.funcname)
             .bind(tick.fprevision)

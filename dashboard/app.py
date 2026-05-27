@@ -38,6 +38,7 @@ except ImportError:
 from flask import (
     Blueprint,
     Flask,
+    flash,
     g,
     jsonify,
     redirect, url_for, session, 
@@ -193,6 +194,7 @@ MAX_GPU_VRAM_MB_ENV = "INFERX_MAX_GPU_VRAM_MB"
 MAX_GPU_COUNT_ENV = "INFERX_MAX_GPU_COUNT"
 OPEN_CODE_CONFIG_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "integration" / "opencode.json"
 KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
+SKILLS_DIR = Path("/opt/inferx/skills")
 FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
 
 
@@ -3356,6 +3358,7 @@ def normalize_catalog_api_type(api_type):
     return normalized
 
 
+
 def knowledgebase_stage_file_path(tenant: str, namespace: str, name: str) -> Path:
     return KNOWLEDGEBASE_DIR / f"{tenant}.{namespace}.{name}" / "kb.data"
 
@@ -4801,6 +4804,195 @@ def proxy_gateway_endpoint_admin_action(method: str, slug: str, *, metadata=None
         return int(body)
     except Exception:
         return body
+
+
+def list_admin_skill_templates():
+    url = f"{apihostaddr}/admin/skilltemplates"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid skill template list response")
+    return payload
+
+
+def create_admin_skill_template(payload):
+    url = f"{apihostaddr}/admin/skilltemplates"
+    resp = requests.post(
+        url,
+        headers=gateway_request_headers(json_body=True),
+        json=payload,
+        timeout=60,
+    )
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+
+    parsed = response_json_or_none(resp)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("invalid create skill template response")
+    return parsed
+
+
+def deactivate_admin_skill_template(template_id: int):
+    url = f"{apihostaddr}/admin/skilltemplates/{int(template_id)}/deactivate"
+    resp = requests.post(url, headers=gateway_request_headers(), timeout=60)
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return body
+
+
+def activate_admin_skill_template(template_id: int):
+    url = f"{apihostaddr}/admin/skilltemplates/{int(template_id)}/activate"
+    resp = requests.post(url, headers=gateway_request_headers(), timeout=60)
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return body
+
+
+def update_admin_skill_template(template_id: int, payload):
+    url = f"{apihostaddr}/admin/skilltemplates/{int(template_id)}"
+    resp = requests.put(
+        url,
+        headers=gateway_request_headers(json_body=True),
+        json=payload,
+        timeout=60,
+    )
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    parsed = response_json_or_none(resp)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("invalid update skill template response")
+    return parsed
+
+
+def delete_admin_skill_template(template_id: int):
+    url = f"{apihostaddr}/admin/skilltemplates/{int(template_id)}"
+    resp = requests.delete(url, headers=gateway_request_headers(), timeout=60)
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return body
+
+
+def normalize_admin_skill_template_form(form):
+    def required(field_name: str, label: str) -> str:
+        value = str(form.get(field_name, "") or "").strip()
+        if value == "":
+            raise ValueError(f"{label} is required")
+        return value
+
+    return {
+        "tenant": required("tenant", "Tenant"),
+        "namespace": required("namespace", "Namespace"),
+        "display_name": required("display_name", "Display name"),
+        "description": str(form.get("description", "") or "").strip(),
+        "func_tenant": required("func_tenant", "Function tenant"),
+        "func_namespace": required("func_namespace", "Function namespace"),
+        "normal_funcname": required("normal_funcname", "Function name"),
+        "is_active": str(form.get("is_active", "true") or "true").strip().lower() not in ("0", "false", "off", "no"),
+    }
+
+
+def list_active_skill_templates():
+    url = f"{apihostaddr}/skilltemplates"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid skill template response")
+    return payload
+
+
+def list_published_skills():
+    url = f"{apihostaddr}/skills"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid skills list response")
+    return payload
+
+
+def list_tenant_skills(owner_tenant: str):
+    url = f"{apihostaddr}/skills/{owner_tenant}"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid tenant skills response")
+    return payload
+
+
+def list_namespace_skills(owner_tenant: str, namespace: str):
+    url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid namespace skills response")
+    return payload
+
+
+def create_skill(owner_tenant: str, namespace: str, skillname: str, payload):
+    url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}/{skillname}"
+    resp = requests.post(
+        url,
+        headers=gateway_request_headers(json_body=True),
+        json=payload,
+        timeout=60,
+    )
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return response_json_or_none(resp)
+
+
+def post_skill_state_action(owner_tenant: str, namespace: str, skillname: str, action: str):
+    url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}/{skillname}/{action}"
+    resp = requests.post(url, headers=gateway_request_headers(), timeout=60)
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return body
+
+
+def delete_skill(owner_tenant: str, namespace: str, skillname: str):
+    url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}/{skillname}"
+    resp = requests.delete(url, headers=gateway_request_headers(), timeout=60)
+    body = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(body or f"HTTP {resp.status_code}")
+    return body
+
+
+def build_skill_form_context(*, roles=None):
+    if roles is None:
+        roles = listroles()
+    deploy_target = build_catalog_deploy_target_selector_context(roles=roles)
+    deploy_target = dict(deploy_target)
+    deploy_target["resolved_summary_label"] = "Skill owner:"
+    deploy_target["unresolved_summary_label"] = "Skill owner not selected:"
+    deploy_target["action_label"] = "Create Skill"
+    deploy_target["preferred_namespace_value"] = "default"
+    templates = list_active_skill_templates()
+    return {
+        "deploy_target": deploy_target,
+        "skill_templates": templates,
+    }
 
 
 def endpoint_metadata_payload_from_prefill(data):
@@ -7416,6 +7608,496 @@ def EndpointAdminUnpublish(slug):
     return jsonify({"slug": slug, "version": version, "published": False})
 
 
+@prefix_bp.route("/admin/skilltemplates", methods=["GET"])
+@require_login
+@require_admin
+def AdminSkillTemplates():
+    try:
+        templates = list_admin_skill_templates()
+    except Exception as e:
+        return json_error(f"failed to load skill templates: {e}", 500)
+
+    return render_template(
+        "admin_skill_templates.html",
+        skill_templates=templates,
+    )
+
+
+@prefix_bp.route("/admin/skilltemplates/json", methods=["GET"])
+@require_login
+@require_admin
+def AdminSkillTemplatesJson():
+    try:
+        templates = list_admin_skill_templates()
+    except Exception as e:
+        return json_error(f"failed to load skill templates: {e}", 500)
+    return jsonify(templates)
+
+
+@prefix_bp.route("/admin/skilltemplate_create", methods=["GET"])
+@require_login
+@require_admin
+def AdminSkillTemplateCreate():
+    prefill = {
+        "tenant": "inferx",
+        "namespace": "skills",
+        "display_name": "",
+        "description": "",
+        "func_tenant": "inferx",
+        "func_namespace": "skills",
+        "normal_funcname": "",
+        "is_active": True,
+    }
+
+    return render_template(
+        "admin_skill_template_create.html",
+        form_data=prefill,
+        error_message="",
+    )
+
+
+@prefix_bp.route("/admin/skilltemplate_save", methods=["POST"])
+@require_login
+@require_admin
+def AdminSkillTemplateSave():
+    try:
+        payload = normalize_admin_skill_template_form(request.form)
+        create_admin_skill_template(payload)
+    except ValueError as e:
+        return render_template(
+            "admin_skill_template_create.html",
+            form_data={
+                "tenant": str(request.form.get("tenant", "") or "").strip(),
+                "namespace": str(request.form.get("namespace", "") or "").strip(),
+                "display_name": str(request.form.get("display_name", "") or "").strip(),
+                "description": str(request.form.get("description", "") or "").strip(),
+                "func_tenant": str(request.form.get("func_tenant", "") or "").strip(),
+                "func_namespace": str(request.form.get("func_namespace", "") or "").strip(),
+                "normal_funcname": str(request.form.get("normal_funcname", "") or "").strip(),
+                "is_active": str(request.form.get("is_active", "true") or "true").strip().lower() not in ("0", "false", "off", "no"),
+            },
+            error_message=str(e),
+        )
+    except Exception as e:
+        message = str(e)
+        if "skill template name is taken" in message:
+            message = "Template name is already taken"
+        return render_template(
+            "admin_skill_template_create.html",
+            form_data={
+                "tenant": str(request.form.get("tenant", "") or "").strip(),
+                "namespace": str(request.form.get("namespace", "") or "").strip(),
+                "display_name": str(request.form.get("display_name", "") or "").strip(),
+                "description": str(request.form.get("description", "") or "").strip(),
+                "func_tenant": str(request.form.get("func_tenant", "") or "").strip(),
+                "func_namespace": str(request.form.get("func_namespace", "") or "").strip(),
+                "normal_funcname": str(request.form.get("normal_funcname", "") or "").strip(),
+                "is_active": str(request.form.get("is_active", "true") or "true").strip().lower() not in ("0", "false", "off", "no"),
+            },
+            error_message=message,
+        )
+
+    return redirect(url_for("prefix.apikeys"))
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>/deactivate", methods=["POST"])
+@require_login
+@require_admin
+def AdminSkillTemplateDeactivate(template_id: int):
+    try:
+        deactivate_admin_skill_template(template_id)
+    except Exception as e:
+        return json_error(f"failed to deactivate skill template: {e}", 502)
+    return jsonify({"ok": True})
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>/activate", methods=["POST"])
+@require_login
+@require_admin
+def AdminSkillTemplateActivate(template_id: int):
+    try:
+        activate_admin_skill_template(template_id)
+    except Exception as e:
+        return json_error(f"failed to activate skill template: {e}", 502)
+    return jsonify({"ok": True})
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>", methods=["GET"])
+@require_login
+@require_admin
+def AdminSkillTemplateDetail(template_id: int):
+    try:
+        templates = list_admin_skill_templates()
+    except Exception as e:
+        return json_error(f"failed to load skill template: {e}", 500)
+
+    template = next((t for t in templates if t.get("template_id") == template_id), None)
+    if template is None:
+        return json_error("skill template not found", 404)
+
+    return render_template(
+        "admin_skill_template_detail.html",
+        template=template,
+    )
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>/edit", methods=["GET"])
+@require_login
+@require_admin
+def AdminSkillTemplateEdit(template_id: int):
+    try:
+        templates = list_admin_skill_templates()
+    except Exception as e:
+        return json_error(f"failed to load skill template: {e}", 500)
+
+    template = next((t for t in templates if t.get("template_id") == template_id), None)
+    if template is None:
+        return json_error("skill template not found", 404)
+
+    return render_template(
+        "admin_skill_template_edit.html",
+        template_id=template_id,
+        form_data=template,
+        error_message="",
+    )
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>/update", methods=["POST"])
+@require_login
+@require_admin
+def AdminSkillTemplateUpdate(template_id: int):
+    def render_edit(error_message):
+        return render_template(
+            "admin_skill_template_edit.html",
+            template_id=template_id,
+            form_data={
+                "tenant": str(request.form.get("tenant", "") or "").strip(),
+                "namespace": str(request.form.get("namespace", "") or "").strip(),
+                "display_name": str(request.form.get("display_name", "") or "").strip(),
+                "description": str(request.form.get("description", "") or "").strip(),
+                "func_tenant": str(request.form.get("func_tenant", "") or "").strip(),
+                "func_namespace": str(request.form.get("func_namespace", "") or "").strip(),
+                "normal_funcname": str(request.form.get("normal_funcname", "") or "").strip(),
+                "is_active": str(request.form.get("is_active", "true") or "true").strip().lower() not in ("0", "false", "off", "no"),
+            },
+            error_message=error_message,
+        )
+
+    try:
+        payload = normalize_admin_skill_template_form(request.form)
+        update_admin_skill_template(template_id, payload)
+    except ValueError as e:
+        return render_edit(str(e))
+    except Exception as e:
+        message = str(e)
+        if "skill template name is taken" in message:
+            message = "Template name is already taken"
+        return render_edit(message)
+
+    return redirect(url_for("prefix.apikeys"))
+
+
+@prefix_bp.route("/admin/skilltemplate/<int:template_id>/delete", methods=["POST"])
+@require_login
+@require_admin
+def AdminSkillTemplateDelete(template_id: int):
+    try:
+        delete_admin_skill_template(template_id)
+    except Exception as e:
+        message = str(e)
+        if "in use by existing skills" in message:
+            return json_error("Cannot delete: template is in use by existing skills.", 409)
+        return json_error(f"failed to delete skill template: {e}", 502)
+    return jsonify({"ok": True})
+
+
+def render_skill_create_page(*, form_data=None, error_message="", success_message=""):
+    try:
+        context = build_skill_form_context()
+    except Exception as e:
+        return json_error(f"failed to load skill create page: {e}", 500)
+
+    deploy_target = context["deploy_target"]
+    merged_form_data = {
+        "skillname": "",
+        "tenant": deploy_target.get("selected_tenant", ""),
+        "namespace": deploy_target.get("selected_namespace", ""),
+        "template_id": "",
+        "prefix": "",
+        "gpu_billing_target": "caller",
+    }
+    if isinstance(form_data, dict):
+        merged_form_data.update(form_data)
+
+    return render_template(
+        "skill_create.html",
+        form_data=merged_form_data,
+        error_message=error_message,
+        success_message=success_message,
+        deploy_target=deploy_target,
+        skill_templates=context["skill_templates"],
+    )
+
+
+@prefix_bp.route("/listskills", methods=["GET"])
+@require_login
+def ListSkills():
+    try:
+        active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+        if active_tenant == "":
+            raise RuntimeError("No active tenant selected")
+
+        is_inferx_admin = is_inferx_admin_user()
+        if is_inferx_admin:
+            all_skills = list_published_skills()
+            my_skills = [r for r in all_skills if str(r.get("owner_tenant", "") or "").lower() == active_tenant.lower()]
+            my_skill_ids = {int(r["skill_id"]) for r in my_skills if r.get("skill_id") is not None}
+            published_skills = [r for r in all_skills if r.get("skill_id") is None or int(r["skill_id"]) not in my_skill_ids]
+        else:
+            my_skills = list_tenant_skills(active_tenant)
+            my_skill_ids = {int(r["skill_id"]) for r in my_skills if r.get("skill_id") is not None}
+            published_skills = []
+            for row in list_published_skills():
+                skill_id = row.get("skill_id")
+                if skill_id is not None and int(skill_id) in my_skill_ids:
+                    continue
+                published_skills.append(row)
+    except Exception as e:
+        return json_error(f"failed to load skills: {e}", 500)
+
+    return render_template(
+        "skill_list.html",
+        active_tenant=active_tenant,
+        my_skills=my_skills,
+        published_skills=published_skills,
+        is_inferx_admin=is_inferx_admin,
+    )
+
+
+@prefix_bp.route("/skill_create", methods=["GET"])
+@require_login
+def SkillCreate():
+    return render_skill_create_page()
+
+
+@prefix_bp.route("/skill_save", methods=["POST"])
+@require_login
+def SkillSave():
+    form_data = {
+        "skillname": str(request.form.get("skillname", "") or "").strip(),
+        "tenant": str(request.form.get("tenant", "") or "").strip(),
+        "namespace": str(request.form.get("namespace", "") or "").strip(),
+        "template_id": str(request.form.get("template_id", "") or "").strip(),
+        "description": str(request.form.get("description", "") or "").strip(),
+        "gpu_billing_target": str(request.form.get("gpu_billing_target", "caller") or "caller").strip().lower(),
+        "prefix": str(request.form.get("prefix", "") or ""),
+    }
+
+    try:
+        if form_data["tenant"] == "":
+            raise ValueError("Tenant is required")
+        if not re.fullmatch(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", form_data["skillname"]):
+            raise ValueError("Skill name must match ^[a-zA-Z0-9][a-zA-Z0-9-]*$")
+        if form_data["namespace"] == "":
+            raise ValueError("Namespace is required")
+        template_id = int(form_data["template_id"])
+        if not form_data["description"]:
+            raise ValueError("Description is required")
+        if form_data["gpu_billing_target"] not in ("caller", "owner"):
+            raise ValueError("GPU billed to must be Caller or Owner")
+        if not form_data["prefix"].strip():
+            raise ValueError("System prompt is required")
+
+        create_skill(
+            form_data["tenant"],
+            form_data["namespace"],
+            form_data["skillname"],
+            {
+                "template_id": template_id,
+                "description": form_data["description"] or None,
+                "prefix": form_data["prefix"],
+                "serving_mode": "dedicated",
+                "has_cache": False,
+                "gpu_billing_target": form_data["gpu_billing_target"],
+            },
+        )
+    except ValueError as e:
+        return render_skill_create_page(form_data=form_data, error_message=str(e))
+    except Exception as e:
+        return render_skill_create_page(form_data=form_data, error_message=str(e))
+
+    flash("Skill created — publish it when ready", "success")
+    return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/skill/publish/<owner>/<ns>/<name>", methods=["POST"])
+@require_login
+def SkillPublish(owner, ns, name):
+    try:
+        post_skill_state_action(owner, ns, name, "publish")
+    except Exception as e:
+        return json_error(f"failed to publish skill: {e}", 502)
+    return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/skill/unpublish/<owner>/<ns>/<name>", methods=["POST"])
+@require_login
+def SkillUnpublish(owner, ns, name):
+    try:
+        post_skill_state_action(owner, ns, name, "unpublish")
+    except Exception as e:
+        return json_error(f"failed to unpublish skill: {e}", 502)
+    return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/skill/delete/<owner>/<ns>/<name>", methods=["POST"])
+@require_login
+def SkillDelete(owner, ns, name):
+    try:
+        delete_skill(owner, ns, name)
+    except Exception as e:
+        return json_error(f"failed to delete skill: {e}", 502)
+    return redirect(url_for("prefix.ListSkills"))
+
+
+def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):
+    url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}/{skillname}"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
+    payload = response_json_or_none(resp)
+    if is_upstream_resource_unavailable(resp, payload):
+        raise LookupError(f"skill `{owner_tenant}/{namespace}/{skillname}` not found")
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise RuntimeError(detail or f"HTTP {resp.status_code}")
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid skill detail response")
+    return payload
+
+
+def load_skill_prefix_text(tenant: str, namespace: str, name: str, version: int) -> str:
+    path = SKILLS_DIR / f"{tenant}.{namespace}.{name}" / str(version) / "skill.data"
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+
+
+def build_skill_sample_rest_call(owner_tenant: str, namespace: str, skillname: str, normal_funcname: str, apikey: str) -> str:
+    base_url = normalize_public_api_base_url()
+    url = f"{base_url}/skills/{owner_tenant}/{namespace}/{skillname}/v1/chat/completions"
+    token = str(apikey or "").strip() or build_inference_apikey_placeholder()
+    body = json.dumps({
+        "model": normal_funcname,
+        "messages": [{"role": "user", "content": "What's in the context?"}],
+        "stream": True,
+    }, indent=2)
+    lines = [
+        f"curl -X POST '{url}'",
+        f"  -H 'Authorization: Bearer {token}'",
+        "  -H 'Content-Type: application/json'",
+        f"  -d '{body}'",
+    ]
+    return " \\\n".join(lines)
+
+
+@prefix_bp.route("/skill", methods=["GET"])
+@require_login
+def SkillDetail():
+    owner = str(request.args.get("owner", "") or "").strip()
+    ns = str(request.args.get("ns", "") or "").strip()
+    name = str(request.args.get("name", "") or "").strip()
+
+    if not owner or not ns or not name:
+        return json_error("owner, ns, and name are required", 400)
+
+    try:
+        skill = get_skill_detail(owner, ns, name)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except Exception as e:
+        return json_error(f"failed to load skill: {e}", 502)
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    can_manage = has_admin_role_for_model(roles, owner, ns) or is_inferx_admin_user()
+    if not can_manage and not skill.get("is_published"):
+        return Response("No permission", status=403)
+
+    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(owner)
+    normal_funcname = str(skill.get("normal_funcname", "") or "").strip()
+
+    func_tenant = str(skill.get("func_tenant", "") or "").strip()
+    func_namespace = str(skill.get("func_namespace", "") or "").strip()
+    model_name = normal_funcname
+    if func_tenant and func_namespace and normal_funcname:
+        try:
+            _, backing_func = getfunc_response(func_tenant, func_namespace, normal_funcname)
+            if backing_func is not None:
+                backing_spec = (((backing_func.get("func") or {}).get("object") or {}).get("spec") or {})
+                resolved = resolve_effective_model_target_from_spec(backing_spec)
+                if resolved:
+                    model_name = resolved
+        except Exception:
+            pass
+
+    sample_rest_call = build_skill_sample_rest_call(owner, ns, name, model_name, onboarding_apikey)
+    sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey) if onboarding_apikey else sample_rest_call
+
+    base_url = normalize_public_api_base_url()
+    skill_api_base_url = f"{base_url}/skills/{owner}/{ns}/{name}/v1"
+    auth_required = str(owner or "").strip().lower() != "public"
+    normalized_apikey = str(onboarding_apikey or "").strip()
+    api_key_copyable = False
+    if not auth_required:
+        api_key_value = "(not required for public models)"
+        api_key_display = api_key_value
+        onboarding_apikey_name = ""
+    elif normalized_apikey != "":
+        api_key_value = normalized_apikey
+        api_key_display = mask_apikey_for_ui(normalized_apikey)
+        api_key_copyable = True
+    else:
+        api_key_value = build_inference_apikey_placeholder()
+        api_key_display = api_key_value
+    client_setup = {
+        "api_base_url": skill_api_base_url,
+        "auth_required": auth_required,
+        "model_name": model_name,
+        "api_key": api_key_value,
+        "api_key_display": api_key_display,
+        "api_key_copyable": api_key_copyable,
+        "api_key_name": str(onboarding_apikey_name or "").strip(),
+    }
+    opencode_download_href = ""
+    if session.get("access_token", "") != "" and skill_api_base_url:
+        opencode_download_href = url_for(
+            "prefix.DownloadSkillOpenCodeConfig",
+            owner=owner,
+            ns=ns,
+            name=name,
+        )
+
+    return render_template(
+        "skill_detail.html",
+        skill=skill,
+        owner=owner,
+        ns=ns,
+        name=name,
+        normal_funcname=normal_funcname,
+        model_name=model_name,
+        sample_rest_call=sample_rest_call,
+        sample_rest_call_display=sample_rest_call_display,
+        client_setup=client_setup,
+        opencode_download_href=opencode_download_href,
+        can_manage=can_manage,
+    )
+
+
 @prefix_bp.route("/catalog", methods=["GET"])
 @not_require_login
 def CatalogList():
@@ -8601,6 +9283,97 @@ def api_get_func(tenant, namespace, name):
             resp.status_code,
         )
     return jsonify({"exists": True}), 200
+
+
+
+@prefix_bp.route("/skill/download-prefix/<owner>/<ns>/<name>", methods=["GET"])
+@require_login
+def download_skill_prefix(owner, ns, name):
+    deny_resp = deny_public_tenant_request(owner)
+    if deny_resp is not None:
+        return deny_resp
+
+    if not re.fullmatch(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$", name):
+        return json_error("invalid skill name", 400)
+
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not has_admin_role_for_model(roles, owner, ns) and not is_inferx_admin_user():
+        return Response("No permission", status=403)
+
+    try:
+        skill = get_skill_detail(owner, ns, name)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except Exception as e:
+        return json_error(f"failed to load skill: {e}", 502)
+
+    version = skill.get("version") or 0
+    skill_file = SKILLS_DIR / f"{owner}.{ns}.{name}" / str(version) / "skill.data"
+    if not skill_file.exists():
+        return json_error("system prompt file not found", 404)
+
+    return send_from_directory(
+        str(skill_file.parent),
+        skill_file.name,
+        as_attachment=True,
+        download_name=f"{name}-skill.data",
+    )
+
+
+@prefix_bp.route("/skill/download-opencode/<owner>/<ns>/<name>", methods=["GET"])
+@require_login
+def DownloadSkillOpenCodeConfig(owner, ns, name):
+    try:
+        roles = listroles()
+    except Exception as e:
+        return json_error(f"failed to load roles: {e}", 502)
+
+    if not has_admin_role_for_model(roles, owner, ns) and not is_inferx_admin_user():
+        return Response("No permission", status=403)
+
+    try:
+        skill = get_skill_detail(owner, ns, name)
+    except LookupError as e:
+        return json_error(str(e), 404)
+    except Exception as e:
+        return json_error(f"failed to load skill: {e}", 502)
+
+    onboarding_apikey, _ = resolve_onboarding_inference_apikey_for_ui(owner)
+    normalized_apikey = str(onboarding_apikey or "").strip()
+    if not normalized_apikey:
+        normalized_apikey = build_inference_apikey_placeholder()
+
+    base_url = normalize_public_api_base_url()
+    api_base_url = f"{base_url}/skills/{owner}/{ns}/{name}/v1"
+    normal_funcname = str(skill.get("normal_funcname", "") or "").strip()
+    func_tenant = str(skill.get("func_tenant", "") or "").strip()
+    func_namespace = str(skill.get("func_namespace", "") or "").strip()
+    model_name = normal_funcname
+    if func_tenant and func_namespace and normal_funcname:
+        try:
+            _, backing_func = getfunc_response(func_tenant, func_namespace, normal_funcname)
+            if backing_func is not None:
+                backing_spec = (((backing_func.get("func") or {}).get("object") or {}).get("spec") or {})
+                resolved = resolve_effective_model_target_from_spec(backing_spec)
+                if resolved:
+                    model_name = resolved
+        except Exception:
+            pass
+    if not model_name:
+        return json_error("OpenCode config is unavailable: missing model name.", 400)
+
+    return build_opencode_download_response(
+        filename_stem=f"inferx-opencode-skill-{owner}-{ns}-{name}",
+        api_base_url=api_base_url,
+        api_key=normalized_apikey,
+        model_name=model_name,
+        context_length=8192,
+        output_length=16384,
+    )
 
 
 @prefix_bp.route("/kb/upload/<tenant>/<namespace>/<name>", methods=["POST"])

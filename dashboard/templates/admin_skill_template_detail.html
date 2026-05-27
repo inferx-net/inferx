@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .skill-template-detail-page {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+        display: grid;
+        gap: 16px;
+    }
+
+    .skill-template-detail-page h2 {
+        margin: 0;
+        font-size: 22px;
+        color: #1f2937;
+    }
+
+    .skill-template-detail-page .editor-subtitle {
+        color: #64748b;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .skill-template-detail-card {
+        display: grid;
+        gap: 14px;
+        padding: 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 2px;
+        background: #ffffff;
+        margin-bottom: 14px;
+    }
+
+    .skill-template-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+    }
+
+    .skill-template-detail-field label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .skill-template-detail-field .value {
+        font-size: 14px;
+        color: #1f2937;
+        word-break: break-all;
+    }
+
+    .skill-template-detail-field .value.muted {
+        color: #94a3b8;
+        font-style: italic;
+    }
+
+    .skill-template-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #475569;
+    }
+
+    .skill-template-badge.inactive {
+        border-color: #d1d5db;
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+</style>
+
+<div class="skill-template-detail-page">
+    <div class="skill-template-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+            <h2>{{ template.get('display_name') or 'Skill Template' }}</h2>
+            <div class="editor-subtitle">{{ template.get('tenant') }}/{{ template.get('namespace') }} &middot; ID #{{ template.get('template_id') }}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <a class="ix-btn secondary" href="{{ url_for('prefix.apikeys') }}">Back</a>
+            <a class="ix-btn secondary" href="{{ url_for('prefix.AdminSkillTemplateEdit', template_id=template.get('template_id')) }}">Edit</a>
+            {% if template.get('is_active') %}
+            <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDeactivate', template_id=template.get('template_id')) }}" onsubmit="return confirm('Deactivating hides this template from new skill creation. Existing skills are unaffected.');" style="display:inline;">
+                <button class="ix-btn secondary" type="submit">Deactivate</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('prefix.AdminSkillTemplateActivate', template_id=template.get('template_id')) }}" style="display:inline;">
+                <button class="ix-btn secondary" type="submit">Activate</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDelete', template_id=template.get('template_id')) }}" onsubmit="return confirm('Delete this template? This cannot be undone. Templates in use by existing skills cannot be deleted.');" style="display:inline;">
+                <button class="ix-btn danger" type="submit">Delete</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="skill-template-detail-card">
+        <div class="skill-template-detail-grid">
+            <div class="skill-template-detail-field">
+                <label>Status</label>
+                <div class="value">
+                    {% if template.get('is_active') %}
+                    <span class="skill-template-badge">Active</span>
+                    {% else %}
+                    <span class="skill-template-badge inactive">Inactive</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Tenant</label>
+                <div class="value">{{ template.get('tenant') }}</div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Namespace</label>
+                <div class="value">{{ template.get('namespace') }}</div>
+            </div>
+        </div>
+
+        <div class="skill-template-detail-field">
+            <label>Description</label>
+            <div class="value {% if not template.get('description') %}muted{% endif %}">
+                {{ template.get('description') or 'No description' }}
+            </div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;">
+
+        <div class="skill-template-detail-grid">
+            <div class="skill-template-detail-field">
+                <label>Function Tenant</label>
+                <div class="value">{{ template.get('func_tenant') }}</div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Function Namespace</label>
+                <div class="value">{{ template.get('func_namespace') }}</div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Function Name (Normal)</label>
+                <div class="value">{{ template.get('normal_funcname') }}</div>
+            </div>
+        </div>
+
+        {% if template.get('producer_funcname') or template.get('consumer_funcname') %}
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;">
+        <div class="skill-template-detail-grid">
+            <div class="skill-template-detail-field">
+                <label>Cache Producer (R3)</label>
+                <div class="value {% if not template.get('producer_funcname') %}muted{% endif %}">
+                    {{ template.get('producer_funcname') or '—' }}
+                </div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Cache Producer Revision</label>
+                <div class="value {% if not template.get('producer_revision') %}muted{% endif %}">
+                    {{ template.get('producer_revision') or '—' }}
+                </div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Cache Consumer (R3)</label>
+                <div class="value {% if not template.get('consumer_funcname') %}muted{% endif %}">
+                    {{ template.get('consumer_funcname') or '—' }}
+                </div>
+            </div>
+            <div class="skill-template-detail-field">
+                <label>Cache Consumer Revision</label>
+                <div class="value {% if not template.get('consumer_revision') %}muted{% endif %}">
+                    {{ template.get('consumer_revision') or '—' }}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

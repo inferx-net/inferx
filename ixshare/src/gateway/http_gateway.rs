@@ -13,6 +13,7 @@
 // limitations under
 
 use core::str;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -96,7 +97,7 @@ use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
-use super::secret::{EndpointMetadata, SqlSecret};
+use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
 // use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::TokenizerRoute;
 use super::tokenizer::NormalizeFuncRequest;
@@ -105,6 +106,227 @@ const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 const VIRTUAL_ENDPOINTS_NAMESPACE: &str = "endpoints";
 const PLATFORM_TENANT: &str = "inferx";
 const PLATFORM_SHARED_NAMESPACE: &str = "endpoint";
+const SKILLS_NAMESPACE: &str = "skills";
+const SKILLS_ROOT_DIR: &str = "/opt/inferx/skills";
+const SKILL_FILE_NAME: &str = "skill.data";
+
+#[derive(Debug, Deserialize)]
+struct SkillCreateRequest {
+    template_id: i64,
+    prefix: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    serving_mode: Option<String>,
+    #[serde(default)]
+    has_cache: Option<bool>,
+    #[serde(default)]
+    gpu_billing_target: Option<String>,
+    #[serde(default)]
+    earning_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillTemplateCreateRequest {
+    tenant: String,
+    namespace: String,
+    display_name: String,
+    #[serde(default)]
+    description: Option<String>,
+    func_tenant: String,
+    func_namespace: String,
+    normal_funcname: String,
+    #[serde(default = "default_true")]
+    is_active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillTemplateUpdateRequest {
+    tenant: String,
+    namespace: String,
+    display_name: String,
+    #[serde(default)]
+    description: Option<String>,
+    func_tenant: String,
+    func_namespace: String,
+    normal_funcname: String,
+    #[serde(default = "default_true")]
+    is_active: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn skill_version_dir_path(
+    owner_tenant: &str,
+    owner_namespace: &str,
+    skillname: &str,
+    version: i32,
+) -> PathBuf {
+    PathBuf::from(SKILLS_ROOT_DIR)
+        .join(format!("{}.{}.{}", owner_tenant, owner_namespace, skillname))
+        .join(version.to_string())
+}
+
+fn skill_file_path(owner_tenant: &str, owner_namespace: &str, skillname: &str, version: i32) -> PathBuf {
+    skill_version_dir_path(owner_tenant, owner_namespace, skillname, version).join(SKILL_FILE_NAME)
+}
+
+fn skill_root_path(owner_tenant: &str, owner_namespace: &str, skillname: &str) -> PathBuf {
+    PathBuf::from(SKILLS_ROOT_DIR)
+        .join(format!("{}.{}.{}", owner_tenant, owner_namespace, skillname))
+}
+
+fn write_skill_prefix(
+    owner_tenant: &str,
+    owner_namespace: &str,
+    skillname: &str,
+    version: i32,
+    prefix: &str,
+) -> Result<()> {
+    let dir = skill_version_dir_path(owner_tenant, owner_namespace, skillname, version);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(skill_file_path(owner_tenant, owner_namespace, skillname, version), prefix)?;
+    Ok(())
+}
+
+fn remove_skill_storage(owner_tenant: &str, owner_namespace: &str, skillname: &str) -> Result<()> {
+    let root = skill_root_path(owner_tenant, owner_namespace, skillname);
+    if root.exists() {
+        std::fs::remove_dir_all(root)?;
+    }
+    Ok(())
+}
+
+fn load_skill_prefix(skill: &SkillDetail) -> Result<String> {
+    Ok(std::fs::read_to_string(skill_file_path(
+        &skill.owner_tenant,
+        &skill.owner_namespace,
+        &skill.skillname,
+        skill.version,
+    ))?)
+}
+
+fn json_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+fn normalize_skill_request(
+    remain_path: &str,
+    body_bytes: &[u8],
+    prefix: &str,
+    model_path: Option<&str>,
+) -> SResult<Option<super::tokenizer::NormalizedFuncRequest>, StatusCode> {
+    if remain_path.starts_with("/v1/chat/completions") {
+        let mut body: Value = serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let obj = body
+            .as_object_mut()
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        let messages = obj
+            .remove("messages")
+            .and_then(|v| v.as_array().cloned())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+
+        let mut system_parts = Vec::new();
+        if !prefix.trim().is_empty() {
+            system_parts.push(prefix.trim().to_string());
+        }
+
+        let mut non_system = Vec::new();
+        for msg in messages {
+            let role = msg.get("role").and_then(Value::as_str).unwrap_or("");
+            if role == "system" {
+                if let Some(content) = msg.get("content").and_then(json_text) {
+                    if !content.trim().is_empty() {
+                        system_parts.push(content);
+                    }
+                }
+            } else {
+                non_system.push(msg);
+            }
+        }
+
+        let mut rewritten = Vec::new();
+        if !system_parts.is_empty() {
+            rewritten.push(serde_json::json!({
+                "role": "system",
+                "content": system_parts.join("\n\n"),
+            }));
+        }
+        rewritten.extend(non_system);
+        obj.insert("messages".to_string(), Value::Array(rewritten));
+        if let Some(mp) = model_path {
+            obj.insert("model".to_string(), Value::String(mp.to_string()));
+        }
+
+        return Ok(Some(super::tokenizer::NormalizedFuncRequest {
+            target_path: remain_path.to_string(),
+            body_bytes: serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            content_type: "application/json",
+        }));
+    }
+
+    if remain_path.starts_with("/v1/completions") {
+        let mut body: Value = serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let obj = body
+            .as_object_mut()
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        let prompt = obj
+            .remove("prompt")
+            .and_then(|v| json_text(&v))
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        let combined = if prefix.trim().is_empty() {
+            prompt
+        } else if prompt.trim().is_empty() {
+            prefix.to_string()
+        } else {
+            format!("{}\n\n{}", prefix, prompt)
+        };
+        obj.insert("prompt".to_string(), Value::String(combined));
+        if let Some(mp) = model_path {
+            obj.insert("model".to_string(), Value::String(mp.to_string()));
+        }
+
+        return Ok(Some(super::tokenizer::NormalizedFuncRequest {
+            target_path: remain_path.to_string(),
+            body_bytes: serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+            content_type: "application/json",
+        }));
+    }
+
+    Ok(None)
+}
+
+fn resolve_skill_calling_tenant(token: &AccessToken, skill: &SkillDetail) -> Result<String> {
+    if let Some(tenant) = token.restrictTenant.as_ref() {
+        return Ok(tenant.clone());
+    }
+
+    if !skill.is_published
+        && token.IsNamespaceInferenceUser(&skill.owner_tenant, &skill.owner_namespace)
+    {
+        return Ok(skill.owner_tenant.clone());
+    }
+
+    let mut tenants: BTreeSet<String> = token
+        .UserTenants()
+        .into_iter()
+        .filter(|tenant| tenant != "public")
+        .collect();
+
+    if tenants.len() == 1 {
+        return Ok(tenants.pop_first().unwrap());
+    }
+
+    Err(Error::CommonError(
+        "skill call requires a tenant-restricted API key or a single-tenant token".to_string(),
+    ))
+}
 
 lazy_static::lazy_static! {
     #[derive(Debug)]
@@ -358,6 +580,7 @@ fn resolve_funccall_target(
             physical: identity,
             policy: GW_OBJREPO.get().unwrap().FuncPolicy(&func),
             func,
+            caller_tenant: None,
         });
     }
 
@@ -406,6 +629,7 @@ fn resolve_funccall_target(
         },
         policy: endpoint_policy_for_request(gw, tenant, funcname),
         func,
+        caller_tenant: None,
     })
 }
 
@@ -616,6 +840,42 @@ impl HttpGateway {
             .route("/funccall/*rest", post(FuncCall))
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
+            .route("/skilltemplates", get(ListSkillTemplates))
+            .route("/skills", get(ListPublishedSkills))
+            .route("/skills/:owner_tenant", get(ListSkillsByTenant))
+            .route("/skills/:owner_tenant/:namespace", get(ListSkillsByNamespace))
+            .route(
+                "/admin/skilltemplates",
+                get(ListAdminSkillTemplates).post(CreateSkillTemplate),
+            )
+            .route(
+                "/admin/skilltemplates/:template_id",
+                put(UpdateSkillTemplate).delete(DeleteSkillTemplate),
+            )
+            .route(
+                "/admin/skilltemplates/:template_id/activate",
+                post(ActivateSkillTemplate),
+            )
+            .route(
+                "/admin/skilltemplates/:template_id/deactivate",
+                post(DeactivateSkillTemplate),
+            )
+            .route(
+                "/skills/:owner_tenant/:namespace/:skillname",
+                post(CreateSkill).get(GetSkill).delete(DeleteSkill),
+            )
+            .route(
+                "/skills/:owner_tenant/:namespace/:skillname/publish",
+                post(PublishSkill),
+            )
+            .route(
+                "/skills/:owner_tenant/:namespace/:skillname/unpublish",
+                post(UnpublishSkill),
+            )
+            .route(
+                "/skills/:owner_tenant/:namespace/:skillname/*subpath",
+                post(SkillCall).get(SkillCall).head(SkillCall),
+            )
             .route("/tokenizer/*rest", post(TokenizerRoute))
             .route("/tokenizer/*rest", get(TokenizerRoute))
             .route("/tokenizer/*rest", head(TokenizerRoute))
@@ -1390,19 +1650,9 @@ async fn FuncCall(
 pub async fn FuncCall1(
     token: &Arc<AccessToken>,
     gw: &HttpGateway,
-    mut req: Request,
+    req: Request,
 ) -> SResult<Response, StatusCode> {
-    let reqStart = std::time::Instant::now();
-    let headers = req.headers().clone();
     let path = req.uri().path();
-
-    let tracer = opentelemetry::global::tracer("gateway");
-    let mut ttftSpan = tracer.start("TTFT");
-    ttftSpan.set_attribute(KeyValue::new("req", path.to_owned()));
-    let ttftCtx = Context::current_with_span(ttftSpan);
-
-    let now = std::time::Instant::now();
-
     let parts = path.split("/").collect::<Vec<&str>>();
     let partsCount = parts.len();
     if partsCount < 5 {
@@ -1431,7 +1681,6 @@ pub async fn FuncCall1(
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
     let funcname = parts[4].to_owned();
-
     if is_blocked_public_endpoint_inference(&tenant, &namespace) {
         let body = Body::from("service failure: unsupported");
         let resp = Response::builder()
@@ -1465,14 +1714,6 @@ pub async fn FuncCall1(
         remainPath = remainPath + "/" + parts[i];
     }
 
-    let mut labels = FunccallLabels {
-        tenant: tenant.clone(),
-        namespace: namespace.clone(),
-        funcname: funcname.clone(),
-        status: StatusCode::OK.as_u16(),
-    };
-
-    let timestamp = IxTimestamp::default();
     let route = match resolve_funccall_target(&gw, &tenant, &namespace, &funcname) {
         Ok(route) => route,
         Err(e) => {
@@ -1483,13 +1724,55 @@ pub async fn FuncCall1(
             return Ok(resp);
         }
     };
-    let policy = route.policy.clone();
+    dispatch_func_call(
+        gw,
+        req,
+        route,
+        tenant,
+        namespace,
+        funcname,
+        remainPath,
+        None,
+    )
+    .await
+}
 
+pub const TCPCONN_LATENCY_HEADER: &'static str = "X-TcpConn-Latency";
+pub const TTFT_LATENCY_HEADER: &'static str = "X-Ttft-Latency";
+
+async fn dispatch_func_call(
+    gw: &HttpGateway,
+    mut req: Request,
+    route: FuncRouteTarget,
+    tenant: String,
+    namespace: String,
+    funcname: String,
+    remainPath: String,
+    skill_prefix: Option<&str>,
+) -> SResult<Response, StatusCode> {
+    let reqStart = std::time::Instant::now();
+    let headers = req.headers().clone();
+    let path = req.uri().path();
+
+    let tracer = opentelemetry::global::tracer("gateway");
+    let mut ttftSpan = tracer.start("TTFT");
+    ttftSpan.set_attribute(KeyValue::new("req", path.to_owned()));
+    let ttftCtx = Context::current_with_span(ttftSpan);
+    let now = std::time::Instant::now();
+
+    let mut labels = FunccallLabels {
+        tenant: tenant.clone(),
+        namespace: namespace.clone(),
+        funcname: funcname.clone(),
+        status: StatusCode::OK.as_u16(),
+    };
+
+    let policy = route.policy.clone();
+    let timestamp = IxTimestamp::default();
     let timeout_header = req
         .headers()
         .get("X-Inferx-Timeout")
         .and_then(|v| v.to_str().ok());
-
     let timeoutSec = match &timeout_header {
         None => policy.queueTimeout,
         Some(s) => match s.parse() {
@@ -1497,19 +1780,14 @@ pub async fn FuncCall1(
             Ok(t) => policy.queueTimeout.min(t),
         },
     };
-
     let timeout = (timeoutSec * 1000.0) as u64;
 
-    let uri = format!("{}", remainPath); // &func.object.spec.endpoint.path);
-    *req.uri_mut() = Uri::try_from(uri).unwrap();
+    *req.uri_mut() = Uri::try_from(remainPath.clone()).unwrap();
 
     let mut res;
-
     let (mut parts, body) = req.into_parts();
-
-    // Collect the body bytes
     let mut bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
-        Err(_e) => {
+        Err(_) => {
             let resp = FailureResponse(
                 Error::BAD_REQUEST(StatusCode::BAD_REQUEST),
                 &mut labels,
@@ -1521,12 +1799,24 @@ pub async fn FuncCall1(
         Ok(b) => b,
     };
 
-    // Normalize the request once before the retry loop (KB: chat→completions rewrite)
+    let skill_model_path = skill_prefix.map(|_| route.func.object.spec.ModelPath()).flatten();
     if parts.method == axum::http::Method::POST {
+        if let Some(prefix) = skill_prefix {
+            match normalize_skill_request(&remainPath, &bytes, prefix, skill_model_path.as_deref())? {
+                None => {}
+                Some(norm) => {
+                    parts.uri = Uri::try_from(norm.target_path.as_str()).unwrap_or(parts.uri);
+                    bytes = Bytes::from(norm.body_bytes);
+                    parts.headers.remove(hyper::header::CONTENT_LENGTH);
+                    parts.headers.insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
+                }
+            }
+        }
+
         match NormalizeFuncRequest(&gw, &route, &remainPath, &bytes).await {
             Err(status) => {
                 error!(
-                    "FuncCall1 normalization failed tenant={}/{} func={} path={} method={} status={}",
+                    "dispatch_func_call normalization failed tenant={}/{} func={} path={} method={} status={}",
                     route.physical.tenant,
                     route.physical.namespace,
                     route.physical.funcname,
@@ -1542,14 +1832,10 @@ pub async fn FuncCall1(
             }
             Ok(None) => {}
             Ok(Some(norm)) => {
-                parts.uri = Uri::try_from(norm.target_path.as_str())
-                    .unwrap_or(parts.uri);
+                parts.uri = Uri::try_from(norm.target_path.as_str()).unwrap_or(parts.uri);
                 bytes = Bytes::from(norm.body_bytes);
                 parts.headers.remove(hyper::header::CONTENT_LENGTH);
-                parts.headers.insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static(norm.content_type),
-                );
+                parts.headers.insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
             }
         }
     }
@@ -1557,13 +1843,30 @@ pub async fn FuncCall1(
     let trace_enabled = trace_logging_enabled();
     let redacted_json_req = summarize_funccall_body_for_log(&bytes, trace_enabled);
     let redacted_headers = summarize_headers_for_log(&headers);
+    {
+        let (max_tokens, input_chars) = serde_json::from_slice::<Value>(&bytes)
+            .map(|v| {
+                let max_tokens = v.get("max_tokens").map(|t| t.to_string()).unwrap_or_default();
+                let input_chars: usize = v.get("messages")
+                    .and_then(Value::as_array)
+                    .map(|msgs| msgs.iter().map(|m| {
+                        m.get("content").map(|c| c.to_string().len()).unwrap_or(0)
+                    }).sum())
+                    .unwrap_or_else(|| {
+                        v.get("prompt").and_then(Value::as_str).map(|s| s.len()).unwrap_or(0)
+                    });
+                (max_tokens, input_chars)
+            })
+            .unwrap_or_default();
+        info!("dispatch_func_call sending to pod pod={} path={} input_chars={} approx_input_tokens={} max_tokens={}",
+            route.physical.funcname, remainPath, input_chars, input_chars / 4, max_tokens);
+    }
     if trace_enabled {
         trace!("FuncCall get req {:#?}", redacted_json_req);
     }
     let disconnect = Disconnect::New(redacted_json_req.clone(), redacted_headers.clone(), &labels);
 
     let mut retry = 0;
-
     let mut error = Error::Timeout(timeout);
     let client;
     let keepalive;
@@ -1572,17 +1875,16 @@ pub async fn FuncCall1(
     loop {
         retry += 1;
         if timestamp.Elapsed() > timeout {
-            error!("FuncCall 1");
             let resp = FailureResponse(error, &mut labels, Status::RequestFailure).await;
             ttftCtx.span().end();
             return Ok(resp);
         }
 
-        // let mut startupSpan = tracer.start_with_context("startup", &ttftCtx);
-
-        let (mut tclient, tkeepalive) = match RetryGetClient(&gw, &route, timeout, timestamp).await
-        {
+        let (mut tclient, tkeepalive) = match RetryGetClient(&gw, &route, timeout, timestamp).await {
             Err(e) => {
+                error!("dispatch_func_call RetryGetClient failed logical={}/{}/{} physical={}/{}/{}: {:?}",
+                    route.logical.tenant, route.logical.namespace, route.logical.funcname,
+                    route.physical.tenant, route.physical.namespace, route.physical.funcname, e);
                 let resp = FailureResponse(e, &mut labels, Status::ConnectFailure).await;
                 return Ok(resp);
             }
@@ -1590,7 +1892,6 @@ pub async fn FuncCall1(
         };
 
         tcpConnLatency = now.elapsed().as_millis() as u64;
-
         if !tkeepalive {
             GATEWAY_METRICS
                 .lock()
@@ -1600,65 +1901,46 @@ pub async fn FuncCall1(
                 .inc();
         }
 
-        // startupSpan.end();
-
         start = std::time::Instant::now();
-        let body = axum::body::Body::from(bytes.clone());
-        let req = Request::from_parts(parts.clone(), body);
+        let req = Request::from_parts(parts.clone(), axum::body::Body::from(bytes.clone()));
         res = match tclient.Send(req).await {
             Err(e) => {
-                // error!(
-                //     "FuncCall fail {} retry {} with error {:?}",
-                //     tclient.PodName(),
-                //     retry,
-                //     &e
-                // );
                 error = e;
                 continue;
             }
             Ok(r) => {
                 if retry > 1 {
-                    error!(
-                        "FuncCall retry success {} with try round {}",
-                        route.AgentKey(),
-                        retry
-                    );
+                    error!("FuncCall retry success {} with try round {}", route.AgentKey(), retry);
                 }
                 r
             }
         };
 
         let status = res.status();
-
         if status != StatusCode::OK {
-            let needRetry = RETRYABLE_HTTP_STATUS.contains(&(status.as_u16()));
-
-            if needRetry {
-                error!(
-                    "Http call get fail status {:?} for pod {}",
-                    status,
-                    tclient.PodName()
-                );
+            if RETRYABLE_HTTP_STATUS.contains(&(status.as_u16())) {
+                error!("Http call get fail status {:?} for pod {}", status, tclient.PodName());
                 continue;
-            } else {
-                // let text = String::from_utf8(bytes.to_vec()).ok();
-                let resp = FailureResponse(
-                    Error::BAD_REQUEST(status),
-                    &mut labels,
-                    Status::InvalidRequest,
-                )
-                .await;
-                ttftCtx.span().end();
-                return Ok(resp);
             }
+            let err_body = res.into_body().collect().await
+                .map(|b| String::from_utf8_lossy(&b.to_bytes()).to_string())
+                .unwrap_or_default();
+            error!("dispatch_func_call pod returned non-200 status={} pod={} logical={}/{}/{} physical={}/{}/{} path={} body={}",
+                status, tclient.PodName(),
+                labels.tenant, labels.namespace, labels.funcname,
+                route.physical.tenant, route.physical.namespace, route.physical.funcname,
+                remainPath, err_body);
+            let resp =
+                FailureResponse(Error::BAD_REQUEST(status), &mut labels, Status::InvalidRequest)
+                    .await;
+            ttftCtx.span().end();
+            return Ok(resp);
         }
 
         client = tclient;
         keepalive = tkeepalive;
         break;
     }
-
-    let mut first = true;
 
     labels.status = StatusCode::OK.as_u16();
     GATEWAY_METRICS
@@ -1668,36 +1950,30 @@ pub async fn FuncCall1(
         .get_or_create(&labels)
         .inc();
 
-    let mut kvs = Vec::new();
-    for (k, v) in res.headers() {
-        kvs.push((k.clone(), v.clone()));
-    }
-
-    let mut bytecnt = 0;
-    let mut framecount = 0;
-
+    let kvs: Vec<_> = res
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(4096);
     let (ttftTx, mut ttftRx) = mpsc::channel::<u64>(1);
     disconnect.Cancel();
     tokio::spawn(async move {
         let _client = client;
+        let mut first = true;
         let mut ttft = 0;
         let mut total = 0;
+        let mut bytecnt = 0;
+        let mut framecount = 0;
         loop {
             let frame = res.frame().await;
             framecount += 1;
             if first {
                 ttft = start.elapsed().as_millis() as u64;
                 ttftTx.send(ttft).await.ok();
-
                 ttftCtx.span().end();
                 first = false;
-
                 total = ttft + tcpConnLatency;
-                // error!(
-                //     "ttft is {} ms /total {} ms keepalive {}",
-                //     ttft, total, keepalive
-                // );
                 if !keepalive {
                     GATEWAY_METRICS
                         .lock()
@@ -1722,82 +1998,769 @@ pub async fn FuncCall1(
                         tenant: tenant.clone(),
                         namespace: namespace.clone(),
                         fpname: funcname.clone(),
-                        keepalive: keepalive,
+                        keepalive,
                         ttft: ttft as i32,
                         latency: latency.as_millis() as i32,
                     });
-                    // error!(
-                    //     "Funccall ********* Pass: sendbytes finish with client connection takes {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
-                    //     reqStart.elapsed().as_millis(),
-                    //     total,
-                    //     framecount,
-                    //     retry-1,
-                    //     bytecnt,
-                    //     &headers,
-                    //     json_req
-                    // );
                     return;
                 }
-                Some(b) => match b {
-                    Ok(b) => b,
-                    Err(e) => {
-                        error!(
-                            "PostCall for path {}/{}/{} len {} get error {:?}",
-                            tenant, namespace, funcname, bytecnt, e
-                        );
-                        return;
-                    }
-                },
-            };
-            let bytes: Bytes = bytes.into_data().unwrap();
-            bytecnt += bytes.len();
-
-            match tx.send(Ok(bytes)).await {
-                Err(_) => {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => {
                     error!(
-                        "Funccall ********* Fail: sendbytes fail with client disconnect after return header {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
-                        reqStart.elapsed().as_millis(),
-                        total,
-                        framecount,
-                        retry - 1,
-                        bytecnt,
-                        &redacted_headers,
-                        redacted_json_req
+                        "PostCall for path {}/{}/{} len {} get error {:?}",
+                        tenant, namespace, funcname, bytecnt, e
                     );
                     return;
                 }
-                Ok(()) => (),
+            };
+            let bytes: Bytes = bytes.into_data().unwrap();
+            bytecnt += bytes.len();
+            if tx.send(Ok(bytes)).await.is_err() {
+                error!(
+                    "Funccall ********* Fail: sendbytes fail with client disconnect after return header {} ms ttft {} ms framecount {} retry count {} total send {} bytes headers {:#?} req {:#?}",
+                    reqStart.elapsed().as_millis(),
+                    total,
+                    framecount,
+                    retry - 1,
+                    bytecnt,
+                    &redacted_headers,
+                    redacted_json_req
+                );
+                return;
             }
         }
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    let body = http_body_util::StreamBody::new(stream);
-
-    let body = axum::body::Body::from_stream(body);
-
+    let body = axum::body::Body::from_stream(http_body_util::StreamBody::new(stream));
     let mut resp = Response::new(body);
-
     for (k, v) in kvs {
         resp.headers_mut().insert(k, v);
     }
-
-    let val = HeaderValue::from_str(&format!("{}", tcpConnLatency)).unwrap();
-    resp.headers_mut().insert("TCPCONN_LATENCY_HEADER", val);
-
-    match ttftRx.recv().await {
-        Some(ttft) => {
-            let val = HeaderValue::from_str(&format!("{}", ttft)).unwrap();
-            resp.headers_mut().insert("TTFT_LATENCY_HEADER", val);
-        }
-        None => (),
-    };
-
-    return Ok(resp);
+    resp.headers_mut().insert(
+        TCPCONN_LATENCY_HEADER,
+        HeaderValue::from_str(&format!("{}", tcpConnLatency)).unwrap(),
+    );
+    if let Some(ttft) = ttftRx.recv().await {
+        resp.headers_mut().insert(
+            TTFT_LATENCY_HEADER,
+            HeaderValue::from_str(&format!("{}", ttft)).unwrap(),
+        );
+    }
+    Ok(resp)
 }
 
-pub const TCPCONN_LATENCY_HEADER: &'static str = "X-TcpConn-Latency";
-pub const TTFT_LATENCY_HEADER: &'static str = "X-Ttft-Latency";
+fn skill_admin_response(err: Error) -> Response<Body> {
+    let status = match err {
+        Error::NoPermission => StatusCode::FORBIDDEN,
+        Error::SqlxError(sqlx::Error::RowNotFound) | Error::NotExist(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::BAD_REQUEST,
+    };
+    Response::builder()
+        .status(status)
+        .body(Body::from(format!("service failure {:?}", err)))
+        .unwrap()
+}
+
+fn is_skill_template_duplicate_name_error(err: &Error) -> bool {
+    match err {
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            if db_err.code().as_deref() != Some("23505") {
+                return false;
+            }
+
+            if matches!(
+                db_err.constraint(),
+                Some("skilltemplate_tenant_namespace_display_name_key")
+            ) {
+                return true;
+            }
+
+            db_err
+                .message()
+                .contains("duplicate key value violates unique constraint")
+        }
+        _ => false,
+    }
+}
+
+fn normalize_required_skill_template_field(name: &str, value: &str) -> Result<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(Error::CommonError(format!("{} is required", name)));
+    }
+
+    Ok(normalized.to_string())
+}
+
+async fn ListSkillTemplates(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+    match gw.sqlSecret.ListActiveSkillTemplates().await {
+        Ok(templates) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&templates).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListPublishedSkills(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let result = if token.IsInferxAdmin() {
+        gw.sqlSecret.ListAllSkills().await
+    } else {
+        gw.sqlSecret.ListPublishedSkills().await
+    };
+    match result {
+        Ok(skills) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&skills).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListSkillsByTenant(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(owner_tenant): Path<String>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let show_all = token.IsTenantAdmin(&owner_tenant) || token.IsInferxAdmin();
+    match gw.sqlSecret.ListSkillsByTenant(&owner_tenant, show_all).await {
+        Ok(skills) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&skills).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListSkillsByNamespace(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace)): Path<(String, String)>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let show_all = token.IsNamespaceAdmin(&owner_tenant, &namespace) || token.IsInferxAdmin();
+    match gw
+        .sqlSecret
+        .ListSkillsByNamespace(&owner_tenant, &namespace, show_all)
+        .await
+    {
+        Ok(skills) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&skills).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListAdminSkillTemplates(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    match gw.sqlSecret.ListSkillTemplates().await {
+        Ok(templates) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&templates).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn CreateSkillTemplate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(req): Json<SkillTemplateCreateRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    let tenant = match normalize_required_skill_template_field("tenant", &req.tenant) {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let namespace = match normalize_required_skill_template_field("namespace", &req.namespace) {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let display_name =
+        match normalize_required_skill_template_field("display_name", &req.display_name) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let func_tenant = match normalize_required_skill_template_field("func_tenant", &req.func_tenant)
+    {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let func_namespace =
+        match normalize_required_skill_template_field("func_namespace", &req.func_namespace) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let normal_funcname =
+        match normalize_required_skill_template_field("normal_funcname", &req.normal_funcname) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let description = req
+        .description
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    if let Err(e) = gw.objRepo.GetFunc(&func_tenant, &func_namespace, &normal_funcname) {
+        return Ok(Response::builder()
+            .status(StatusCode::UNPROCESSABLE_ENTITY)
+            .body(Body::from(format!("function not found: {:?}", e)))
+            .unwrap());
+    }
+
+    match gw
+        .sqlSecret
+        .CreateSkillTemplate(
+            &tenant,
+            &namespace,
+            &display_name,
+            description.as_deref(),
+            &func_tenant,
+            &func_namespace,
+            &normal_funcname,
+            req.is_active,
+        )
+        .await
+    {
+        Ok(template) => Ok(Response::builder()
+            .status(StatusCode::CREATED)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&template).unwrap()))
+            .unwrap()),
+        Err(e) => {
+            if is_skill_template_duplicate_name_error(&e) {
+                return Ok(Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(Body::from("skill template name is taken"))
+                    .unwrap());
+            }
+
+            Ok(skill_admin_response(e))
+        }
+    }
+}
+
+async fn DeactivateSkillTemplate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(template_id): Path<i64>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    match gw.sqlSecret.DeactivateSkillTemplate(template_id).await {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("deactivated"))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ActivateSkillTemplate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(template_id): Path<i64>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    match gw.sqlSecret.ActivateSkillTemplate(template_id).await {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("activated"))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn UpdateSkillTemplate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(template_id): Path<i64>,
+    Json(req): Json<SkillTemplateUpdateRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    let tenant = match normalize_required_skill_template_field("tenant", &req.tenant) {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let namespace = match normalize_required_skill_template_field("namespace", &req.namespace) {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let display_name =
+        match normalize_required_skill_template_field("display_name", &req.display_name) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let func_tenant =
+        match normalize_required_skill_template_field("func_tenant", &req.func_tenant) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let func_namespace =
+        match normalize_required_skill_template_field("func_namespace", &req.func_namespace) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let normal_funcname =
+        match normalize_required_skill_template_field("normal_funcname", &req.normal_funcname) {
+            Ok(v) => v,
+            Err(e) => return Ok(skill_admin_response(e)),
+        };
+    let description = req
+        .description
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let current = match gw.sqlSecret.GetSkillTemplate(template_id).await {
+        Ok(t) => t,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let func_fields_changed = current.func_tenant != func_tenant
+        || current.func_namespace != func_namespace
+        || current.normal_funcname != normal_funcname;
+
+    if func_fields_changed {
+        if let Err(e) = gw.objRepo.GetFunc(&func_tenant, &func_namespace, &normal_funcname) {
+            return Ok(Response::builder()
+                .status(StatusCode::UNPROCESSABLE_ENTITY)
+                .body(Body::from(format!("function not found: {:?}", e)))
+                .unwrap());
+        }
+
+        match gw.sqlSecret.IsSkillTemplateReferenced(template_id).await {
+            Ok(true) => {
+                return Ok(Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(Body::from(
+                        "function fields cannot be changed: template is in use by existing skills",
+                    ))
+                    .unwrap());
+            }
+            Ok(false) => {}
+            Err(e) => return Ok(skill_admin_response(e)),
+        }
+    }
+
+    match gw
+        .sqlSecret
+        .UpdateSkillTemplate(
+            template_id,
+            &tenant,
+            &namespace,
+            &display_name,
+            description.as_deref(),
+            &func_tenant,
+            &func_namespace,
+            &normal_funcname,
+            req.is_active,
+        )
+        .await
+    {
+        Ok(template) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&template).unwrap()))
+            .unwrap()),
+        Err(e) => {
+            if is_skill_template_duplicate_name_error(&e) {
+                return Ok(Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(Body::from("skill template name is taken"))
+                    .unwrap());
+            }
+
+            Ok(skill_admin_response(e))
+        }
+    }
+}
+
+async fn DeleteSkillTemplate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(template_id): Path<i64>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    match gw.sqlSecret.IsSkillTemplateReferenced(template_id).await {
+        Ok(true) => {
+            return Ok(Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(Body::from("template is in use by existing skills and cannot be deleted"))
+                .unwrap());
+        }
+        Ok(false) => {}
+        Err(e) => return Ok(skill_admin_response(e)),
+    }
+
+    match gw.sqlSecret.DeleteSkillTemplate(template_id).await {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("deleted"))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn CreateSkill(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+    Json(req): Json<SkillCreateRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    if req.earning_type.is_some() {
+        return Ok(skill_admin_response(Error::CommonError(
+            "earning_type is not supported in R1".to_string(),
+        )));
+    }
+    let serving_mode = req.serving_mode.unwrap_or_else(|| "dedicated".to_string());
+    if serving_mode != "dedicated" {
+        return Ok(skill_admin_response(Error::CommonError(
+            "serving_mode must be dedicated in R1".to_string(),
+        )));
+    }
+    if req.has_cache.unwrap_or(false) {
+        return Ok(skill_admin_response(Error::CommonError(
+            "has_cache=true is not supported in R1".to_string(),
+        )));
+    }
+    let gpu_billing_target = req
+        .gpu_billing_target
+        .clone()
+        .unwrap_or_else(|| "caller".to_string());
+    if gpu_billing_target != "caller" && gpu_billing_target != "owner" {
+        return Ok(skill_admin_response(Error::CommonError(
+            "gpu_billing_target must be caller or owner".to_string(),
+        )));
+    }
+
+    let template = match gw.sqlSecret.GetSkillTemplate(req.template_id).await {
+        Ok(template) => template,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    if !template.is_active {
+        return Ok(skill_admin_response(Error::CommonError(
+            "template is inactive".to_string(),
+        )));
+    }
+
+    match gw
+        .sqlSecret
+        .CreateSkill(
+            &owner_tenant,
+            &namespace,
+            &skillname,
+            req.description.as_deref(),
+            &serving_mode,
+            "free",
+            None,
+            &gpu_billing_target,
+            req.template_id,
+            false,
+            &token.username,
+        )
+        .await
+    {
+        Ok(skill) => match write_skill_prefix(&owner_tenant, &namespace, &skillname, skill.version, &req.prefix) {
+            Ok(()) => Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&skill).unwrap()))
+                .unwrap()),
+            Err(e) => {
+                let _ = gw.sqlSecret.DeleteSkill(&owner_tenant, &namespace, &skillname).await;
+                Ok(skill_admin_response(Error::from(e)))
+            }
+        },
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn GetSkill(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    let skill = match gw.sqlSecret.GetSkill(&owner_tenant, &namespace, &skillname).await {
+        Ok(skill) => skill,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    if !skill.is_published && !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&skill).unwrap()))
+        .unwrap())
+}
+
+async fn DeleteSkill(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    match gw.sqlSecret.DeleteSkill(&owner_tenant, &namespace, &skillname).await {
+        Ok(()) => match remove_skill_storage(&owner_tenant, &namespace, &skillname) {
+            Ok(()) => Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("deleted"))
+                .unwrap()),
+            Err(e) => Ok(skill_admin_response(Error::from(e))),
+        },
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn PublishSkill(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    match gw
+        .sqlSecret
+        .PublishSkill(&owner_tenant, &namespace, &skillname, &token.username)
+        .await
+    {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("published"))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn UnpublishSkill(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    match gw.sqlSecret.UnpublishSkill(&owner_tenant, &namespace, &skillname).await {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("unpublished"))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn SkillCall(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname, subpath)): Path<(String, String, String, String)>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("inference") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let remainPath = format!("/{}", subpath);
+
+    let skill = match gw.sqlSecret.GetSkill(&owner_tenant, &namespace, &skillname).await {
+        Ok(skill) => skill,
+        Err(Error::SqlxError(sqlx::Error::RowNotFound)) => {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("service failure: skill not found"))
+                .unwrap())
+        }
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    if !skill.is_published
+        && !token.IsNamespaceInferenceUser(&owner_tenant, &namespace)
+        && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
+    {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("service failure: not found"))
+            .unwrap());
+    }
+    if skill.has_cache && skill.cache_status != "ready" {
+        return Ok(Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(Body::from("service failure: skill cache not ready"))
+            .unwrap());
+    }
+
+    let calling_tenant = match resolve_skill_calling_tenant(&token, &skill) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    if !token.IsInferxAdmin() {
+        let payer = if skill.gpu_billing_target == "owner" {
+            skill.owner_tenant.as_str()
+        } else {
+            calling_tenant.as_str()
+        };
+        match tenant_quota_state(&gw, payer) {
+            Ok((true, _)) => {}
+            Ok((false, true)) => return Ok(quota_exceeded_response(payer)),
+            Ok((false, false)) => {}
+            Err(e) => {
+                error!("skill quota lookup failed for {}: {:?}", payer, e);
+                return Ok(quota_lookup_failed_response(payer));
+            }
+        }
+    }
+
+    let prefix = match load_skill_prefix(&skill) {
+        Ok(prefix) => prefix,
+        Err(e) => {
+            error!("SkillCall load_skill_prefix failed skill={}/{}/{} version={}: {:?}", owner_tenant, namespace, skillname, skill.version, e);
+            return Ok(skill_admin_response(e));
+        }
+    };
+    info!("SkillCall prefix loaded skill={}/{}/{} prefix_len={}", owner_tenant, namespace, skillname, prefix.len());
+
+    let physical_funcname = if skill.has_cache {
+        skill.consumer_funcname
+            .clone()
+            .ok_or_else(|| Error::CommonError("consumer_funcname missing for cached skill".to_string()))
+    } else {
+        Ok(skill.normal_funcname.clone())
+    };
+    let physical_funcname = match physical_funcname {
+        Ok(name) => name,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let func = match gw
+        .objRepo
+        .GetFunc(&skill.func_tenant, &skill.func_namespace, &physical_funcname)
+    {
+        Ok(func) => func,
+        Err(e) => {
+            error!("SkillCall GetFunc failed func={}/{}/{}: {:?}", skill.func_tenant, skill.func_namespace, physical_funcname, e);
+            return Ok(skill_admin_response(e));
+        }
+    };
+    info!("SkillCall GetFunc ok func={}/{}/{} version={}", skill.func_tenant, skill.func_namespace, physical_funcname, func.Version());
+
+    let owner_billed = skill.gpu_billing_target == "owner";
+    let base_funcname = format!(
+        "{}.{}.{}",
+        skill.func_tenant, skill.func_namespace, physical_funcname
+    );
+    let (logical_tenant, logical_funcname, caller_tenant) = if owner_billed {
+        (
+            skill.owner_tenant.clone(),
+            format!("{}.{}", base_funcname, calling_tenant),
+            Some(calling_tenant.clone()),
+        )
+    } else {
+        (calling_tenant.clone(), base_funcname, None)
+    };
+    info!("SkillCall dispatch logical={}/{}/{} physical={}/{}/{} remain={}",
+        logical_tenant, SKILLS_NAMESPACE, logical_funcname,
+        skill.func_tenant, skill.func_namespace, physical_funcname,
+        remainPath);
+    let route = FuncRouteTarget {
+        logical: FuncIdentity {
+            tenant: logical_tenant,
+            namespace: SKILLS_NAMESPACE.to_string(),
+            funcname: logical_funcname.clone(),
+            version: func.Version(),
+        },
+        physical: FuncIdentity {
+            tenant: skill.func_tenant.clone(),
+            namespace: skill.func_namespace.clone(),
+            funcname: physical_funcname,
+            version: func.Version(),
+        },
+        policy: GW_OBJREPO.get().unwrap().FuncPolicy(&func),
+        func,
+        caller_tenant,
+    };
+
+    dispatch_func_call(
+        &gw,
+        req,
+        route,
+        calling_tenant,
+        SKILLS_NAMESPACE.to_string(),
+        logical_funcname,
+        remainPath,
+        Some(prefix.as_str()),
+    )
+    .await
+}
 
 async fn ReadPodFaillogs(
     Extension(token): Extension<Arc<AccessToken>>,

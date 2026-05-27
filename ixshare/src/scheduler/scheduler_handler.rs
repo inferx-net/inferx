@@ -2354,6 +2354,7 @@ impl SchedulerHandler {
         let tick = UsageTick {
             session_id: session_id.clone(),
             tenant: tenant.clone(),
+            caller_tenant: None,
             namespace: namespace.clone(),
             funcname: funcname.clone(),
             fprevision,
@@ -2407,6 +2408,7 @@ impl SchedulerHandler {
         let tick = UsageTick {
             session_id: session.session_id.clone(),
             tenant: session.tenant,
+            caller_tenant: None,
             namespace: session.namespace,
             funcname: session.funcname,
             fprevision: session.fprevision,
@@ -2452,6 +2454,7 @@ impl SchedulerHandler {
                 let tick = UsageTick {
                     session_id: session.session_id.clone(),
                     tenant: session.tenant.clone(),
+                    caller_tenant: None,
                     namespace: session.namespace.clone(),
                     funcname: session.funcname.clone(),
                     fprevision: session.fprevision,
@@ -2568,6 +2571,7 @@ impl SchedulerHandler {
         let tick = UsageTick {
             session_id: session_id.clone(),
             tenant,
+            caller_tenant: None,
             namespace,
             funcname,
             fprevision,
@@ -2610,6 +2614,7 @@ impl SchedulerHandler {
         let tick = UsageTick {
             session_id: session.session_id.clone(),
             tenant: session.tenant,
+            caller_tenant: None,
             namespace: session.namespace,
             funcname: session.funcname,
             fprevision: session.fprevision,
@@ -2653,6 +2658,7 @@ impl SchedulerHandler {
                 let tick = UsageTick {
                     session_id: session.session_id.clone(),
                     tenant: session.tenant.clone(),
+                    caller_tenant: None,
                     namespace: session.namespace.clone(),
                     funcname: session.funcname.clone(),
                     fprevision: session.fprevision,

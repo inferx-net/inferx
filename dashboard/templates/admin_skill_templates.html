@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .skill-template-page {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+        display: grid;
+        gap: 16px;
+    }
+
+    .skill-template-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+    }
+
+    .skill-template-header h2 {
+        margin: 0;
+        font-size: 22px;
+        color: #1f2937;
+    }
+
+    .skill-template-header .editor-subtitle {
+        color: #64748b;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .skill-template-muted {
+        color: #64748b;
+    }
+
+    .skill-template-table .inactive-row td:not(:last-child) {
+        opacity: 0.65;
+    }
+
+    .skill-template-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #475569;
+    }
+
+    .skill-template-badge.inactive {
+        border-color: #d1d5db;
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+
+    .skill-template-table td,
+    .skill-template-table th {
+        vertical-align: top;
+    }
+</style>
+
+<div class="skill-template-page">
+    <div class="skill-template-header">
+        <div>
+            <h2>Skill Templates</h2>
+            <div class="editor-subtitle">Admin-managed templates available to skill creators.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <a class="ix-btn secondary" href="{{ url_for('prefix.apikeys') }}">Back to Admin</a>
+            <a class="ix-btn" href="{{ url_for('prefix.AdminSkillTemplateCreate') }}">New Template</a>
+        </div>
+    </div>
+
+    <table class="ix-table skill-template-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th>Backing Model</th>
+                <th>Cache Support</th>
+                <th>Active</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if not skill_templates %}
+            <tr>
+                <td colspan="7">No skill templates found.</td>
+            </tr>
+            {% endif %}
+            {% for template in skill_templates %}
+            <tr class="{% if not template.get('is_active') %}inactive-row{% endif %}">
+                <td>
+                    <a href="{{ url_for('prefix.AdminSkillTemplateDetail', template_id=template.get('template_id')) }}">{{ template.get('template_id') }}</a>
+                </td>
+                <td>
+                    <a href="{{ url_for('prefix.AdminSkillTemplateDetail', template_id=template.get('template_id')) }}" style="color:inherit;">
+                        <strong>{{ template.get('display_name') or '' }}</strong>
+                    </a><br>
+                    <span class="skill-template-muted">{{ template.get('tenant') }}/{{ template.get('namespace') }}</span>
+                </td>
+                <td>{{ template.get('description') or '' }}</td>
+                <td>
+                    {{ template.get('func_tenant') }}/{{ template.get('func_namespace') }}/{{ template.get('normal_funcname') }}
+                </td>
+                <td>
+                    {% if template.get('producer_funcname') or template.get('consumer_funcname') %}
+                    Yes
+                    {% else %}
+                    No
+                    {% endif %}
+                </td>
+                <td>
+                    {% if template.get('is_active') %}
+                    <span class="skill-template-badge">Active</span>
+                    {% else %}
+                    <span class="skill-template-badge inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <a class="ix-btn secondary" href="{{ url_for('prefix.AdminSkillTemplateEdit', template_id=template.get('template_id')) }}">Edit</a>
+                        {% if template.get('is_active') %}
+                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDeactivate', template_id=template.get('template_id')) }}" onsubmit="return confirm('Deactivating hides this template from new skill creation. Existing skills are unaffected.');">
+                            <button class="ix-btn secondary" type="submit">Deactivate</button>
+                        </form>
+                        {% else %}
+                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateActivate', template_id=template.get('template_id')) }}">
+                            <button class="ix-btn secondary" type="submit">Activate</button>
+                        </form>
+                        {% endif %}
+                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDelete', template_id=template.get('template_id')) }}" onsubmit="return confirm('Delete this template? This cannot be undone. Templates in use by existing skills cannot be deleted.');">
+                            <button class="ix-btn danger" type="submit">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

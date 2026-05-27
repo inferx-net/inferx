@@ -761,6 +761,7 @@
         color: #1d4ed8;
     }
 
+
 </style>
 
 <div class="tab">
@@ -771,6 +772,9 @@
     <button class="tablinks" onclick="openTab(event, 'Billing')">Billing</button>
     <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="display: none;">Billing Admin</button>
     <button class="tablinks" id="endpoint-usage-tab-btn" onclick="openTab(event, 'EndpointUsage')">Endpoint Usage</button>
+    {% if dashboard_is_inferx_admin %}
+    <button class="tablinks" onclick="openTab(event, 'SkillTemplates')">Skill Templates</button>
+    {% endif %}
 </div>
 
 <div id="Apikeys" class="tabcontent">
@@ -1695,6 +1699,33 @@
     </div>
 </div>
 
+<div id="SkillTemplates" class="tabcontent">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+        <div>
+            <h3 style="margin:0;">Skill Templates</h3>
+            <div style="color:#64748b;font-size:13px;margin-top:4px;">Admin-managed templates available to skill creators.</div>
+        </div>
+        <a class="ix-btn" href="{{ url_for('prefix.AdminSkillTemplateCreate') }}">New Template</a>
+    </div>
+    <div id="skill-templates-error" style="display:none;margin-bottom:12px;padding:10px 12px;border:1px solid #fecdd3;background:#fff1f2;color:#9f1239;border-radius:4px;"></div>
+    <table class="ix-table admin-data-table" id="skill-templates-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Description</th>
+                <th>Backing Model</th>
+                <th>Cache</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td colspan="7" style="color:#64748b;">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
 <script>
     async function fetchWithAuth(url, options) {
         const resp = await fetch(url, options);
@@ -1787,6 +1818,7 @@
         'Billing',
         'BillingAdmin',
         'EndpointUsage',
+        'SkillTemplates',
     ]);
 
     function normalizeAdminTabName(tabName) {
@@ -1920,7 +1952,7 @@
             maybeLoadEndpointUsageData();
         }
 
-        if (['Apikeys', 'Roles', 'Namespaces', 'Tenants'].includes(tabName)) {
+        if (['Apikeys', 'Roles', 'Namespaces', 'Tenants', 'SkillTemplates'].includes(tabName)) {
             ensureAdminTabData(tabName).catch(error => {
                 console.error(`Failed to load ${tabName} tab data:`, error);
             });
@@ -7046,6 +7078,86 @@
         adminTabDataState.tenantsLoaded = true;
     }
 
+    async function loadSkillTemplatesTab() {
+        const tbody = document.querySelector('#skill-templates-table tbody');
+        const errorDiv = document.getElementById('skill-templates-error');
+        if (!tbody) return;
+
+        tbody.innerHTML = '<tr><td colspan="7" style="color:#64748b;">Loading…</td></tr>';
+        if (errorDiv) errorDiv.style.display = 'none';
+
+        let templates;
+        try {
+            const resp = await fetchWithAuth('{{ hosturl }}admin/skilltemplates/json');
+            templates = await resp.json();
+            if (!resp.ok) throw new Error(templates.error || `HTTP ${resp.status}`);
+        } catch (err) {
+            tbody.innerHTML = '';
+            if (errorDiv) { errorDiv.textContent = String(err); errorDiv.style.display = 'block'; }
+            return;
+        }
+
+        tbody.innerHTML = '';
+        if (!Array.isArray(templates) || templates.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7">No skill templates found.</td></tr>';
+            return;
+        }
+
+        for (const t of templates) {
+            const isActive = !!t.is_active;
+            const cacheSupport = (t.producer_funcname || t.consumer_funcname) ? 'Yes' : 'No';
+            const badge = isActive
+                ? '<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;">Active</span>'
+                : '<span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid #d1d5db;background:#f3f4f6;color:#6b7280;">Inactive</span>';
+            const detailUrl = `{{ hosturl }}admin/skilltemplate/${t.template_id}`;
+            const editUrl = `{{ hosturl }}admin/skilltemplate/${t.template_id}/edit`;
+            const deactivateUrl = `{{ hosturl }}admin/skilltemplate/${t.template_id}/deactivate`;
+            const activateUrl = `{{ hosturl }}admin/skilltemplate/${t.template_id}/activate`;
+            const deleteUrl = `{{ hosturl }}admin/skilltemplate/${t.template_id}/delete`;
+
+            const tr = document.createElement('tr');
+            if (!isActive) { tr.querySelectorAll && (tr.style.opacity = '0.65'); }
+            tr.innerHTML = `
+                <td><a href="${detailUrl}">${t.template_id}</a></td>
+                <td>
+                    <a href="${detailUrl}" style="color:inherit;"><strong>${t.display_name || ''}</strong></a><br>
+                    <span style="color:#64748b;">${t.tenant}/${t.namespace}</span>
+                </td>
+                <td>${t.description || ''}</td>
+                <td>${t.func_tenant}/${t.func_namespace}/${t.normal_funcname}</td>
+                <td>${cacheSupport}</td>
+                <td>${badge}</td>
+                <td>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <a class="ix-btn secondary" href="${editUrl}">Edit</a>
+                        <button class="ix-btn secondary" type="button" data-st-action="${isActive ? 'deactivate' : 'activate'}" data-st-url="${isActive ? deactivateUrl : activateUrl}" data-st-confirm="${isActive ? 'Deactivating hides this template from new skill creation. Existing skills are unaffected.' : ''}">${isActive ? 'Deactivate' : 'Activate'}</button>
+                        <button class="ix-btn danger" type="button" data-st-action="delete" data-st-url="${deleteUrl}" data-st-confirm="Delete this template? This cannot be undone. Templates in use by existing skills cannot be deleted.">Delete</button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        tbody.querySelectorAll('button[data-st-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const confirmMsg = btn.dataset.stConfirm;
+                if (confirmMsg && !window.confirm(confirmMsg)) return;
+                btn.disabled = true;
+                try {
+                    const resp = await fetchWithAuth(btn.dataset.stUrl, { method: 'POST' });
+                    if (!resp.ok) {
+                        const body = await resp.json().catch(() => ({}));
+                        throw new Error(body.error || `HTTP ${resp.status}`);
+                    }
+                    await loadSkillTemplatesTab();
+                } catch (err) {
+                    btn.disabled = false;
+                    if (errorDiv) { errorDiv.textContent = String(err); errorDiv.style.display = 'block'; }
+                }
+            });
+        });
+    }
+
     async function ensureAdminTabData(tabName, force = false) {
         switch (tabName) {
             case 'Apikeys':
@@ -7062,6 +7174,9 @@
                 break;
             case 'Tenants':
                 await loadTenantsTab(force);
+                break;
+            case 'SkillTemplates':
+                await loadSkillTemplatesTab();
                 break;
             default:
                 break;

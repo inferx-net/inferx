@@ -165,7 +165,13 @@ pub struct FuncWorkerInner {
 
     // GPU tracking for billing
     pub gpuTrackingInfo: Mutex<GpuTrackingInfo>,
+    pub billingContext: Mutex<SkillBillingContext>,
     pub publishedGpuCountLabels: Mutex<Option<GpuCountLabels>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SkillBillingContext {
+    pub caller_tenant: Option<String>,
 }
 
 impl Drop for FuncWorkerInner {
@@ -267,6 +273,7 @@ impl FuncWorker {
             failCount: AtomicUsize::new(0),
             perfStat: PerfStat::default(),
             gpuTrackingInfo: Mutex::new(GpuTrackingInfo::default()),
+            billingContext: Mutex::new(SkillBillingContext::default()),
             publishedGpuCountLabels: Mutex::new(None),
         };
 
@@ -739,6 +746,10 @@ impl FuncWorker {
                         let reqCnt = reqs.len();
                         self.ongoingReqCnt.fetch_add(reqCnt, Ordering::SeqCst);
                         for req in reqs {
+                            {
+                                let mut billing_context = self.billingContext.lock().unwrap();
+                                billing_context.caller_tenant = req.caller_tenant.clone();
+                            }
                             let client = match self.NewHttpCallClient().await {
                                 Err(e) => {
                                     error!("Funcworker connect fail with error {:?}", &e);
@@ -936,6 +947,7 @@ impl FuncWorker {
         let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
+            caller_tenant: self.billingContext.lock().unwrap().caller_tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
             fprevision: self.fprevision,
@@ -981,6 +993,7 @@ impl FuncWorker {
         let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
+            caller_tenant: self.billingContext.lock().unwrap().caller_tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
             fprevision: self.fprevision,
@@ -1042,6 +1055,7 @@ impl FuncWorker {
         let tick = UsageTick {
             session_id,
             tenant: self.tenant.clone(),
+            caller_tenant: self.billingContext.lock().unwrap().caller_tenant.clone(),
             namespace: self.namespace.clone(),
             funcname: self.funcname.clone(),
             fprevision: self.fprevision,
@@ -1247,6 +1261,7 @@ pub struct FuncClientReq {
     pub tenant: String,
     pub namespace: String,
     pub funcName: String,
+    pub caller_tenant: Option<String>,
     pub keepalive: bool,
     pub enqueueTime: IxTimestamp,
     pub timeout: u64,

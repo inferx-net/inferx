@@ -1,0 +1,306 @@
+{% extends 'base.html' %}
+{% import '_catalog_deploy_target.html' as catalog_deploy_target %}
+{% set sc_tenant_options = deploy_target.tenant_options if deploy_target and deploy_target.tenant_options is defined else [] %}
+{% set sc_selected_tenant = form_data.get('tenant') or (deploy_target.selected_tenant if deploy_target and deploy_target.selected_tenant is defined else '') %}
+{% set sc_selected_namespace = form_data.get('namespace') or (deploy_target.selected_namespace if deploy_target and deploy_target.selected_namespace is defined else '') %}
+{% set sc_namespace_options_by_tenant = deploy_target.namespace_options_by_tenant if deploy_target and deploy_target.namespace_options_by_tenant is defined else {} %}
+{% set sc_current_namespace_options = sc_namespace_options_by_tenant.get(sc_selected_tenant, []) if sc_selected_tenant else [] %}
+{% set sc_single_fixed = (sc_tenant_options | length) == 1 and (sc_current_namespace_options | length) == 1 %}
+{% set sc_deploy_target = deploy_target.copy() if deploy_target else {} %}
+{% if sc_deploy_target %}
+    {% set _ = sc_deploy_target.update({'selected_tenant': sc_selected_tenant, 'selected_namespace': sc_selected_namespace, 'resolved': (sc_selected_tenant != '' and sc_selected_namespace != '')}) %}
+{% endif %}
+
+{% block content %}
+<style>
+    .skill-create-page {
+        max-width: 960px;
+        margin: 0 auto;
+        display: grid;
+        gap: 16px;
+    }
+
+    .skill-panel {
+        padding: 18px;
+        border: 1px solid #d7dee8;
+        border-radius: 4px;
+        background: #f8fbff;
+    }
+
+    .skill-panel h2 {
+        margin: 0 0 12px 0;
+        font-size: 18px;
+        color: #1f2937;
+    }
+
+    .skill-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+    }
+
+    .skill-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .skill-field input,
+    .skill-field select,
+    .skill-field textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #fff;
+        color: #1f2937;
+        font: inherit;
+    }
+
+    .skill-field textarea {
+        min-height: 180px;
+        resize: vertical;
+    }
+
+    .skill-inline-options {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+    }
+
+    .skill-inline-options label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 500;
+    }
+
+    .skill-error {
+        padding: 10px 12px;
+        border: 1px solid #fecaca;
+        border-radius: 4px;
+        background: #fef2f2;
+        color: #991b1b;
+    }
+
+    .skill-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .skill-template-detail {
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px solid #d7dee8;
+        border-radius: 4px;
+        background: #fff;
+        color: #475569;
+    }
+
+    /* deploy target styles */
+    .catalog-deploy-target-summary {
+        color: #334155;
+        margin-bottom: 10px;
+    }
+
+    .catalog-deploy-target-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(180px, 280px));
+        gap: 12px;
+        align-items: end;
+    }
+
+    .catalog-deploy-target-field label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        color: #334155;
+    }
+
+    .catalog-deploy-target-field select,
+    .catalog-deploy-target-readonly {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #fff;
+        padding: 8px 10px;
+        font: inherit;
+        color: #1f2937;
+        min-height: 38px;
+    }
+
+    .catalog-deploy-target-readonly {
+        display: flex;
+        align-items: center;
+        background: #f1f5f9;
+        color: #475569;
+    }
+</style>
+
+<div class="skill-create-page">
+    <div>
+        <h1>Create Skill</h1>
+    </div>
+
+    {% if error_message %}
+    <div class="skill-error" role="alert">{{ error_message }}</div>
+    {% endif %}
+
+    <form id="skill-create-form" method="post" action="{{ url_for('prefix.SkillSave') }}">
+        <input id="skill-target-tenant-input" type="hidden" name="tenant" value="{{ sc_selected_tenant }}">
+        <input id="skill-target-namespace-input" type="hidden" name="namespace" value="{{ sc_selected_namespace or (sc_current_namespace_options[0].value if sc_single_fixed else '') }}">
+
+        <div class="skill-panel">
+            <h2>Identity</h2>
+            <div class="skill-field" style="margin-bottom:14px;">
+                <label for="skillname">Skill Name</label>
+                <input id="skillname" name="skillname" type="text" required pattern="^[a-zA-Z0-9][a-zA-Z0-9-]*$" value="{{ form_data.get('skillname', '') }}">
+            </div>
+
+            {% if sc_single_fixed %}
+            <div class="catalog-deploy-target-summary" style="margin-bottom:0;">
+                <strong>Owner:</strong>
+                <span>{% if (sc_tenant_options | length) != 1 %}{{ sc_selected_tenant }} / {% endif %}{{ sc_selected_namespace or sc_current_namespace_options[0].value }}</span>
+            </div>
+            {% else %}
+            {{ catalog_deploy_target.render_catalog_deploy_target('skill-create-deploy-target', sc_deploy_target) }}
+            {% endif %}
+
+            <div class="skill-field" style="margin-top:14px;">
+                <label for="description">Description</label>
+                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this skill does" required>{{ form_data.get('description', '') }}</textarea>
+            </div>
+        </div>
+
+        <div class="skill-panel">
+            <h2>Template</h2>
+            <div class="skill-field">
+                <label for="template_id">Template</label>
+                <select id="template_id" name="template_id" required>
+                    <option value="">Select a template</option>
+                    {% for template in skill_templates %}
+                    <option
+                        value="{{ template.get('template_id') }}"
+                        data-description="{{ template.get('description', '') or '' }}"
+                        data-model="{{ template.get('normal_funcname', '') or '' }}"
+                        {% if form_data.get('template_id')|string == template.get('template_id')|string %}selected{% endif %}
+                    >
+                        {{ template.get('display_name') }} ({{ template.get('tenant') }}/{{ template.get('namespace') }})
+                    </option>
+                    {% endfor %}
+                </select>
+                <div class="skill-template-detail" id="skill-template-detail">
+                    <div><strong>Description:</strong> <span id="skill-template-description"></span></div>
+                    <div><strong>Model:</strong> <span id="skill-template-model"></span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="skill-panel">
+            <h2>Skill Data</h2>
+            <div class="skill-field">
+                <label for="prefix">Skill Data — prepended to every user request as the leading system message</label>
+                <textarea id="prefix" name="prefix" placeholder="Enter skill data here...">{{ form_data.get('prefix', '') }}</textarea>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label for="skill-prefix-file-input" class="ix-btn secondary" style="cursor:pointer;margin:0;">Load from file</label>
+                    <input id="skill-prefix-file-input" type="file" style="display:none">
+                    <span id="skill-prefix-file-status" style="color:#475569;font-size:0.9em;"></span>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="gpu_billing_target" value="{{ form_data.get('gpu_billing_target', 'caller') }}">
+
+        <div class="skill-actions">
+            <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Cancel</a>
+            <button id="skill-create-submit-btn" class="ix-btn" type="submit"{% if not sc_deploy_target.resolved %} disabled{% endif %}>Create Skill</button>
+        </div>
+    </form>
+</div>
+
+{% include '_catalog_deploy_target_script.html' %}
+<script>
+    (function () {
+        const hiddenTenantInput = document.getElementById('skill-target-tenant-input');
+        const hiddenNamespaceInput = document.getElementById('skill-target-namespace-input');
+        const submitBtn = document.getElementById('skill-create-submit-btn');
+        const deployTargetState = {{ sc_deploy_target | tojson }};
+
+        const skillnameInput = document.getElementById('skillname');
+        const descriptionTextarea = document.getElementById('description');
+        const prefixTextarea = document.getElementById('prefix');
+        const prefixFileInput = document.getElementById('skill-prefix-file-input');
+        const prefixFileStatus = document.getElementById('skill-prefix-file-status');
+
+        function currentTenant() { return String(hiddenTenantInput.value || '').trim(); }
+        function currentNamespace() { return String(hiddenNamespaceInput.value || '').trim(); }
+        function targetReady() { return currentTenant() !== '' && currentNamespace() !== ''; }
+
+        function syncButtons() {
+            if (submitBtn) submitBtn.disabled = !targetReady() || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
+        }
+
+        descriptionTextarea.addEventListener('input', syncButtons);
+        prefixTextarea.addEventListener('input', syncButtons);
+
+        prefixFileInput.addEventListener('change', () => {
+            const file = prefixFileInput.files && prefixFileInput.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                prefixTextarea.value = e.target.result;
+                prefixFileStatus.textContent = `Loaded: ${file.name}`;
+                prefixFileInput.value = '';
+                syncButtons();
+            };
+            reader.onerror = () => {
+                prefixFileStatus.textContent = 'Failed to read file.';
+                prefixFileStatus.style.color = '#b91c1c';
+            };
+            reader.readAsText(file);
+        });
+
+        // deploy target controller
+        const root = document.getElementById('skill-create-deploy-target');
+        if (root && window.createCatalogDeployTargetController) {
+            const controller = window.createCatalogDeployTargetController({
+                root,
+                initialState: deployTargetState,
+            });
+            if (controller && typeof controller.refresh === 'function') {
+                const originalRefresh = controller.refresh;
+                controller.refresh = function () {
+                    const summary = originalRefresh();
+                    const sel = controller.getSelection ? controller.getSelection() : { tenant: '', namespace: '' };
+                    hiddenTenantInput.value = sel.tenant || '';
+                    hiddenNamespaceInput.value = sel.namespace || '';
+                    syncButtons();
+                    return summary;
+                };
+                controller.refresh();
+            }
+        }
+
+        // template detail preview
+        const templateSelect = document.getElementById('template_id');
+        const descriptionEl = document.getElementById('skill-template-description');
+        const modelEl = document.getElementById('skill-template-model');
+
+        function updateTemplateDetail() {
+            const option = templateSelect.options[templateSelect.selectedIndex];
+            if (!option || !option.value) { descriptionEl.textContent = ''; modelEl.textContent = ''; return; }
+            descriptionEl.textContent = option.dataset.description || '';
+            modelEl.textContent = option.dataset.model || '';
+        }
+
+        templateSelect.addEventListener('change', updateTemplateDetail);
+        updateTemplateDetail();
+        syncButtons();
+    })();
+</script>
+{% endblock %}
