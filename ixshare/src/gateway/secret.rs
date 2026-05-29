@@ -181,6 +181,93 @@ pub struct SkillSummary {
     pub template_display_name: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillMarketplaceItem {
+    pub skill_id: i64,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub description: Option<String>,
+    pub serving_mode: String,
+    pub earning_type: String,
+    pub user_price_microcents: Option<i32>,
+    pub gpu_billing_target: String,
+    pub is_published: bool,
+    pub published_at: Option<chrono::NaiveDateTime>,
+    pub active_revision_id: Option<i64>,
+    pub version: i32,
+    pub has_cache: bool,
+    pub cache_status: String,
+    pub template_display_name: String,
+    pub is_subscribed: bool,
+    pub tool_alias: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SkillMarketplacePage {
+    pub items: Vec<SkillMarketplaceItem>,
+    pub page: i64,
+    pub page_size: i64,
+    pub has_next: bool,
+    pub keyword: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillSubscription {
+    pub subscription_id: i64,
+    pub subscriber_tenant: String,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub tool_alias: String,
+    pub subscribed_at: chrono::DateTime<chrono::Utc>,
+    pub subscribed_by: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SkillSubscriptionWithDetail {
+    pub subscription_id: i64,
+    pub subscriber_tenant: String,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub tool_alias: String,
+    pub subscribed_at: chrono::DateTime<chrono::Utc>,
+    pub subscribed_by: String,
+    pub skill_id: i64,
+    pub description: Option<String>,
+    pub serving_mode: String,
+    pub earning_type: String,
+    pub user_price_microcents: Option<i32>,
+    pub gpu_billing_target: String,
+    pub inferx_revenue_share_pct: f64,
+    pub active_revision_id: Option<i64>,
+    pub is_published: bool,
+    pub published_at: Option<chrono::NaiveDateTime>,
+    pub published_by: Option<String>,
+    pub revision_id: i64,
+    pub version: i32,
+    pub template_id: i64,
+    pub has_cache: bool,
+    pub cache_status: String,
+    pub cache_ready_at: Option<chrono::NaiveDateTime>,
+    pub revision_created_at: Option<chrono::NaiveDateTime>,
+    pub revision_created_by: String,
+    pub template_tenant: String,
+    pub template_namespace: String,
+    pub template_display_name: String,
+    pub template_description: Option<String>,
+    pub func_tenant: String,
+    pub func_namespace: String,
+    pub normal_funcname: String,
+    pub producer_funcname: Option<String>,
+    pub producer_revision: Option<i64>,
+    pub consumer_funcname: Option<String>,
+    pub consumer_revision: Option<i64>,
+    pub template_is_active: bool,
+    pub template_created_at: Option<chrono::NaiveDateTime>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlSecret {
     pub pool: PgPool,
@@ -945,6 +1032,106 @@ impl SqlSecret {
             .await?)
     }
 
+    pub async fn ListMarketplaceSkills(
+        &self,
+        subscriber_tenant: Option<&str>,
+        keyword: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> Result<SkillMarketplacePage> {
+        let keyword = keyword
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let page = page.max(1);
+        let page_size = page_size.max(1);
+        let offset = (page - 1) * page_size;
+        let limit = page_size + 1;
+
+        let mut query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.is_published,
+                s.published_at,
+                s.active_revision_id,
+                sr.version,
+                sr.has_cache,
+                sr.cache_status,
+                st.display_name AS template_display_name,
+                CASE WHEN ss.subscription_id IS NULL THEN FALSE ELSE TRUE END AS is_subscribed,
+                ss.tool_alias
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+            LEFT JOIN SkillSubscription ss
+                ON ss.owner_tenant = s.owner_tenant
+               AND ss.owner_namespace = s.owner_namespace
+               AND ss.skillname = s.skillname
+               AND ss.subscriber_tenant = $1
+            WHERE s.is_published = TRUE
+        "#
+        .to_string();
+
+        if keyword.is_some() {
+            query.push_str(
+                r#"
+              AND (
+                    s.skillname ILIKE $2
+                 OR s.owner_tenant ILIKE $2
+                 OR s.owner_namespace ILIKE $2
+                 OR COALESCE(s.description, '') ILIKE $2
+                 OR st.display_name ILIKE $2
+                 OR COALESCE(st.description, '') ILIKE $2
+              )
+            "#,
+            );
+        }
+
+        query.push_str("\n            ORDER BY s.owner_tenant, s.owner_namespace, s.skillname");
+        if keyword.is_some() {
+            query.push_str("\n            LIMIT $3 OFFSET $4");
+        } else {
+            query.push_str("\n            LIMIT $2 OFFSET $3");
+        }
+
+        let rows = if let Some(keyword) = keyword.as_deref() {
+            sqlx::query_as::<_, SkillMarketplaceItem>(&query)
+                .bind(subscriber_tenant)
+                .bind(format!("%{}%", keyword))
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query_as::<_, SkillMarketplaceItem>(&query)
+                .bind(subscriber_tenant)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?
+        };
+
+        let has_next = rows.len() as i64 > page_size;
+        let items = rows.into_iter().take(page_size as usize).collect();
+
+        Ok(SkillMarketplacePage {
+            items,
+            page,
+            page_size,
+            has_next,
+            keyword,
+        })
+    }
+
     pub async fn IsSkillTemplateReferenced(&self, template_id: i64) -> Result<bool> {
         let row = sqlx::query(
             r#"
@@ -1219,6 +1406,59 @@ impl SqlSecret {
         self.GetSkill(owner_tenant, owner_namespace, skillname).await
     }
 
+    pub async fn ListSkillDetailsByTenant(&self, owner_tenant: &str) -> Result<Vec<SkillDetail>> {
+        let query = r#"
+            SELECT
+                s.skill_id,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.inferx_revenue_share_pct::FLOAT8 AS inferx_revenue_share_pct,
+                s.active_revision_id,
+                s.is_published,
+                s.published_at,
+                s.published_by,
+                sr.revision_id,
+                sr.version,
+                sr.template_id,
+                sr.has_cache,
+                sr.cache_status,
+                sr.cache_ready_at,
+                sr.created_at AS revision_created_at,
+                sr.created_by AS revision_created_by,
+                st.tenant AS template_tenant,
+                st.namespace AS template_namespace,
+                st.display_name AS template_display_name,
+                st.description AS template_description,
+                st.func_tenant,
+                st.func_namespace,
+                st.normal_funcname,
+                st.producer_funcname,
+                st.producer_revision,
+                st.consumer_funcname,
+                st.consumer_revision,
+                st.is_active AS template_is_active,
+                st.created_at AS template_created_at
+            FROM Skill s
+            JOIN SkillRevision sr
+                ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+                ON st.template_id = sr.template_id
+            WHERE s.owner_tenant = $1
+            ORDER BY s.skillname, s.owner_namespace
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillDetail>(query)
+            .bind(owner_tenant)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
     pub async fn GetSkill(
         &self,
         owner_tenant: &str,
@@ -1374,5 +1614,199 @@ impl SqlSecret {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    pub async fn CreateSkillSubscription(
+        &self,
+        subscriber_tenant: &str,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+        tool_alias: &str,
+        subscribed_by: &str,
+    ) -> Result<SkillSubscription> {
+        let query = r#"
+            INSERT INTO SkillSubscription (
+                subscriber_tenant,
+                owner_tenant,
+                owner_namespace,
+                skillname,
+                tool_alias,
+                subscribed_by
+            )
+            SELECT $1, s.owner_tenant, s.owner_namespace, s.skillname, $5, $6
+            FROM Skill s
+            WHERE s.owner_tenant = $2
+              AND s.owner_namespace = $3
+              AND s.skillname = $4
+              AND s.is_published = TRUE
+            RETURNING
+                subscription_id,
+                subscriber_tenant,
+                owner_tenant,
+                owner_namespace,
+                skillname,
+                tool_alias,
+                subscribed_at,
+                subscribed_by
+        "#;
+
+        let row = sqlx::query_as::<_, SkillSubscription>(query)
+            .bind(subscriber_tenant)
+            .bind(owner_tenant)
+            .bind(owner_namespace)
+            .bind(skillname)
+            .bind(tool_alias)
+            .bind(subscribed_by)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        row.ok_or_else(|| {
+            Error::NotExist(format!(
+                "published skill {}/{}/{} does not exist",
+                owner_tenant, owner_namespace, skillname
+            ))
+        })
+    }
+
+    pub async fn ListSkillSubscriptions(
+        &self,
+        subscriber_tenant: &str,
+    ) -> Result<Vec<SkillSubscriptionWithDetail>> {
+        let query = r#"
+            SELECT
+                ss.subscription_id,
+                ss.subscriber_tenant,
+                ss.owner_tenant,
+                ss.owner_namespace,
+                ss.skillname,
+                ss.tool_alias,
+                ss.subscribed_at,
+                ss.subscribed_by,
+                s.skill_id,
+                s.description,
+                s.serving_mode,
+                s.earning_type,
+                s.user_price_microcents,
+                s.gpu_billing_target,
+                s.inferx_revenue_share_pct::FLOAT8 AS inferx_revenue_share_pct,
+                s.active_revision_id,
+                s.is_published,
+                s.published_at,
+                s.published_by,
+                sr.revision_id,
+                sr.version,
+                sr.template_id,
+                sr.has_cache,
+                sr.cache_status,
+                sr.cache_ready_at,
+                sr.created_at AS revision_created_at,
+                sr.created_by AS revision_created_by,
+                st.tenant AS template_tenant,
+                st.namespace AS template_namespace,
+                st.display_name AS template_display_name,
+                st.description AS template_description,
+                st.func_tenant,
+                st.func_namespace,
+                st.normal_funcname,
+                st.producer_funcname,
+                st.producer_revision,
+                st.consumer_funcname,
+                st.consumer_revision,
+                st.is_active AS template_is_active,
+                st.created_at AS template_created_at
+            FROM SkillSubscription ss
+            JOIN Skill s
+              ON s.owner_tenant = ss.owner_tenant
+             AND s.owner_namespace = ss.owner_namespace
+             AND s.skillname = ss.skillname
+            JOIN SkillRevision sr
+              ON sr.revision_id = s.active_revision_id
+            JOIN SkillTemplate st
+              ON st.template_id = sr.template_id
+            WHERE ss.subscriber_tenant = $1
+            ORDER BY ss.tool_alias, ss.owner_tenant, ss.owner_namespace, ss.skillname
+        "#;
+
+        Ok(sqlx::query_as::<_, SkillSubscriptionWithDetail>(query)
+            .bind(subscriber_tenant)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn DeleteSkillSubscription(
+        &self,
+        subscriber_tenant: &str,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+                DELETE FROM SkillSubscription
+                WHERE subscriber_tenant = $1
+                  AND owner_tenant = $2
+                  AND owner_namespace = $3
+                  AND skillname = $4
+            "#,
+        )
+        .bind(subscriber_tenant)
+        .bind(owner_tenant)
+        .bind(owner_namespace)
+        .bind(skillname)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "subscription {}/{}/{} does not exist for tenant {}",
+                owner_tenant, owner_namespace, skillname, subscriber_tenant
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub async fn UpdateSkillSubscriptionAlias(
+        &self,
+        subscriber_tenant: &str,
+        owner_tenant: &str,
+        owner_namespace: &str,
+        skillname: &str,
+        tool_alias: &str,
+    ) -> Result<SkillSubscription> {
+        let query = r#"
+            UPDATE SkillSubscription
+            SET tool_alias = $5
+            WHERE subscriber_tenant = $1
+              AND owner_tenant = $2
+              AND owner_namespace = $3
+              AND skillname = $4
+            RETURNING
+                subscription_id,
+                subscriber_tenant,
+                owner_tenant,
+                owner_namespace,
+                skillname,
+                tool_alias,
+                subscribed_at,
+                subscribed_by
+        "#;
+
+        let row = sqlx::query_as::<_, SkillSubscription>(query)
+            .bind(subscriber_tenant)
+            .bind(owner_tenant)
+            .bind(owner_namespace)
+            .bind(skillname)
+            .bind(tool_alias)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        row.ok_or_else(|| {
+            Error::NotExist(format!(
+                "subscription {}/{}/{} does not exist for tenant {}",
+                owner_tenant, owner_namespace, skillname, subscriber_tenant
+            ))
+        })
     }
 }

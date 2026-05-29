@@ -85,6 +85,26 @@
             background: #c22f50;
         }
 
+        nav a.nav-sub-link {
+            font-size: clamp(13px, 1.1vw, 16px);
+            font-weight: 600;
+            padding: 3px 7px;
+            color: #9f1239;
+        }
+
+        nav a.nav-sub-link.active {
+            background: #d64161;
+            color: #ffffff;
+        }
+
+        nav a.nav-sub-link:hover {
+            background: #fff1f2;
+        }
+
+        nav a.nav-sub-link.active:hover {
+            background: #c22f50;
+        }
+
         nav a.nav-support-link {
             margin-left: auto;
             min-height: 28px;
@@ -610,7 +630,7 @@
     {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
     {% set nav_functions_active = request_path_no_slash in ('/listfunctions', '/function_create', '/function') %}
     {% set nav_models_active = request_path_no_slash in ('/listfunc', '/func_create', '/func', '/funclog') %}
-    {% set nav_skills_active = request_path_no_slash in ('/listskills',) or request_path.startswith('/skill_create') or request_path.startswith('/skill/') %}
+    {% set nav_skills_active = request_path.startswith('/listskills') or request_path.startswith('/skill_create') or request_path.startswith('/skill/') %}
     {% set nav_catalog_active = '/catalog' in request_path %}
     {% set nav_endpoints_active = request_path_no_slash in ('',) or '/endpoints' in request_path %}
     {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}

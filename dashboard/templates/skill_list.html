@@ -2,14 +2,69 @@
 
 {% block content %}
 <style>
+    .skills-page-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid #d7dee8;
+    }
+
+    .skills-page-nav a {
+        background: transparent;
+        color: #475569;
+        border: none;
+        border-radius: 0;
+        outline: none;
+        padding: 8px 6px 10px 6px;
+        text-decoration: none;
+        font-size: clamp(17px, 1.35vw, 20px);
+        font-weight: 600;
+        line-height: 1.15;
+        position: relative;
+        transition: color 120ms ease, background-color 120ms ease;
+    }
+
+    .skills-page-nav a::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -8px;
+        height: 2px;
+        background: transparent;
+        border-radius: 999px;
+    }
+
+    .skills-page-nav a:hover {
+        background: transparent;
+        color: #1f2937;
+    }
+
+    .skills-page-nav a.active {
+        background: transparent;
+        color: #be123c;
+    }
+
+    .skills-page-nav a.active::after {
+        background: #d64161;
+    }
+
+    .skills-page-nav a:focus-visible {
+        outline: 2px solid #f3b4c0;
+        outline-offset: 2px;
+    }
+
     .skills-page {
         display: grid;
-        gap: 20px;
+        gap: 24px;
     }
 
     .skills-section {
         display: grid;
-        gap: 12px;
+        gap: 14px;
     }
 
     .skills-header {
@@ -26,6 +81,12 @@
         color: #1f2937;
     }
 
+    .skills-subtitle {
+        margin: 4px 0 0 0;
+        color: #475569;
+        font-size: 14px;
+    }
+
     .skills-empty {
         padding: 14px 16px;
         border: 1px solid #d7dee8;
@@ -33,13 +94,173 @@
         background: #f8fbff;
         color: #475569;
     }
+
+    .skills-marketplace-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .skills-marketplace-search {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .skills-marketplace-search label {
+        display: grid;
+        gap: 6px;
+        color: #0f172a;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .skills-marketplace-search input {
+        min-width: 280px;
+        max-width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #fff;
+        color: #1f2937;
+        font: inherit;
+    }
+
+    .skills-marketplace-pager {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        color: #475569;
+        font-size: 14px;
+    }
+
+    .skill-card-alias {
+        color: #475569;
+        font-size: 13px;
+    }
+
+    .skills-marketplace-table td {
+        vertical-align: top;
+    }
+
+    .skills-marketplace-description {
+        color: #334155;
+        min-width: 280px;
+    }
+
+    .skills-readonly-note {
+        color: #64748b;
+        font-size: 13px;
+    }
+
+    .subscription-row-edit[hidden],
+    .skill-subscribe-modal[hidden] {
+        display: none;
+    }
+
+    .subscription-alias-editor {
+        display: grid;
+        gap: 8px;
+        min-width: 240px;
+    }
+
+    .subscription-alias-editor input,
+    .skill-subscribe-form input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        background: #fff;
+        color: #1f2937;
+        font: inherit;
+    }
+
+    .subscription-inline-actions,
+    .skill-subscribe-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .skill-validation-error {
+        color: #b91c1c;
+        font-size: 13px;
+    }
+
+    .skill-validation-hint {
+        color: #475569;
+        font-size: 13px;
+    }
+
+    .skill-subscribe-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 1000;
+    }
+
+    .skill-subscribe-dialog {
+        width: min(100%, 480px);
+        background: #fff;
+        border-radius: 6px;
+        border: 1px solid #d7dee8;
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.18);
+    }
+
+    .skill-subscribe-dialog h3 {
+        margin: 0;
+        font-size: 20px;
+        color: #111827;
+    }
+
+    .skill-subscribe-form {
+        display: grid;
+        gap: 12px;
+    }
+
+    .skill-subscribe-form label {
+        display: block;
+        margin-bottom: 6px;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    .skill-subscribe-form p {
+        margin: 0;
+    }
+
+    .skill-subscribe-meta {
+        color: #475569;
+        font-size: 14px;
+    }
 </style>
 
+{% set current_view = skills_view | default('my_skills') %}
+
 <div class="skills-page">
+    <nav class="skills-page-nav" aria-label="Skills pages">
+        <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Skills</a>
+        <a href="{{ url_for('prefix.SkillMarketplace') }}" class="{% if current_view == 'marketplace' %}active{% endif %}">Marketplace</a>
+    </nav>
+
+    {% if current_view == 'my_skills' %}
     <section class="skills-section">
         <div class="skills-header">
             <div>
-                <h2>My Skills</h2>
+                <h2>My Own Skills</h2>
+                <p class="skills-subtitle">Skills you own under tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
             <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
         </div>
@@ -86,38 +307,538 @@
         <div class="skills-empty">You have no skills yet. Create your first skill.</div>
         {% endif %}
     </section>
-
-    {% if published_skills %}
-    <section class="skills-section">
+    <section class="skills-section" id="skills-subscriptions">
         <div class="skills-header">
             <div>
-                <h2>{{ 'All Other Skills' if is_inferx_admin else 'Published Skills' }}</h2>
+                <h2>My Subscribed Skills</h2>
+                <p class="skills-subtitle">External skills currently available to tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
         </div>
 
+        {% if subscriptions %}
         <table class="ix-table">
             <thead>
                 <tr>
+                    <th>Skill</th>
                     <th>Owner</th>
-                    <th>Namespace</th>
-                    <th>Name</th>
-                    <th>Description</th>
-                    {% if is_inferx_admin %}<th>Status</th>{% endif %}
+                    <th>Alias</th>
+                    <th>Subscribed</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {% for skill in published_skills %}
-                <tr>
-                    <td>{{ skill.get('owner_tenant') }}</td>
-                    <td>{{ skill.get('owner_namespace') }}</td>
-                    <td><a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a></td>
-                    <td>{{ skill.get('description') }}</td>
-                    {% if is_inferx_admin %}<td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>{% endif %}
+                {% for row in subscriptions %}
+                <tr
+                    data-role="subscription-row"
+                    data-owner-tenant="{{ row.get('owner_tenant') }}"
+                    data-owner-namespace="{{ row.get('owner_namespace') }}"
+                    data-skillname="{{ row.get('skillname') }}"
+                    data-tool-alias="{{ row.get('tool_alias') }}"
+                >
+                    <td>
+                        <a href="{{ url_for('prefix.SkillDetail', owner=row.get('owner_tenant'), ns=row.get('owner_namespace'), name=row.get('skillname')) }}">{{ row.get('skillname') }}</a>
+                    </td>
+                    <td>{{ row.get('owner_tenant') }}/{{ row.get('owner_namespace') }}</td>
+                    <td>
+                        <div data-role="alias-read">{{ row.get('tool_alias') }}</div>
+                        <div class="subscription-row-edit" data-role="alias-edit" hidden>
+                            <div class="subscription-alias-editor">
+                                <input
+                                    type="text"
+                                    value="{{ row.get('tool_alias') }}"
+                                    data-role="alias-input"
+                                >
+                                <div class="skill-validation-error" data-role="alias-error"></div>
+                                <div class="subscription-inline-actions">
+                                    <button class="ix-btn" type="button" data-action="save-alias">Save</button>
+                                    <button class="ix-btn secondary" type="button" data-action="cancel-alias">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>{{ row.get('subscribed_at_display') or row.get('subscribed_at') or '—' }}</td>
+                    <td>
+                        {% if can_manage_subscriptions %}
+                        <div class="ix-row-actions">
+                            <button class="ix-btn secondary" type="button" data-action="edit-alias">Edit Alias</button>
+                            <button class="ix-btn danger" type="button" data-action="unsubscribe-subscription">Unsubscribe</button>
+                        </div>
+                        {% else %}
+                        <span class="skills-readonly-note">Read-only</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <div class="skills-empty">No active subscriptions.</div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if current_view == 'marketplace' %}
+    <section class="skills-section" id="skills-marketplace">
+        <div class="skills-header">
+            <div>
+                <h2>Marketplace</h2>
+                <p class="skills-subtitle">Published skills from all tenants. Subscribe to expose selected external skills to your tenant.</p>
+            </div>
+        </div>
+        <div class="skills-marketplace-controls">
+            <form method="get" action="{{ url_for('prefix.SkillMarketplace') }}" class="skills-marketplace-search">
+                <label>
+                    Search
+                    <input
+                        type="search"
+                        name="keyword"
+                        value="{{ marketplace_keyword or '' }}"
+                        placeholder="Search by skill, owner, namespace, or description"
+                    >
+                </label>
+                <input type="hidden" name="page" value="1">
+                <input type="hidden" name="page_size" value="{{ marketplace_page_size or 24 }}">
+                <button class="ix-btn" type="submit">Apply</button>
+                {% if marketplace_keyword %}
+                <a class="ix-btn secondary" href="{{ url_for('prefix.SkillMarketplace', page=1, page_size=marketplace_page_size or 24) }}">Clear</a>
+                {% endif %}
+            </form>
+            <div class="skills-marketplace-pager">
+                <span>Page {{ marketplace_page or 1 }}</span>
+                {% if (marketplace_page or 1) > 1 %}
+                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24) }}{% endif %}">Previous</a>
+                {% endif %}
+                {% if marketplace_has_next %}
+                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24) }}{% endif %}">Next</a>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if marketplace_skills %}
+        <table class="ix-table skills-marketplace-table">
+            <thead>
+                <tr>
+                    <th>Skill</th>
+                    <th>Owner</th>
+                    <th>Description</th>
+                    <th>Price</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for skill in marketplace_skills %}
+                <tr
+                    data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                    data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                    data-skillname="{{ skill.get('skillname') }}"
+                >
+                    <td>
+                        <a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a>
+                    </td>
+                    <td>{{ skill.get('owner_tenant') }}/{{ skill.get('owner_namespace') }}</td>
+                    <td class="skills-marketplace-description">{{ skill.get('description') or 'No description provided.' }}</td>
+                    <td>{% if skill.get('earning_type') == 'free' %}Free{% elif skill.get('user_price_microcents') is not none %}${{ '%.4f'|format((skill.get('user_price_microcents')|int) / 1000000) }}/run{% else %}Paid{% endif %}</td>
+                    <td>
+                        <div class="skill-card-alias" data-role="alias-display">
+                            {% if skill.get('is_subscribed') and skill.get('tool_alias') %}
+                            Subscribed as <strong>{{ skill.get('tool_alias') }}</strong>
+                            {% else %}
+                            Not subscribed
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% if can_manage_subscriptions %}
+                        <div class="ix-row-actions">
+                            {% if skill.get('is_subscribed') %}
+                            <button
+                                class="ix-btn danger"
+                                type="button"
+                                data-action="unsubscribe-marketplace"
+                                data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                                data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                                data-skillname="{{ skill.get('skillname') }}"
+                            >
+                                Unsubscribe
+                            </button>
+                            {% else %}
+                            <button
+                                class="ix-btn"
+                                type="button"
+                                data-action="open-subscribe-modal"
+                                data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                                data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                                data-skillname="{{ skill.get('skillname') }}"
+                            >
+                                Subscribe
+                            </button>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <div class="skills-readonly-note">Read-only</div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="skills-empty">No published skills are currently available.</div>
+        {% endif %}
     </section>
     {% endif %}
 </div>
+
+{% if can_manage_subscriptions %}
+<div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>
+    <div class="skill-subscribe-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-subscribe-modal-title">
+        <div>
+            <h3 id="skill-subscribe-modal-title">Subscribe to Skill</h3>
+            <p id="skill-subscribe-modal-skill" class="skill-subscribe-meta"></p>
+        </div>
+        <div class="skill-subscribe-form">
+            <div>
+                <label for="skill-subscribe-alias-input">Tool alias</label>
+                <input id="skill-subscribe-alias-input" type="text" value="">
+                <p class="skill-validation-hint">Agents will call this tool as "<span id="skill-subscribe-alias-preview"></span>"</p>
+                <div id="skill-subscribe-alias-error" class="skill-validation-error"></div>
+            </div>
+            <div class="skill-subscribe-actions">
+                <button id="skill-subscribe-confirm-btn" class="ix-btn" type="button" disabled>Subscribe</button>
+                <button id="skill-subscribe-cancel-btn" class="ix-btn secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const canManage = {{ can_manage_subscriptions | tojson }};
+        if (!canManage) return;
+
+        const subscribeUrl = {{ url_for('prefix.SkillSubscriptionSubscribe') | tojson }};
+        const unsubscribeUrl = {{ url_for('prefix.SkillSubscriptionUnsubscribe') | tojson }};
+        const updateAliasUrl = {{ url_for('prefix.SkillSubscriptionUpdateAlias') | tojson }};
+
+        const marketplaceRoot = document.getElementById('skills-marketplace');
+        const subscriptionsRoot = document.getElementById('skills-subscriptions');
+        const modal = document.getElementById('skill-subscribe-modal');
+        const modalSkillText = document.getElementById('skill-subscribe-modal-skill');
+        const modalAliasInput = document.getElementById('skill-subscribe-alias-input');
+        const modalAliasPreview = document.getElementById('skill-subscribe-alias-preview');
+        const modalAliasError = document.getElementById('skill-subscribe-alias-error');
+        const modalConfirmBtn = document.getElementById('skill-subscribe-confirm-btn');
+        const modalCancelBtn = document.getElementById('skill-subscribe-cancel-btn');
+
+        let modalState = null;
+
+        function parseJsonResponse(response) {
+            return response.text().then((text) => {
+                let payload = null;
+                try {
+                    payload = text ? JSON.parse(text) : null;
+                } catch (_) {
+                    payload = null;
+                }
+                if (!response.ok) {
+                    const message = (payload && (payload.error || payload.message)) || text || `HTTP ${response.status}`;
+                    throw new Error(message);
+                }
+                return payload;
+            });
+        }
+
+        function isAliasFormatValid(alias) {
+            return /^[a-z][a-z0-9_-]{0,63}$/.test(alias);
+        }
+
+        function setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, alias) {
+            if (!marketplaceRoot) return;
+            const card = marketplaceRoot.querySelector(`[data-owner-tenant="${CSS.escape(ownerTenant)}"][data-owner-namespace="${CSS.escape(ownerNamespace)}"][data-skillname="${CSS.escape(skillname)}"]`);
+            if (!card) return;
+
+            const aliasDisplay = card.querySelector('[data-role="alias-display"]');
+            if (aliasDisplay) {
+                aliasDisplay.innerHTML = alias ? `Subscribed as <strong>${alias}</strong>` : 'Not subscribed';
+            }
+
+            const actions = card.querySelector('.ix-row-actions');
+            if (!actions) return;
+            actions.innerHTML = '';
+            if (alias) {
+                const button = document.createElement('button');
+                button.className = 'ix-btn danger';
+                button.type = 'button';
+                button.dataset.action = 'unsubscribe-marketplace';
+                button.dataset.ownerTenant = ownerTenant;
+                button.dataset.ownerNamespace = ownerNamespace;
+                button.dataset.skillname = skillname;
+                button.textContent = 'Unsubscribe';
+                actions.appendChild(button);
+            } else {
+                const button = document.createElement('button');
+                button.className = 'ix-btn';
+                button.type = 'button';
+                button.dataset.action = 'open-subscribe-modal';
+                button.dataset.ownerTenant = ownerTenant;
+                button.dataset.ownerNamespace = ownerNamespace;
+                button.dataset.skillname = skillname;
+                button.textContent = 'Subscribe';
+                actions.appendChild(button);
+            }
+        }
+
+        function removeSubscriptionRow(ownerTenant, ownerNamespace, skillname) {
+            if (!subscriptionsRoot) return;
+            const row = subscriptionsRoot.querySelector(
+                `[data-role="subscription-row"][data-owner-tenant="${CSS.escape(ownerTenant)}"][data-owner-namespace="${CSS.escape(ownerNamespace)}"][data-skillname="${CSS.escape(skillname)}"]`
+            );
+            if (row) row.remove();
+        }
+
+        function upsertSubscriptionRow(payload) {
+            if (!subscriptionsRoot) return;
+            const ownerTenant = String(payload.owner_tenant || '');
+            const ownerNamespace = String(payload.owner_namespace || '');
+            const skillname = String(payload.skillname || '');
+            const alias = String(payload.tool_alias || '');
+            const row = subscriptionsRoot.querySelector(
+                `[data-role="subscription-row"][data-owner-tenant="${CSS.escape(ownerTenant)}"][data-owner-namespace="${CSS.escape(ownerNamespace)}"][data-skillname="${CSS.escape(skillname)}"]`
+            );
+            if (row) {
+                row.dataset.toolAlias = alias;
+                const readNode = row.querySelector('[data-role="alias-read"]');
+                if (readNode) readNode.textContent = alias;
+                const inputNode = row.querySelector('[data-role="alias-input"]');
+                if (inputNode) inputNode.value = alias;
+                return;
+            }
+            window.location.reload();
+        }
+
+        function setModalValidation(valid, message) {
+            if (modalAliasPreview) modalAliasPreview.textContent = String(modalAliasInput.value || '').trim().toLowerCase();
+            if (modalAliasError) modalAliasError.textContent = message || '';
+            if (modalConfirmBtn) modalConfirmBtn.disabled = !valid;
+            if (modalState) modalState.valid = !!valid;
+        }
+
+        function setInlineValidation(row, valid, message) {
+            const aliasError = row?.querySelector('[data-role="alias-error"]');
+            const saveButton = row?.querySelector('button[data-action="save-alias"]');
+            if (aliasError) aliasError.textContent = message || '';
+            if (saveButton) saveButton.disabled = !valid;
+        }
+
+        function scheduleModalValidation() {
+            const alias = String(modalAliasInput.value || '').trim();
+            if (modalAliasPreview) modalAliasPreview.textContent = alias.toLowerCase();
+            if (!isAliasFormatValid(alias)) {
+                setModalValidation(false, 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.');
+                return;
+            }
+            setModalValidation(true, '');
+        }
+
+        function openSubscribeModal(ownerTenant, ownerNamespace, skillname) {
+            modalState = {
+                ownerTenant,
+                ownerNamespace,
+                skillname,
+                valid: false,
+            };
+            modalSkillText.textContent = `${ownerTenant}/${ownerNamespace}/${skillname}`;
+            modalAliasInput.value = skillname;
+            setModalValidation(false, '');
+            modal.hidden = false;
+            scheduleModalValidation();
+            window.setTimeout(() => modalAliasInput.focus(), 0);
+        }
+
+        function scheduleInlineAliasValidation(row) {
+            const aliasInput = row?.querySelector('[data-role="alias-input"]');
+            const alias = String(aliasInput?.value || '').trim();
+            if (!isAliasFormatValid(alias)) {
+                setInlineValidation(row, false, 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.');
+                return;
+            }
+            setInlineValidation(row, true, '');
+        }
+
+        function closeSubscribeModal() {
+            modal.hidden = true;
+            modalState = null;
+            modalAliasInput.value = '';
+            modalAliasError.textContent = '';
+            modalConfirmBtn.disabled = true;
+        }
+
+        function submitSubscription(ownerTenant, ownerNamespace, skillname, alias) {
+            return fetch(subscribeUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    owner_tenant: ownerTenant,
+                    owner_namespace: ownerNamespace,
+                    skillname,
+                    tool_alias: alias,
+                }),
+            }).then(parseJsonResponse);
+        }
+
+        function unsubscribeSkill(ownerTenant, ownerNamespace, skillname) {
+            return fetch(unsubscribeUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    owner_tenant: ownerTenant,
+                    owner_namespace: ownerNamespace,
+                    skillname,
+                }),
+            }).then(parseJsonResponse);
+        }
+
+        function saveAlias(ownerTenant, ownerNamespace, skillname, alias) {
+            return fetch(updateAliasUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    owner_tenant: ownerTenant,
+                    owner_namespace: ownerNamespace,
+                    skillname,
+                    tool_alias: alias,
+                }),
+            }).then(parseJsonResponse);
+        }
+
+        marketplaceRoot?.addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+            const ownerTenant = button.dataset.ownerTenant || '';
+            const ownerNamespace = button.dataset.ownerNamespace || '';
+            const skillname = button.dataset.skillname || '';
+            if (button.dataset.action === 'open-subscribe-modal') {
+                openSubscribeModal(ownerTenant, ownerNamespace, skillname);
+            } else if (button.dataset.action === 'unsubscribe-marketplace') {
+                if (!window.confirm('Unsubscribe from this skill?')) return;
+                unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
+                    .then(() => {
+                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');
+                        removeSubscriptionRow(ownerTenant, ownerNamespace, skillname);
+                        window.location.reload();
+                    })
+                    .catch((error) => {
+                        window.alert(error.message || 'Failed to unsubscribe');
+                    });
+            }
+        });
+
+        subscriptionsRoot?.addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+            const row = button.closest('[data-role="subscription-row"]');
+            if (!row) return;
+            const ownerTenant = row.dataset.ownerTenant || '';
+            const ownerNamespace = row.dataset.ownerNamespace || '';
+            const skillname = row.dataset.skillname || '';
+            const aliasRead = row.querySelector('[data-role="alias-read"]');
+            const aliasEdit = row.querySelector('[data-role="alias-edit"]');
+            const aliasInput = row.querySelector('[data-role="alias-input"]');
+            const aliasError = row.querySelector('[data-role="alias-error"]');
+
+            if (button.dataset.action === 'edit-alias') {
+                if (aliasRead) aliasRead.hidden = true;
+                if (aliasEdit) aliasEdit.hidden = false;
+                if (aliasError) aliasError.textContent = '';
+                if (aliasInput) {
+                    aliasInput.value = row.dataset.toolAlias || aliasInput.value || '';
+                    aliasInput.focus();
+                }
+                setInlineValidation(row, isAliasFormatValid(String(aliasInput?.value || '').trim()), '');
+                scheduleInlineAliasValidation(row);
+                return;
+            }
+
+            if (button.dataset.action === 'cancel-alias') {
+                if (aliasRead) aliasRead.hidden = false;
+                if (aliasEdit) aliasEdit.hidden = true;
+                if (aliasError) aliasError.textContent = '';
+                if (aliasInput) aliasInput.value = row.dataset.toolAlias || '';
+                return;
+            }
+
+            if (button.dataset.action === 'save-alias') {
+                const alias = String(aliasInput?.value || '').trim().toLowerCase();
+                if (!isAliasFormatValid(alias)) {
+                    if (aliasError) aliasError.textContent = 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.';
+                    return;
+                }
+                if (aliasError) aliasError.textContent = '';
+                saveAlias(ownerTenant, ownerNamespace, skillname, alias)
+                    .then((payload) => {
+                        row.dataset.toolAlias = payload.tool_alias || '';
+                        if (aliasRead) {
+                            aliasRead.textContent = payload.tool_alias || '';
+                            aliasRead.hidden = false;
+                        }
+                        if (aliasEdit) aliasEdit.hidden = true;
+                        if (aliasInput) aliasInput.value = payload.tool_alias || '';
+                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || '');
+                    })
+                    .catch((error) => {
+                        if (aliasError) aliasError.textContent = error.message || 'Failed to update alias';
+                    });
+                return;
+            }
+
+            if (button.dataset.action === 'unsubscribe-subscription') {
+                if (!window.confirm('Unsubscribe from this skill?')) return;
+                unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
+                    .then(() => {
+                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');
+                        row.remove();
+                        window.location.reload();
+                    })
+                    .catch((error) => {
+                        window.alert(error.message || 'Failed to unsubscribe');
+                    });
+            }
+        });
+
+        subscriptionsRoot?.addEventListener('input', (event) => {
+            const input = event.target.closest('[data-role="alias-input"]');
+            if (!input) return;
+            const row = input.closest('[data-role="subscription-row"]');
+            if (!row) return;
+            scheduleInlineAliasValidation(row);
+        });
+
+        modalAliasInput?.addEventListener('input', scheduleModalValidation);
+        modalCancelBtn?.addEventListener('click', closeSubscribeModal);
+        modal?.addEventListener('click', (event) => {
+            if (event.target === modal) closeSubscribeModal();
+        });
+        modalConfirmBtn?.addEventListener('click', () => {
+            if (!modalState || !modalState.valid) return;
+            const ownerTenant = modalState.ownerTenant;
+            const ownerNamespace = modalState.ownerNamespace;
+            const skillname = modalState.skillname;
+            const alias = String(modalAliasInput.value || '').trim().toLowerCase();
+            submitSubscription(ownerTenant, ownerNamespace, skillname, alias)
+                .then((payload) => {
+                    closeSubscribeModal();
+                    setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || alias);
+                    upsertSubscriptionRow(payload);
+                })
+                .catch((error) => {
+                    setModalValidation(false, error.message || 'Failed to subscribe');
+                });
+        });
+    }());
+</script>
+{% endif %}
 {% endblock %}
