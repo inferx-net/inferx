@@ -4738,13 +4738,15 @@ def query_endpoint_row_by_slug(slug: str):
     return normalize_endpoint_row(dict(row))
 
 
-def gateway_request_headers(*, json_body=False):
+def gateway_request_headers(*, json_body=False, active_tenant: str | None = None):
     access_token = session.get('access_token', '')
     headers = {}
     if access_token != "":
         headers['Authorization'] = f'Bearer {access_token}'
     if json_body:
         headers["Content-Type"] = "application/json"
+    if active_tenant:
+        headers["X-Tenant"] = str(active_tenant).strip()
     return headers
 
 
@@ -4923,6 +4925,46 @@ def list_published_skills():
     return payload
 
 
+def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str | None = None, active_tenant: str | None = None):
+    url = f"{apihostaddr}/api/v1/skills/marketplace"
+    params: dict = {
+        "page": max(1, int(page)),
+        "page_size": max(1, int(page_size)),
+    }
+    if keyword is not None and str(keyword).strip() != "":
+        params["keyword"] = str(keyword).strip()
+
+    resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), params=params, timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise SkillSubscriptionGatewayError(detail or f"HTTP {resp.status_code}", resp.status_code)
+
+    if isinstance(payload, list):
+        return {
+            "items": payload,
+            "page": params["page"],
+            "page_size": params["page_size"],
+            "has_next": False,
+            "keyword": params.get("keyword", ""),
+        }
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid marketplace skills response")
+
+    items = payload.get("items") or []
+    if not isinstance(items, list):
+        raise RuntimeError("invalid marketplace skills response")
+
+    return {
+        "items": items,
+        "page": int(payload.get("page") or params["page"]),
+        "page_size": int(payload.get("page_size") or params["page_size"]),
+        "has_next": bool(payload.get("has_next")),
+        "keyword": str(payload.get("keyword") or params.get("keyword", "") or "").strip(),
+    }
+
+
 def list_tenant_skills(owner_tenant: str):
     url = f"{apihostaddr}/skills/{owner_tenant}"
     resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
@@ -4945,6 +4987,224 @@ def list_namespace_skills(owner_tenant: str, namespace: str):
     if not isinstance(payload, list):
         raise RuntimeError("invalid namespace skills response")
     return payload
+
+
+class SkillSubscriptionGatewayError(RuntimeError):
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = int(status_code)
+
+
+def list_skill_subscriptions(*, active_tenant: str | None = None):
+    url = f"{apihostaddr}/api/v1/skills/subscriptions"
+    resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise SkillSubscriptionGatewayError(detail or f"HTTP {resp.status_code}", resp.status_code)
+    if not isinstance(payload, list):
+        raise RuntimeError("invalid skill subscriptions response")
+
+    rows = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["subscribed_at_display"] = format_catalog_datetime(item.get("subscribed_at"))
+        rows.append(item)
+    return rows
+
+
+def create_skill_subscription(owner_tenant: str, namespace: str, skillname: str, tool_alias: str | None = None, *, active_tenant: str | None = None):
+    payload = {
+        "owner_tenant": owner_tenant,
+        "owner_namespace": namespace,
+        "skillname": skillname,
+    }
+    if tool_alias is not None and str(tool_alias).strip() != "":
+        payload["tool_alias"] = str(tool_alias).strip()
+
+    url = f"{apihostaddr}/api/v1/skills/subscriptions"
+    resp = requests.post(
+        url,
+        headers=gateway_request_headers(json_body=True, active_tenant=active_tenant),
+        json=payload,
+        timeout=60,
+    )
+    response_payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, response_payload)
+        raise SkillSubscriptionGatewayError(detail or f"HTTP {resp.status_code}", resp.status_code)
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("invalid create skill subscription response")
+    return response_payload
+
+
+def update_skill_subscription_alias(owner_tenant: str, namespace: str, skillname: str, tool_alias: str, *, active_tenant: str | None = None):
+    encoded_owner = quote(owner_tenant, safe="")
+    encoded_namespace = quote(namespace, safe="")
+    encoded_skill = quote(skillname, safe="")
+    url = f"{apihostaddr}/api/v1/skills/subscriptions/{encoded_owner}/{encoded_namespace}/{encoded_skill}"
+    resp = requests.patch(
+        url,
+        headers=gateway_request_headers(json_body=True, active_tenant=active_tenant),
+        json={"tool_alias": str(tool_alias or "").strip()},
+        timeout=60,
+    )
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise SkillSubscriptionGatewayError(detail or f"HTTP {resp.status_code}", resp.status_code)
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid update skill subscription response")
+    return payload
+
+
+def delete_skill_subscription(owner_tenant: str, namespace: str, skillname: str, *, active_tenant: str | None = None):
+    encoded_owner = quote(owner_tenant, safe="")
+    encoded_namespace = quote(namespace, safe="")
+    encoded_skill = quote(skillname, safe="")
+    url = f"{apihostaddr}/api/v1/skills/subscriptions/{encoded_owner}/{encoded_namespace}/{encoded_skill}"
+    resp = requests.delete(url, headers=gateway_request_headers(active_tenant=active_tenant), timeout=60)
+    payload = response_json_or_none(resp)
+    if not resp.ok:
+        detail = extract_upstream_error_message(resp, payload)
+        raise SkillSubscriptionGatewayError(detail or f"HTTP {resp.status_code}", resp.status_code)
+    return True
+
+
+def get_admin_namespace_names_for_tenant(roles, tenant_name: str):
+    normalized_tenant = str(tenant_name or "").strip().lower()
+    if normalized_tenant == "":
+        return []
+
+    namespaces = []
+    seen = set()
+    for role in roles if isinstance(roles, list) else []:
+        if not isinstance(role, dict):
+            continue
+        if str(role.get("objType", "") or "").strip().lower() != "namespace":
+            continue
+        if str(role.get("role", "") or "").strip().lower() != "admin":
+            continue
+        if str(role.get("tenant", "") or "").strip().lower() != normalized_tenant:
+            continue
+        namespace_name = str(role.get("namespace", "") or "").strip()
+        namespace_key = namespace_name.lower()
+        if namespace_name == "" or namespace_key in seen:
+            continue
+        seen.add(namespace_key)
+        namespaces.append(namespace_name)
+
+    return sorted(namespaces, key=lambda item: item.lower())
+
+
+def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
+    def parse_positive_int_arg(name: str, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+        raw = str(request.args.get(name, default) or "").strip()
+        try:
+            value = int(raw)
+        except Exception:
+            value = default
+        if value < minimum:
+            value = minimum
+        if maximum is not None and value > maximum:
+            value = maximum
+        return value
+
+    roles = listroles()
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant == "":
+        raise RuntimeError("No active tenant selected")
+
+    is_inferx_admin = is_inferx_admin_user()
+    can_manage_subscriptions = has_admin_role_for_model(roles, active_tenant) or is_inferx_admin
+
+    my_skills = list_tenant_skills(active_tenant)
+    if not (is_inferx_admin or has_admin_role_for_model(roles, active_tenant)):
+        seen_keys = {
+            (
+                str(row.get("owner_tenant", "") or "").strip().lower(),
+                str(row.get("owner_namespace", "") or "").strip().lower(),
+                str(row.get("skillname", "") or "").strip().lower(),
+            )
+            for row in my_skills
+            if isinstance(row, dict)
+        }
+        for namespace in get_admin_namespace_names_for_tenant(roles, active_tenant):
+            for row in list_namespace_skills(active_tenant, namespace):
+                key = (
+                    str(row.get("owner_tenant", "") or "").strip().lower(),
+                    str(row.get("owner_namespace", "") or "").strip().lower(),
+                    str(row.get("skillname", "") or "").strip().lower(),
+                )
+                if any(part == "" for part in key) or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                my_skills.append(row)
+
+    subscriptions = list_skill_subscriptions(active_tenant=active_tenant)
+    subscriptions_by_skill = {}
+    for row in subscriptions:
+        key = (
+            str(row.get("owner_tenant", "") or "").strip().lower(),
+            str(row.get("owner_namespace", "") or "").strip().lower(),
+            str(row.get("skillname", "") or "").strip().lower(),
+        )
+        if any(part == "" for part in key):
+            continue
+        subscriptions_by_skill[key] = dict(row)
+
+    marketplace_page = 1
+    marketplace_page_size = 24
+    marketplace_keyword = ""
+    marketplace_has_next = False
+    marketplace_skills = []
+
+    if skills_view == "marketplace":
+        marketplace_page = parse_positive_int_arg("page", 1)
+        marketplace_page_size = parse_positive_int_arg("page_size", 24, maximum=200)
+        marketplace_keyword = str(request.args.get("keyword", "") or "").strip()
+
+        marketplace_payload = list_marketplace_skills(
+            page=marketplace_page,
+            page_size=marketplace_page_size,
+            keyword=marketplace_keyword or None,
+            active_tenant=active_tenant,
+        )
+        marketplace_page = int(marketplace_payload.get("page") or marketplace_page)
+        marketplace_page_size = int(marketplace_payload.get("page_size") or marketplace_page_size)
+        marketplace_has_next = bool(marketplace_payload.get("has_next"))
+
+        my_skill_ids = {int(r["skill_id"]) for r in my_skills if r.get("skill_id") is not None}
+        for row in marketplace_payload.get("items", []):
+            skill_id = row.get("skill_id")
+            if skill_id is not None and int(skill_id) in my_skill_ids:
+                continue
+            item = dict(row)
+            key = (
+                str(item.get("owner_tenant", "") or "").strip().lower(),
+                str(item.get("owner_namespace", "") or "").strip().lower(),
+                str(item.get("skillname", "") or "").strip().lower(),
+            )
+            if "is_subscribed" not in item:
+                subscription = subscriptions_by_skill.get(key)
+                item["is_subscribed"] = bool(subscription)
+                item["tool_alias"] = subscription.get("tool_alias") if subscription else None
+            marketplace_skills.append(item)
+
+    return {
+        "active_tenant": active_tenant,
+        "can_manage_subscriptions": can_manage_subscriptions,
+        "is_inferx_admin": is_inferx_admin,
+        "my_skills": my_skills,
+        "marketplace_skills": marketplace_skills,
+        "marketplace_page": marketplace_page,
+        "marketplace_page_size": marketplace_page_size,
+        "marketplace_keyword": marketplace_keyword,
+        "marketplace_has_next": marketplace_has_next,
+        "subscriptions": subscriptions,
+    }
 
 
 def create_skill(owner_tenant: str, namespace: str, skillname: str, payload):
@@ -7841,36 +8101,37 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
 
 @prefix_bp.route("/listskills", methods=["GET"])
 @require_login
+def ListSkillsLegacy():
+    return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/listskills/myskills", methods=["GET"])
+@require_login
 def ListSkills():
     try:
-        active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
-        if active_tenant == "":
-            raise RuntimeError("No active tenant selected")
-
-        is_inferx_admin = is_inferx_admin_user()
-        if is_inferx_admin:
-            all_skills = list_published_skills()
-            my_skills = [r for r in all_skills if str(r.get("owner_tenant", "") or "").lower() == active_tenant.lower()]
-            my_skill_ids = {int(r["skill_id"]) for r in my_skills if r.get("skill_id") is not None}
-            published_skills = [r for r in all_skills if r.get("skill_id") is None or int(r["skill_id"]) not in my_skill_ids]
-        else:
-            my_skills = list_tenant_skills(active_tenant)
-            my_skill_ids = {int(r["skill_id"]) for r in my_skills if r.get("skill_id") is not None}
-            published_skills = []
-            for row in list_published_skills():
-                skill_id = row.get("skill_id")
-                if skill_id is not None and int(skill_id) in my_skill_ids:
-                    continue
-                published_skills.append(row)
+        context = load_skill_dashboard_context(skills_view="my_skills")
     except Exception as e:
         return json_error(f"failed to load skills: {e}", 500)
 
     return render_template(
         "skill_list.html",
-        active_tenant=active_tenant,
-        my_skills=my_skills,
-        published_skills=published_skills,
-        is_inferx_admin=is_inferx_admin,
+        skills_view="my_skills",
+        **context,
+    )
+
+
+@prefix_bp.route("/listskills/marketplace", methods=["GET"])
+@require_login
+def SkillMarketplace():
+    try:
+        context = load_skill_dashboard_context(skills_view="marketplace")
+    except Exception as e:
+        return json_error(f"failed to load marketplace: {e}", 500)
+
+    return render_template(
+        "skill_list.html",
+        skills_view="marketplace",
+        **context,
     )
 
 
@@ -7958,6 +8219,93 @@ def SkillDelete(owner, ns, name):
     except Exception as e:
         return json_error(f"failed to delete skill: {e}", 502)
     return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/skill_subscription/subscribe", methods=["POST"])
+@require_login
+def SkillSubscriptionSubscribe():
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant == "":
+        return json_error("No active tenant selected", 400)
+
+    try:
+        roles = listroles()
+        if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
+            return json_error("No permission", 403)
+
+        req = request.get_json(silent=True) or {}
+        owner = str(req.get("owner_tenant", "") or "").strip()
+        namespace = str(req.get("owner_namespace", "") or "").strip()
+        skillname = str(req.get("skillname", "") or "").strip()
+        alias = str(req.get("tool_alias", "") or "").strip()
+        if owner == "" or namespace == "" or skillname == "":
+            return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
+        if alias != "" and not re.fullmatch(r"^[a-z][a-z0-9_-]{0,63}$", alias):
+            return json_error("tool_alias must match [a-z][a-z0-9_-]* and be at most 64 characters", 400)
+        created = create_skill_subscription(owner, namespace, skillname, alias or None, active_tenant=active_tenant)
+    except SkillSubscriptionGatewayError as e:
+        return json_error(str(e), e.status_code)
+    except Exception as e:
+        return json_error(f"failed to subscribe to skill: {e}", 502)
+
+    return jsonify(created), 201
+
+
+@prefix_bp.route("/skill_subscription/unsubscribe", methods=["POST"])
+@require_login
+def SkillSubscriptionUnsubscribe():
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant == "":
+        return json_error("No active tenant selected", 400)
+
+    try:
+        roles = listroles()
+        if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
+            return json_error("No permission", 403)
+
+        req = request.get_json(silent=True) or {}
+        owner = str(req.get("owner_tenant", "") or "").strip()
+        namespace = str(req.get("owner_namespace", "") or "").strip()
+        skillname = str(req.get("skillname", "") or "").strip()
+        if owner == "" or namespace == "" or skillname == "":
+            return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
+        delete_skill_subscription(owner, namespace, skillname, active_tenant=active_tenant)
+    except SkillSubscriptionGatewayError as e:
+        return json_error(str(e), e.status_code)
+    except Exception as e:
+        return json_error(f"failed to unsubscribe from skill: {e}", 502)
+
+    return jsonify({"ok": True})
+
+
+@prefix_bp.route("/skill_subscription/update_alias", methods=["POST"])
+@require_login
+def SkillSubscriptionUpdateAlias():
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant == "":
+        return json_error("No active tenant selected", 400)
+
+    try:
+        roles = listroles()
+        if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
+            return json_error("No permission", 403)
+
+        req = request.get_json(silent=True) or {}
+        owner = str(req.get("owner_tenant", "") or "").strip()
+        namespace = str(req.get("owner_namespace", "") or "").strip()
+        skillname = str(req.get("skillname", "") or "").strip()
+        alias = str(req.get("tool_alias", "") or "").strip()
+        if owner == "" or namespace == "" or skillname == "":
+            return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
+        if not re.fullmatch(r"^[a-z][a-z0-9_-]{0,63}$", alias):
+            return json_error("tool_alias must match [a-z][a-z0-9_-]* and be at most 64 characters", 400)
+        updated = update_skill_subscription_alias(owner, namespace, skillname, alias, active_tenant=active_tenant)
+    except SkillSubscriptionGatewayError as e:
+        return json_error(str(e), e.status_code)
+    except Exception as e:
+        return json_error(f"failed to update subscription alias: {e}", 502)
+
+    return jsonify(updated)
 
 
 def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):

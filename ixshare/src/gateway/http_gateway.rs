@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under
-
+            
 use core::str;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -19,10 +19,11 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::result::Result as SResult;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-
+            
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use opentelemetry::global::ObjectSafeSpan;
 use opentelemetry::trace::TraceContextExt;
@@ -30,6 +31,7 @@ use opentelemetry::trace::Tracer;
 use opentelemetry::KeyValue;
 
 use axum::extract::{Query, Request, State};
+use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
@@ -153,8 +155,42 @@ struct SkillTemplateUpdateRequest {
     is_active: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct SkillMarketplaceQuery {
+    #[serde(default = "default_marketplace_page")]
+    page: i64,
+    #[serde(default = "default_marketplace_page_size")]
+    page_size: i64,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    keyword: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillSubscriptionCreateRequest {
+    owner_tenant: String,
+    owner_namespace: String,
+    skillname: String,
+    #[serde(default)]
+    tool_alias: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillSubscriptionUpdateRequest {
+    tool_alias: String,
+}
+
 fn default_true() -> bool {
     true
+}
+
+fn default_marketplace_page() -> i64 {
+    1
+}
+
+fn default_marketplace_page_size() -> i64 {
+    50
 }
 
 fn skill_version_dir_path(
@@ -325,6 +361,111 @@ fn resolve_skill_calling_tenant(token: &AccessToken, skill: &SkillDetail) -> Res
     Err(Error::CommonError(
         "skill call requires a tenant-restricted API key or a single-tenant token".to_string(),
     ))
+}
+
+fn resolve_subscription_tenant(token: &AccessToken, tenant_hint: Option<&str>) -> Result<String> {
+    if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        if !token.IsTenantUser(hint) {
+            return Err(Error::NoPermission);
+        }
+        return Ok(hint.to_string());
+    }
+
+    if let Some(tenant) = token.restrictTenant.as_ref() {
+        return Ok(tenant.clone());
+    }
+
+    let mut tenants: BTreeSet<String> = token
+        .UserTenants()
+        .into_iter()
+        .filter(|tenant| tenant != "public")
+        .collect();
+
+    if tenants.len() == 1 {
+        return Ok(tenants.pop_first().unwrap());
+    }
+
+    Err(Error::CommonError(
+        "subscription APIs require a tenant-restricted API key, a single-tenant token, or an X-Tenant header"
+            .to_string(),
+    ))
+}
+
+fn normalize_subscription_alias(alias: &str) -> Result<String> {
+    static SUBSCRIPTION_ALIAS_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let trimmed = alias.trim();
+    let valid =
+        SUBSCRIPTION_ALIAS_RE.get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]{0,63}$").unwrap());
+    if !valid.is_match(trimmed) {
+        return Err(Error::CommonError(
+            "tool_alias must match [a-z][a-z0-9_-]* and be at most 64 chars".to_string(),
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn percent_encode_tool_name_component(component: &str) -> String {
+    let mut encoded = String::with_capacity(component.len());
+    for byte in component.bytes() {
+        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'~');
+        if keep {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{:02X}", byte));
+        }
+    }
+    encoded
+}
+
+fn compute_own_skill_tool_names(
+    skills: &[SkillDetail],
+) -> HashMap<(String, String, String), String> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for skill in skills {
+        *counts.entry(skill.skillname.as_str()).or_insert(0) += 1;
+    }
+
+    let mut names = HashMap::new();
+    for skill in skills {
+        let tool_name = if skill.skillname.contains('.')
+            || counts.get(skill.skillname.as_str()).copied().unwrap_or(0) > 1
+        {
+            format!(
+                "{}.{}.{}",
+                percent_encode_tool_name_component(&skill.skillname),
+                percent_encode_tool_name_component(&skill.owner_namespace),
+                percent_encode_tool_name_component(&skill.owner_tenant)
+            )
+        } else {
+            skill.skillname.clone()
+        };
+        names.insert(
+            (
+                skill.owner_tenant.clone(),
+                skill.owner_namespace.clone(),
+                skill.skillname.clone(),
+            ),
+            tool_name,
+        );
+    }
+
+    names
+}
+
+fn is_skill_subscription_conflict_error(err: &Error) -> bool {
+    match err {
+        Error::Exist(_) => true,
+        Error::SqlxError(sqlx::Error::Database(db_err)) => {
+            db_err.code().as_deref() == Some("23505")
+                || db_err.code().as_deref() == Some("23514")
+                || db_err
+                    .message()
+                    .contains("duplicate key value violates unique constraint")
+        }
+        _ => false,
+    }
 }
 
 lazy_static::lazy_static! {
@@ -843,6 +984,15 @@ impl HttpGateway {
             .route("/skills", get(ListPublishedSkills))
             .route("/skills/:owner_tenant", get(ListSkillsByTenant))
             .route("/skills/:owner_tenant/:namespace", get(ListSkillsByNamespace))
+            .route("/api/v1/skills/marketplace", get(ListSkillMarketplace))
+            .route(
+                "/api/v1/skills/subscriptions",
+                get(ListSkillSubscriptions).post(CreateSkillSubscription),
+            )
+            .route(
+                "/api/v1/skills/subscriptions/:owner_tenant/:owner_namespace/:skillname",
+                delete(DeleteSkillSubscription).patch(UpdateSkillSubscription),
+            )
             .route(
                 "/admin/skilltemplates",
                 get(ListAdminSkillTemplates).post(CreateSkillTemplate),
@@ -2053,6 +2203,13 @@ fn skill_admin_response(err: Error) -> Response<Body> {
     let status = match err {
         Error::NoPermission => StatusCode::FORBIDDEN,
         Error::SqlxError(sqlx::Error::RowNotFound) | Error::NotExist(_) => StatusCode::NOT_FOUND,
+        Error::Exist(_) => StatusCode::CONFLICT,
+        Error::SqlxError(sqlx::Error::Database(ref db_err))
+            if db_err.code().as_deref() == Some("23505")
+                || db_err.code().as_deref() == Some("23514") =>
+        {
+            StatusCode::CONFLICT
+        }
         _ => StatusCode::BAD_REQUEST,
     };
     Response::builder()
@@ -2184,6 +2341,264 @@ async fn ListSkillsByNamespace(
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&skills).unwrap()))
             .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListSkillMarketplace(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    headers: HeaderMap,
+    Query(params): Query<SkillMarketplaceQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    if params.page < 1 {
+        return Ok(skill_admin_response(Error::CommonError(
+            "page must be >= 1".to_string(),
+        )));
+    }
+
+    if params.page_size < 1 || params.page_size > 200 {
+        return Ok(skill_admin_response(Error::CommonError(
+            "page_size must be between 1 and 200".to_string(),
+        )));
+    }
+
+    if let Some(tag) = params.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(skill_admin_response(Error::CommonError(format!(
+            "tag filter '{}' is not supported: skills do not have tag metadata",
+            tag
+        ))));
+    }
+
+    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
+    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    match gw
+        .sqlSecret
+        .ListMarketplaceSkills(
+            Some(subscriber_tenant.as_str()),
+            params.keyword.as_deref(),
+            params.page,
+            params.page_size,
+        )
+        .await
+    {
+        Ok(skills) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&skills).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn CreateSkillSubscription(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    headers: HeaderMap,
+    Json(req): Json<SkillSubscriptionCreateRequest>,
+) -> SResult<Response, StatusCode> {
+    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
+    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    if !token.IsTenantAdmin(&subscriber_tenant) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    if subscriber_tenant.eq_ignore_ascii_case(req.owner_tenant.trim()) {
+        return Ok(skill_admin_response(Error::CommonError(
+            "cannot subscribe to your own skill".to_string(),
+        )));
+    }
+
+    let tool_alias = match req.tool_alias.as_deref() {
+        Some(alias) => match normalize_subscription_alias(alias) {
+            Ok(alias) => alias,
+            Err(e) => return Ok(skill_admin_response(e)),
+        },
+        None => match normalize_subscription_alias(&req.skillname) {
+            Ok(alias) => alias,
+            Err(_) => {
+                return Ok(skill_admin_response(Error::CommonError(format!(
+                    "skillname '{}' cannot be used as the default tool_alias; provide an explicit alias matching [a-z][a-z0-9_-]* and at most 64 chars",
+                    req.skillname.trim()
+                ))))
+            }
+        },
+    };
+
+    let own_skills = match gw
+        .sqlSecret
+        .ListSkillDetailsByTenant(&subscriber_tenant)
+        .await
+    {
+        Ok(skills) => skills,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let own_tool_names = compute_own_skill_tool_names(&own_skills);
+    if own_tool_names.values().any(|name| name == &tool_alias) {
+        return Ok(skill_admin_response(Error::Exist(format!(
+            "tool_alias '{}' collides with an own skill tool name",
+            tool_alias
+        ))));
+    }
+
+    match gw
+        .sqlSecret
+        .CreateSkillSubscription(
+            &subscriber_tenant,
+            req.owner_tenant.trim(),
+            req.owner_namespace.trim(),
+            req.skillname.trim(),
+            &tool_alias,
+            &token.username,
+        )
+        .await
+    {
+        Ok(sub) => Ok(Response::builder()
+            .status(StatusCode::CREATED)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&sub).unwrap()))
+            .unwrap()),
+        Err(e) if is_skill_subscription_conflict_error(&e) => Ok(skill_admin_response(
+            Error::Exist("subscription or tool_alias already exists".to_string()),
+        )),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn ListSkillSubscriptions(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    headers: HeaderMap,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("read") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
+    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    match gw
+        .sqlSecret
+        .ListSkillSubscriptions(&subscriber_tenant)
+        .await
+    {
+        Ok(subs) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&subs).unwrap()))
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn DeleteSkillSubscription(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    headers: HeaderMap,
+    Path((owner_tenant, owner_namespace, skillname)): Path<(String, String, String)>,
+) -> SResult<Response, StatusCode> {
+    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
+    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    if !token.IsTenantAdmin(&subscriber_tenant) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    match gw
+        .sqlSecret
+        .DeleteSkillSubscription(
+            &subscriber_tenant,
+            &owner_tenant,
+            &owner_namespace,
+            &skillname,
+        )
+        .await
+    {
+        Ok(()) => Ok(Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .unwrap()),
+        Err(e) => Ok(skill_admin_response(e)),
+    }
+}
+
+async fn UpdateSkillSubscription(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    headers: HeaderMap,
+    Path((owner_tenant, owner_namespace, skillname)): Path<(String, String, String)>,
+    Json(req): Json<SkillSubscriptionUpdateRequest>,
+) -> SResult<Response, StatusCode> {
+    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
+    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+        Ok(tenant) => tenant,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    if !token.IsTenantAdmin(&subscriber_tenant) {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+
+    let tool_alias = match normalize_subscription_alias(&req.tool_alias) {
+        Ok(alias) => alias,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let own_skills = match gw
+        .sqlSecret
+        .ListSkillDetailsByTenant(&subscriber_tenant)
+        .await
+    {
+        Ok(skills) => skills,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let own_tool_names = compute_own_skill_tool_names(&own_skills);
+    if own_tool_names.values().any(|name| name == &tool_alias) {
+        return Ok(skill_admin_response(Error::Exist(format!(
+            "tool_alias '{}' collides with an own skill tool name",
+            tool_alias
+        ))));
+    }
+
+    match gw
+        .sqlSecret
+        .UpdateSkillSubscriptionAlias(
+            &subscriber_tenant,
+            &owner_tenant,
+            &owner_namespace,
+            &skillname,
+            &tool_alias,
+        )
+        .await
+    {
+        Ok(sub) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&sub).unwrap()))
+            .unwrap()),
+        Err(e) if is_skill_subscription_conflict_error(&e) => Ok(skill_admin_response(
+            Error::Exist("tool_alias already exists".to_string()),
+        )),
         Err(e) => Ok(skill_admin_response(e)),
     }
 }

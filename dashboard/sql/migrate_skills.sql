@@ -68,3 +68,23 @@ BEGIN
 END$$;
 
 ALTER TABLE Skill ADD COLUMN IF NOT EXISTS description TEXT;
+
+CREATE TABLE IF NOT EXISTS SkillSubscription (
+    subscription_id   BIGSERIAL PRIMARY KEY,
+    subscriber_tenant VARCHAR NOT NULL,
+    owner_tenant      VARCHAR NOT NULL,
+    owner_namespace   VARCHAR NOT NULL,
+    skillname         VARCHAR NOT NULL,
+    tool_alias        VARCHAR NOT NULL,
+    subscribed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    subscribed_by     VARCHAR NOT NULL,
+    UNIQUE(subscriber_tenant, owner_tenant, owner_namespace, skillname),
+    UNIQUE(subscriber_tenant, tool_alias),
+    FOREIGN KEY (owner_tenant, owner_namespace, skillname)
+        REFERENCES Skill (owner_tenant, owner_namespace, skillname)
+        ON DELETE CASCADE,
+    CHECK (tool_alias ~ '^[a-z][a-z0-9_-]{0,63}$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_skillsub_tenant
+    ON SkillSubscription (subscriber_tenant);
