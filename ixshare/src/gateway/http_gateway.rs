@@ -67,8 +67,8 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::tokenizer::CountKnowledgeBaseTokens;
 use crate::gateway::tokenizer::ModelsFuncCall;
-use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
 use crate::metastore::cacher_client::CacherClient;
@@ -98,8 +98,8 @@ use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SqlSecret};
 // use super::tokenizer::KnowledgeBaseRoute;
-use super::tokenizer::TokenizerRoute;
 use super::tokenizer::NormalizeFuncRequest;
+use super::tokenizer::TokenizerRoute;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
 const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 const VIRTUAL_ENDPOINTS_NAMESPACE: &str = "endpoints";
@@ -572,7 +572,7 @@ impl HttpGateway {
 
         let session_manager = LocalSessionManager::default();
         let mpcservice = StreamableHttpService::new(
-            move || Ok(McpStreamServer::new()),
+            move || Ok(McpStreamServer::New()),
             Arc::new(session_manager),
             config,
         );
@@ -709,7 +709,10 @@ impl HttpGateway {
             )
             .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
             .route("/admin/usage/endpoints", get(GetAdminEndpointUsage))
-            .route("/admin/usage/endpoints/:tenant/:endpoint_slug", get(GetAdminEndpointTenantUsageByPeriod))
+            .route(
+                "/admin/usage/endpoints/:tenant/:endpoint_slug",
+                get(GetAdminEndpointTenantUsageByPeriod),
+            )
             .route("/metrics", get(GetMetrics))
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
@@ -1542,14 +1545,12 @@ pub async fn FuncCall1(
             }
             Ok(None) => {}
             Ok(Some(norm)) => {
-                parts.uri = Uri::try_from(norm.target_path.as_str())
-                    .unwrap_or(parts.uri);
+                parts.uri = Uri::try_from(norm.target_path.as_str()).unwrap_or(parts.uri);
                 bytes = Bytes::from(norm.body_bytes);
                 parts.headers.remove(hyper::header::CONTENT_LENGTH);
-                parts.headers.insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static(norm.content_type),
-                );
+                parts
+                    .headers
+                    .insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
             }
         }
     }
@@ -4321,7 +4322,7 @@ async fn GetAdminEndpointUsage(
                 "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             });
-            
+
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -4374,7 +4375,13 @@ async fn GetAdminEndpointTenantUsageByPeriod(
 
     match gw
         .sqlBilling
-        .GetAdminEndpointTenantUsageByPeriod(&tenant, &endpoint_slug, start_hour, end_hour, &granularity)
+        .GetAdminEndpointTenantUsageByPeriod(
+            &tenant,
+            &endpoint_slug,
+            start_hour,
+            end_hour,
+            &granularity,
+        )
         .await
     {
         Ok(rows) => {
@@ -4399,7 +4406,7 @@ async fn GetAdminEndpointTenantUsageByPeriod(
                 "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             });
-            
+
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
