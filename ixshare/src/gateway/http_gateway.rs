@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under
-            
+
 use core::str;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-            
+
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use opentelemetry::global::ObjectSafeSpan;
 use opentelemetry::trace::TraceContextExt;
@@ -70,6 +70,7 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::secret::compute_own_skill_tool_names;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -403,55 +404,6 @@ fn normalize_subscription_alias(alias: &str) -> Result<String> {
     }
 
     Ok(trimmed.to_string())
-}
-
-fn percent_encode_tool_name_component(component: &str) -> String {
-    let mut encoded = String::with_capacity(component.len());
-    for byte in component.bytes() {
-        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'~');
-        if keep {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push_str(&format!("{:02X}", byte));
-        }
-    }
-    encoded
-}
-
-fn compute_own_skill_tool_names(
-    skills: &[SkillDetail],
-) -> HashMap<(String, String, String), String> {
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for skill in skills {
-        *counts.entry(skill.skillname.as_str()).or_insert(0) += 1;
-    }
-
-    let mut names = HashMap::new();
-    for skill in skills {
-        let tool_name = if skill.skillname.contains('.')
-            || counts.get(skill.skillname.as_str()).copied().unwrap_or(0) > 1
-        {
-            format!(
-                "{}.{}.{}",
-                percent_encode_tool_name_component(&skill.skillname),
-                percent_encode_tool_name_component(&skill.owner_namespace),
-                percent_encode_tool_name_component(&skill.owner_tenant)
-            )
-        } else {
-            skill.skillname.clone()
-        };
-        names.insert(
-            (
-                skill.owner_tenant.clone(),
-                skill.owner_namespace.clone(),
-                skill.skillname.clone(),
-            ),
-            tool_name,
-        );
-    }
-
-    names
 }
 
 fn is_skill_subscription_conflict_error(err: &Error) -> bool {
@@ -935,8 +887,15 @@ impl HttpGateway {
             .with_sse_keep_alive(Some(std::time::Duration::from_secs(30)));
 
         let session_manager = LocalSessionManager::default();
+        let mcp_secret = Arc::new(self.sqlSecret.clone());
+        let mcp_gateway_base_url = format!("http://127.0.0.1:{}", GATEWAY_CONFIG.gatewayPort);
         let mpcservice = StreamableHttpService::new(
-            move || Ok(McpStreamServer::new()),
+            move || {
+                Ok(McpStreamServer::new(
+                    mcp_secret.clone(),
+                    mcp_gateway_base_url.clone(),
+                ))
+            },
             Arc::new(session_manager),
             config,
         );
@@ -5698,7 +5657,7 @@ async fn GetAdminEndpointUsage(
                 "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             });
-            
+
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()
@@ -5776,7 +5735,7 @@ async fn GetAdminEndpointTenantUsageByPeriod(
                 "start": start_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 "end": end_hour.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             });
-            
+
             let data = serde_json::to_string(&resp_body).unwrap();
             let body = Body::from(data);
             let resp = Response::builder()

@@ -1,41 +1,75 @@
 use anyhow::Result as AResult;
 use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
-pub struct McpStreamServer;
+use super::secret::{compute_own_skill_tool_names, SqlSecret};
 
-#[derive(Clone, Debug)]
-struct ToolConfig {
-    description: String,
-    url: String,
+#[derive(Clone)]
+pub struct McpStreamServer {
+    secret: Arc<SqlSecret>,
+    gateway_base_url: String,
 }
 
 impl McpStreamServer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(secret: Arc<SqlSecret>, gateway_base_url: String) -> Self {
+        Self {
+            secret,
+            gateway_base_url,
+        }
     }
 
-    fn get_tool_configs() -> BTreeMap<String, ToolConfig> {
-        let mut configs = BTreeMap::new();
-        configs.insert(
-            "ads".to_string(),
-            ToolConfig {
-                description:
-                    "Get advertising campaign strategy from the ads endpoint via HTTP streaming"
-                        .to_string(),
-                url: "http://192.168.0.44:8000/ads/v1/chat/completions".to_string(),
-            },
-        );
-        configs.insert(
-            "price".to_string(),
-            ToolConfig {
-                description: "Get pricing strategy from the pricing endpoint via HTTP streaming"
-                    .to_string(),
-                url: "http://192.168.0.44:8000/price/v1/chat/completions".to_string(),
-            },
-        );
-        configs
+    fn internal_error(message: impl Into<String>) -> ErrorData {
+        ErrorData::new(rmcp::model::ErrorCode::INTERNAL_ERROR, message.into(), None)
+    }
+
+    fn extract_authorization_header(
+        context: &RequestContext<RoleServer>,
+    ) -> Result<String, ErrorData> {
+        context
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.headers.get("Authorization"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| Self::internal_error("missing Authorization header"))
+    }
+
+    fn extract_bearer_apikey(
+        context: &RequestContext<RoleServer>,
+    ) -> Result<(String, String), ErrorData> {
+        let authorization = Self::extract_authorization_header(context)?;
+        let apikey = authorization
+            .strip_prefix("Bearer ")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Self::internal_error("Authorization header must be Bearer <apikey>"))?
+            .to_string();
+        Ok((authorization, apikey))
+    }
+
+    async fn resolve_tenant(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<(String, String), ErrorData> {
+        let (authorization, apikey) = Self::extract_bearer_apikey(context)?;
+        let key =
+            self.secret.GetApikey(&apikey).await.map_err(|e| {
+                Self::internal_error(format!("failed to resolve MCP API key: {:?}", e))
+            })?;
+        let tenant = key.restrict_tenant.ok_or_else(|| {
+            Self::internal_error(
+                "MCP requires a tenant-restricted API key so skill tools can be resolved",
+            )
+        })?;
+        Ok((authorization, tenant))
+    }
+
+    fn skill_url(&self, owner_tenant: &str, owner_namespace: &str, skillname: &str) -> String {
+        format!(
+            "{}/skills/{}/{}/{}/v1/chat/completions",
+            self.gateway_base_url, owner_tenant, owner_namespace, skillname
+        )
     }
 }
 
@@ -44,7 +78,7 @@ impl ServerHandler for McpStreamServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_03_26)
             .with_server_info(Implementation::new("mcp-stream-server", "1.0.0"))
-            .with_instructions("vLLM MCP HTTP streaming server with multiple tools")
+            .with_instructions("InferX MCP server exposing tenant skills and subscriptions")
     }
 
     async fn call_tool(
@@ -52,16 +86,64 @@ impl ServerHandler for McpStreamServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let configs = McpStreamServer::get_tool_configs();
-        let config = configs.get(&*request.name).ok_or_else(|| {
-            ErrorData::new(
-                rmcp::model::ErrorCode::INTERNAL_ERROR,
-                format!("Unknown tool: {}", request.name),
-                None,
-            )
-        })?;
+        let (authorization, tenant) = self.resolve_tenant(&context).await?;
 
-        error!("call_tool get config {:?}", &config);
+        let own_skills = self
+            .secret
+            .GetOwnSkillsForTenant(&tenant)
+            .await
+            .map_err(|e| Self::internal_error(format!("failed to load own skills: {:?}", e)))?;
+        let own_tool_names = compute_own_skill_tool_names(&own_skills);
+
+        let requested_name = request.name.to_string();
+        let own_match = own_skills.iter().find(|skill| {
+            own_tool_names.get(&(
+                skill.owner_tenant.clone(),
+                skill.owner_namespace.clone(),
+                skill.skillname.clone(),
+            )) == Some(&requested_name)
+        });
+
+        let route = if let Some(skill) = own_match {
+            (
+                skill.owner_tenant.clone(),
+                skill.owner_namespace.clone(),
+                skill.skillname.clone(),
+            )
+        } else {
+            let same_name = self
+                .secret
+                .ListOwnSkillsByName(&tenant, &requested_name)
+                .await
+                .map_err(|e| {
+                    Self::internal_error(format!(
+                        "failed to check own-skill name ambiguity: {:?}",
+                        e
+                    ))
+                })?;
+            if same_name.len() > 1 {
+                return Err(Self::internal_error(format!(
+                    "ambiguous tool name '{}'; re-run list_tools and use the qualified name",
+                    requested_name
+                )));
+            }
+
+            let subscription = self
+                .secret
+                .GetSubscribedSkillRoute(&tenant, &requested_name)
+                .await
+                .map_err(|e| {
+                    Self::internal_error(format!("failed to load subscribed skill route: {:?}", e))
+                })?;
+            let Some(subscription) = subscription else {
+                return Err(Self::internal_error("unknown tool or not subscribed"));
+            };
+            (
+                subscription.owner_tenant,
+                subscription.owner_namespace,
+                subscription.skillname,
+            )
+        };
 
         let query = request
             .arguments
@@ -70,25 +152,17 @@ impl ServerHandler for McpStreamServer {
             .and_then(|q| q.as_str())
             .unwrap_or("");
 
-        let endpoint = config.url.clone();
-
-        let progress_param = ProgressNotificationParam {
-            progress_token: ProgressToken(NumberOrString::Number(0)),
-            progress: 0.0,
-            total: None,
-            message: Some(format!("Forwarding to {} with query: {}", endpoint, query)),
-        };
+        let endpoint = self.skill_url(&route.0, &route.1, &route.2);
         context
             .peer
-            .notify_progress(progress_param)
+            .notify_progress(ProgressNotificationParam {
+                progress_token: ProgressToken(NumberOrString::Number(0)),
+                progress: 0.0,
+                total: None,
+                message: Some(format!("Forwarding to {}", endpoint)),
+            })
             .await
-            .map_err(|e| {
-                ErrorData::new(
-                    rmcp::model::ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to notify progress: {}", e),
-                    None,
-                )
-            })?;
+            .map_err(|e| Self::internal_error(format!("failed to notify progress: {}", e)))?;
 
         let body = json!({
             "messages": [{"role": "user", "content": query}],
@@ -98,33 +172,23 @@ impl ServerHandler for McpStreamServer {
         });
 
         let client = reqwest::Client::new();
-        let mut req = client.post(&endpoint);
-
-        let api_key = context
-            .extensions
-            .get::<http::request::Parts>()
-            .and_then(|parts| parts.headers.get("Authorization"))
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string());
-        
-        if let Some(ref key) = api_key {
-            req = req.header("Authorization", format!("Bearer {}", key));
-        }
-        let response = req.json(&body).send().await.map_err(|e| {
-            ErrorData::new(
-                rmcp::model::ErrorCode::INTERNAL_ERROR,
-                format!("Failed to connect to endpoint: {}", e),
-                None,
-            )
-        })?;
+        let response = client
+            .post(&endpoint)
+            .header("Authorization", authorization)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?;
 
         if !response.status().is_success() {
-            return Err(ErrorData::new(
-                rmcp::model::ErrorCode::INTERNAL_ERROR,
-                format!("Endpoint returned error: {}", response.status()),
-                None,
-            ));
+            let status = response.status();
+            let detail = response.text().await.unwrap_or_default();
+            let message = if detail.trim().is_empty() {
+                format!("endpoint returned error: {}", status)
+            } else {
+                format!("endpoint returned error: {}: {}", status, detail.trim())
+            };
+            return Err(Self::internal_error(message));
         }
 
         let mut counter = 0;
@@ -137,44 +201,38 @@ impl ServerHandler for McpStreamServer {
                 Some(Ok(chunk)) => {
                     let chunk_str = String::from_utf8_lossy(&chunk);
                     for line in chunk_str.lines() {
-                        if line.starts_with("data: ") {
-                            let data = line[6..].trim().to_string();
-                            if data.is_empty() || data == "[DONE]" {
-                                continue;
-                            }
-                            if let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&data)
-                            {
-                                if let Some(choice) =
-                                    json_data.get("choices").and_then(|c| c.get(0))
-                                {
-                                    if let Some(delta) = choice.get("delta") {
-                                        if let Some(token) =
-                                            delta.get("content").and_then(|c| c.as_str())
-                                        {
-                                            if !token.is_empty() {
-                                                full_response.push_str(token);
-                                                context
-                                                    .peer
-                                                    .notify_progress(ProgressNotificationParam {
-                                                        progress_token: ProgressToken(
-                                                            NumberOrString::Number(counter),
-                                                        ),
-                                                        progress: counter as f64,
-                                                        total: None,
-                                                        message: Some(token.to_string()),
-                                                    })
-                                                    .await
-                                                    .map_err(|e| {
-                                                        ErrorData::new(
-                                                            rmcp::model::ErrorCode::INTERNAL_ERROR,
-                                                            format!(
-                                                                "Failed to notify progress: {}",
-                                                                e
-                                                            ),
-                                                            None,
-                                                        )
-                                                    })?;
-                                            }
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
+                        let data = line[6..].trim().to_string();
+                        if data.is_empty() || data == "[DONE]" {
+                            continue;
+                        }
+                        if let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&data) {
+                            if let Some(choice) = json_data.get("choices").and_then(|c| c.get(0)) {
+                                if let Some(delta) = choice.get("delta") {
+                                    if let Some(token) =
+                                        delta.get("content").and_then(|c| c.as_str())
+                                    {
+                                        if !token.is_empty() {
+                                            full_response.push_str(token);
+                                            context
+                                                .peer
+                                                .notify_progress(ProgressNotificationParam {
+                                                    progress_token: ProgressToken(
+                                                        NumberOrString::Number(counter),
+                                                    ),
+                                                    progress: counter as f64,
+                                                    total: None,
+                                                    message: Some(token.to_string()),
+                                                })
+                                                .await
+                                                .map_err(|e| {
+                                                    Self::internal_error(format!(
+                                                        "failed to notify progress: {}",
+                                                        e
+                                                    ))
+                                                })?;
                                         }
                                     }
                                 }
@@ -183,11 +241,10 @@ impl ServerHandler for McpStreamServer {
                     }
                 }
                 Some(Err(e)) => {
-                    return Err(ErrorData::new(
-                        rmcp::model::ErrorCode::INTERNAL_ERROR,
-                        format!("Failed to read response chunk: {}", e),
-                        None,
-                    ));
+                    return Err(Self::internal_error(format!(
+                        "failed to read response chunk: {}",
+                        e
+                    )));
                 }
                 None => break,
             }
@@ -200,15 +257,19 @@ impl ServerHandler for McpStreamServer {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> AResult<rmcp::model::ListToolsResult, ErrorData> {
-        let configs = McpStreamServer::get_tool_configs();
-        let tools: Vec<Tool> = configs
-            .iter()
-            .map(|(name, config)| {
+        let (_, tenant) = self.resolve_tenant(&context).await?;
+        let tools = self
+            .secret
+            .GetToolsForTenant(&tenant)
+            .await
+            .map_err(|e| Self::internal_error(format!("failed to load tenant tools: {:?}", e)))?
+            .into_iter()
+            .map(|tool| {
                 Tool::new(
-                    name.clone(),
-                    config.description.clone(),
+                    tool.tool_name,
+                    tool.description.unwrap_or_default(),
                     std::sync::Arc::new(
                         serde_json::from_value(serde_json::json!({
                             "type": "object",
@@ -220,10 +281,85 @@ impl ServerHandler for McpStreamServer {
                 )
             })
             .collect();
+
         Ok(rmcp::model::ListToolsResult {
             tools,
             meta: None,
             next_cursor: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_own_skill_tool_names;
+    use crate::gateway::secret::OwnSkillToolRoute;
+
+    #[test]
+    fn own_skill_unique_name_stays_plain() {
+        let tools = vec![OwnSkillToolRoute {
+            owner_tenant: "acme".to_string(),
+            owner_namespace: "default".to_string(),
+            skillname: "pricing".to_string(),
+            description: None,
+        }];
+        let names = compute_own_skill_tool_names(&tools);
+        assert_eq!(
+            names.get(&(
+                "acme".to_string(),
+                "default".to_string(),
+                "pricing".to_string()
+            )),
+            Some(&"pricing".to_string())
+        );
+    }
+
+    #[test]
+    fn dotted_or_duplicate_own_skill_name_gets_qualified() {
+        let tools = vec![
+            OwnSkillToolRoute {
+                owner_tenant: "acme".to_string(),
+                owner_namespace: "default".to_string(),
+                skillname: "my.model".to_string(),
+                description: None,
+            },
+            OwnSkillToolRoute {
+                owner_tenant: "acme".to_string(),
+                owner_namespace: "other".to_string(),
+                skillname: "pricing".to_string(),
+                description: None,
+            },
+            OwnSkillToolRoute {
+                owner_tenant: "acme".to_string(),
+                owner_namespace: "default".to_string(),
+                skillname: "pricing".to_string(),
+                description: None,
+            },
+        ];
+        let names = compute_own_skill_tool_names(&tools);
+        assert_eq!(
+            names.get(&(
+                "acme".to_string(),
+                "default".to_string(),
+                "my.model".to_string()
+            )),
+            Some(&"my%2Emodel.default.acme".to_string())
+        );
+        assert_eq!(
+            names.get(&(
+                "acme".to_string(),
+                "default".to_string(),
+                "pricing".to_string()
+            )),
+            Some(&"pricing.default.acme".to_string())
+        );
+        assert_eq!(
+            names.get(&(
+                "acme".to_string(),
+                "other".to_string(),
+                "pricing".to_string()
+            )),
+            Some(&"pricing.other.acme".to_string())
+        );
     }
 }
