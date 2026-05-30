@@ -554,7 +554,6 @@ impl ServerHandler for McpStreamServer {
 
 curl "https://model.inferx.net/funccall/tn-a3t79iogb2/endpoints/Qwen3.5-122B-A10B-FP8/v1/chat/completions" \
 -H "Content-Type: application/json" \
--H "Authorization: Bearer ix_0929e8b02da13c0437ec37b4a41ba46e936d59c92ae5605a3c3448953d621ba0" \
 -d '{
     "messages": [
         {
