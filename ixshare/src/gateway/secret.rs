@@ -10,6 +10,12 @@ use sqlx::Row;
 
 use crate::common::*;
 
+pub trait OwnSkillToolIdentity {
+    fn owner_tenant(&self) -> &str;
+    fn owner_namespace(&self) -> &str;
+    fn skillname(&self) -> &str;
+}
+
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct Apikey {
     #[serde(default)]
@@ -268,9 +274,112 @@ pub struct SkillSubscriptionWithDetail {
     pub template_created_at: Option<chrono::NaiveDateTime>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct OwnSkillToolRoute {
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+    pub description: Option<String>,
+}
+
+impl OwnSkillToolIdentity for OwnSkillToolRoute {
+    fn owner_tenant(&self) -> &str {
+        &self.owner_tenant
+    }
+
+    fn owner_namespace(&self) -> &str {
+        &self.owner_namespace
+    }
+
+    fn skillname(&self) -> &str {
+        &self.skillname
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct SubscribedSkillRoute {
+    pub tool_name: String,
+    pub description: Option<String>,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TenantToolRoute {
+    pub tool_name: String,
+    pub description: Option<String>,
+    pub owner_tenant: String,
+    pub owner_namespace: String,
+    pub skillname: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlSecret {
     pub pool: PgPool,
+}
+
+fn percent_encode_tool_name_component(component: &str) -> String {
+    let mut encoded = String::with_capacity(component.len());
+    for byte in component.bytes() {
+        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'~');
+        if keep {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{:02X}", byte));
+        }
+    }
+    encoded
+}
+
+pub fn compute_own_skill_tool_names<T: OwnSkillToolIdentity>(
+    skills: &[T],
+) -> HashMap<(String, String, String), String> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for skill in skills {
+        *counts.entry(skill.skillname()).or_insert(0) += 1;
+    }
+
+    let mut names = HashMap::new();
+    for skill in skills {
+        let tool_name = if skill.skillname().contains('.')
+            || counts.get(skill.skillname()).copied().unwrap_or(0) > 1
+        {
+            format!(
+                "{}.{}.{}",
+                percent_encode_tool_name_component(skill.skillname()),
+                percent_encode_tool_name_component(skill.owner_namespace()),
+                percent_encode_tool_name_component(skill.owner_tenant())
+            )
+        } else {
+            skill.skillname().to_string()
+        };
+        names.insert(
+            (
+                skill.owner_tenant().to_string(),
+                skill.owner_namespace().to_string(),
+                skill.skillname().to_string(),
+            ),
+            tool_name,
+        );
+    }
+
+    names
+}
+
+impl OwnSkillToolIdentity for SkillDetail {
+    fn owner_tenant(&self) -> &str {
+        &self.owner_tenant
+    }
+
+    fn owner_namespace(&self) -> &str {
+        &self.owner_namespace
+    }
+
+    fn skillname(&self) -> &str {
+        &self.skillname
+    }
 }
 
 impl SqlSecret {
@@ -1667,6 +1776,142 @@ impl SqlSecret {
                 owner_tenant, owner_namespace, skillname
             ))
         })
+    }
+
+    pub async fn GetOwnSkillsForTenant(
+        &self,
+        owner_tenant: &str,
+    ) -> Result<Vec<OwnSkillToolRoute>> {
+        let query = r#"
+            SELECT
+                owner_tenant,
+                owner_namespace,
+                skillname,
+                description
+            FROM Skill
+            WHERE owner_tenant = $1
+            ORDER BY skillname, owner_namespace
+        "#;
+
+        Ok(sqlx::query_as::<_, OwnSkillToolRoute>(query)
+            .bind(owner_tenant)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn ListOwnSkillsByName(
+        &self,
+        owner_tenant: &str,
+        skillname: &str,
+    ) -> Result<Vec<OwnSkillToolRoute>> {
+        let query = r#"
+            SELECT
+                owner_tenant,
+                owner_namespace,
+                skillname,
+                description
+            FROM Skill
+            WHERE owner_tenant = $1
+              AND skillname = $2
+            ORDER BY owner_namespace
+        "#;
+
+        Ok(sqlx::query_as::<_, OwnSkillToolRoute>(query)
+            .bind(owner_tenant)
+            .bind(skillname)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    pub async fn GetSubscribedSkillRoute(
+        &self,
+        subscriber_tenant: &str,
+        tool_alias: &str,
+    ) -> Result<Option<SubscribedSkillRoute>> {
+        let query = r#"
+            SELECT
+                ss.tool_alias AS tool_name,
+                s.description,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname
+            FROM SkillSubscription ss
+            JOIN Skill s
+              ON s.owner_tenant = ss.owner_tenant
+             AND s.owner_namespace = ss.owner_namespace
+             AND s.skillname = ss.skillname
+            WHERE ss.subscriber_tenant = $1
+              AND ss.tool_alias = $2
+            LIMIT 1
+        "#;
+
+        Ok(sqlx::query_as::<_, SubscribedSkillRoute>(query)
+            .bind(subscriber_tenant)
+            .bind(tool_alias)
+            .fetch_optional(&self.pool)
+            .await?)
+    }
+
+    pub async fn GetToolsForTenant(&self, tenant: &str) -> Result<Vec<TenantToolRoute>> {
+        let own_skills = self.GetOwnSkillsForTenant(tenant).await?;
+        let own_tool_names = compute_own_skill_tool_names(&own_skills);
+
+        let mut tools: Vec<TenantToolRoute> = own_skills
+            .into_iter()
+            .map(|skill| TenantToolRoute {
+                tool_name: own_tool_names
+                    .get(&(
+                        skill.owner_tenant.clone(),
+                        skill.owner_namespace.clone(),
+                        skill.skillname.clone(),
+                    ))
+                    .cloned()
+                    .unwrap_or_else(|| skill.skillname.clone()),
+                description: skill.description,
+                owner_tenant: skill.owner_tenant,
+                owner_namespace: skill.owner_namespace,
+                skillname: skill.skillname,
+            })
+            .collect();
+
+        let subscribed_query = r#"
+            SELECT
+                ss.tool_alias AS tool_name,
+                s.description,
+                s.owner_tenant,
+                s.owner_namespace,
+                s.skillname
+            FROM SkillSubscription ss
+            JOIN Skill s
+              ON s.owner_tenant = ss.owner_tenant
+             AND s.owner_namespace = ss.owner_namespace
+             AND s.skillname = ss.skillname
+            WHERE ss.subscriber_tenant = $1
+              AND s.is_published = TRUE
+            ORDER BY ss.tool_alias, s.owner_tenant, s.owner_namespace, s.skillname
+        "#;
+
+        let subscribed = sqlx::query_as::<_, SubscribedSkillRoute>(subscribed_query)
+            .bind(tenant)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let own_names: std::collections::HashSet<String> =
+            tools.iter().map(|tool| tool.tool_name.clone()).collect();
+        for tool in subscribed {
+            if own_names.contains(&tool.tool_name) {
+                continue;
+            }
+            tools.push(TenantToolRoute {
+                tool_name: tool.tool_name,
+                description: tool.description,
+                owner_tenant: tool.owner_tenant,
+                owner_namespace: tool.owner_namespace,
+                skillname: tool.skillname,
+            });
+        }
+
+        Ok(tools)
     }
 
     pub async fn ListSkillSubscriptions(
