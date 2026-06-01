@@ -238,3 +238,104 @@ curl -X POST  https://model.inferx.net/funccall/public/Trial/whisper-tiny/v1/aud
 
 
 curl -X POST  https://dev1.inferx.net/funccall/public/Qwen/whisper-tiny/v1/audio/transcriptions     -H "Content-Type: multipart/form-data"     -F "file=@/home/qq/code/inferx/config/clone_test.wav"     -F "response_format=json"     -F "language=en" | jq .
+
+
+curl -X POST \
+  http://localhost:31501/skills/tn-18efd5fgs1/default/inferxinto2/v1/chat/completions \
+  -H 'Authorization: Bearer <INFERENCE_API_KEY>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "1000",
+    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "how fast is inferx code start?"
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+curl -X POST \
+  https://dev1.inferx.net/skills/tn-18efd5fgs1/default/inferxinto2/v1/chat/completions \
+  -H 'Authorization: Bearer ix_98f386bcefadef17c650989e7c8827d77a63e04e5f05488dacb21b652c7649c9' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "max_tokens": "1000",
+    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GPTQ-Int4",
+    "temperature": "0",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "how fast is inferx code start?"
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+
+curl -X POST https://model.inferx.net/funccall/tn-sn09uc1q1b/default/chandra/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <INFERENCE_API_KEY(Find or create one on Admin|Apikeys page)>' \
+  -d '{"max_tokens": 4096, "messages": [{"content": [{"image_url": {"url": "<data-url>"}, "type": "image_url"}, {"text": "OCR this image to HTML, arranged as layout blocks.", "type": "text"}], "role": "user"}], "model": "datalab-to/chandra-ocr-2", "stream": true, "temperature": 0}'
+
+
+curl -X GET https://model.inferx.net/funccall/tn-sn09uc1q1b/default/chandra/v1/models \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer ix_19c61ebe5ba42d7051d5cd9d0ea1ca5f37fa96f6a1b007d2ab2cbee1b60bec0e'
+
+
+
+curl -X GET https://model.inferx.net/funccall/tn-4y507qk0vc/default/chandra-ocr-2/v1/models \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer ix_19c61ebe5ba42d7051d5cd9d0ea1ca5f37fa96f6a1b007d2ab2cbee1b60bec0e'
+
+
+curl -i \
+  -X POST 'http://localhost:31501/skills/tn-phkm4fnk4b/default/totalentryskill/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer ix_98f386bcefadef17c650989e7c8827d77a63e04e5f05488dacb21b652c7649c9' \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Find pricing details and summarize them."
+      }
+    ],
+    "stream": false,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "call_skillep",
+          "description": "Call another InferX skill endpoint",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "skillep_id": {
+                "type": "string",
+                "description": "Canonical skill endpoint id owner_tenant/namespace/skillname"
+              },
+              "query": {
+                "type": "string",
+                "description": "User request to send to the child skill"
+              }
+            },
+            "required": ["skillep_id", "query"]
+          }
+        }
+      }
+    ]
+  }'
+
+

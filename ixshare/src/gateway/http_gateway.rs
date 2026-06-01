@@ -19,10 +19,10 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::result::Result as SResult;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use opentelemetry::global::ObjectSafeSpan;
@@ -100,9 +100,10 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
+use super::skill_chain::handle_skill_call_chain;
 // use super::tokenizer::KnowledgeBaseRoute;
-use super::tokenizer::TokenizerRoute;
 use super::tokenizer::NormalizeFuncRequest;
+use super::tokenizer::TokenizerRoute;
 pub static GATEWAY_ID: AtomicI64 = AtomicI64::new(-1);
 const FUNCCALL_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
 const VIRTUAL_ENDPOINTS_NAMESPACE: &str = "endpoints";
@@ -201,17 +202,27 @@ fn skill_version_dir_path(
     version: i32,
 ) -> PathBuf {
     PathBuf::from(SKILLS_ROOT_DIR)
-        .join(format!("{}.{}.{}", owner_tenant, owner_namespace, skillname))
+        .join(format!(
+            "{}.{}.{}",
+            owner_tenant, owner_namespace, skillname
+        ))
         .join(version.to_string())
 }
 
-fn skill_file_path(owner_tenant: &str, owner_namespace: &str, skillname: &str, version: i32) -> PathBuf {
+fn skill_file_path(
+    owner_tenant: &str,
+    owner_namespace: &str,
+    skillname: &str,
+    version: i32,
+) -> PathBuf {
     skill_version_dir_path(owner_tenant, owner_namespace, skillname, version).join(SKILL_FILE_NAME)
 }
 
 fn skill_root_path(owner_tenant: &str, owner_namespace: &str, skillname: &str) -> PathBuf {
-    PathBuf::from(SKILLS_ROOT_DIR)
-        .join(format!("{}.{}.{}", owner_tenant, owner_namespace, skillname))
+    PathBuf::from(SKILLS_ROOT_DIR).join(format!(
+        "{}.{}.{}",
+        owner_tenant, owner_namespace, skillname
+    ))
 }
 
 fn write_skill_prefix(
@@ -223,7 +234,10 @@ fn write_skill_prefix(
 ) -> Result<()> {
     let dir = skill_version_dir_path(owner_tenant, owner_namespace, skillname, version);
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(skill_file_path(owner_tenant, owner_namespace, skillname, version), prefix)?;
+    std::fs::write(
+        skill_file_path(owner_tenant, owner_namespace, skillname, version),
+        prefix,
+    )?;
     Ok(())
 }
 
@@ -259,10 +273,9 @@ fn normalize_skill_request(
     model_path: Option<&str>,
 ) -> SResult<Option<super::tokenizer::NormalizedFuncRequest>, StatusCode> {
     if remain_path.starts_with("/v1/chat/completions") {
-        let mut body: Value = serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-        let obj = body
-            .as_object_mut()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let mut body: Value =
+            serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let obj = body.as_object_mut().ok_or(StatusCode::BAD_REQUEST)?;
         let messages = obj
             .remove("messages")
             .and_then(|v| v.as_array().cloned())
@@ -308,10 +321,9 @@ fn normalize_skill_request(
     }
 
     if remain_path.starts_with("/v1/completions") {
-        let mut body: Value = serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
-        let obj = body
-            .as_object_mut()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let mut body: Value =
+            serde_json::from_slice(body_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let obj = body.as_object_mut().ok_or(StatusCode::BAD_REQUEST)?;
         let prompt = obj
             .remove("prompt")
             .and_then(|v| json_text(&v))
@@ -338,7 +350,18 @@ fn normalize_skill_request(
     Ok(None)
 }
 
-fn resolve_skill_calling_tenant(token: &AccessToken, skill: &SkillDetail) -> Result<String> {
+fn resolve_skill_calling_tenant(
+    token: &AccessToken,
+    skill: &SkillDetail,
+    tenant_hint: Option<&str>,
+) -> Result<String> {
+    if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        if !token.IsTenantUser(hint) {
+            return Err(Error::NoPermission);
+        }
+        return Ok(hint.to_string());
+    }
+
     if let Some(tenant) = token.restrictTenant.as_ref() {
         return Ok(tenant.clone());
     }
@@ -360,7 +383,8 @@ fn resolve_skill_calling_tenant(token: &AccessToken, skill: &SkillDetail) -> Res
     }
 
     Err(Error::CommonError(
-        "skill call requires a tenant-restricted API key or a single-tenant token".to_string(),
+        "skill call requires a tenant-restricted API key, a single-tenant token, or an X-Tenant header"
+            .to_string(),
     ))
 }
 
@@ -395,8 +419,8 @@ fn resolve_subscription_tenant(token: &AccessToken, tenant_hint: Option<&str>) -
 fn normalize_subscription_alias(alias: &str) -> Result<String> {
     static SUBSCRIPTION_ALIAS_RE: OnceLock<regex::Regex> = OnceLock::new();
     let trimmed = alias.trim();
-    let valid =
-        SUBSCRIPTION_ALIAS_RE.get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]{0,63}$").unwrap());
+    let valid = SUBSCRIPTION_ALIAS_RE
+        .get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]{0,63}$").unwrap());
     if !valid.is_match(trimmed) {
         return Err(Error::CommonError(
             "tool_alias must match [a-z][a-z0-9_-]* and be at most 64 chars".to_string(),
@@ -942,7 +966,10 @@ impl HttpGateway {
             .route("/skilltemplates", get(ListSkillTemplates))
             .route("/skills", get(ListPublishedSkills))
             .route("/skills/:owner_tenant", get(ListSkillsByTenant))
-            .route("/skills/:owner_tenant/:namespace", get(ListSkillsByNamespace))
+            .route(
+                "/skills/:owner_tenant/:namespace",
+                get(ListSkillsByNamespace),
+            )
             .route("/api/v1/skills/marketplace", get(ListSkillMarketplace))
             .route(
                 "/api/v1/skills/subscriptions",
@@ -1077,7 +1104,10 @@ impl HttpGateway {
             )
             .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
             .route("/admin/usage/endpoints", get(GetAdminEndpointUsage))
-            .route("/admin/usage/endpoints/:tenant/:endpoint_slug", get(GetAdminEndpointTenantUsageByPeriod))
+            .route(
+                "/admin/usage/endpoints/:tenant/:endpoint_slug",
+                get(GetAdminEndpointTenantUsageByPeriod),
+            )
             .route("/metrics", get(GetMetrics))
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
             .with_state(self.clone())
@@ -1833,14 +1863,7 @@ pub async fn FuncCall1(
         }
     };
     dispatch_func_call(
-        gw,
-        req,
-        route,
-        tenant,
-        namespace,
-        funcname,
-        remainPath,
-        None,
+        gw, req, route, tenant, namespace, funcname, remainPath, None,
     )
     .await
 }
@@ -1848,7 +1871,7 @@ pub async fn FuncCall1(
 pub const TCPCONN_LATENCY_HEADER: &'static str = "X-TcpConn-Latency";
 pub const TTFT_LATENCY_HEADER: &'static str = "X-Ttft-Latency";
 
-async fn dispatch_func_call(
+pub(super) async fn dispatch_func_call(
     gw: &HttpGateway,
     mut req: Request,
     route: FuncRouteTarget,
@@ -1907,16 +1930,21 @@ async fn dispatch_func_call(
         Ok(b) => b,
     };
 
-    let skill_model_path = skill_prefix.map(|_| route.func.object.spec.ModelPath()).flatten();
+    let skill_model_path = skill_prefix
+        .map(|_| route.func.object.spec.ModelPath())
+        .flatten();
     if parts.method == axum::http::Method::POST {
         if let Some(prefix) = skill_prefix {
-            match normalize_skill_request(&remainPath, &bytes, prefix, skill_model_path.as_deref())? {
+            match normalize_skill_request(&remainPath, &bytes, prefix, skill_model_path.as_deref())?
+            {
                 None => {}
                 Some(norm) => {
                     parts.uri = Uri::try_from(norm.target_path.as_str()).unwrap_or(parts.uri);
                     bytes = Bytes::from(norm.body_bytes);
                     parts.headers.remove(hyper::header::CONTENT_LENGTH);
-                    parts.headers.insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
+                    parts
+                        .headers
+                        .insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
                 }
             }
         }
@@ -1943,7 +1971,9 @@ async fn dispatch_func_call(
                 parts.uri = Uri::try_from(norm.target_path.as_str()).unwrap_or(parts.uri);
                 bytes = Bytes::from(norm.body_bytes);
                 parts.headers.remove(hyper::header::CONTENT_LENGTH);
-                parts.headers.insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
+                parts
+                    .headers
+                    .insert(CONTENT_TYPE, HeaderValue::from_static(norm.content_type));
             }
         }
     }
@@ -1954,14 +1984,23 @@ async fn dispatch_func_call(
     {
         let (max_tokens, input_chars) = serde_json::from_slice::<Value>(&bytes)
             .map(|v| {
-                let max_tokens = v.get("max_tokens").map(|t| t.to_string()).unwrap_or_default();
-                let input_chars: usize = v.get("messages")
+                let max_tokens = v
+                    .get("max_tokens")
+                    .map(|t| t.to_string())
+                    .unwrap_or_default();
+                let input_chars: usize = v
+                    .get("messages")
                     .and_then(Value::as_array)
-                    .map(|msgs| msgs.iter().map(|m| {
-                        m.get("content").map(|c| c.to_string().len()).unwrap_or(0)
-                    }).sum())
+                    .map(|msgs| {
+                        msgs.iter()
+                            .map(|m| m.get("content").map(|c| c.to_string().len()).unwrap_or(0))
+                            .sum()
+                    })
                     .unwrap_or_else(|| {
-                        v.get("prompt").and_then(Value::as_str).map(|s| s.len()).unwrap_or(0)
+                        v.get("prompt")
+                            .and_then(Value::as_str)
+                            .map(|s| s.len())
+                            .unwrap_or(0)
                     });
                 (max_tokens, input_chars)
             })
@@ -1980,6 +2019,7 @@ async fn dispatch_func_call(
     let keepalive;
     let mut tcpConnLatency;
     let mut start;
+
     loop {
         retry += 1;
         if timestamp.Elapsed() > timeout {
@@ -1988,7 +2028,8 @@ async fn dispatch_func_call(
             return Ok(resp);
         }
 
-        let (mut tclient, tkeepalive) = match RetryGetClient(&gw, &route, timeout, timestamp).await {
+        let (mut tclient, tkeepalive) = match RetryGetClient(&gw, &route, timeout, timestamp).await
+        {
             Err(e) => {
                 error!("dispatch_func_call RetryGetClient failed logical={}/{}/{} physical={}/{}/{}: {:?}",
                     route.logical.tenant, route.logical.namespace, route.logical.funcname,
@@ -2018,7 +2059,11 @@ async fn dispatch_func_call(
             }
             Ok(r) => {
                 if retry > 1 {
-                    error!("FuncCall retry success {} with try round {}", route.AgentKey(), retry);
+                    error!(
+                        "FuncCall retry success {} with try round {}",
+                        route.AgentKey(),
+                        retry
+                    );
                 }
                 r
             }
@@ -2027,10 +2072,17 @@ async fn dispatch_func_call(
         let status = res.status();
         if status != StatusCode::OK {
             if RETRYABLE_HTTP_STATUS.contains(&(status.as_u16())) {
-                error!("Http call get fail status {:?} for pod {}", status, tclient.PodName());
+                error!(
+                    "Http call get fail status {:?} for pod {}",
+                    status,
+                    tclient.PodName()
+                );
                 continue;
             }
-            let err_body = res.into_body().collect().await
+            let err_body = res
+                .into_body()
+                .collect()
+                .await
                 .map(|b| String::from_utf8_lossy(&b.to_bytes()).to_string())
                 .unwrap_or_default();
             error!("dispatch_func_call pod returned non-200 status={} pod={} logical={}/{}/{} physical={}/{}/{} path={} body={}",
@@ -2038,9 +2090,12 @@ async fn dispatch_func_call(
                 labels.tenant, labels.namespace, labels.funcname,
                 route.physical.tenant, route.physical.namespace, route.physical.funcname,
                 remainPath, err_body);
-            let resp =
-                FailureResponse(Error::BAD_REQUEST(status), &mut labels, Status::InvalidRequest)
-                    .await;
+            let resp = FailureResponse(
+                Error::BAD_REQUEST(status),
+                &mut labels,
+                Status::InvalidRequest,
+            )
+            .await;
             ttftCtx.span().end();
             return Ok(resp);
         }
@@ -2267,7 +2322,11 @@ async fn ListSkillsByTenant(
     }
 
     let show_all = token.IsTenantAdmin(&owner_tenant) || token.IsInferxAdmin();
-    match gw.sqlSecret.ListSkillsByTenant(&owner_tenant, show_all).await {
+    match gw
+        .sqlSecret
+        .ListSkillsByTenant(&owner_tenant, show_all)
+        .await
+    {
         Ok(skills) => Ok(Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, "application/json")
@@ -2329,7 +2388,12 @@ async fn ListSkillMarketplace(
         )));
     }
 
-    if let Some(tag) = params.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(tag) = params
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return Ok(skill_admin_response(Error::CommonError(format!(
             "tag filter '{}' is not supported: skills do not have tag metadata",
             tag
@@ -2623,7 +2687,10 @@ async fn CreateSkillTemplate(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
 
-    if let Err(e) = gw.objRepo.GetFunc(&func_tenant, &func_namespace, &normal_funcname) {
+    if let Err(e) = gw
+        .objRepo
+        .GetFunc(&func_tenant, &func_namespace, &normal_funcname)
+    {
         return Ok(Response::builder()
             .status(StatusCode::UNPROCESSABLE_ENTITY)
             .body(Body::from(format!("function not found: {:?}", e)))
@@ -2721,11 +2788,11 @@ async fn UpdateSkillTemplate(
             Ok(v) => v,
             Err(e) => return Ok(skill_admin_response(e)),
         };
-    let func_tenant =
-        match normalize_required_skill_template_field("func_tenant", &req.func_tenant) {
-            Ok(v) => v,
-            Err(e) => return Ok(skill_admin_response(e)),
-        };
+    let func_tenant = match normalize_required_skill_template_field("func_tenant", &req.func_tenant)
+    {
+        Ok(v) => v,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
     let func_namespace =
         match normalize_required_skill_template_field("func_namespace", &req.func_namespace) {
             Ok(v) => v,
@@ -2752,7 +2819,10 @@ async fn UpdateSkillTemplate(
         || current.normal_funcname != normal_funcname;
 
     if func_fields_changed {
-        if let Err(e) = gw.objRepo.GetFunc(&func_tenant, &func_namespace, &normal_funcname) {
+        if let Err(e) = gw
+            .objRepo
+            .GetFunc(&func_tenant, &func_namespace, &normal_funcname)
+        {
             return Ok(Response::builder()
                 .status(StatusCode::UNPROCESSABLE_ENTITY)
                 .body(Body::from(format!("function not found: {:?}", e)))
@@ -2819,7 +2889,9 @@ async fn DeleteSkillTemplate(
         Ok(true) => {
             return Ok(Response::builder()
                 .status(StatusCode::CONFLICT)
-                .body(Body::from("template is in use by existing skills and cannot be deleted"))
+                .body(Body::from(
+                    "template is in use by existing skills and cannot be deleted",
+                ))
                 .unwrap());
         }
         Ok(false) => {}
@@ -2897,14 +2969,23 @@ async fn CreateSkill(
         )
         .await
     {
-        Ok(skill) => match write_skill_prefix(&owner_tenant, &namespace, &skillname, skill.version, &req.prefix) {
+        Ok(skill) => match write_skill_prefix(
+            &owner_tenant,
+            &namespace,
+            &skillname,
+            skill.version,
+            &req.prefix,
+        ) {
             Ok(()) => Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&skill).unwrap()))
                 .unwrap()),
             Err(e) => {
-                let _ = gw.sqlSecret.DeleteSkill(&owner_tenant, &namespace, &skillname).await;
+                let _ = gw
+                    .sqlSecret
+                    .DeleteSkill(&owner_tenant, &namespace, &skillname)
+                    .await;
                 Ok(skill_admin_response(Error::from(e)))
             }
         },
@@ -2917,11 +2998,18 @@ async fn GetSkill(
     State(gw): State<HttpGateway>,
     Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    let skill = match gw.sqlSecret.GetSkill(&owner_tenant, &namespace, &skillname).await {
+    let skill = match gw
+        .sqlSecret
+        .GetSkill(&owner_tenant, &namespace, &skillname)
+        .await
+    {
         Ok(skill) => skill,
         Err(e) => return Ok(skill_admin_response(e)),
     };
-    if !skill.is_published && !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
+    if !skill.is_published
+        && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
+        && !token.IsInferxAdmin()
+    {
         return Ok(skill_admin_response(Error::NoPermission));
     }
     Ok(Response::builder()
@@ -2939,7 +3027,11 @@ async fn DeleteSkill(
     if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
         return Ok(skill_admin_response(Error::NoPermission));
     }
-    match gw.sqlSecret.DeleteSkill(&owner_tenant, &namespace, &skillname).await {
+    match gw
+        .sqlSecret
+        .DeleteSkill(&owner_tenant, &namespace, &skillname)
+        .await
+    {
         Ok(()) => match remove_skill_storage(&owner_tenant, &namespace, &skillname) {
             Ok(()) => Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -2980,7 +3072,11 @@ async fn UnpublishSkill(
     if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
         return Ok(skill_admin_response(Error::NoPermission));
     }
-    match gw.sqlSecret.UnpublishSkill(&owner_tenant, &namespace, &skillname).await {
+    match gw
+        .sqlSecret
+        .UnpublishSkill(&owner_tenant, &namespace, &skillname)
+        .await
+    {
         Ok(()) => Ok(Response::builder()
             .status(StatusCode::OK)
             .body(Body::from("unpublished"))
@@ -3004,7 +3100,11 @@ async fn SkillCall(
 
     let remainPath = format!("/{}", subpath);
 
-    let skill = match gw.sqlSecret.GetSkill(&owner_tenant, &namespace, &skillname).await {
+    let skill = match gw
+        .sqlSecret
+        .GetSkill(&owner_tenant, &namespace, &skillname)
+        .await
+    {
         Ok(skill) => skill,
         Err(Error::SqlxError(sqlx::Error::RowNotFound)) => {
             return Ok(Response::builder()
@@ -3031,7 +3131,8 @@ async fn SkillCall(
             .unwrap());
     }
 
-    let calling_tenant = match resolve_skill_calling_tenant(&token, &skill) {
+    let tenant_hint = req.headers().get("X-Tenant").and_then(|v| v.to_str().ok());
+    let calling_tenant = match resolve_skill_calling_tenant(&token, &skill, tenant_hint) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -3056,16 +3157,25 @@ async fn SkillCall(
     let prefix = match load_skill_prefix(&skill) {
         Ok(prefix) => prefix,
         Err(e) => {
-            error!("SkillCall load_skill_prefix failed skill={}/{}/{} version={}: {:?}", owner_tenant, namespace, skillname, skill.version, e);
+            error!(
+                "SkillCall load_skill_prefix failed skill={}/{}/{} version={}: {:?}",
+                owner_tenant, namespace, skillname, skill.version, e
+            );
             return Ok(skill_admin_response(e));
         }
     };
-    info!("SkillCall prefix loaded skill={}/{}/{} prefix_len={}", owner_tenant, namespace, skillname, prefix.len());
+    info!(
+        "SkillCall prefix loaded skill={}/{}/{} prefix_len={}",
+        owner_tenant,
+        namespace,
+        skillname,
+        prefix.len()
+    );
 
     let physical_funcname = if skill.has_cache {
-        skill.consumer_funcname
-            .clone()
-            .ok_or_else(|| Error::CommonError("consumer_funcname missing for cached skill".to_string()))
+        skill.consumer_funcname.clone().ok_or_else(|| {
+            Error::CommonError("consumer_funcname missing for cached skill".to_string())
+        })
     } else {
         Ok(skill.normal_funcname.clone())
     };
@@ -3074,17 +3184,27 @@ async fn SkillCall(
         Err(e) => return Ok(skill_admin_response(e)),
     };
 
-    let func = match gw
-        .objRepo
-        .GetFunc(&skill.func_tenant, &skill.func_namespace, &physical_funcname)
-    {
+    let func = match gw.objRepo.GetFunc(
+        &skill.func_tenant,
+        &skill.func_namespace,
+        &physical_funcname,
+    ) {
         Ok(func) => func,
         Err(e) => {
-            error!("SkillCall GetFunc failed func={}/{}/{}: {:?}", skill.func_tenant, skill.func_namespace, physical_funcname, e);
+            error!(
+                "SkillCall GetFunc failed func={}/{}/{}: {:?}",
+                skill.func_tenant, skill.func_namespace, physical_funcname, e
+            );
             return Ok(skill_admin_response(e));
         }
     };
-    info!("SkillCall GetFunc ok func={}/{}/{} version={}", skill.func_tenant, skill.func_namespace, physical_funcname, func.Version());
+    info!(
+        "SkillCall GetFunc ok func={}/{}/{} version={}",
+        skill.func_tenant,
+        skill.func_namespace,
+        physical_funcname,
+        func.Version()
+    );
 
     let owner_billed = skill.gpu_billing_target == "owner";
     let base_funcname = format!(
@@ -3100,10 +3220,16 @@ async fn SkillCall(
     } else {
         (calling_tenant.clone(), base_funcname, None)
     };
-    info!("SkillCall dispatch logical={}/{}/{} physical={}/{}/{} remain={}",
-        logical_tenant, SKILLS_NAMESPACE, logical_funcname,
-        skill.func_tenant, skill.func_namespace, physical_funcname,
-        remainPath);
+    info!(
+        "SkillCall dispatch logical={}/{}/{} physical={}/{}/{} remain={}",
+        logical_tenant,
+        SKILLS_NAMESPACE,
+        logical_funcname,
+        skill.func_tenant,
+        skill.func_namespace,
+        physical_funcname,
+        remainPath
+    );
     let route = FuncRouteTarget {
         logical: FuncIdentity {
             tenant: logical_tenant,
@@ -3122,15 +3248,30 @@ async fn SkillCall(
         caller_tenant,
     };
 
-    dispatch_func_call(
+    if req.method() != axum::http::Method::POST || !remainPath.starts_with("/v1/chat/completions") {
+        return dispatch_func_call(
+            &gw,
+            req,
+            route,
+            calling_tenant,
+            SKILLS_NAMESPACE.to_string(),
+            logical_funcname,
+            remainPath,
+            Some(prefix.as_str()),
+        )
+        .await;
+    }
+
+    handle_skill_call_chain(
         &gw,
         req,
         route,
         calling_tenant,
-        SKILLS_NAMESPACE.to_string(),
         logical_funcname,
         remainPath,
-        Some(prefix.as_str()),
+        prefix.as_str(),
+        SKILLS_NAMESPACE,
+        FUNCCALL_MAX_BODY_BYTES,
     )
     .await
 }
@@ -5710,7 +5851,13 @@ async fn GetAdminEndpointTenantUsageByPeriod(
 
     match gw
         .sqlBilling
-        .GetAdminEndpointTenantUsageByPeriod(&tenant, &endpoint_slug, start_hour, end_hour, &granularity)
+        .GetAdminEndpointTenantUsageByPeriod(
+            &tenant,
+            &endpoint_slug,
+            start_hour,
+            end_hour,
+            &granularity,
+        )
         .await
     {
         Ok(rows) => {
