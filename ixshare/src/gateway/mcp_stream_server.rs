@@ -71,6 +71,22 @@ impl McpStreamServer {
             self.gateway_base_url, owner_tenant, owner_namespace, skillname
         )
     }
+
+    fn parse_text_response(body: &[u8]) -> Result<String, ErrorData> {
+        let json: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|e| Self::internal_error(format!("invalid skill response JSON: {}", e)))?;
+        json.get("choices")
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(|content| match content {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Null => None,
+                other => Some(other.to_string()),
+            })
+            .ok_or_else(|| Self::internal_error("skill response did not contain final text"))
+    }
 }
 
 impl ServerHandler for McpStreamServer {
@@ -168,7 +184,7 @@ impl ServerHandler for McpStreamServer {
             "messages": [{"role": "user", "content": query}],
             "max_tokens": 5000,
             "temperature": 0,
-            "stream": true
+            "stream": false
         });
 
         let client = reqwest::Client::new();
@@ -191,65 +207,10 @@ impl ServerHandler for McpStreamServer {
             return Err(Self::internal_error(message));
         }
 
-        let mut counter = 0;
-        let mut full_response = String::new();
-        let body = response.bytes_stream();
-        tokio::pin!(body);
-
-        loop {
-            match futures::StreamExt::next(&mut body).await {
-                Some(Ok(chunk)) => {
-                    let chunk_str = String::from_utf8_lossy(&chunk);
-                    for line in chunk_str.lines() {
-                        if !line.starts_with("data: ") {
-                            continue;
-                        }
-                        let data = line[6..].trim().to_string();
-                        if data.is_empty() || data == "[DONE]" {
-                            continue;
-                        }
-                        if let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&data) {
-                            if let Some(choice) = json_data.get("choices").and_then(|c| c.get(0)) {
-                                if let Some(delta) = choice.get("delta") {
-                                    if let Some(token) =
-                                        delta.get("content").and_then(|c| c.as_str())
-                                    {
-                                        if !token.is_empty() {
-                                            full_response.push_str(token);
-                                            context
-                                                .peer
-                                                .notify_progress(ProgressNotificationParam {
-                                                    progress_token: ProgressToken(
-                                                        NumberOrString::Number(counter),
-                                                    ),
-                                                    progress: counter as f64,
-                                                    total: None,
-                                                    message: Some(token.to_string()),
-                                                })
-                                                .await
-                                                .map_err(|e| {
-                                                    Self::internal_error(format!(
-                                                        "failed to notify progress: {}",
-                                                        e
-                                                    ))
-                                                })?;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(Err(e)) => {
-                    return Err(Self::internal_error(format!(
-                        "failed to read response chunk: {}",
-                        e
-                    )));
-                }
-                None => break,
-            }
-            counter += 1;
-        }
+        let response_bytes = response.bytes().await.map_err(|e| {
+            Self::internal_error(format!("failed to read endpoint response: {}", e))
+        })?;
+        let full_response = Self::parse_text_response(&response_bytes)?;
 
         Ok(CallToolResult::success(vec![Content::text(full_response)]))
     }
@@ -292,8 +253,9 @@ impl ServerHandler for McpStreamServer {
 
 #[cfg(test)]
 mod tests {
-    use super::compute_own_skill_tool_names;
+    use super::{compute_own_skill_tool_names, McpStreamServer};
     use crate::gateway::secret::OwnSkillToolRoute;
+    use serde_json::json;
 
     #[test]
     fn own_skill_unique_name_stays_plain() {
@@ -360,6 +322,19 @@ mod tests {
                 "pricing".to_string()
             )),
             Some(&"pricing.other.acme".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_text_response_extracts_message_content() {
+        let body = json!({
+            "choices": [{
+                "message": {"content": "final answer"}
+            }]
+        });
+        assert_eq!(
+            McpStreamServer::parse_text_response(&serde_json::to_vec(&body).unwrap()).unwrap(),
+            "final answer"
         );
     }
 }

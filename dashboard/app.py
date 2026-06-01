@@ -8078,6 +8078,7 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         return json_error(f"failed to load skill create page: {e}", 500)
 
     deploy_target = context["deploy_target"]
+    skill_templates = context["skill_templates"]
     merged_form_data = {
         "skillname": "",
         "tenant": deploy_target.get("selected_tenant", ""),
@@ -8088,6 +8089,8 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
     }
     if isinstance(form_data, dict):
         merged_form_data.update(form_data)
+    if merged_form_data.get("template_id", "") == "" and len(skill_templates) == 1:
+        merged_form_data["template_id"] = str(skill_templates[0].get("template_id") or "")
 
     return render_template(
         "skill_create.html",
@@ -8095,7 +8098,7 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         error_message=error_message,
         success_message=success_message,
         deploy_target=deploy_target,
-        skill_templates=context["skill_templates"],
+        skill_templates=skill_templates,
     )
 
 
@@ -8429,6 +8432,10 @@ def SkillDetail():
             ns=ns,
             name=name,
         )
+    skill_prefix_text = ""
+    if can_manage:
+        version = skill.get("version") or 0
+        skill_prefix_text = load_skill_prefix_text(owner, ns, name, int(version or 0))
 
     return render_template(
         "skill_detail.html",
@@ -8443,6 +8450,7 @@ def SkillDetail():
         client_setup=client_setup,
         opencode_download_href=opencode_download_href,
         can_manage=can_manage,
+        skill_prefix_text=skill_prefix_text,
     )
 
 
@@ -9052,13 +9060,21 @@ def proxy(path):
     access_token = session.get('access_token', '')
     headers = {key: value for key, value in request.headers if key.lower() != 'host'}
     normalized_path = path.lstrip('/')
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
     # Keep public funccall requests anonymous. Some gateway configs reject
     # dashboard session tokens on /funccall while allowing unauthenticated
     # access for public tenant models.
     is_public_funccall = normalized_path.startswith("funccall/public/")
     has_client_auth = any(key.lower() == 'authorization' for key in headers)
+    has_client_tenant = any(key.lower() == 'x-tenant' for key in headers)
     if access_token != "" and not has_client_auth and not is_public_funccall:
         headers["Authorization"] = f'Bearer {access_token}'
+    if (
+        active_tenant != ""
+        and not has_client_tenant
+        and normalized_path.startswith("skills/")
+    ):
+        headers["X-Tenant"] = active_tenant
     
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"

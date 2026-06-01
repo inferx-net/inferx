@@ -6,6 +6,14 @@
 {% set sc_namespace_options_by_tenant = deploy_target.namespace_options_by_tenant if deploy_target and deploy_target.namespace_options_by_tenant is defined else {} %}
 {% set sc_current_namespace_options = sc_namespace_options_by_tenant.get(sc_selected_tenant, []) if sc_selected_tenant else [] %}
 {% set sc_single_fixed = (sc_tenant_options | length) == 1 and (sc_current_namespace_options | length) == 1 %}
+{% set sc_single_template = (skill_templates | length) == 1 %}
+{% set sc_selected_template_id = form_data.get('template_id', '') | string %}
+{% set sc_selected_template = namespace(value=None) %}
+{% for template in skill_templates %}
+    {% if sc_single_template or sc_selected_template_id == template.get('template_id') | string %}
+        {% set sc_selected_template.value = template %}
+    {% endif %}
+{% endfor %}
 {% set sc_deploy_target = deploy_target.copy() if deploy_target else {} %}
 {% if sc_deploy_target %}
     {% set _ = sc_deploy_target.update({'selected_tenant': sc_selected_tenant, 'selected_namespace': sc_selected_namespace, 'resolved': (sc_selected_tenant != '' and sc_selected_namespace != '')}) %}
@@ -178,11 +186,17 @@
         </div>
 
         <div class="skill-panel">
-            <h2>Template</h2>
+            <h2>Skill Template</h2>
             <div class="skill-field">
-                <label for="template_id">Template</label>
+                <label for="template_id">Skill Template</label>
+                {% if sc_single_template and sc_selected_template.value %}
+                <input type="hidden" id="template_id" name="template_id" value="{{ sc_selected_template.value.get('template_id') }}">
+                <div class="catalog-deploy-target-readonly">
+                    {{ sc_selected_template.value.get('display_name') }} ({{ sc_selected_template.value.get('tenant') }}/{{ sc_selected_template.value.get('namespace') }})
+                </div>
+                {% else %}
                 <select id="template_id" name="template_id" required>
-                    <option value="">Select a template</option>
+                    <option value="">Select a skill template</option>
                     {% for template in skill_templates %}
                     <option
                         value="{{ template.get('template_id') }}"
@@ -194,9 +208,10 @@
                     </option>
                     {% endfor %}
                 </select>
+                {% endif %}
                 <div class="skill-template-detail" id="skill-template-detail">
-                    <div><strong>Description:</strong> <span id="skill-template-description"></span></div>
-                    <div><strong>Model:</strong> <span id="skill-template-model"></span></div>
+                    <div><strong>Description:</strong> <span id="skill-template-description">{{ sc_selected_template.value.get('description', '') if sc_selected_template.value else '' }}</span></div>
+                    <div><strong>Model:</strong> <span id="skill-template-model">{{ sc_selected_template.value.get('normal_funcname', '') if sc_selected_template.value else '' }}</span></div>
                 </div>
             </div>
         </div>
@@ -242,7 +257,9 @@
         function targetReady() { return currentTenant() !== '' && currentNamespace() !== ''; }
 
         function syncButtons() {
-            if (submitBtn) submitBtn.disabled = !targetReady() || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
+            const templateInput = document.getElementById('template_id');
+            const templateReady = !!(templateInput && String(templateInput.value || '').trim());
+            if (submitBtn) submitBtn.disabled = !targetReady() || !templateReady || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
         }
 
         descriptionTextarea.addEventListener('input', syncButtons);
@@ -298,8 +315,8 @@
             modelEl.textContent = option.dataset.model || '';
         }
 
-        templateSelect.addEventListener('change', updateTemplateDetail);
-        updateTemplateDetail();
+        templateSelect?.addEventListener('change', updateTemplateDetail);
+        if (templateSelect) updateTemplateDetail();
         syncButtons();
     })();
 </script>

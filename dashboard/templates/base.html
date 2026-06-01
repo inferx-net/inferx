@@ -628,7 +628,6 @@
     {% set is_public_visitor = (not is_logged_in) and (not is_gateway_aligned_anonymous_active) %}
     {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active or '/catalog' in request_path or '/help' in request_path or '/endpoints' in request_path %}
     {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
-    {% set nav_functions_active = request_path_no_slash in ('/listfunctions', '/function_create', '/function') %}
     {% set nav_models_active = request_path_no_slash in ('/listfunc', '/func_create', '/func', '/funclog') %}
     {% set nav_skills_active = request_path.startswith('/listskills') or request_path.startswith('/skill_create') or request_path.startswith('/skill/') %}
     {% set nav_catalog_active = '/catalog' in request_path %}
@@ -667,7 +666,6 @@
         <a href="{{ hosturl }}endpoints" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
         {% if not is_public_visitor %}
         <a href="{{ hosturl }}listskills" class="{% if nav_skills_active %}active{% endif %}"> Skills </a>
-        <a href="{{ hosturl }}listfunctions" class="{% if nav_functions_active %}active{% endif %}"> Functions </a>
         {% endif %}
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         {% if not is_public_visitor %}

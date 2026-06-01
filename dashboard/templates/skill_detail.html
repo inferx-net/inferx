@@ -93,6 +93,19 @@
         color: #475569;
     }
     .copyable-area-copy:hover { background: #cbd5e1; }
+    .skill-data-viewer {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        background: #f8fafc;
+        resize: vertical;
+        line-height: 1.45;
+        min-height: 220px;
+    }
     @media (max-width: 720px) {
         .skill-meta-grid { grid-template-columns: 1fr; }
     }
@@ -159,10 +172,22 @@
             <div>{{ skill.get('revision_created_by') or '—' }}</div>
             <strong>Skill Data</strong>
             <div>
+                {% if can_manage %}
+                <button class="ix-btn secondary" type="button" id="skill-data-view-btn">View</button>
                 <a class="ix-btn secondary" href="{{ url_for('prefix.download_skill_prefix', owner=owner, ns=ns, name=name) }}">Download</a>
+                {% else %}
+                —
+                {% endif %}
             </div>
         </div>
     </section>
+
+    {% if can_manage %}
+    <section class="skill-panel" id="skill-data-viewer" hidden>
+        <h2>Skill Data</h2>
+        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No skill data found.">{{ skill_prefix_text }}</textarea>
+    </section>
+    {% endif %}
 
     {% set section_class = 'skill-panel' %}
     {% include '_client_setup.html' %}
@@ -215,6 +240,8 @@
     const metricsEl = document.getElementById('skill-metrics');
     const ttftEl = document.getElementById('skill-metric-ttft');
     const tpsEl = document.getElementById('skill-metric-tps');
+    const skillDataViewBtn = document.getElementById('skill-data-view-btn');
+    const skillDataViewer = document.getElementById('skill-data-viewer');
 
     let abortController = null;
     let startTime = 0;
@@ -234,6 +261,31 @@
     function fmtMs(ms) {
         return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms / 1000).toFixed(2) + 's';
     }
+
+    function extractTextContent(content) {
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+            return content
+                .map((item) => {
+                    if (typeof item === 'string') return item;
+                    if (item && typeof item === 'object' && typeof item.text === 'string') return item.text;
+                    return '';
+                })
+                .join('');
+        }
+        if (content == null) return '';
+        return String(content);
+    }
+
+    skillDataViewBtn?.addEventListener('click', () => {
+        if (!skillDataViewer) return;
+        const nextHidden = !skillDataViewer.hidden;
+        skillDataViewer.hidden = nextHidden;
+        skillDataViewBtn.textContent = nextHidden ? 'View' : 'Hide';
+        if (!nextHidden) {
+            skillDataViewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
 
     runBtn.addEventListener('click', async () => {
         const prompt = (promptInput.value || '').trim();
@@ -269,6 +321,19 @@
             if (!resp.ok) {
                 const text = await resp.text();
                 throw new Error(`HTTP ${resp.status}: ${text || 'request failed'}`);
+            }
+
+            const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+                const payload = await resp.json();
+                const message = payload?.choices?.[0]?.message;
+                const content = extractTextContent(message?.content);
+                outputEl.value = content;
+                if (!content) {
+                    throw new Error('Skill returned an empty response.');
+                }
+                setStatus('Done.', false);
+                return;
             }
 
             const reader = resp.body.getReader();

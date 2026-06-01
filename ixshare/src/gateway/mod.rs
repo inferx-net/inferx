@@ -22,4 +22,5 @@ pub mod mcp_stream_server;
 pub mod metrics;
 pub mod scheduler_client;
 pub mod secret;
+mod skill_chain;
 pub mod tokenizer;
