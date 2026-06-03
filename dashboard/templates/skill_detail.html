@@ -129,7 +129,7 @@
                 <button class="ix-btn" type="submit">Publish</button>
             </form>
             {% endif %}
-            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this skill? This cannot be undone.');" style="display:inline;">
+            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this function? This cannot be undone.');" style="display:inline;">
                 <button class="ix-btn danger" type="submit">Delete</button>
             </form>
             {% endif %}
@@ -150,16 +150,10 @@
             <strong>Owner</strong><div>{{ owner }} / {{ ns }}</div>
             <strong>Description</strong>
             <div>{{ skill.get('description') or '—' }}</div>
-            <strong>Template</strong>
-            <div>{{ skill.get('template_display_name') or '—' }}</div>
             <strong>Backing Model</strong>
-            <div>{{ skill.get('func_tenant') }}/{{ skill.get('func_namespace') }}/{{ normal_funcname }}</div>
-            <strong>GPU Billing</strong>
-            <div>{{ skill.get('gpu_billing_target', 'caller') | capitalize }}</div>
-            <strong>Serving Mode</strong>
-            <div>{{ skill.get('serving_mode', '') | capitalize }}</div>
-            <strong>Version</strong>
-            <div>{{ skill.get('version') }}</div>
+            <div>{{ normal_funcname }}</div>
+
+
             {% if skill.get('published_at') %}
             <strong>Published At</strong>
             <div>{{ skill.get('published_at') }}</div>
@@ -170,7 +164,7 @@
             {% endif %}
             <strong>Created By</strong>
             <div>{{ skill.get('revision_created_by') or '—' }}</div>
-            <strong>Skill Data</strong>
+            <strong>Function Data</strong>
             <div>
                 {% if can_manage %}
                 <button class="ix-btn secondary" type="button" id="skill-data-view-btn">View</button>
@@ -184,8 +178,8 @@
 
     {% if can_manage %}
     <section class="skill-panel" id="skill-data-viewer" hidden>
-        <h2>Skill Data</h2>
-        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No skill data found.">{{ skill_prefix_text }}</textarea>
+        <h2>Function Data</h2>
+        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No function data found.">{{ skill_prefix_text }}</textarea>
     </section>
     {% endif %}
 
@@ -330,7 +324,7 @@
                 const content = extractTextContent(message?.content);
                 outputEl.value = content;
                 if (!content) {
-                    throw new Error('Skill returned an empty response.');
+                    throw new Error('Function returned an empty response.');
                 }
                 setStatus('Done.', false);
                 return;

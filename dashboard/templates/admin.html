@@ -1702,8 +1702,8 @@
 <div id="SkillTemplates" class="tabcontent">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
         <div>
-            <h3 style="margin:0;">Skill Templates</h3>
-            <div style="color:#64748b;font-size:13px;margin-top:4px;">Admin-managed templates available to skill creators.</div>
+            <h3 style="margin:0;">Backing Models</h3>
+            <div style="color:#64748b;font-size:13px;margin-top:4px;">Admin-managed backing models available to function creators.</div>
         </div>
         <a class="ix-btn" href="{{ url_for('prefix.AdminSkillTemplateCreate') }}">New Template</a>
     </div>
@@ -7099,7 +7099,7 @@
 
         tbody.innerHTML = '';
         if (!Array.isArray(templates) || templates.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7">No skill templates found.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7">No backing models found.</td></tr>';
             return;
         }
 
