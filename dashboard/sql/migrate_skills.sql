@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS SkillSubscription (
     UNIQUE(subscriber_tenant, tool_alias),
     FOREIGN KEY (owner_tenant, owner_namespace, skillname)
         REFERENCES Skill (owner_tenant, owner_namespace, skillname)
-        ON DELETE CASCADE,
+        ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_skillsub_tenant
