@@ -83,8 +83,21 @@ CREATE TABLE IF NOT EXISTS SkillSubscription (
     FOREIGN KEY (owner_tenant, owner_namespace, skillname)
         REFERENCES Skill (owner_tenant, owner_namespace, skillname)
         ON DELETE CASCADE,
-    CHECK (tool_alias ~ '^[a-z][a-z0-9_-]{0,63}$')
 );
 
 CREATE INDEX IF NOT EXISTS idx_skillsub_tenant
     ON SkillSubscription (subscriber_tenant);
+
+DO $$
+DECLARE
+    v_constraint_name TEXT;
+BEGIN
+    SELECT conname INTO v_constraint_name
+    FROM pg_constraint
+    WHERE conrelid = 'SkillSubscription'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%tool_alias%';
+    IF v_constraint_name IS NOT NULL THEN
+        EXECUTE 'ALTER TABLE SkillSubscription DROP CONSTRAINT ' || quote_ident(v_constraint_name);
+    END IF;
+END$$;

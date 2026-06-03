@@ -64,8 +64,8 @@
 <div class="skill-template-page">
     <div class="skill-template-header">
         <div>
-            <h2>Skill Templates</h2>
-            <div class="editor-subtitle">Admin-managed templates available to skill creators.</div>
+            <h2>Backing Models</h2>
+            <div class="editor-subtitle">Admin-managed backing models available to function creators.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             <a class="ix-btn secondary" href="{{ url_for('prefix.apikeys') }}">Back to Admin</a>
@@ -88,7 +88,7 @@
         <tbody>
             {% if not skill_templates %}
             <tr>
-                <td colspan="7">No skill templates found.</td>
+                <td colspan="7">No backing models found.</td>
             </tr>
             {% endif %}
             {% for template in skill_templates %}
@@ -124,7 +124,7 @@
                     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                         <a class="ix-btn secondary" href="{{ url_for('prefix.AdminSkillTemplateEdit', template_id=template.get('template_id')) }}">Edit</a>
                         {% if template.get('is_active') %}
-                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDeactivate', template_id=template.get('template_id')) }}" onsubmit="return confirm('Deactivating hides this template from new skill creation. Existing skills are unaffected.');">
+                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDeactivate', template_id=template.get('template_id')) }}" onsubmit="return confirm('Deactivating hides this backing model from new function creation. Existing functions are unaffected.');">
                             <button class="ix-btn secondary" type="submit">Deactivate</button>
                         </form>
                         {% else %}
@@ -132,7 +132,7 @@
                             <button class="ix-btn secondary" type="submit">Activate</button>
                         </form>
                         {% endif %}
-                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDelete', template_id=template.get('template_id')) }}" onsubmit="return confirm('Delete this template? This cannot be undone. Templates in use by existing skills cannot be deleted.');">
+                        <form method="post" action="{{ url_for('prefix.AdminSkillTemplateDelete', template_id=template.get('template_id')) }}" onsubmit="return confirm('Delete this backing model? This cannot be undone. Backing models in use by existing functions cannot be deleted.');">
                             <button class="ix-btn danger" type="submit">Delete</button>
                         </form>
                     </div>

@@ -189,3 +189,22 @@ CREATE TABLE SkillRevision (
 ALTER TABLE Skill
     ADD CONSTRAINT fk_active_revision
     FOREIGN KEY (active_revision_id) REFERENCES SkillRevision(revision_id);
+
+CREATE TABLE SkillSubscription (
+    subscription_id   BIGSERIAL PRIMARY KEY,
+    subscriber_tenant VARCHAR NOT NULL,
+    owner_tenant      VARCHAR NOT NULL,
+    owner_namespace   VARCHAR NOT NULL,
+    skillname         VARCHAR NOT NULL,
+    tool_alias        VARCHAR NOT NULL,
+    subscribed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    subscribed_by     VARCHAR NOT NULL,
+    UNIQUE(subscriber_tenant, owner_tenant, owner_namespace, skillname),
+    UNIQUE(subscriber_tenant, tool_alias),
+    FOREIGN KEY (owner_tenant, owner_namespace, skillname)
+        REFERENCES Skill (owner_tenant, owner_namespace, skillname)
+        ON DELETE CASCADE,
+);
+
+CREATE INDEX idx_skillsub_tenant
+    ON SkillSubscription (subscriber_tenant);

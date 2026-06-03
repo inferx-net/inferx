@@ -152,7 +152,7 @@
 
 <div class="skill-create-page">
     <div>
-        <h1>Create Skill</h1>
+        <h1>Create Function</h1>
     </div>
 
     {% if error_message %}
@@ -166,13 +166,13 @@
         <div class="skill-panel">
             <h2>Identity</h2>
             <div class="skill-field" style="margin-bottom:14px;">
-                <label for="skillname">Skill Name</label>
+                <label for="skillname">Function Name</label>
                 <input id="skillname" name="skillname" type="text" required pattern="^[a-zA-Z0-9][a-zA-Z0-9-]*$" value="{{ form_data.get('skillname', '') }}">
             </div>
 
             {% if sc_single_fixed %}
             <div class="catalog-deploy-target-summary" style="margin-bottom:0;">
-                <strong>Owner:</strong>
+                <strong>Function path:</strong>
                 <span>{% if (sc_tenant_options | length) != 1 %}{{ sc_selected_tenant }} / {% endif %}{{ sc_selected_namespace or sc_current_namespace_options[0].value }}</span>
             </div>
             {% else %}
@@ -181,14 +181,14 @@
 
             <div class="skill-field" style="margin-top:14px;">
                 <label for="description">Description</label>
-                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this skill does" required>{{ form_data.get('description', '') }}</textarea>
+                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this function does" required>{{ form_data.get('description', '') }}</textarea>
             </div>
         </div>
 
         <div class="skill-panel">
-            <h2>Skill Template</h2>
+            <h2>Backing Model</h2>
             <div class="skill-field">
-                <label for="template_id">Skill Template</label>
+                <label for="template_id">Backing Model</label>
                 {% if sc_single_template and sc_selected_template.value %}
                 <input type="hidden" id="template_id" name="template_id" value="{{ sc_selected_template.value.get('template_id') }}">
                 <div class="catalog-deploy-target-readonly">
@@ -196,7 +196,7 @@
                 </div>
                 {% else %}
                 <select id="template_id" name="template_id" required>
-                    <option value="">Select a skill template</option>
+                    <option value="">Select a backing model</option>
                     {% for template in skill_templates %}
                     <option
                         value="{{ template.get('template_id') }}"
@@ -217,10 +217,10 @@
         </div>
 
         <div class="skill-panel">
-            <h2>Skill Data</h2>
+            <h2>Function Data</h2>
             <div class="skill-field">
-                <label for="prefix">Skill Data — prepended to every user request as the leading system message</label>
-                <textarea id="prefix" name="prefix" placeholder="Enter skill data here...">{{ form_data.get('prefix', '') }}</textarea>
+                <label for="prefix">Function Data — Provide system context for every user request</label>
+                <textarea id="prefix" name="prefix" placeholder="Enter function data here...">{{ form_data.get('prefix', '') }}</textarea>
                 <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                     <label for="skill-prefix-file-input" class="ix-btn secondary" style="cursor:pointer;margin:0;">Load from file</label>
                     <input id="skill-prefix-file-input" type="file" style="display:none">

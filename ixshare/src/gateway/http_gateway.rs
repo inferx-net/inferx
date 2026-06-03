@@ -22,7 +22,6 @@ use std::result::Result as SResult;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use inferxlib::obj_mgr::funcpolicy_mgr::{FuncPolicy, FuncPolicySpec};
 use opentelemetry::global::ObjectSafeSpan;
@@ -417,13 +416,15 @@ fn resolve_subscription_tenant(token: &AccessToken, tenant_hint: Option<&str>) -
 }
 
 fn normalize_subscription_alias(alias: &str) -> Result<String> {
-    static SUBSCRIPTION_ALIAS_RE: OnceLock<regex::Regex> = OnceLock::new();
     let trimmed = alias.trim();
-    let valid = SUBSCRIPTION_ALIAS_RE
-        .get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]{0,63}$").unwrap());
-    if !valid.is_match(trimmed) {
+    if trimmed.is_empty()
+        || !trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
         return Err(Error::CommonError(
-            "tool_alias must match [a-z][a-z0-9_-]* and be at most 64 chars".to_string(),
+            "tool_alias may contain only letters, numbers, hyphens, underscores, and periods"
+                .to_string(),
         ));
     }
 
@@ -2454,7 +2455,7 @@ async fn CreateSkillSubscription(
             Ok(alias) => alias,
             Err(_) => {
                 return Ok(skill_admin_response(Error::CommonError(format!(
-                    "skillname '{}' cannot be used as the default tool_alias; provide an explicit alias matching [a-z][a-z0-9_-]* and at most 64 chars",
+                    "skillname '{}' cannot be used as the default tool_alias; provide an explicit alias using only letters, numbers, hyphens, underscores, and periods",
                     req.skillname.trim()
                 ))))
             }

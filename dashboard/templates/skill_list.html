@@ -251,18 +251,18 @@
 
 <div class="skills-page">
     <nav class="skills-page-nav" aria-label="Skills pages">
-        <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Skills</a>
-        <a href="{{ url_for('prefix.SkillMarketplace') }}" class="{% if current_view == 'marketplace' %}active{% endif %}">Marketplace</a>
+        <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Functions</a>
+        <a href="{{ url_for('prefix.SkillMarketplace') }}" class="{% if current_view == 'marketplace' %}active{% endif %}">Public</a>
     </nav>
 
     {% if current_view == 'my_skills' %}
     <section class="skills-section">
         <div class="skills-header">
             <div>
-                <h2>My Own Skills</h2>
-                <p class="skills-subtitle">Skills you own under tenant <strong>{{ active_tenant }}</strong>.</p>
+                <h2>My Own Functions</h2>
+                <p class="skills-subtitle">Functions you own under tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
-            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
+            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Function</a>
         </div>
 
         {% if my_skills %}
@@ -294,7 +294,7 @@
                                 <button class="ix-btn secondary" type="submit">Publish</button>
                             </form>
                             {% endif %}
-                            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this skill?');">
+                            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this function?');">
                                 <button class="ix-btn danger" type="submit">Delete</button>
                             </form>
                         </div>
@@ -310,8 +310,8 @@
     <section class="skills-section" id="skills-subscriptions">
         <div class="skills-header">
             <div>
-                <h2>My Subscribed Skills</h2>
-                <p class="skills-subtitle">External skills currently available to tenant <strong>{{ active_tenant }}</strong>.</p>
+                <h2>My Subscribed Functions</h2>
+                <p class="skills-subtitle">External functions currently available to tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
         </div>
 
@@ -319,10 +319,9 @@
         <table class="ix-table">
             <thead>
                 <tr>
-                    <th>Skill</th>
+                    <th>Function</th>
                     <th>Owner</th>
-                    <th>Alias</th>
-                    <th>Subscribed</th>
+                    <th>Description</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -339,28 +338,10 @@
                         <a href="{{ url_for('prefix.SkillDetail', owner=row.get('owner_tenant'), ns=row.get('owner_namespace'), name=row.get('skillname')) }}">{{ row.get('skillname') }}</a>
                     </td>
                     <td>{{ row.get('owner_tenant') }}/{{ row.get('owner_namespace') }}</td>
-                    <td>
-                        <div data-role="alias-read">{{ row.get('tool_alias') }}</div>
-                        <div class="subscription-row-edit" data-role="alias-edit" hidden>
-                            <div class="subscription-alias-editor">
-                                <input
-                                    type="text"
-                                    value="{{ row.get('tool_alias') }}"
-                                    data-role="alias-input"
-                                >
-                                <div class="skill-validation-error" data-role="alias-error"></div>
-                                <div class="subscription-inline-actions">
-                                    <button class="ix-btn" type="button" data-action="save-alias">Save</button>
-                                    <button class="ix-btn secondary" type="button" data-action="cancel-alias">Cancel</button>
-                                </div>
-                            </div>
-                        </div>
-                    </td>
-                    <td>{{ row.get('subscribed_at_display') or row.get('subscribed_at') or '—' }}</td>
+                    <td>{{ row.get('description') or '—' }}</td>
                     <td>
                         {% if can_manage_subscriptions %}
                         <div class="ix-row-actions">
-                            <button class="ix-btn secondary" type="button" data-action="edit-alias">Edit Alias</button>
                             <button class="ix-btn danger" type="button" data-action="unsubscribe-subscription">Unsubscribe</button>
                         </div>
                         {% else %}
@@ -381,8 +362,8 @@
     <section class="skills-section" id="skills-marketplace">
         <div class="skills-header">
             <div>
-                <h2>Marketplace</h2>
-                <p class="skills-subtitle">Published skills from all tenants. Subscribe to expose selected external skills to your tenant.</p>
+                <h2>Public</h2>
+                <p class="skills-subtitle">Published functions from all tenants. Subscribe to expose selected external functions to your tenant.</p>
             </div>
         </div>
         <div class="skills-marketplace-controls">
@@ -393,7 +374,7 @@
                         type="search"
                         name="keyword"
                         value="{{ marketplace_keyword or '' }}"
-                        placeholder="Search by skill, owner, namespace, or description"
+                        placeholder="Search by function, owner, namespace, or description"
                     >
                 </label>
                 <input type="hidden" name="page" value="1">
@@ -418,7 +399,7 @@
         <table class="ix-table skills-marketplace-table">
             <thead>
                 <tr>
-                    <th>Skill</th>
+                    <th>Function</th>
                     <th>Owner</th>
                     <th>Description</th>
                     <th>Price</th>
@@ -484,7 +465,7 @@
             </tbody>
         </table>
         {% else %}
-        <div class="skills-empty">No published skills are currently available.</div>
+        <div class="skills-empty">No published functions are currently available.</div>
         {% endif %}
     </section>
     {% endif %}
@@ -494,14 +475,14 @@
 <div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>
     <div class="skill-subscribe-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-subscribe-modal-title">
         <div>
-            <h3 id="skill-subscribe-modal-title">Subscribe to Skill</h3>
+            <h3 id="skill-subscribe-modal-title">Subscribe to Function</h3>
             <p id="skill-subscribe-modal-skill" class="skill-subscribe-meta"></p>
         </div>
         <div class="skill-subscribe-form">
             <div>
                 <label for="skill-subscribe-alias-input">Tool alias</label>
                 <input id="skill-subscribe-alias-input" type="text" value="">
-                <p class="skill-validation-hint">Agents will call this tool as "<span id="skill-subscribe-alias-preview"></span>"</p>
+                <p class="skill-validation-hint">Agents will call this function as "<span id="skill-subscribe-alias-preview"></span>"</p>
                 <div id="skill-subscribe-alias-error" class="skill-validation-error"></div>
             </div>
             <div class="skill-subscribe-actions">
@@ -550,7 +531,7 @@
         }
 
         function isAliasFormatValid(alias) {
-            return /^[a-z][a-z0-9_-]{0,63}$/.test(alias);
+            return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(alias);
         }
 
         function setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, alias) {
@@ -635,7 +616,7 @@
             const alias = String(modalAliasInput.value || '').trim();
             if (modalAliasPreview) modalAliasPreview.textContent = alias.toLowerCase();
             if (!isAliasFormatValid(alias)) {
-                setModalValidation(false, 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.');
+                setModalValidation(false, 'Alias may contain only letters, numbers, hyphens, underscores, and periods.');
                 return;
             }
             setModalValidation(true, '');
@@ -649,7 +630,7 @@
                 valid: false,
             };
             modalSkillText.textContent = `${ownerTenant}/${ownerNamespace}/${skillname}`;
-            modalAliasInput.value = skillname;
+            modalAliasInput.value = `${skillname}.${ownerNamespace}.${ownerTenant}`;
             setModalValidation(false, '');
             modal.hidden = false;
             scheduleModalValidation();
@@ -660,7 +641,7 @@
             const aliasInput = row?.querySelector('[data-role="alias-input"]');
             const alias = String(aliasInput?.value || '').trim();
             if (!isAliasFormatValid(alias)) {
-                setInlineValidation(row, false, 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.');
+                setInlineValidation(row, false, 'Alias may contain only letters, numbers, hyphens, underscores, and periods.');
                 return;
             }
             setInlineValidation(row, true, '');
@@ -724,7 +705,7 @@
             if (button.dataset.action === 'open-subscribe-modal') {
                 openSubscribeModal(ownerTenant, ownerNamespace, skillname);
             } else if (button.dataset.action === 'unsubscribe-marketplace') {
-                if (!window.confirm('Unsubscribe from this skill?')) return;
+                if (!window.confirm('Unsubscribe from this function?')) return;
                 unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
                     .then(() => {
                         setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');
@@ -774,7 +755,7 @@
             if (button.dataset.action === 'save-alias') {
                 const alias = String(aliasInput?.value || '').trim().toLowerCase();
                 if (!isAliasFormatValid(alias)) {
-                    if (aliasError) aliasError.textContent = 'Alias must match [a-z][a-z0-9_-]* and be at most 64 characters.';
+                    if (aliasError) aliasError.textContent = 'Alias may contain only letters, numbers, hyphens, underscores, and periods.';
                     return;
                 }
                 if (aliasError) aliasError.textContent = '';
@@ -796,7 +777,7 @@
             }
 
             if (button.dataset.action === 'unsubscribe-subscription') {
-                if (!window.confirm('Unsubscribe from this skill?')) return;
+                if (!window.confirm('Unsubscribe from this function?')) return;
                 unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
                     .then(() => {
                         setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');

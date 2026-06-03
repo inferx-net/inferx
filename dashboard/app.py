@@ -5244,9 +5244,9 @@ def build_skill_form_context(*, roles=None):
         roles = listroles()
     deploy_target = build_catalog_deploy_target_selector_context(roles=roles)
     deploy_target = dict(deploy_target)
-    deploy_target["resolved_summary_label"] = "Skill owner:"
-    deploy_target["unresolved_summary_label"] = "Skill owner not selected:"
-    deploy_target["action_label"] = "Create Skill"
+    deploy_target["resolved_summary_label"] = "Function path:"
+    deploy_target["unresolved_summary_label"] = "Function path not selected:"
+    deploy_target["action_label"] = "Create Function"
     deploy_target["preferred_namespace_value"] = "default"
     templates = list_active_skill_templates()
     return {
@@ -8110,6 +8110,18 @@ def ListSkillsLegacy():
 
 @prefix_bp.route("/listskills/myskills", methods=["GET"])
 @require_login
+def ListSkillsMySkillsLegacy():
+    return redirect(url_for("prefix.ListSkills"))
+
+
+@prefix_bp.route("/listskills/marketplace", methods=["GET"])
+@require_login
+def ListSkillsMarketplaceLegacy():
+    return redirect(url_for("prefix.SkillMarketplace"))
+
+
+@prefix_bp.route("/listfunctions/myfunctions", methods=["GET"])
+@require_login
 def ListSkills():
     try:
         context = load_skill_dashboard_context(skills_view="my_skills")
@@ -8123,7 +8135,7 @@ def ListSkills():
     )
 
 
-@prefix_bp.route("/listskills/marketplace", methods=["GET"])
+@prefix_bp.route("/listfunctions/public", methods=["GET"])
 @require_login
 def SkillMarketplace():
     try:
@@ -8243,13 +8255,13 @@ def SkillSubscriptionSubscribe():
         alias = str(req.get("tool_alias", "") or "").strip()
         if owner == "" or namespace == "" or skillname == "":
             return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
-        if alias != "" and not re.fullmatch(r"^[a-z][a-z0-9_-]{0,63}$", alias):
-            return json_error("tool_alias must match [a-z][a-z0-9_-]* and be at most 64 characters", 400)
+        if alias != "" and not all(ch.isascii() and (ch.isalnum() or ch in "-_.") for ch in alias):
+            return json_error("tool_alias may contain only letters, numbers, hyphens, underscores, and periods", 400)
         created = create_skill_subscription(owner, namespace, skillname, alias or None, active_tenant=active_tenant)
     except SkillSubscriptionGatewayError as e:
         return json_error(str(e), e.status_code)
     except Exception as e:
-        return json_error(f"failed to subscribe to skill: {e}", 502)
+        return json_error(f"failed to subscribe to function: {e}", 502)
 
     return jsonify(created), 201
 
@@ -8300,8 +8312,8 @@ def SkillSubscriptionUpdateAlias():
         alias = str(req.get("tool_alias", "") or "").strip()
         if owner == "" or namespace == "" or skillname == "":
             return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
-        if not re.fullmatch(r"^[a-z][a-z0-9_-]{0,63}$", alias):
-            return json_error("tool_alias must match [a-z][a-z0-9_-]* and be at most 64 characters", 400)
+        if not alias or not all(ch.isascii() and (ch.isalnum() or ch in "-_.") for ch in alias):
+            return json_error("tool_alias may contain only letters, numbers, hyphens, underscores, and periods", 400)
         updated = update_skill_subscription_alias(owner, namespace, skillname, alias, active_tenant=active_tenant)
     except SkillSubscriptionGatewayError as e:
         return json_error(str(e), e.status_code)
@@ -8354,6 +8366,12 @@ def build_skill_sample_rest_call(owner_tenant: str, namespace: str, skillname: s
 
 
 @prefix_bp.route("/skill", methods=["GET"])
+@require_login
+def SkillDetailLegacy():
+    return redirect(url_for("prefix.SkillDetail", **request.args))
+
+
+@prefix_bp.route("/function", methods=["GET"])
 @require_login
 def SkillDetail():
     owner = str(request.args.get("owner", "") or "").strip()
