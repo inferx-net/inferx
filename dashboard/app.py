@@ -5113,7 +5113,7 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
         return value
 
     roles = listroles()
-    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    active_tenant = resolve_active_tenant_name(roles)
     if active_tenant == "":
         raise RuntimeError("No active tenant selected")
 
@@ -5497,6 +5497,23 @@ def accessible_endpoint_tenant_names(roles):
     if active_tenant != "" and active_tenant not in tenant_names:
         tenant_names.append(active_tenant)
     return sorted(set(tenant_names), key=lambda item: item.lower())
+
+
+def resolve_active_tenant_name(roles=None) -> str:
+    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    if active_tenant != "":
+        return active_tenant
+
+    if roles is None:
+        roles = listroles()
+
+    tenant_names = accessible_endpoint_tenant_names(roles)
+    if not tenant_names:
+        return ""
+
+    active_tenant = tenant_names[0]
+    session["active_tenant_name"] = active_tenant
+    return active_tenant
 
 
 def enrich_endpoint_catalog_fallback(entry):
@@ -8126,7 +8143,7 @@ def ListSkills():
     try:
         context = load_skill_dashboard_context(skills_view="my_skills")
     except Exception as e:
-        return json_error(f"failed to load skills: {e}", 500)
+        return json_error(f"failed to load functions: {e}", 500)
 
     return render_template(
         "skill_list.html",
@@ -8239,12 +8256,12 @@ def SkillDelete(owner, ns, name):
 @prefix_bp.route("/skill_subscription/subscribe", methods=["POST"])
 @require_login
 def SkillSubscriptionSubscribe():
-    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
     if active_tenant == "":
         return json_error("No active tenant selected", 400)
 
     try:
-        roles = listroles()
         if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
             return json_error("No permission", 403)
 
@@ -8269,12 +8286,12 @@ def SkillSubscriptionSubscribe():
 @prefix_bp.route("/skill_subscription/unsubscribe", methods=["POST"])
 @require_login
 def SkillSubscriptionUnsubscribe():
-    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
     if active_tenant == "":
         return json_error("No active tenant selected", 400)
 
     try:
-        roles = listroles()
         if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
             return json_error("No permission", 403)
 
@@ -8296,12 +8313,12 @@ def SkillSubscriptionUnsubscribe():
 @prefix_bp.route("/skill_subscription/update_alias", methods=["POST"])
 @require_login
 def SkillSubscriptionUpdateAlias():
-    active_tenant = str(session.get("active_tenant_name", session.get("tenant_name", "")) or "").strip()
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
     if active_tenant == "":
         return json_error("No active tenant selected", 400)
 
     try:
-        roles = listroles()
         if not has_admin_role_for_model(roles, active_tenant) and not is_inferx_admin_user():
             return json_error("No permission", 403)
 
