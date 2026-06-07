@@ -23,4 +23,5 @@ pub mod metrics;
 pub mod scheduler_client;
 pub mod secret;
 mod skill_chain;
+pub mod session;
 pub mod tokenizer;

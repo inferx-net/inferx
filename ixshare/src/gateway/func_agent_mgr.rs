@@ -28,6 +28,7 @@ use tokio::sync::{oneshot, Mutex as TMutex};
 use tokio::time;
 
 use super::func_worker::*;
+use super::session::SessionStore;
 use super::gw_obj_repo::GwObjRepo;
 use super::http_gateway::GATEWAY_CONFIG;
 use crate::audit::SqlAudit;
@@ -189,6 +190,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         sqlBilling: sqlbilling,
         sqlSecret: sqlsecret,
         client: client,
+        sessions: SessionStore::New(),
     };
 
     gateway.EnsurePlatformShared().await?;
