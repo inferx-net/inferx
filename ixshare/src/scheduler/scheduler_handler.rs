@@ -534,11 +534,12 @@ impl FuncStatus {
                         match tx.send(resp) {
                             Ok(()) => {
                                 pod.SetWorking(req.gateway_id);
-                                *pod.consumer_tenant.lock().unwrap() = if req.consumer_tenant.is_empty() {
-                                    None
-                                } else {
-                                    Some(req.consumer_tenant.clone())
-                                };
+                                *pod.consumer_tenant.lock().unwrap() =
+                                    if req.consumer_tenant.is_empty() {
+                                        None
+                                    } else {
+                                        Some(req.consumer_tenant.clone())
+                                    };
                                 let labels = PodLabels {
                                     tenant: req.tenant.clone(),
                                     namespace: req.namespace.clone(),
@@ -848,7 +849,12 @@ impl SchedulerHandler {
     pub fn TenantActiveGpu(&self, tenant: &str) -> u64 {
         self.pods
             .values()
-            .filter(|pod| matches!(pod.State(), WorkerPodState::Working(_) | WorkerPodState::Resuming))
+            .filter(|pod| {
+                matches!(
+                    pod.State(),
+                    WorkerPodState::Working(_) | WorkerPodState::Resuming
+                )
+            })
             .filter(|pod| {
                 let effective_tenant = pod
                     .consumer_tenant
@@ -5994,6 +6000,7 @@ impl SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inferxlib::obj_mgr::tenant_mgr::SYSTEM_TENANT;
     use inferxlib::obj_mgr::tenant_mgr::{TenantObject, TenantSpec};
     use std::collections::BTreeMap;
 
@@ -6069,7 +6076,15 @@ mod tests {
     #[test]
     fn tenant_active_gpu_uses_consumer_tenant_for_resuming_pods() {
         let mut handler = SchedulerHandler::default();
-        let pod = make_pod("inferx", "endpoint", "shared", 1, "p1", 2, PodState::Resuming);
+        let pod = make_pod(
+            "inferx",
+            "endpoint",
+            "shared",
+            1,
+            "p1",
+            2,
+            PodState::Resuming,
+        );
         *pod.consumer_tenant.lock().unwrap() = Some("tenant-a".to_owned());
         handler.pods.insert(pod.pod.PodKey(), pod);
 
@@ -6090,11 +6105,15 @@ mod tests {
     #[tokio::test]
     async fn process_lease_worker_req_rejects_when_gpu_limit_would_be_exceeded() {
         let mut handler = SchedulerHandler::default();
-        handler.tenants.insert("tenant-a".to_owned(), make_tenant("tenant-a", 2, false));
+        handler
+            .tenants
+            .insert("tenant-a".to_owned(), make_tenant("tenant-a", 2, false));
 
         let active_pod = make_pod("tenant-a", "ns", "busy", 1, "p-busy", 2, PodState::Ready);
         active_pod.SetWorking(7);
-        handler.pods.insert(active_pod.pod.PodKey(), active_pod.clone());
+        handler
+            .pods
+            .insert(active_pod.pod.PodKey(), active_pod.clone());
 
         let idle_pod = make_pod("tenant-a", "ns", "target", 1, "p-idle", 1, PodState::Ready);
         let idle_pod_key = idle_pod.pod.PodKey();
@@ -6107,7 +6126,10 @@ mod tests {
         );
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        handler.ProcessLeaseWorkerReq(make_lease_req("tenant-a", "ns", "target", 1), tx).await.unwrap();
+        handler
+            .ProcessLeaseWorkerReq(make_lease_req("tenant-a", "ns", "target", 1), tx)
+            .await
+            .unwrap();
 
         let resp = rx.await.unwrap();
         assert!(resp.error.contains("max_gpu"));

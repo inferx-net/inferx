@@ -154,9 +154,20 @@
         border-color: #fdba74;
         color: #9a3412;
     }
+    .debug-view-stage {
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        background: #f8fafc;
+        padding: 12px;
+        min-height: 320px;
+    }
+    .debug-view-panel[hidden] {
+        display: none !important;
+    }
     .debug-tree {
         display: grid;
         gap: 10px;
+        align-content: start;
     }
     .debug-tree-empty {
         color: #64748b;
@@ -524,10 +535,16 @@
                         </div>
                         <div id="skill-debug-summary" class="debug-summary-bar"></div>
                     </div>
-                    <div id="skill-debug-tree" class="debug-tree">
-                        <div class="debug-tree-empty">Debug trace will appear here.</div>
+                    <div class="debug-view-stage">
+                        <div id="skill-debug-tree-view" class="debug-view-panel">
+                            <div id="skill-debug-tree" class="debug-tree">
+                                <div class="debug-tree-empty">Debug trace will appear here.</div>
+                            </div>
+                        </div>
+                        <div id="skill-debug-log-view" class="debug-view-panel" hidden>
+                            <textarea id="skill-debug-trace-log" class="trace-output" rows="18" readonly placeholder="Debug trace log will appear here…"></textarea>
+                        </div>
                     </div>
-                    <textarea id="skill-debug-trace-log" class="trace-output" rows="10" readonly hidden placeholder="Debug trace log will appear here…"></textarea>
                 </div>
             <div class="playground-field">
                 <label for="skill-debug-output">Debug Result</label>
@@ -574,6 +591,8 @@
     const debugStatusEl = document.getElementById('skill-debug-status');
     const debugViewTreeBtn = document.getElementById('skill-debug-view-tree');
     const debugViewLogBtn = document.getElementById('skill-debug-view-log');
+    const debugTreeViewEl = document.getElementById('skill-debug-tree-view');
+    const debugLogViewEl = document.getElementById('skill-debug-log-view');
     const debugTreeEl = document.getElementById('skill-debug-tree');
     const debugTraceLogEl = document.getElementById('skill-debug-trace-log');
     const debugOutputEl = document.getElementById('skill-debug-output');
@@ -1267,8 +1286,8 @@
 
     function setDebugTraceMode(mode) {
         debugTraceMode = mode === 'log' ? 'log' : 'tree';
-        if (debugTreeEl) debugTreeEl.hidden = debugTraceMode !== 'tree';
-        if (debugTraceLogEl) debugTraceLogEl.hidden = debugTraceMode !== 'log';
+        if (debugTreeViewEl) debugTreeViewEl.hidden = debugTraceMode !== 'tree';
+        if (debugLogViewEl) debugLogViewEl.hidden = debugTraceMode !== 'log';
         if (debugViewTreeBtn) debugViewTreeBtn.classList.toggle('active', debugTraceMode === 'tree');
         if (debugViewLogBtn) debugViewLogBtn.classList.toggle('active', debugTraceMode === 'log');
     }

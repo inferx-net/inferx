@@ -3,6 +3,7 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::Response;
 use chrono::Utc;
+use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use hyper::header::CONTENT_TYPE;
@@ -49,6 +50,34 @@ struct ParsedSkillToolCall {
 struct ParsedSkillResponse {
     tool_calls: Vec<ParsedSkillToolCall>,
     final_text: Option<String>,
+    usage: Option<SkillTraceTokenUsage>,
+}
+
+#[derive(Clone, Debug)]
+struct ParallelChildTaskInput {
+    original_index: usize,
+    call: ParsedSkillToolCall,
+}
+
+#[derive(Clone, Debug)]
+struct ParallelChildTaskContext {
+    current_depth: u32,
+    headers: HeaderMap,
+    debug_mocks: Arc<HashMap<String, String>>,
+    child_http_client: reqwest::Client,
+    trace: Option<SkillChainTraceState>,
+    direct_child_depth: u32,
+    logical_tenant: String,
+    logical_namespace: String,
+    logical_funcname: String,
+}
+
+#[derive(Clone, Debug)]
+struct ParallelChildResult {
+    original_index: usize,
+    tool_call_id: String,
+    tool_result: String,
+    fail_reason: Option<SkillTraceFailReason>,
     usage: Option<SkillTraceTokenUsage>,
 }
 
@@ -119,7 +148,7 @@ fn update_open_descendants(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SkillTraceFailReason {
     Timeout,
     MaxDepth,
@@ -429,7 +458,10 @@ async fn emit_trace_event(
                 "completion_tokens".to_string(),
                 serde_json::json!(usage.completion_tokens),
             );
-            obj.insert("total_tokens".to_string(), serde_json::json!(usage.total_tokens));
+            obj.insert(
+                "total_tokens".to_string(),
+                serde_json::json!(usage.total_tokens),
+            );
         }
     }
     let sent = send_trace_chunk(
@@ -836,6 +868,510 @@ fn latest_user_query(history: &[Value]) -> Option<String> {
         }
         obj.get("content").and_then(json_text)
     })
+}
+
+fn child_result_usage(result: &ParallelChildResult) -> Option<&SkillTraceTokenUsage> {
+    result.usage.as_ref()
+}
+
+#[cfg(test)]
+fn log_invalid_tool_args(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+) {
+    eprintln!(
+        "skill_chain invalid_tool_args logical={}/{}/{} tool_call_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id
+    );
+}
+
+#[cfg(not(test))]
+fn log_invalid_tool_args(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+) {
+    warn!(
+        "skill_chain invalid_tool_args logical={}/{}/{} tool_call_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id
+    );
+}
+
+#[cfg(test)]
+fn log_invalid_skillep_id(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    eprintln!(
+        "skill_chain invalid_skillep_id logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
+#[cfg(not(test))]
+fn log_invalid_skillep_id(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    warn!(
+        "skill_chain invalid_skillep_id logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
+fn copy_forwarded_child_headers(
+    parent_headers: &HeaderMap,
+    child_req: reqwest::RequestBuilder,
+) -> reqwest::RequestBuilder {
+    let mut child_req = child_req;
+    for header_name in ["Authorization", "X-Request-Id", "traceparent", "X-Tenant"] {
+        if let Some(v) = parent_headers
+            .get(header_name)
+            .and_then(|value| value.to_str().ok())
+        {
+            child_req = child_req.header(header_name, v);
+        }
+    }
+    child_req
+}
+
+async fn execute_parallel_child_call(
+    task: ParallelChildTaskInput,
+    context: ParallelChildTaskContext,
+) -> ParallelChildResult {
+    let tool_call_id = task.call.id.clone();
+    let skillep_id_and_query = match parse_skillep_tool_args(&task.call.arguments) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            log_invalid_tool_args(
+                &context.logical_tenant,
+                &context.logical_namespace,
+                &context.logical_funcname,
+                &task.call.id,
+            );
+            return ParallelChildResult {
+                original_index: task.original_index,
+                tool_call_id,
+                tool_result: err,
+                fail_reason: None,
+                usage: None,
+            };
+        }
+    };
+
+    let (skillep_id, query) = skillep_id_and_query;
+    let (child_owner_tenant, child_namespace, child_skillname) = match split_skillep_id(&skillep_id)
+    {
+        Ok(parts) => parts,
+        Err(err) => {
+            log_invalid_skillep_id(
+                &context.logical_tenant,
+                &context.logical_namespace,
+                &context.logical_funcname,
+                &task.call.id,
+                &skillep_id,
+            );
+            return ParallelChildResult {
+                original_index: task.original_index,
+                tool_call_id,
+                tool_result: err,
+                fail_reason: None,
+                usage: None,
+            };
+        }
+    };
+
+    let mocked_result = context.debug_mocks.get(&skillep_id).cloned();
+    let (tool_result, fail_reason, usage) = if let Some(mocked_result) = mocked_result {
+        (mocked_result, None, None)
+    } else {
+        match context.current_depth.checked_add(1) {
+            Some(next_depth) if next_depth <= SKILL_CHAIN_MAX_DEPTH => {
+                let child_trace = context.trace.as_ref().map(|_| SkillChainChildTraceState {
+                    call_id: Uuid::new_v4().to_string(),
+                    skill: skillep_id.clone(),
+                    started_at: Instant::now(),
+                    local_root_call_id: Arc::new(Mutex::new(None)),
+                });
+                if let (Some(trace_state), Some(child_trace)) =
+                    (context.trace.as_ref(), child_trace.as_ref())
+                {
+                    let _ = emit_trace_event(
+                        trace_state,
+                        "subcall_start",
+                        &child_trace.call_id,
+                        Some(&trace_state.root_call_id),
+                        context.direct_child_depth,
+                        &child_trace.skill,
+                        None,
+                        Some("child_call_start"),
+                        Some(query.as_str()),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                }
+
+                info!(
+                    "skill_chain child_call logical={}/{}/{} tool_call_id={} child={}/{}/{} next_depth={} query_len={}",
+                    context.logical_tenant,
+                    context.logical_namespace,
+                    context.logical_funcname,
+                    task.call.id,
+                    child_owner_tenant,
+                    child_namespace,
+                    child_skillname,
+                    next_depth,
+                    query.len()
+                );
+                let child_body = serde_json::json!({
+                    "messages": [{"role": "user", "content": query}],
+                    "stream": false
+                });
+                let child_url = format!(
+                    "http://127.0.0.1:{}/skills/{}/{}/{}/v1/chat/completions",
+                    GATEWAY_CONFIG.gatewayPort,
+                    child_owner_tenant,
+                    child_namespace,
+                    child_skillname
+                );
+                let child_req = context
+                    .child_http_client
+                    .post(&child_url)
+                    .header(CONTENT_TYPE.as_str(), "application/json")
+                    .header(SKILL_CHAIN_CHILD_HEADER, "1")
+                    .header(SKILL_CHAIN_DEPTH_HEADER, next_depth.to_string())
+                    .json(&child_body);
+                let mut child_req = copy_forwarded_child_headers(&context.headers, child_req);
+                if let Some(trace_state) = context.trace.as_ref() {
+                    child_req = child_req.header(SKILL_TRACE_HEADER, "1");
+                    if trace_state.include_content {
+                        child_req = child_req.header(SKILL_TRACE_CONTENT_HEADER, "1");
+                    }
+                }
+
+                let trace_for_child_call = context.trace.clone();
+                let child_trace_for_stream = child_trace.clone();
+                let child_depth_for_stream = context.direct_child_depth;
+                let child_call = async {
+                    let resp = child_req.send().await.map_err(|e| ChildTraceReadError {
+                        message: e.to_string(),
+                        fail_reason: SkillTraceFailReason::TransportError,
+                        open_descendants: Vec::new(),
+                    })?;
+                    let child_status = resp.status();
+                    let child_content_type = resp
+                        .headers()
+                        .get("content-type")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.to_ascii_lowercase());
+                    if let (Some(trace_state), Some(child_trace_state)) = (
+                        trace_for_child_call.as_ref(),
+                        child_trace_for_stream.as_ref(),
+                    ) {
+                        if child_status.is_success()
+                            && child_content_type
+                                .as_deref()
+                                .map(|v| v.contains("text/event-stream"))
+                                .unwrap_or(false)
+                        {
+                            let child_trace_result = read_child_trace_sse(
+                                trace_state,
+                                child_trace_state,
+                                child_depth_for_stream,
+                                resp,
+                            )
+                            .await?;
+                            return Ok::<_, ChildTraceReadError>((
+                                child_status,
+                                child_trace_result,
+                            ));
+                        }
+                    }
+                    let bytes = resp.bytes().await.map_err(|e| ChildTraceReadError {
+                        message: e.to_string(),
+                        fail_reason: SkillTraceFailReason::TransportError,
+                        open_descendants: Vec::new(),
+                    })?;
+                    Ok::<_, ChildTraceReadError>((
+                        child_status,
+                        ChildTraceReadResult {
+                            skill_result: Some(bytes.to_vec()),
+                            terminal_result_code: None,
+                            terminal_fail_reason: None,
+                            terminal_usage: None,
+                            open_descendants: Vec::new(),
+                        },
+                    ))
+                };
+
+                let trace_for_tick = context.trace.clone();
+                let child_trace_for_tick = child_trace.clone();
+                let (tool_result, fail_reason, usage) = match await_with_trace_heartbeat(
+                    trace_for_tick,
+                    child_call,
+                    move |trace_state| {
+                        let child_trace = child_trace_for_tick.clone();
+                        async move {
+                            if let Some(child_trace) = child_trace.as_ref() {
+                                let _ = emit_trace_heartbeat(
+                                    &trace_state,
+                                    &child_trace.call_id,
+                                    Some(&trace_state.root_call_id),
+                                    child_depth_for_stream,
+                                    &child_trace.skill,
+                                    child_trace.started_at,
+                                    "child_call",
+                                )
+                                .await;
+                            }
+                        }
+                    },
+                )
+                .await
+                {
+                    Err(err) => {
+                        if let Some(trace_state) = context.trace.as_ref() {
+                            for descendant in &err.open_descendants {
+                                let _ = emit_trace_event(
+                                    trace_state,
+                                    "subcall_finish",
+                                    &descendant.call_id,
+                                    descendant.parent_call_id.as_deref(),
+                                    descendant.depth,
+                                    &descendant.skill,
+                                    Some(
+                                        child_trace
+                                            .as_ref()
+                                            .map(|c| c.started_at.elapsed().as_millis() as u64)
+                                            .unwrap_or(0),
+                                    ),
+                                    Some("child_call_end"),
+                                    None,
+                                    None,
+                                    Some("fail"),
+                                    Some(err.fail_reason),
+                                    None,
+                                )
+                                .await;
+                            }
+                        }
+                        warn!(
+                            "skill_chain child_call_transport_error logical={}/{}/{} tool_call_id={} child={}/{}/{} err={}",
+                            context.logical_tenant,
+                            context.logical_namespace,
+                            context.logical_funcname,
+                            task.call.id,
+                            child_owner_tenant,
+                            child_namespace,
+                            child_skillname,
+                            err.message
+                        );
+                        (
+                            format_child_tool_error(err.message),
+                            Some(err.fail_reason),
+                            None,
+                        )
+                    }
+                    Ok((child_status, child_result)) if !child_status.is_success() => {
+                        warn!(
+                            "skill_chain child_call_http_error logical={}/{}/{} tool_call_id={} child={}/{}/{} status={}",
+                            context.logical_tenant,
+                            context.logical_namespace,
+                            context.logical_funcname,
+                            task.call.id,
+                            child_owner_tenant,
+                            child_namespace,
+                            child_skillname,
+                            child_status
+                        );
+                        let bytes = child_result.skill_result.unwrap_or_default();
+                        let detail = String::from_utf8_lossy(&bytes).trim().to_string();
+                        let message = if detail.is_empty() {
+                            format_child_tool_error(format!(
+                                "child call failed with {}",
+                                child_status
+                            ))
+                        } else {
+                            format_child_tool_error(detail)
+                        };
+                        (
+                            message,
+                            Some(SkillTraceFailReason::TransportError),
+                            child_result.terminal_usage,
+                        )
+                    }
+                    Ok((_, child_result)) => {
+                        if !child_result.open_descendants.is_empty() {
+                            if let Some(trace_state) = context.trace.as_ref() {
+                                for descendant in &child_result.open_descendants {
+                                    let _ = emit_trace_event(
+                                        trace_state,
+                                        "subcall_finish",
+                                        &descendant.call_id,
+                                        descendant.parent_call_id.as_deref(),
+                                        descendant.depth,
+                                        &descendant.skill,
+                                        Some(
+                                            child_trace
+                                                .as_ref()
+                                                .map(|c| c.started_at.elapsed().as_millis() as u64)
+                                                .unwrap_or(0),
+                                        ),
+                                        Some("child_call_end"),
+                                        None,
+                                        None,
+                                        Some("fail"),
+                                        Some(SkillTraceFailReason::InvalidResponse),
+                                        None,
+                                    )
+                                    .await;
+                                }
+                            }
+                            (
+                                "Error: child trace stream left open descendant calls".to_string(),
+                                Some(SkillTraceFailReason::InvalidResponse),
+                                child_result.terminal_usage,
+                            )
+                        } else if child_result.terminal_result_code.as_deref() == Some("fail") {
+                            (
+                                format_child_fail_reason(child_result.terminal_fail_reason),
+                                child_result.terminal_fail_reason,
+                                child_result.terminal_usage,
+                            )
+                        } else {
+                            match child_result.skill_result {
+                                Some(bytes) => match parse_skill_response(&bytes) {
+                                    Some(parsed_child) => {
+                                        info!(
+                                            "skill_chain child_call_ok logical={}/{}/{} tool_call_id={} child={}/{}/{} final_text_present={}",
+                                            context.logical_tenant,
+                                            context.logical_namespace,
+                                            context.logical_funcname,
+                                            task.call.id,
+                                            child_owner_tenant,
+                                            child_namespace,
+                                            child_skillname,
+                                            parsed_child.final_text.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+                                        );
+                                        match parsed_child.final_text.filter(|s| !s.is_empty()) {
+                                            Some(text) => (text, None, parsed_child.usage),
+                                            None => (
+                                                "Error: child returned empty response".to_string(),
+                                                Some(SkillTraceFailReason::InvalidResponse),
+                                                parsed_child.usage,
+                                            ),
+                                        }
+                                    }
+                                    None => {
+                                        warn!(
+                                            "skill_chain child_call_invalid_response logical={}/{}/{} tool_call_id={} child={}/{}/{}",
+                                            context.logical_tenant,
+                                            context.logical_namespace,
+                                            context.logical_funcname,
+                                            task.call.id,
+                                            child_owner_tenant,
+                                            child_namespace,
+                                            child_skillname
+                                        );
+                                        (
+                                            format_child_tool_error(
+                                                "child returned invalid response",
+                                            ),
+                                            Some(SkillTraceFailReason::InvalidResponse),
+                                            child_result.terminal_usage,
+                                        )
+                                    }
+                                },
+                                None => (
+                                    "Error: child trace stream missing skill_result".to_string(),
+                                    Some(SkillTraceFailReason::InvalidResponse),
+                                    child_result.terminal_usage,
+                                ),
+                            }
+                        }
+                    }
+                };
+
+                if let (Some(trace_state), Some(child_trace)) =
+                    (context.trace.as_ref(), child_trace.as_ref())
+                {
+                    let _ = emit_trace_event(
+                        trace_state,
+                        "subcall_finish",
+                        &child_trace.call_id,
+                        Some(&trace_state.root_call_id),
+                        context.direct_child_depth,
+                        &child_trace.skill,
+                        Some(child_trace.started_at.elapsed().as_millis() as u64),
+                        Some("child_call_end"),
+                        None,
+                        Some(tool_result.as_str()),
+                        Some(if fail_reason.is_some() {
+                            "fail"
+                        } else {
+                            "pass"
+                        }),
+                        fail_reason,
+                        usage.as_ref(),
+                    )
+                    .await;
+                }
+
+                (tool_result, fail_reason, usage)
+            }
+            _ => {
+                warn!(
+                    "skill_chain max_depth_exceeded logical={}/{}/{} current_depth={} tool_call_id={}",
+                    context.logical_tenant,
+                    context.logical_namespace,
+                    context.logical_funcname,
+                    context.current_depth,
+                    task.call.id
+                );
+                (
+                    "Error: max chain depth exceeded".to_string(),
+                    Some(SkillTraceFailReason::MaxDepth),
+                    None,
+                )
+            }
+        }
+    };
+
+    ParallelChildResult {
+        original_index: task.original_index,
+        tool_call_id,
+        tool_result,
+        fail_reason,
+        usage,
+    }
+}
+
+async fn drive_parallel_child_tasks<F>(tasks: FuturesUnordered<F>) -> Vec<ParallelChildResult>
+where
+    F: Future<Output = ParallelChildResult>,
+{
+    let mut tasks = tasks;
+    let mut results: Vec<Option<ParallelChildResult>> = Vec::new();
+    while let Some(result) = tasks.next().await {
+        let result_index = result.original_index;
+        if results.len() <= result_index {
+            results.resize(result_index + 1, None);
+        }
+        results[result_index] = Some(result);
+    }
+    results.into_iter().flatten().collect()
 }
 
 async fn forward_child_trace_event(
@@ -1312,461 +1848,44 @@ async fn execute_skill_chain(
             "content": Value::Null,
             "tool_calls": parsed.tool_calls.iter().map(|call| call.raw.clone()).collect::<Vec<_>>(),
         }));
+        let child_context = ParallelChildTaskContext {
+            current_depth: chain.current_depth,
+            headers: chain.headers.clone(),
+            debug_mocks: Arc::new(chain.debug_mocks.clone()),
+            child_http_client: child_http_client.clone(),
+            trace: trace.clone(),
+            direct_child_depth: 2,
+            logical_tenant: route.logical.tenant.clone(),
+            logical_namespace: route.logical.namespace.clone(),
+            logical_funcname: route.logical.funcname.clone(),
+        };
+        let child_tasks = FuturesUnordered::new();
+        for (original_index, call) in parsed.tool_calls.into_iter().enumerate() {
+            child_tasks.push(execute_parallel_child_call(
+                ParallelChildTaskInput {
+                    original_index,
+                    call,
+                },
+                child_context.clone(),
+            ));
+        }
 
-        for call in parsed.tool_calls {
-            let tool_result = match parse_skillep_tool_args(&call.arguments) {
-                Err(err) => {
-                    warn!(
-                        "skill_chain invalid_tool_args logical={}/{}/{} tool_call_id={}",
-                        route.logical.tenant,
-                        route.logical.namespace,
-                        route.logical.funcname,
-                        call.id
-                    );
-                    err
-                }
-                Ok((skillep_id, query)) => {
-                    let (child_owner_tenant, child_namespace, child_skillname) =
-                        match split_skillep_id(&skillep_id) {
-                            Ok(parts) => parts,
-                            Err(err) => {
-                                warn!(
-                                    "skill_chain invalid_skillep_id logical={}/{}/{} tool_call_id={} skillep_id={}",
-                                    route.logical.tenant,
-                                    route.logical.namespace,
-                                    route.logical.funcname,
-                                    call.id,
-                                    skillep_id
-                                );
-                                chain.history.push(serde_json::json!({
-                                    "role": "tool",
-                                    "tool_call_id": call.id,
-                                    "content": err,
-                                }));
-                                continue;
-                            }
-                        };
-
-                    let local_child_depth = 2;
-                    let child_trace = trace.as_ref().map(|_| SkillChainChildTraceState {
-                        call_id: Uuid::new_v4().to_string(),
-                        skill: skillep_id.clone(),
-                        started_at: Instant::now(),
-                        local_root_call_id: Arc::new(Mutex::new(None)),
-                    });
-                    if let (Some(trace_state), Some(child_trace)) =
-                        (trace.as_ref(), child_trace.as_ref())
-                    {
-                        let _ = emit_trace_event(
-                            trace_state,
-                            "subcall_start",
-                            &child_trace.call_id,
-                            Some(&trace_state.root_call_id),
-                            local_child_depth,
-                            &child_trace.skill,
-                            None,
-                            None,
-                            Some(query.as_str()),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        .await;
-                    }
-
-                    let mocked_result = chain.debug_mocks.get(&skillep_id).cloned();
-                    let (tool_result, fail_reason, child_usage) = if let Some(mocked_result) =
-                        mocked_result
-                    {
-                        (mocked_result, None, None)
-                    } else {
-                        match chain.current_depth.checked_add(1) {
-                            Some(next_depth) if next_depth <= SKILL_CHAIN_MAX_DEPTH => {
-                                info!(
-                                    "skill_chain child_call logical={}/{}/{} tool_call_id={} child={}/{}/{} next_depth={} query_len={}",
-                                    route.logical.tenant,
-                                    route.logical.namespace,
-                                    route.logical.funcname,
-                                    call.id,
-                                    child_owner_tenant,
-                                    child_namespace,
-                                    child_skillname,
-                                    next_depth,
-                                    query.len()
-                                );
-                                let child_body = serde_json::json!({
-                                    "messages": [{"role": "user", "content": query}],
-                                    "stream": false
-                                });
-                                let child_url = format!(
-                                    "http://127.0.0.1:{}/skills/{}/{}/{}/v1/chat/completions",
-                                    GATEWAY_CONFIG.gatewayPort,
-                                    child_owner_tenant,
-                                    child_namespace,
-                                    child_skillname
-                                );
-                                let mut child_req = child_http_client
-                                    .post(&child_url)
-                                    .header(CONTENT_TYPE.as_str(), "application/json")
-                                    .header(SKILL_CHAIN_CHILD_HEADER, "1")
-                                    .header(SKILL_CHAIN_DEPTH_HEADER, next_depth.to_string())
-                                    .json(&child_body);
-                                if let Some(v) = chain
-                                    .headers
-                                    .get("Authorization")
-                                    .and_then(|v| v.to_str().ok())
-                                {
-                                    child_req = child_req.header("Authorization", v);
-                                }
-                                if let Some(v) = chain
-                                    .headers
-                                    .get("X-Request-Id")
-                                    .and_then(|v| v.to_str().ok())
-                                {
-                                    child_req = child_req.header("X-Request-Id", v);
-                                }
-                                if let Some(v) = chain
-                                    .headers
-                                    .get("traceparent")
-                                    .and_then(|v| v.to_str().ok())
-                                {
-                                    child_req = child_req.header("traceparent", v);
-                                }
-                                if let Some(v) =
-                                    chain.headers.get("X-Tenant").and_then(|v| v.to_str().ok())
-                                {
-                                    child_req = child_req.header("X-Tenant", v);
-                                }
-                                if let Some(trace_state) = trace.as_ref() {
-                                    child_req = child_req.header(SKILL_TRACE_HEADER, "1");
-                                    if trace_state.include_content {
-                                        child_req =
-                                            child_req.header(SKILL_TRACE_CONTENT_HEADER, "1");
-                                    }
-                                }
-
-                                let trace_for_child_call = trace.clone();
-                                let child_trace_for_stream = child_trace.clone();
-                                let child_depth_for_stream = local_child_depth;
-                                let child_call = async {
-                                    let resp = child_req.send().await.map_err(|e| {
-                                        ChildTraceReadError {
-                                            message: e.to_string(),
-                                            fail_reason: SkillTraceFailReason::TransportError,
-                                            open_descendants: Vec::new(),
-                                        }
-                                    })?;
-                                    let child_status = resp.status();
-                                    let child_content_type = resp
-                                        .headers()
-                                        .get("content-type")
-                                        .and_then(|v| v.to_str().ok())
-                                        .map(|v| v.to_ascii_lowercase());
-                                    if let (Some(trace_state), Some(child_trace_state)) = (
-                                        trace_for_child_call.as_ref(),
-                                        child_trace_for_stream.as_ref(),
-                                    ) {
-                                        if child_status.is_success()
-                                            && child_content_type
-                                                .as_deref()
-                                                .map(|v| v.contains("text/event-stream"))
-                                                .unwrap_or(false)
-                                        {
-                                            let child_trace_result = read_child_trace_sse(
-                                                trace_state,
-                                                child_trace_state,
-                                                child_depth_for_stream,
-                                                resp,
-                                            )
-                                            .await?;
-                                            return Ok::<_, ChildTraceReadError>((
-                                                child_status,
-                                                child_trace_result,
-                                            ));
-                                        }
-                                    }
-                                    let bytes = resp.bytes().await.map_err(|e| {
-                                        ChildTraceReadError {
-                                            message: e.to_string(),
-                                            fail_reason: SkillTraceFailReason::TransportError,
-                                            open_descendants: Vec::new(),
-                                        }
-                                    })?;
-                                    Ok::<_, ChildTraceReadError>((
-                                        child_status,
-                                        ChildTraceReadResult {
-                                            skill_result: Some(bytes.to_vec()),
-                                            terminal_result_code: None,
-                                            terminal_fail_reason: None,
-                                            terminal_usage: None,
-                                            open_descendants: Vec::new(),
-                                        },
-                                    ))
-                                };
-
-                                let child_trace_for_tick = child_trace.clone();
-                                match await_with_trace_heartbeat(
-                                    trace.clone(),
-                                    child_call,
-                                    move |trace_state| {
-                                        let child_trace = child_trace_for_tick.clone();
-                                        async move {
-                                            if let Some(child_trace) = child_trace.as_ref() {
-                                                let _ = emit_trace_heartbeat(
-                                                    &trace_state,
-                                                    &child_trace.call_id,
-                                                    Some(&trace_state.root_call_id),
-                                                    local_child_depth,
-                                                    &child_trace.skill,
-                                                    child_trace.started_at,
-                                                    "child_call",
-                                                )
-                                                .await;
-                                            }
-                                        }
-                                    },
-                                )
-                                .await
-                                {
-                                    Err(err) => {
-                                        if let Some(trace_state) = trace.as_ref() {
-                                            for descendant in &err.open_descendants {
-                                                let _ = emit_trace_event(
-                                                    trace_state,
-                                                    "subcall_finish",
-                                                    &descendant.call_id,
-                                                    descendant.parent_call_id.as_deref(),
-                                                    descendant.depth,
-                                                    &descendant.skill,
-                                                    Some(
-                                                        child_trace
-                                                            .as_ref()
-                                                            .map(|c| {
-                                                                c.started_at
-                                                                    .elapsed()
-                                                                    .as_millis()
-                                                                    as u64
-                                                            })
-                                                            .unwrap_or(0),
-                                                    ),
-                                                    None,
-                                                    None,
-                                                    None,
-                                                    Some("fail"),
-                                                    Some(err.fail_reason),
-                                                    None,
-                                                )
-                                                .await;
-                                            }
-                                        }
-                                        warn!(
-                                            "skill_chain child_call_transport_error logical={}/{}/{} tool_call_id={} child={}/{}/{} err={}",
-                                            route.logical.tenant,
-                                            route.logical.namespace,
-                                            route.logical.funcname,
-                                            call.id,
-                                            child_owner_tenant,
-                                            child_namespace,
-                                            child_skillname,
-                                            err.message
-                                        );
-                                        (
-                                            format_child_tool_error(err.message),
-                                            Some(err.fail_reason),
-                                            None,
-                                        )
-                                    }
-                                    Ok((child_status, child_result))
-                                        if !child_status.is_success() =>
-                                    {
-                                        warn!(
-                                            "skill_chain child_call_http_error logical={}/{}/{} tool_call_id={} child={}/{}/{} status={}",
-                                            route.logical.tenant,
-                                            route.logical.namespace,
-                                            route.logical.funcname,
-                                            call.id,
-                                            child_owner_tenant,
-                                            child_namespace,
-                                            child_skillname,
-                                            child_status
-                                        );
-                                        let bytes =
-                                            child_result.skill_result.unwrap_or_default();
-                                        let detail =
-                                            String::from_utf8_lossy(&bytes).trim().to_string();
-                                        let message = if detail.is_empty() {
-                                            format_child_tool_error(format!(
-                                                "child call failed with {}",
-                                                child_status
-                                            ))
-                                        } else {
-                                            format_child_tool_error(detail)
-                                        };
-                                        (
-                                            message,
-                                            Some(SkillTraceFailReason::TransportError),
-                                            child_result.terminal_usage,
-                                        )
-                                    }
-                                    Ok((_, child_result)) => {
-                                        if !child_result.open_descendants.is_empty() {
-                                            if let Some(trace_state) = trace.as_ref() {
-                                                for descendant in &child_result.open_descendants {
-                                                    let _ = emit_trace_event(
-                                                        trace_state,
-                                                        "subcall_finish",
-                                                        &descendant.call_id,
-                                                        descendant.parent_call_id.as_deref(),
-                                                        descendant.depth,
-                                                        &descendant.skill,
-                                                        Some(
-                                                            child_trace
-                                                                .as_ref()
-                                                                .map(|c| {
-                                                                    c.started_at
-                                                                        .elapsed()
-                                                                        .as_millis()
-                                                                        as u64
-                                                                })
-                                                                .unwrap_or(0),
-                                                        ),
-                                                        None,
-                                                        None,
-                                                        None,
-                                                        Some("fail"),
-                                                        Some(SkillTraceFailReason::InvalidResponse),
-                                                        None,
-                                                    )
-                                                    .await;
-                                                }
-                                            }
-                                            (
-                                                "Error: child trace stream left open descendant calls"
-                                                    .to_string(),
-                                                Some(SkillTraceFailReason::InvalidResponse),
-                                                child_result.terminal_usage,
-                                            )
-                                        } else if child_result.terminal_result_code.as_deref()
-                                            == Some("fail")
-                                        {
-                                            (
-                                                format_child_fail_reason(
-                                                    child_result.terminal_fail_reason,
-                                                ),
-                                                child_result.terminal_fail_reason,
-                                                child_result.terminal_usage,
-                                            )
-                                        } else {
-                                            match child_result.skill_result {
-                                                Some(bytes) => match parse_skill_response(&bytes)
-                                                {
-                                                    Some(parsed_child) => {
-                                                        info!(
-                                                            "skill_chain child_call_ok logical={}/{}/{} tool_call_id={} child={}/{}/{} final_text_present={}",
-                                                            route.logical.tenant,
-                                                            route.logical.namespace,
-                                                            route.logical.funcname,
-                                                            call.id,
-                                                            child_owner_tenant,
-                                                            child_namespace,
-                                                            child_skillname,
-                                                            parsed_child.final_text.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-                                                        );
-                                                        match parsed_child
-                                                            .final_text
-                                                            .filter(|s| !s.is_empty())
-                                                        {
-                                                            Some(text) => (text, None, parsed_child.usage),
-                                                            None => (
-                                                                "Error: child returned empty response".to_string(),
-                                                                Some(SkillTraceFailReason::InvalidResponse),
-                                                                parsed_child.usage,
-                                                            ),
-                                                        }
-                                                    }
-                                                    None => {
-                                                        warn!(
-                                                            "skill_chain child_call_invalid_response logical={}/{}/{} tool_call_id={} child={}/{}/{}",
-                                                            route.logical.tenant,
-                                                            route.logical.namespace,
-                                                            route.logical.funcname,
-                                                            call.id,
-                                                            child_owner_tenant,
-                                                            child_namespace,
-                                                            child_skillname
-                                                        );
-                                                        (
-                                                            format_child_tool_error(
-                                                                "child returned invalid response",
-                                                            ),
-                                                            Some(SkillTraceFailReason::InvalidResponse),
-                                                            child_result.terminal_usage,
-                                                        )
-                                                    }
-                                                },
-                                                None => (
-                                                    "Error: child trace stream missing skill_result"
-                                                        .to_string(),
-                                                    Some(SkillTraceFailReason::InvalidResponse),
-                                                    child_result.terminal_usage,
-                                                ),
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                warn!(
-                                    "skill_chain max_depth_exceeded logical={}/{}/{} current_depth={} tool_call_id={}",
-                                    route.logical.tenant,
-                                    route.logical.namespace,
-                                    route.logical.funcname,
-                                    chain.current_depth,
-                                    call.id
-                                );
-                                (
-                                    "Error: max chain depth exceeded".to_string(),
-                                    Some(SkillTraceFailReason::MaxDepth),
-                                    None,
-                                )
-                            }
-                        }
-                    };
-
-                    if let (Some(trace_state), Some(child_trace)) =
-                        (trace.as_ref(), child_trace.as_ref())
-                    {
-                        let _ = emit_trace_event(
-                            trace_state,
-                            "subcall_finish",
-                            &child_trace.call_id,
-                            Some(&trace_state.root_call_id),
-                            local_child_depth,
-                            &child_trace.skill,
-                            Some(child_trace.started_at.elapsed().as_millis() as u64),
-                            None,
-                            None,
-                            Some(tool_result.as_str()),
-                            Some(if fail_reason.is_some() {
-                                "fail"
-                            } else {
-                                "pass"
-                            }),
-                            fail_reason,
-                            child_usage.as_ref(),
-                        )
-                        .await;
-                    }
-
-                    tool_result
-                }
-            };
+        let child_results = drive_parallel_child_tasks(child_tasks).await;
+        for result in &child_results {
             chain.history.push(serde_json::json!({
                 "role": "tool",
-                "tool_call_id": call.id,
-                "content": tool_result,
+                "tool_call_id": result.tool_call_id,
+                "content": result.tool_result,
             }));
+        }
+        for result in &child_results {
+            if let Some(usage) = child_result_usage(result) {
+                if let Some(aggregate) = aggregate_usage.as_mut() {
+                    aggregate.add_assign(usage);
+                } else {
+                    aggregate_usage = Some(usage.clone());
+                }
+            }
         }
     }
 }
@@ -1921,7 +2040,8 @@ pub(super) async fn handle_skill_call_chain(
 
         match result {
             Ok(final_resp) if final_resp.is_openai_chat_completion => {
-                let _ = emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
+                let _ =
+                    emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
                 let _ = emit_trace_skill_result(&trace, &final_resp.body).await;
             }
             Ok(_) => {
@@ -2042,7 +2162,8 @@ pub(super) async fn handle_skill_debug_call(
 
         match result {
             Ok(final_resp) if final_resp.is_openai_chat_completion => {
-                let _ = emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
+                let _ =
+                    emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
                 let _ = emit_trace_skill_result(&trace, &final_resp.body).await;
             }
             Ok(_) => {
@@ -2082,12 +2203,21 @@ pub(super) async fn handle_skill_debug_call(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_skill_chain_request_body, parse_skill_chain_request, parse_skill_response,
-        parse_skillep_tool_args, skill_chain_tool_definition, split_skillep_id,
-        SkillChainRequestError, SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
+        build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
+        parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
+        skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
+        ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
+        SkillChainRequestError, SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER,
+        SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
+    use futures::future::BoxFuture;
+    use futures::stream::FuturesUnordered;
+    use futures::FutureExt;
     use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn parse_skill_chain_request_rejects_non_empty_top_level_tools() {
@@ -2192,5 +2322,239 @@ mod tests {
         let parsed_final = parse_skill_response(&serde_json::to_vec(&final_resp).unwrap()).unwrap();
         assert!(parsed_final.tool_calls.is_empty());
         assert_eq!(parsed_final.final_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn drive_parallel_child_tasks_commits_results_in_original_order() {
+        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
+            FuturesUnordered::new();
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                ParallelChildResult {
+                    original_index: 2,
+                    tool_call_id: "call_3".to_string(),
+                    tool_result: "third".to_string(),
+                    fail_reason: None,
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                ParallelChildResult {
+                    original_index: 1,
+                    tool_call_id: "call_2".to_string(),
+                    tool_result: "second".to_string(),
+                    fail_reason: Some(SkillTraceFailReason::TransportError),
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                ParallelChildResult {
+                    original_index: 0,
+                    tool_call_id: "call_1".to_string(),
+                    tool_result: "first".to_string(),
+                    fail_reason: None,
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+
+        let results = drive_parallel_child_tasks(tasks).await;
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].tool_call_id, "call_1");
+        assert_eq!(results[1].tool_call_id, "call_2");
+        assert_eq!(results[2].tool_call_id, "call_3");
+        assert_eq!(
+            results[1].fail_reason,
+            Some(SkillTraceFailReason::TransportError)
+        );
+    }
+
+    #[tokio::test]
+    async fn drive_parallel_child_tasks_runs_siblings_concurrently() {
+        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
+            FuturesUnordered::new();
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                ParallelChildResult {
+                    original_index: 0,
+                    tool_call_id: "call_1".to_string(),
+                    tool_result: "one".to_string(),
+                    fail_reason: None,
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                ParallelChildResult {
+                    original_index: 1,
+                    tool_call_id: "call_2".to_string(),
+                    tool_result: "two".to_string(),
+                    fail_reason: None,
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+
+        let started_at = Instant::now();
+        let results = drive_parallel_child_tasks(tasks).await;
+        let elapsed = started_at.elapsed();
+
+        assert_eq!(results.len(), 2);
+        assert!(elapsed < Duration::from_millis(110), "elapsed={elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_returns_error_for_invalid_args_without_trace_failure() {
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_bad".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments: "{bad json}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(HashMap::new()),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_bad");
+        assert_eq!(result.tool_result, "Error: invalid tool arguments");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_returns_error_for_invalid_skillep_id() {
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_bad_id".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments: "{\"skillep_id\":\"acme/default\",\"query\":\"what now\"}"
+                        .to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(HashMap::new()),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_bad_id");
+        assert_eq!(result.tool_result, "Error: invalid skillep_id");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_supports_debug_mock_results() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_mock".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
+                        .to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_mock");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn drive_parallel_child_tasks_preserves_mixed_success_and_failure() {
+        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
+            FuturesUnordered::new();
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                ParallelChildResult {
+                    original_index: 1,
+                    tool_call_id: "call_fail".to_string(),
+                    tool_result: "Error: child transport error".to_string(),
+                    fail_reason: Some(SkillTraceFailReason::TransportError),
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+        tasks.push(
+            async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                ParallelChildResult {
+                    original_index: 0,
+                    tool_call_id: "call_ok".to_string(),
+                    tool_result: "child ok".to_string(),
+                    fail_reason: None,
+                    usage: None,
+                }
+            }
+            .boxed(),
+        );
+
+        let results = drive_parallel_child_tasks(tasks).await;
+        assert_eq!(results[0].tool_result, "child ok");
+        assert_eq!(results[1].tool_result, "Error: child transport error");
+        assert_eq!(
+            results[1].fail_reason,
+            Some(SkillTraceFailReason::TransportError)
+        );
     }
 }
