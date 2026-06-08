@@ -5173,6 +5173,16 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
     marketplace_has_next = False
     marketplace_include_unpublished = False
     marketplace_skills = []
+    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant)
+    mcp_server_url = f"{normalize_public_api_base_url()}/mcp"
+    normalized_onboarding_apikey = str(onboarding_apikey or "").strip()
+    mcp_api_key_copyable = normalized_onboarding_apikey != ""
+    if normalized_onboarding_apikey != "":
+        mcp_api_key_value = normalized_onboarding_apikey
+        mcp_api_key_display = mask_apikey_for_ui(normalized_onboarding_apikey)
+    else:
+        mcp_api_key_value = build_inference_apikey_placeholder()
+        mcp_api_key_display = mcp_api_key_value
 
     if skills_view == "marketplace":
         marketplace_page = parse_positive_int_arg("page", 1)
@@ -5220,6 +5230,11 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
         "marketplace_has_next": marketplace_has_next,
         "marketplace_include_unpublished": marketplace_include_unpublished,
         "subscriptions": subscriptions,
+        "mcp_server_url": mcp_server_url,
+        "mcp_api_key_value": mcp_api_key_value,
+        "mcp_api_key_display": mcp_api_key_display,
+        "mcp_api_key_copyable": mcp_api_key_copyable,
+        "mcp_api_key_name": str(onboarding_apikey_name or "").strip(),
     }
 
 
@@ -6938,16 +6953,14 @@ def resolve_onboarding_inference_apikey_for_ui(tenant_name: str):
         return "", ""
 
     onboarding_apikey = str(session.get("onboarding_inference_apikey", "") or "").strip()
-    onboarding_apikey_name = str(session.get("onboarding_inference_apikey_name", "") or "").strip()
+    cached_apikey_name = str(session.get("onboarding_inference_apikey_name", "") or "").strip()
+    onboarding_apikey_name = build_onboard_inference_apikey_name_for_ui(
+        normalized_tenant,
+        session.get("sub", ""),
+    ) or cached_apikey_name
 
-    if onboarding_apikey != "":
+    if onboarding_apikey != "" and onboarding_apikey_name != "" and cached_apikey_name == onboarding_apikey_name:
         return onboarding_apikey, onboarding_apikey_name
-
-    if onboarding_apikey_name == "":
-        onboarding_apikey_name = build_onboard_inference_apikey_name_for_ui(
-            normalized_tenant,
-            session.get("sub", ""),
-        )
 
     if onboarding_apikey_name == "":
         return "", ""
@@ -7538,8 +7551,10 @@ def EndpointDetail(slug):
     selected_tenant = str(request.args.get("tenant", session.get("active_tenant_name", session.get("tenant_name", ""))) or "").strip()
 
     if is_authenticated:
+        roles = listroles()
+        active_tenant = resolve_active_tenant_name(roles)
         if selected_tenant == "":
-            tenant_options = accessible_endpoint_tenant_names(listroles())
+            tenant_options = accessible_endpoint_tenant_names(roles)
             selected_tenant = tenant_options[0] if tenant_options else ""
 
         try:
@@ -7579,7 +7594,7 @@ def EndpointDetail(slug):
         except Exception as e:
             return json_error(f"failed to load endpoint `{slug}`: {e}", 500)
 
-        onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(selected_tenant)
+        onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or selected_tenant)
         client_setup = build_client_setup_for_ui(
             tenant=selected_tenant,
             namespace="endpoints",
@@ -7696,7 +7711,9 @@ def EndpointDetail(slug):
 @require_login
 def DownloadEndpointOpenCodeConfig(slug):
     try:
-        tenant_options = accessible_endpoint_tenant_names(listroles())
+        roles = listroles()
+        active_tenant = resolve_active_tenant_name(roles)
+        tenant_options = accessible_endpoint_tenant_names(roles)
         selected_tenant = str(
             request.args.get("tenant", session.get("active_tenant_name", session.get("tenant_name", ""))) or ""
         ).strip()
@@ -7712,7 +7729,7 @@ def DownloadEndpointOpenCodeConfig(slug):
         if not detail["published"]:
             raise LookupError(f"endpoint `{slug}` not found")
 
-        onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(selected_tenant)
+        onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or selected_tenant)
         client_setup = build_client_setup_for_ui(
             tenant=selected_tenant,
             namespace="endpoints",
@@ -7770,15 +7787,26 @@ def EndpointAdminDetail(slug):
     except Exception as e:
         return json_error(f"failed to load admin endpoint `{slug}`: {e}", 500)
 
-    client_setup = build_endpoint_client_setup_preview("<tenant>", slug, entry.get("model_name", ""), entry.get("provider", ""))
-    sample_rest_call = build_sample_rest_call_for_ui(
-        tenant="inferx",
-        namespace="endpoint",
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
+    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant)
+    client_setup = build_client_setup_for_ui(
+        tenant=active_tenant,
+        namespace="endpoints",
         funcname=slug,
         sample_query=entry.get("sample_query"),
-        apikey="<INFERENCE_API_KEY>",
+        apikey=onboarding_apikey,
+        apikey_name=onboarding_apikey_name,
+        spec=entry.get("spec"),
     )
-    sample_rest_call_display = sample_rest_call
+    sample_rest_call = build_sample_rest_call_for_ui(
+        tenant=active_tenant,
+        namespace="endpoints",
+        funcname=slug,
+        sample_query=entry.get("sample_query"),
+        apikey=onboarding_apikey,
+    )
+    sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey)
     runtime_context = build_endpoint_runtime_context(
         entry.get("spec"),
         entry.get("sample_query"),
@@ -7794,9 +7822,13 @@ def EndpointAdminDetail(slug):
         endpoint_entry=entry,
         is_admin_view=True,
         is_authenticated=True,
-        selected_tenant="",
+        selected_tenant=active_tenant,
         client_setup=client_setup,
-        opencode_download_href="",
+        opencode_download_href=(
+            url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=active_tenant)
+            if active_tenant
+            else ""
+        ),
         sample_rest_call=sample_rest_call,
         sample_rest_call_display=sample_rest_call_display,
         interactive_enabled=runtime_context["enabled"],
@@ -8430,7 +8462,8 @@ def SkillDetail():
     if not can_manage and not skill.get("is_published"):
         return Response("No permission", status=403)
 
-    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(owner)
+    active_tenant = resolve_active_tenant_name(roles)
+    onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or owner)
     normal_funcname = str(skill.get("normal_funcname", "") or "").strip()
 
     func_tenant = str(skill.get("func_tenant", "") or "").strip()
@@ -8452,14 +8485,12 @@ def SkillDetail():
 
     base_url = normalize_public_api_base_url()
     skill_api_base_url = f"{base_url}/skills/{owner}/{ns}/{name}/v1"
+    mcp_server_url = f"{base_url}/mcp"
+    function_id = f"{owner}/{ns}/{name}"
     auth_required = str(owner or "").strip().lower() != "public"
     normalized_apikey = str(onboarding_apikey or "").strip()
     api_key_copyable = False
-    if not auth_required:
-        api_key_value = "(not required for public models)"
-        api_key_display = api_key_value
-        onboarding_apikey_name = ""
-    elif normalized_apikey != "":
+    if normalized_apikey != "":
         api_key_value = normalized_apikey
         api_key_display = mask_apikey_for_ui(normalized_apikey)
         api_key_copyable = True
@@ -8467,7 +8498,10 @@ def SkillDetail():
         api_key_value = build_inference_apikey_placeholder()
         api_key_display = api_key_value
     client_setup = {
+        "integration_kind": "skill_mcp",
         "api_base_url": skill_api_base_url,
+        "mcp_server_url": mcp_server_url,
+        "function_id": function_id,
         "auth_required": auth_required,
         "model_name": model_name,
         "api_key": api_key_value,
@@ -9757,7 +9791,8 @@ def DownloadSkillOpenCodeConfig(owner, ns, name):
     except Exception as e:
         return json_error(f"failed to load skill: {e}", 502)
 
-    onboarding_apikey, _ = resolve_onboarding_inference_apikey_for_ui(owner)
+    active_tenant = resolve_active_tenant_name(roles)
+    onboarding_apikey, _ = resolve_onboarding_inference_apikey_for_ui(active_tenant or owner)
     normalized_apikey = str(onboarding_apikey or "").strip()
     if not normalized_apikey:
         normalized_apikey = build_inference_apikey_placeholder()

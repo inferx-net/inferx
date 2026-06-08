@@ -356,28 +356,17 @@ fn resolve_skill_calling_tenant(
     tenant_hint: Option<&str>,
 ) -> Result<String> {
     if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        // TODO: Fix MCP tool calls with inference scope API keys
-        // When X-Tenant matches the API key's restrict_tenant, skip IsTenantUser check
-        // which requires "read" scope. Inference scope should be sufficient for skill calls.
-        // See: https://github.com/... (issue tracker link)
-        //
-        // Current behavior: Requires "read" scope even when tenant matches restrict_tenant
-        // Expected behavior: Allow "inference" scope when tenant matches restrict_tenant
-        //
-        // Proposed fix:
-        // if let Some(restricted) = &token.restrictTenant {
-        //     if hint == restricted {
-        //         return Ok(hint.to_string());
-        //     }
-        // }
-        // if !token.IsTenantUser(hint) {
-        //     return Err(Error::NoPermission);
-        // }
-        
-        if !token.IsTenantUser(hint) {
-            return Err(Error::NoPermission);
+        let has_inference_or_above = token.CheckScope("inference");
+        let can_access_hint_tenant = token
+            .restrictTenant
+            .as_ref()
+            .is_some_and(|restricted| restricted == hint)
+            || token.IsTenantUser(hint);
+
+        if has_inference_or_above && can_access_hint_tenant {
+            return Ok(hint.to_string());
         }
-        return Ok(hint.to_string());
+        return Err(Error::NoPermission);
     }
 
     if let Some(tenant) = token.restrictTenant.as_ref() {
@@ -556,12 +545,74 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
+        resolve_skill_calling_tenant,
         summarize_funccall_body_for_log,
     };
     use crate::common::Error;
+    use crate::gateway::auth_layer::AccessToken;
+    use crate::gateway::secret::SkillDetail;
     use axum::http::StatusCode;
     use hyper::body::Bytes;
     use serde_json::Value;
+    use std::collections::BTreeSet;
+    use std::time::SystemTime;
+
+    fn restricted_apikey(scope: &str, tenant: &str) -> AccessToken {
+        AccessToken {
+            subject: String::new(),
+            username: "user".to_owned(),
+            display_name: None,
+            email: String::new(),
+            email_verified: false,
+            roles: BTreeSet::new(),
+            apiKeys: Vec::new(),
+            scope: scope.to_owned(),
+            sourceIsApikey: true,
+            restrictTenant: Some(tenant.to_owned()),
+            restrictNamespace: None,
+            updatetime: SystemTime::now(),
+        }
+    }
+
+    fn test_skill_detail() -> SkillDetail {
+        SkillDetail {
+            skill_id: 1,
+            owner_tenant: "owner-tenant".to_owned(),
+            owner_namespace: "default".to_owned(),
+            skillname: "skill".to_owned(),
+            description: None,
+            serving_mode: "sync".to_owned(),
+            earning_type: "free".to_owned(),
+            user_price_microcents: None,
+            gpu_billing_target: "caller".to_owned(),
+            inferx_revenue_share_pct: 0.0,
+            active_revision_id: Some(1),
+            is_published: true,
+            published_at: None,
+            published_by: None,
+            revision_id: 1,
+            version: 1,
+            template_id: 1,
+            has_cache: false,
+            cache_status: "ready".to_owned(),
+            cache_ready_at: None,
+            revision_created_at: None,
+            revision_created_by: "user".to_owned(),
+            template_tenant: "owner-tenant".to_owned(),
+            template_namespace: "default".to_owned(),
+            template_display_name: "Skill".to_owned(),
+            template_description: None,
+            func_tenant: "func-tenant".to_owned(),
+            func_namespace: "default".to_owned(),
+            normal_funcname: "func".to_owned(),
+            producer_funcname: None,
+            producer_revision: None,
+            consumer_funcname: None,
+            consumer_revision: None,
+            template_is_active: true,
+            template_created_at: None,
+        }
+    }
 
     #[test]
     fn summarize_funccall_body_for_log_skips_empty_body() {
@@ -608,6 +659,22 @@ mod tests {
             "tenant-a",
             super::VIRTUAL_ENDPOINTS_NAMESPACE
         ));
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_allows_restricted_inference_key_for_matching_hint() {
+        let token = restricted_apikey("inference", "tenant-a");
+        let skill = test_skill_detail();
+        let tenant = resolve_skill_calling_tenant(&token, &skill, Some("tenant-a")).unwrap();
+        assert_eq!(tenant, "tenant-a");
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_rejects_restricted_inference_key_for_other_hint() {
+        let token = restricted_apikey("inference", "tenant-a");
+        let skill = test_skill_detail();
+        let err = resolve_skill_calling_tenant(&token, &skill, Some("tenant-b")).unwrap_err();
+        assert!(matches!(err, Error::NoPermission));
     }
 }
 
