@@ -188,15 +188,44 @@ impl WatchCacheBuf {
 mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+    use crate::etcd::etcd_store::EtcdStore;
+    use crate::metastore::cache_store::{BackendStore, CacheStore, ChannelRev};
     //use super::super::selector::*;
+    use serde_json::Value;
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    pub fn ComputePodKey(obj: &DataObject) -> String {
+    pub fn ComputePodKey(obj: &DataObject<Value>) -> String {
         return format!("/pods/{}/{}", &obj.Namespace(), &obj.Name());
+    }
+
+    fn NewPod(namespace: &str, name: &str, revision: i64, channel_rev: i64) -> DataObject<Value> {
+        DataObject {
+            objType: "pods".to_string(),
+            tenant: "".to_string(),
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            labels: Default::default(),
+            annotations: Default::default(),
+            channelRev: channel_rev,
+            srcEpoch: 0,
+            revision,
+            object: Value::Null,
+        }
+    }
+
+    fn AssertSamePod(actual: &DataObject<Value>, expected: &DataObject<Value>) {
+        assert_eq!(actual.objType, expected.objType);
+        assert_eq!(actual.tenant, expected.tenant);
+        assert_eq!(actual.namespace, expected.namespace);
+        assert_eq!(actual.name, expected.name);
+        assert_eq!(actual.channelRev, expected.channelRev);
+        assert_eq!(actual.revision, expected.revision);
     }
 
     // SeedMultiLevelData creates a set of keys with a multi-level structure, returning a resourceVersion
     // from before any were created along with the full set of objects that were persisted
-    async fn SeedMultiLevelData(store: &mut EtcdStore) -> Result<(i64, Vec<DataObject>)> {
+    async fn SeedMultiLevelData(store: &mut EtcdStore) -> Result<(i64, Vec<DataObject<Value>>)> {
         // Setup storage with the following structure:
         //  /
         //   - first/
@@ -209,15 +238,15 @@ mod tests {
         //   - third/
         //  |         - barfooo
         //  |         - fooo
-        let barFirst = DataObject::NewPod("first", "bar", "", "")?;
-        let barSecond = DataObject::NewPod("second", "bar", "", "")?;
-        let foooSecond = DataObject::NewPod("second", "fooo", "", "")?;
-        let barfoooThird = DataObject::NewPod("third", "barfooo", "", "")?;
-        let foooThird = DataObject::NewPod("third", "fooo", "", "")?;
+        let barFirst = NewPod("first", "bar", 0, 0);
+        let barSecond = NewPod("second", "bar", 0, 0);
+        let foooSecond = NewPod("second", "fooo", 0, 0);
+        let barfoooThird = NewPod("third", "barfooo", 0, 0);
+        let foooThird = NewPod("third", "fooo", 0, 0);
 
         struct Test {
             key: String,
-            obj: DataObject,
+            obj: DataObject<Value>,
         }
 
         let mut tests = [
@@ -245,7 +274,7 @@ mod tests {
 
         let initRv = store.Clear("").await?;
         for t in &mut tests {
-            store.Create(&t.key, &t.obj).await?;
+            let _ = store.Create(&t.obj, 0).await?;
         }
 
         let mut pods = Vec::new();
@@ -266,30 +295,26 @@ mod tests {
             ..Default::default()
         };
 
-        let cacher = Cacher::New(&store, "pods", 0).await?;
+        let cacher = CacheStore::New(
+            Some(Arc::new(store.clone())),
+            "pods",
+            0,
+            &ChannelRev::default(),
+        )
+        .await?;
 
-        let list = cacher.List("second", &listOptions).await?;
+        let list = cacher.List("", "second", &listOptions).await?;
 
         assert!(list.objs.len() == 2, "objs is {:#?}", list.objs.len());
         for i in 0..list.objs.len() {
-            assert!(
-                preset[i + 1] == list.objs[i],
-                "expect {:#?}, actual {:#?}",
-                preset[i + 1],
-                &list.objs[i]
-            );
+            AssertSamePod(&list.objs[i], &preset[i + 1]);
         }
 
-        let obj = cacher.Get("second", "bar", 0).await?;
+        let obj = cacher.Get("", "second", "bar", 0).await?;
         match &obj {
             None => assert!(false),
             Some(o) => {
-                assert!(
-                    o == &preset[1],
-                    "expect is {:#?}, actual is {:#?}",
-                    &preset[1],
-                    o
-                );
+                AssertSamePod(o, &preset[1]);
             }
         }
 
@@ -297,27 +322,20 @@ mod tests {
         match &obj {
             None => assert!(false),
             Some(o) => {
-                assert!(o == &preset[1]);
+                AssertSamePod(o, &preset[1]);
             }
         }
 
-        let list = cacher.List("", &ListOption::default()).await?;
+        let list = cacher.List("", "", &ListOption::default()).await?;
         assert!(list.objs.len() == 5);
         for i in 0..list.objs.len() {
-            assert!(
-                preset[i] == list.objs[i],
-                "expect {:#?}, actual {:#?}",
-                preset[i],
-                &list.objs[i]
-            );
+            AssertSamePod(&list.objs[i], &preset[i]);
         }
 
-        let mut w = cacher
-            .Watch("", list.revision + 1, SelectionPredicate::default())
-            .await?;
+        let mut w = cacher.Watch("", list.revision + 1, SelectionPredicate::default())?;
 
-        let bar1Second = DataObject::NewPod("second", "bar1", "", "")?;
-        cacher.Create(&bar1Second).await?;
+        let bar1Second = NewPod("second", "bar1", 1, 1);
+        cacher.Add(&bar1Second)?;
         let event = tokio::select! {
             x = w.stream.recv() => x,
             _ = tokio::time::sleep(Duration::from_millis(2000)) => {
@@ -329,17 +347,12 @@ mod tests {
             None => assert!(false, "event1 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Added);
-                assert!(
-                    e.obj == bar1Second,
-                    "expect is {:#?}, actual is {:#?}",
-                    &preset[1],
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
-        let bar1Second = DataObject::NewPod("second", "bar1", "abc", "")?;
-        cacher.Update(&bar1Second).await?;
+        let bar1Second = NewPod("second", "bar1", 2, 2);
+        cacher.Update(&bar1Second)?;
 
         let event = tokio::select! {
             x = w.stream.recv() => x,
@@ -352,29 +365,21 @@ mod tests {
             None => assert!(false, "event2 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Modified, "e is {:#?}", e);
-                assert!(
-                    bar1Second == e.obj,
-                    "expect is {:#?}, actual is {:#?}",
-                    bar1Second,
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
-        cacher.Delete("second", "bar1").await?;
+        cacher.Remove(&bar1Second)?;
 
         let event = w.stream.recv().await;
         match event {
             None => assert!(false, "event is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Deleted);
-                let tmp = e.obj.CopyWithRev(bar1Second.Revision());
-                assert!(
-                    tmp == bar1Second,
-                    "expect is {:#?}, actual is {:#?}",
-                    &bar1Second,
-                    tmp
-                );
+                let tmp = e
+                    .obj
+                    .CopyWithRev(bar1Second.channelRev, bar1Second.Revision());
+                AssertSamePod(&tmp, &bar1Second);
             }
         }
 
@@ -401,29 +406,26 @@ mod tests {
             ..Default::default()
         };
 
-        let cacher = Cacher::New(&store, "pods", 0).await?;
+        let cacher = CacheStore::New(
+            Some(Arc::new(store.clone())),
+            "pods",
+            0,
+            &ChannelRev::default(),
+        )
+        .await?;
 
-        let list = cacher.List("second", &listOptions).await?;
+        let list = cacher.List("", "second", &listOptions).await?;
 
         assert!(list.objs.len() == 2, "objs is {:#?}", list.objs.len());
         for i in 0..list.objs.len() {
-            assert!(
-                preset[i + 1] == list.objs[i],
-                "expect {:#?}, actual {:#?}",
-                preset[i + 1],
-                &list.objs[i]
-            );
+            AssertSamePod(&list.objs[i], &preset[i + 1]);
         }
 
-        let mut w = cacher
-            .Watch("second", list.revision + 1, SelectionPredicate::default())
-            .await?;
-        let mut w2 = cacher
-            .Watch("", list.revision + 1, SelectionPredicate::default())
-            .await?;
+        let mut w = cacher.Watch("second", list.revision + 1, SelectionPredicate::default())?;
+        let mut w2 = cacher.Watch("", list.revision + 1, SelectionPredicate::default())?;
 
-        let bar1Second = DataObject::NewPod("second", "bar1", "", "")?;
-        cacher.Create(&bar1Second).await?;
+        let bar1Second = NewPod("second", "bar1", 1, 1);
+        cacher.Add(&bar1Second)?;
         let event = tokio::select! {
             x = w.stream.recv() => x,
             _ = tokio::time::sleep(Duration::from_millis(2000)) => {
@@ -435,12 +437,7 @@ mod tests {
             None => assert!(false, "event1 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Added);
-                assert!(
-                    e.obj == bar1Second,
-                    "expect is {:#?}, actual is {:#?}",
-                    &preset[1],
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
@@ -455,19 +452,14 @@ mod tests {
             None => assert!(false, "event1 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Added);
-                assert!(
-                    e.obj == bar1Second,
-                    "expect is {:#?}, actual is {:#?}",
-                    &preset[1],
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
-        let bar1Second = DataObject::NewPod("second", "bar1", "abc", "")?;
-        cacher.Update(&bar1Second).await?;
+        let bar1Second = NewPod("second", "bar1", 2, 2);
+        cacher.Update(&bar1Second)?;
 
-        cacher.RemoveWatch(w2.id).await?;
+        cacher.RemoveWatch(w2.id)?;
 
         let event = tokio::select! {
             x = w.stream.recv() => x,
@@ -480,12 +472,7 @@ mod tests {
             None => assert!(false, "event2 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Modified, "e is {:#?}", e);
-                assert!(
-                    bar1Second == e.obj,
-                    "expect is {:#?}, actual is {:#?}",
-                    bar1Second,
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
@@ -500,18 +487,13 @@ mod tests {
             None => assert!(false, "event2 is {:#?}", event),
             Some(e) => {
                 assert!(e.type_ == EventType::Modified, "e is {:#?}", e);
-                assert!(
-                    bar1Second == e.obj,
-                    "expect is {:#?}, actual is {:#?}",
-                    bar1Second,
-                    e.obj
-                );
+                AssertSamePod(&e.obj, &bar1Second);
             }
         }
 
-        cacher.RemoveWatch(w.id).await?;
+        cacher.RemoveWatch(w.id)?;
 
-        cacher.Delete("second", "bar1").await?;
+        cacher.Remove(&bar1Second)?;
 
         let event = w.stream.recv().await;
         match event {

@@ -69,7 +69,6 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
-use crate::gateway::secret::compute_own_skill_tool_names;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -99,7 +98,7 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
-use super::skill_chain::handle_skill_call_chain;
+use super::skill_chain::{handle_skill_call_chain, handle_skill_debug_call};
 // use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::NormalizeFuncRequest;
 use super::tokenizer::TokenizerRoute;
@@ -166,6 +165,8 @@ struct SkillMarketplaceQuery {
     tag: Option<String>,
     #[serde(default)]
     keyword: Option<String>,
+    #[serde(default)]
+    include_unpublished: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,6 +356,24 @@ fn resolve_skill_calling_tenant(
     tenant_hint: Option<&str>,
 ) -> Result<String> {
     if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        // TODO: Fix MCP tool calls with inference scope API keys
+        // When X-Tenant matches the API key's restrict_tenant, skip IsTenantUser check
+        // which requires "read" scope. Inference scope should be sufficient for skill calls.
+        // See: https://github.com/... (issue tracker link)
+        //
+        // Current behavior: Requires "read" scope even when tenant matches restrict_tenant
+        // Expected behavior: Allow "inference" scope when tenant matches restrict_tenant
+        //
+        // Proposed fix:
+        // if let Some(restricted) = &token.restrictTenant {
+        //     if hint == restricted {
+        //         return Ok(hint.to_string());
+        //     }
+        // }
+        // if !token.IsTenantUser(hint) {
+        //     return Err(Error::NoPermission);
+        // }
+        
         if !token.IsTenantUser(hint) {
             return Err(Error::NoPermission);
         }
@@ -966,6 +985,10 @@ impl HttpGateway {
             .route("/funccall/*rest", head(FuncCall))
             .route("/skilltemplates", get(ListSkillTemplates))
             .route("/skills", get(ListPublishedSkills))
+            .route(
+                "/skills/debug/:owner_tenant/:namespace/:skillname",
+                post(RunSkillDebug),
+            )
             .route("/skills/:owner_tenant", get(ListSkillsByTenant))
             .route(
                 "/skills/:owner_tenant/:namespace",
@@ -2406,6 +2429,7 @@ async fn ListSkillMarketplace(
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
+    let include_unpublished = params.include_unpublished && token.IsInferxAdmin();
     match gw
         .sqlSecret
         .ListMarketplaceSkills(
@@ -2413,6 +2437,7 @@ async fn ListSkillMarketplace(
             params.keyword.as_deref(),
             params.page,
             params.page_size,
+            include_unpublished,
         )
         .await
     {
@@ -2436,14 +2461,8 @@ async fn CreateSkillSubscription(
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
-    if !token.IsTenantAdmin(&subscriber_tenant) {
+    if !token.IsTenantAdmin(&subscriber_tenant) && !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
-    }
-
-    if subscriber_tenant.eq_ignore_ascii_case(req.owner_tenant.trim()) {
-        return Ok(skill_admin_response(Error::CommonError(
-            "cannot subscribe to your own skill".to_string(),
-        )));
     }
 
     let tool_alias = match req.tool_alias.as_deref() {
@@ -2462,22 +2481,6 @@ async fn CreateSkillSubscription(
         },
     };
 
-    let own_skills = match gw
-        .sqlSecret
-        .ListSkillDetailsByTenant(&subscriber_tenant)
-        .await
-    {
-        Ok(skills) => skills,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-    let own_tool_names = compute_own_skill_tool_names(&own_skills);
-    if own_tool_names.values().any(|name| name == &tool_alias) {
-        return Ok(skill_admin_response(Error::Exist(format!(
-            "tool_alias '{}' collides with an own skill tool name",
-            tool_alias
-        ))));
-    }
-
     match gw
         .sqlSecret
         .CreateSkillSubscription(
@@ -2487,6 +2490,7 @@ async fn CreateSkillSubscription(
             req.skillname.trim(),
             &tool_alias,
             &token.username,
+            token.IsInferxAdmin(),
         )
         .await
     {
@@ -2587,22 +2591,6 @@ async fn UpdateSkillSubscription(
         Ok(alias) => alias,
         Err(e) => return Ok(skill_admin_response(e)),
     };
-
-    let own_skills = match gw
-        .sqlSecret
-        .ListSkillDetailsByTenant(&subscriber_tenant)
-        .await
-    {
-        Ok(skills) => skills,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-    let own_tool_names = compute_own_skill_tool_names(&own_skills);
-    if own_tool_names.values().any(|name| name == &tool_alias) {
-        return Ok(skill_admin_response(Error::Exist(format!(
-            "tool_alias '{}' collides with an own skill tool name",
-            tool_alias
-        ))));
-    }
 
     match gw
         .sqlSecret
@@ -3267,9 +3255,114 @@ async fn SkillCall(
         &gw,
         req,
         route,
+        format!("{}/{}/{}", owner_tenant, namespace, skillname),
         calling_tenant,
         logical_funcname,
         remainPath,
+        prefix.as_str(),
+        SKILLS_NAMESPACE,
+        FUNCCALL_MAX_BODY_BYTES,
+    )
+    .await
+}
+
+async fn RunSkillDebug(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
+        return Ok(skill_admin_response(Error::NoPermission));
+    }
+    if !token.CheckScope("inference") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let skill = match gw
+        .sqlSecret
+        .GetSkill(&owner_tenant, &namespace, &skillname)
+        .await
+    {
+        Ok(skill) => skill,
+        Err(Error::SqlxError(sqlx::Error::RowNotFound)) => {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("service failure: skill not found"))
+                .unwrap())
+        }
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let prefix = match load_skill_prefix(&skill) {
+        Ok(prefix) => prefix,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let physical_funcname = if skill.has_cache {
+        skill.consumer_funcname.clone().ok_or_else(|| {
+            Error::CommonError("consumer_funcname missing for cached skill".to_string())
+        })
+    } else {
+        Ok(skill.normal_funcname.clone())
+    };
+    let physical_funcname = match physical_funcname {
+        Ok(name) => name,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let func = match gw.objRepo.GetFunc(
+        &skill.func_tenant,
+        &skill.func_namespace,
+        &physical_funcname,
+    ) {
+        Ok(func) => func,
+        Err(e) => return Ok(skill_admin_response(e)),
+    };
+
+    let calling_tenant = owner_tenant.clone();
+    let base_funcname = format!(
+        "{}.{}.{}",
+        skill.func_tenant, skill.func_namespace, physical_funcname
+    );
+    let (logical_tenant, logical_funcname, caller_tenant) = if skill.gpu_billing_target == "owner" {
+        (
+            skill.owner_tenant.clone(),
+            format!("{}.{}", base_funcname, calling_tenant),
+            Some(calling_tenant.clone()),
+        )
+    } else {
+        (calling_tenant.clone(), base_funcname, None)
+    };
+
+    let route = FuncRouteTarget {
+        logical: FuncIdentity {
+            tenant: logical_tenant,
+            namespace: SKILLS_NAMESPACE.to_string(),
+            funcname: logical_funcname.clone(),
+            version: func.Version(),
+        },
+        physical: FuncIdentity {
+            tenant: skill.func_tenant.clone(),
+            namespace: skill.func_namespace.clone(),
+            funcname: physical_funcname,
+            version: func.Version(),
+        },
+        policy: GW_OBJREPO.get().unwrap().FuncPolicy(&func),
+        func,
+        caller_tenant,
+    };
+
+    handle_skill_debug_call(
+        &gw,
+        req,
+        route,
+        format!("{}/{}/{}", owner_tenant, namespace, skillname),
+        calling_tenant,
+        logical_funcname,
+        "/v1/chat/completions".to_string(),
         prefix.as_str(),
         SKILLS_NAMESPACE,
         FUNCCALL_MAX_BODY_BYTES,

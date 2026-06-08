@@ -4925,7 +4925,7 @@ def list_published_skills():
     return payload
 
 
-def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str | None = None, active_tenant: str | None = None):
+def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str | None = None, active_tenant: str | None = None, include_unpublished: bool = False):
     url = f"{apihostaddr}/api/v1/skills/marketplace"
     params: dict = {
         "page": max(1, int(page)),
@@ -4933,6 +4933,8 @@ def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str 
     }
     if keyword is not None and str(keyword).strip() != "":
         params["keyword"] = str(keyword).strip()
+    if include_unpublished:
+        params["include_unpublished"] = "1"
 
     resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), params=params, timeout=60)
     payload = response_json_or_none(resp)
@@ -5155,22 +5157,35 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
             continue
         subscriptions_by_skill[key] = dict(row)
 
+    for item in my_skills:
+        key = (
+            str(item.get("owner_tenant", "") or "").strip().lower(),
+            str(item.get("owner_namespace", "") or "").strip().lower(),
+            str(item.get("skillname", "") or "").strip().lower(),
+        )
+        subscription = subscriptions_by_skill.get(key)
+        item["is_subscribed"] = bool(subscription)
+        item["tool_alias"] = subscription.get("tool_alias") if subscription else None
+
     marketplace_page = 1
     marketplace_page_size = 24
     marketplace_keyword = ""
     marketplace_has_next = False
+    marketplace_include_unpublished = False
     marketplace_skills = []
 
     if skills_view == "marketplace":
         marketplace_page = parse_positive_int_arg("page", 1)
         marketplace_page_size = parse_positive_int_arg("page_size", 24, maximum=200)
         marketplace_keyword = str(request.args.get("keyword", "") or "").strip()
+        marketplace_include_unpublished = is_inferx_admin and str(request.args.get("include_unpublished", "") or "").strip().lower() in ("1", "true", "yes", "on")
 
         marketplace_payload = list_marketplace_skills(
             page=marketplace_page,
             page_size=marketplace_page_size,
             keyword=marketplace_keyword or None,
             active_tenant=active_tenant,
+            include_unpublished=marketplace_include_unpublished,
         )
         marketplace_page = int(marketplace_payload.get("page") or marketplace_page)
         marketplace_page_size = int(marketplace_payload.get("page_size") or marketplace_page_size)
@@ -5203,6 +5218,7 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
         "marketplace_page_size": marketplace_page_size,
         "marketplace_keyword": marketplace_keyword,
         "marketplace_has_next": marketplace_has_next,
+        "marketplace_include_unpublished": marketplace_include_unpublished,
         "subscriptions": subscriptions,
     }
 

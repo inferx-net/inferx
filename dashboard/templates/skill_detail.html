@@ -24,6 +24,21 @@
         padding: var(--ix-panel-padding);
     }
     .skill-panel h2 { margin: 0 0 12px 0; font-size: 18px; color: #1f2937; }
+    .skill-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+    }
+    .skill-panel-header h2 { margin: 0; }
+    .skill-panel-note {
+        margin: 4px 0 0 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+    }
     .skill-meta-grid {
         display: grid;
         grid-template-columns: 200px minmax(0, 1fr);
@@ -42,6 +57,32 @@
     .skill-status-badge.draft { background: #fef3c7; color: #92400e; }
     .playground-grid { display: grid; gap: 12px; }
     .playground-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #334155; }
+    .playground-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+        flex-wrap: wrap;
+    }
+    .playground-label-row label { margin-bottom: 0; }
+    .playground-toggle-btn {
+        border: 1px solid #d7dee8;
+        border-radius: 999px;
+        background: #fff;
+        color: #475569;
+        padding: 3px 10px;
+        font: inherit;
+        font-size: 12px;
+        line-height: 1.2;
+        cursor: pointer;
+    }
+    .playground-toggle-btn:hover { color: #1f2937; border-color: #b7c6dc; }
+    .playground-toggle-btn:focus-visible { outline: 2px solid #cbd5e1; outline-offset: 2px; }
+    #skill-debugger-body[hidden],
+    #skill-debug-mocks-editor[hidden] {
+        display: none !important;
+    }
     .playground-field textarea {
         width: 100%;
         box-sizing: border-box;
@@ -67,6 +108,301 @@
     }
     .playground-status { font-size: 13px; color: #475569; min-height: 1.4em; }
     .playground-status.error { color: #b91c1c; }
+    .playground-help {
+        margin: -4px 0 4px 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+    }
+    .trace-panel {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 10px 12px;
+    }
+    .trace-panel label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        color: #334155;
+    }
+    .trace-output {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        background: #fff;
+        resize: vertical;
+        line-height: 1.45;
+    }
+    .debug-grid { display: grid; gap: 12px; }
+    .debug-view-toggle {
+        display: inline-flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+    .debug-view-toggle button.active {
+        background: #0f172a;
+        color: #fff;
+        border-color: #0f172a;
+    }
+    .debug-toolbar {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+    .debug-filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        align-items: center;
+    }
+    .debug-filter-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #dbe3ef;
+        border-radius: 999px;
+        padding: 4px 10px;
+        background: #fff;
+        font-size: 12px;
+        color: #334155;
+    }
+    .debug-filter-chip input { margin: 0; }
+    .debug-filter-search {
+        min-width: 220px;
+        flex: 1 1 260px;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        padding: 7px 12px;
+        font: inherit;
+        font-size: 13px;
+        background: #fff;
+    }
+    .debug-summary-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .debug-summary-pill {
+        border: 1px solid #dbe3ef;
+        border-radius: 999px;
+        background: #fff;
+        padding: 5px 10px;
+        font-size: 12px;
+        color: #475569;
+    }
+    .debug-summary-pill.warn {
+        background: #fff7ed;
+        border-color: #fdba74;
+        color: #9a3412;
+    }
+    .debug-view-stage {
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        background: #f8fafc;
+        padding: 12px;
+        min-height: 320px;
+    }
+    .debug-view-panel[hidden] {
+        display: none !important;
+    }
+    .debug-tree {
+        display: grid;
+        gap: 10px;
+        align-content: start;
+    }
+    .debug-tree-empty {
+        color: #64748b;
+        font-size: 13px;
+    }
+    .debug-tree-empty.error { color: #b91c1c; }
+    .debug-trace-node {
+        border-left: 2px solid #dbe3ef;
+        padding-left: 12px;
+    }
+    .debug-trace-node.hidden {
+        display: none;
+    }
+    .debug-trace-card {
+        border: 1px solid #dbe3ef;
+        border-radius: 6px;
+        background: #fff;
+        padding: 10px 12px;
+        display: grid;
+        gap: 8px;
+    }
+    .debug-trace-card.waiting {
+        border-color: #f59e0b;
+        box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.12);
+    }
+    .debug-trace-card.failed {
+        border-color: #fca5a5;
+        box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.14);
+    }
+    .debug-trace-card.focused {
+        box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.18);
+    }
+    .debug-trace-card.collapsed .debug-trace-body {
+        display: none;
+    }
+    .debug-trace-head {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        cursor: pointer;
+    }
+    .debug-trace-toggle {
+        width: 18px;
+        height: 18px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #334155;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        flex: 0 0 auto;
+        padding: 0;
+        cursor: pointer;
+    }
+    .debug-trace-toggle:hover { background: #e2e8f0; }
+    .debug-trace-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 52px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    .debug-trace-badge.start { background: #dbeafe; color: #1d4ed8; }
+    .debug-trace-badge.wait { background: #fef3c7; color: #92400e; }
+    .debug-trace-badge.done { background: #dcfce7; color: #166534; }
+    .debug-trace-badge.fail { background: #fee2e2; color: #b91c1c; }
+    .debug-trace-skill {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        color: #0f172a;
+        word-break: break-all;
+        flex: 1 1 320px;
+    }
+    .debug-trace-time {
+        font-size: 12px;
+        color: #64748b;
+        white-space: nowrap;
+    }
+    .debug-trace-summary {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-left: 28px;
+    }
+    .debug-trace-summary-pill {
+        border: 1px solid #dbe3ef;
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #475569;
+        padding: 2px 8px;
+        font-size: 11px;
+        line-height: 1.4;
+    }
+    .debug-trace-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: #475569;
+    }
+    .debug-trace-meta code {
+        background: #f8fafc;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        padding: 1px 6px;
+    }
+    .debug-trace-details {
+        display: grid;
+        gap: 6px;
+    }
+    .debug-trace-body {
+        display: grid;
+        gap: 8px;
+    }
+    .debug-trace-detail {
+        display: grid;
+        gap: 4px;
+    }
+    .debug-trace-detail-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .debug-trace-detail-body {
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 8px 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .debug-trace-events {
+        display: grid;
+        gap: 6px;
+    }
+    .debug-trace-event {
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        background: #fff;
+        padding: 7px 9px;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+    }
+    .debug-trace-event-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: #334155;
+    }
+    .debug-trace-event-type {
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        font-size: 10px;
+    }
+    .debug-trace-event-meta {
+        color: #64748b;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .debug-trace-gap {
+        border-left: 2px dashed #cbd5e1;
+        margin-left: 6px;
+        padding-left: 10px;
+        color: #64748b;
+        font-size: 11px;
+    }
+    .debug-trace-children {
+        display: grid;
+        gap: 10px;
+        margin-top: 10px;
+        padding-left: 12px;
+    }
     .copyable-area { position: relative; }
     .copyable-area textarea {
         width: 100%;
@@ -202,12 +538,98 @@
                 <div class="playground-metric" id="skill-metric-ttft">TTFT: —</div>
                 <div class="playground-metric" id="skill-metric-tps">TPS: —</div>
             </div>
+            <div class="trace-panel" id="skill-trace-panel" hidden>
+                <label for="skill-trace-output">Progress</label>
+                <textarea id="skill-trace-output" class="trace-output" rows="8" readonly placeholder="Trace events will appear here…"></textarea>
+            </div>
             <div class="playground-field">
                 <label for="skill-output">Output</label>
                 <textarea id="skill-output" rows="10" readonly placeholder="Response will appear here…"></textarea>
             </div>
         </div>
     </section>
+
+    {% if can_manage %}
+    <section class="skill-panel">
+        <div class="skill-panel-header">
+            <div>
+                <h2>Debugger</h2>
+                <div class="skill-panel-note">
+                    This section is used to debug function calling with chain and output info. Click Show to expand it.
+                </div>
+            </div>
+            <button
+                id="skill-debugger-toggle"
+                class="playground-toggle-btn"
+                type="button"
+                aria-expanded="false"
+                aria-controls="skill-debugger-body"
+            >
+                Show
+            </button>
+        </div>
+        <div id="skill-debugger-body" class="debug-grid" hidden>
+            <div class="playground-field">
+                <label for="skill-debug-input">Debug Query</label>
+                <textarea id="skill-debug-input" rows="4" placeholder="Run the skill with full trace content…">What's in the context?</textarea>
+            </div>
+            <div class="playground-field">
+                <div class="playground-label-row">
+                    <label for="skill-debug-mocks">Sub-skill Mocks (JSON object)</label>
+                    <button
+                        id="skill-debug-mocks-toggle"
+                        class="playground-toggle-btn"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="skill-debug-mocks-editor"
+                    >
+                        Show
+                    </button>
+                </div>
+                <div class="playground-help">
+                    Optional. Use a JSON object that maps each child skill's canonical id `owner_tenant/namespace/skillname` to the mocked text result it should return during this debug run. Example: `{"acme/default/pricer":"$25","acme/default/tax":"$2"}`. Values must be strings.
+                </div>
+                <div id="skill-debug-mocks-editor" hidden>
+                    <textarea id="skill-debug-mocks" rows="5" placeholder='{"acme/default/pricer":"$25"}'></textarea>
+                </div>
+            </div>
+            <div class="playground-actions">
+                <button id="skill-debug-run-btn" class="ix-btn" type="button">Run Debug</button>
+                <button id="skill-debug-cancel-btn" class="ix-btn secondary" type="button" disabled>Cancel</button>
+                <div id="skill-debug-status" class="playground-status"></div>
+            </div>
+                <div class="trace-panel">
+                    <label>Live Debug Trace</label>
+                    <div class="debug-view-toggle">
+                        <button id="skill-debug-view-tree" class="ix-btn secondary active" type="button">Tree</button>
+                        <button id="skill-debug-view-log" class="ix-btn secondary" type="button">Raw Log</button>
+                    </div>
+                    <div class="debug-toolbar">
+                        <div class="debug-filter-row">
+                            <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-failed"> Failed only</label>
+                            <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-show-content" checked> Show content</label>
+                            <input id="skill-debug-filter-search" class="debug-filter-search" type="search" placeholder="Filter by skill name">
+                        </div>
+                        <div id="skill-debug-summary" class="debug-summary-bar"></div>
+                    </div>
+                    <div class="debug-view-stage">
+                        <div id="skill-debug-tree-view" class="debug-view-panel">
+                            <div id="skill-debug-tree" class="debug-tree">
+                                <div class="debug-tree-empty">Debug trace will appear here.</div>
+                            </div>
+                        </div>
+                        <div id="skill-debug-log-view" class="debug-view-panel" hidden>
+                            <textarea id="skill-debug-trace-log" class="trace-output" rows="18" readonly placeholder="Debug trace log will appear here…"></textarea>
+                        </div>
+                    </div>
+                </div>
+            <div class="playground-field">
+                <label for="skill-debug-output">Debug Result</label>
+                <textarea id="skill-debug-output" rows="8" readonly placeholder="Final debug result will appear here…"></textarea>
+            </div>
+        </div>
+    </section>
+    {% endif %}
 
     <section class="skill-panel">
         <h2>Sample REST Call</h2>
@@ -225,6 +647,7 @@
     const ns = {{ ns | tojson }};
     const name = {{ name | tojson }};
     const normalFuncname = {{ model_name | tojson }};
+    const canManage = {{ can_manage | tojson }};
 
     const promptInput = document.getElementById('skill-prompt-input');
     const outputEl = document.getElementById('skill-output');
@@ -234,10 +657,45 @@
     const metricsEl = document.getElementById('skill-metrics');
     const ttftEl = document.getElementById('skill-metric-ttft');
     const tpsEl = document.getElementById('skill-metric-tps');
+    const tracePanelEl = document.getElementById('skill-trace-panel');
+    const traceOutputEl = document.getElementById('skill-trace-output');
     const skillDataViewBtn = document.getElementById('skill-data-view-btn');
     const skillDataViewer = document.getElementById('skill-data-viewer');
+    const debugPanelToggleBtn = document.getElementById('skill-debugger-toggle');
+    const debugPanelBodyEl = document.getElementById('skill-debugger-body');
+    const debugInputEl = document.getElementById('skill-debug-input');
+    const debugMocksEl = document.getElementById('skill-debug-mocks');
+    const debugMocksToggleBtn = document.getElementById('skill-debug-mocks-toggle');
+    const debugMocksEditorEl = document.getElementById('skill-debug-mocks-editor');
+    const debugRunBtn = document.getElementById('skill-debug-run-btn');
+    const debugCancelBtn = document.getElementById('skill-debug-cancel-btn');
+    const debugStatusEl = document.getElementById('skill-debug-status');
+    const debugViewTreeBtn = document.getElementById('skill-debug-view-tree');
+    const debugViewLogBtn = document.getElementById('skill-debug-view-log');
+    const debugTreeViewEl = document.getElementById('skill-debug-tree-view');
+    const debugLogViewEl = document.getElementById('skill-debug-log-view');
+    const debugTreeEl = document.getElementById('skill-debug-tree');
+    const debugTraceLogEl = document.getElementById('skill-debug-trace-log');
+    const debugOutputEl = document.getElementById('skill-debug-output');
+    const debugFilterFailedEl = document.getElementById('skill-debug-filter-failed');
+    const debugFilterShowContentEl = document.getElementById('skill-debug-filter-show-content');
+    const debugFilterSearchEl = document.getElementById('skill-debug-filter-search');
+    const debugSummaryEl = document.getElementById('skill-debug-summary');
 
     let abortController = null;
+    let debugAbortController = null;
+    let debugTraceNodes = new Map();
+    let debugTraceRootIds = [];
+    let debugTraceMode = 'tree';
+    let debugUserTouchedTree = false;
+    let debugAutoFocusedFailureId = '';
+    let debugBatchRendering = false;
+    let debugMockSkillIds = new Set();
+    let debugFilters = {
+        failedOnly: false,
+        showContent: true,
+        search: '',
+    };
     let startTime = 0;
     let firstTokenTime = 0;
     let tokenCount = 0;
@@ -271,6 +729,646 @@
         return String(content);
     }
 
+    function resetTrace() {
+        tracePanelEl.hidden = true;
+        traceOutputEl.value = '';
+    }
+
+    function getHeartbeatLabel(ev) {
+        if (ev?.phase === 'model_inference') return 'RUNNING(model)';
+        if (ev?.phase === 'child_call') return 'WAIT(child)';
+        return 'WAIT';
+    }
+
+    function appendTrace(ev) {
+        tracePanelEl.hidden = false;
+        const label = {
+            call_start: 'START',
+            call_finish: ev.result_code === 'pass' ? 'DONE' : 'FAIL',
+            subcall_start: 'START',
+            subcall_finish: ev.result_code === 'pass' ? 'DONE' : 'FAIL',
+            heartbeat: getHeartbeatLabel(ev),
+        }[ev.type] || 'INFO';
+        const depth = Math.max(1, Number(ev.depth || 1));
+        const indent = '  '.repeat(depth - 1);
+        const timing = ev.elapsed_ms != null ? `  ${(Number(ev.elapsed_ms) / 1000).toFixed(1)}s` : '';
+        traceOutputEl.value += `${indent}${label}  ${ev.skill || 'unknown'}${timing}\n`;
+        traceOutputEl.scrollTop = traceOutputEl.scrollHeight;
+    }
+
+    function setDebugStatus(msg, isError) {
+        if (!debugStatusEl) return;
+        debugStatusEl.textContent = msg || '';
+        debugStatusEl.className = 'playground-status' + (isError ? ' error' : '');
+    }
+
+    function setDebugSending(inFlight) {
+        if (!debugRunBtn || !debugCancelBtn) return;
+        debugRunBtn.disabled = inFlight;
+        debugCancelBtn.disabled = !inFlight;
+    }
+
+    function fmtClock(tsMs) {
+        if (!Number.isFinite(tsMs)) return '—';
+        return new Date(tsMs).toLocaleString([], {
+            hour12: false,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
+    }
+
+    function getDebugResultLabel(ev) {
+        if (!ev) return ['INFO', 'start'];
+        if (ev.type === 'heartbeat') return [getHeartbeatLabel(ev), 'wait'];
+        if (ev.type === 'call_start' || ev.type === 'subcall_start') return ['START', 'start'];
+        if (ev.type === 'call_finish' || ev.type === 'subcall_finish') {
+            return [ev.result_code === 'pass' ? 'DONE' : 'FAIL', ev.result_code === 'pass' ? 'done' : 'fail'];
+        }
+        return ['INFO', 'start'];
+    }
+
+    function isDebugNodeWaiting(node) {
+        if (!node) return false;
+        const status = getEffectiveDebugNodeStatus(node);
+        return status[1] === 'wait';
+    }
+
+    function isDebugNodeFailed(node) {
+        return !!(node && node.resultCode && node.resultCode !== 'pass');
+    }
+
+    function hasOpenDirectChild(node) {
+        if (!node) return false;
+        if (node.activeChildCalls && node.activeChildCalls.size > 0) return true;
+        for (const childId of node.children || []) {
+            const child = debugTraceNodes.get(childId);
+            if (child && !child.resultCode) return true;
+        }
+        return false;
+    }
+
+    function getEffectiveDebugNodeStatus(node) {
+        const latest = node?.latestEvent;
+        if (!latest) return ['INFO', 'start'];
+        if (node?.resultCode) {
+            return [node.resultCode === 'pass' ? 'DONE' : 'FAIL', node.resultCode === 'pass' ? 'done' : 'fail'];
+        }
+        if (hasOpenDirectChild(node)) {
+            return ['WAIT(child)', 'wait'];
+        }
+        if ((latest.type === 'call_start' || latest.type === 'subcall_start') && (node.children?.length || 0) > 0) {
+            return ['RUNNING', 'wait'];
+        }
+        return getDebugResultLabel(latest);
+    }
+
+    function getEffectiveDebugNodePhase(node) {
+        if (!node) return '';
+        if (node.resultCode) return node.latestEvent?.phase || '';
+        if (hasOpenDirectChild(node)) return 'child_call';
+        return node.latestEvent?.phase || '';
+    }
+
+    function ensureDebugNode(ev) {
+        let node = debugTraceNodes.get(ev.call_id);
+        if (node) return node;
+        node = {
+            callId: ev.call_id,
+            parentCallId: ev.parent_call_id || null,
+            skill: ev.skill || 'unknown',
+            depth: Math.max(1, Number(ev.depth || 1)),
+            children: [],
+            events: [],
+            latestEvent: null,
+            startedTs: Number.isFinite(Number(ev.ts_ms)) ? Number(ev.ts_ms) : null,
+            finishedTs: null,
+            subtreeLastTs: Number.isFinite(Number(ev.ts_ms)) ? Number(ev.ts_ms) : null,
+            resultCode: '',
+            failReason: '',
+            resultLabel: 'START',
+            collapsed: false,
+            mocked: false,
+            hasFailureDescendant: false,
+            hasFailedDescendant: false,
+            visibleChildCount: 0,
+            activeChildCalls: new Set(),
+        };
+        debugTraceNodes.set(ev.call_id, node);
+        if (!node.parentCallId) {
+            debugTraceRootIds.push(node.callId);
+        }
+        return node;
+    }
+
+    function updateDebugParentActiveChildState(ev) {
+        const parentCallId = ev?.parent_call_id;
+        if (!parentCallId) return;
+        const parent = debugTraceNodes.get(parentCallId);
+        if (!parent) return;
+        if (!parent.activeChildCalls) parent.activeChildCalls = new Set();
+        if (ev.type === 'subcall_start') {
+            parent.activeChildCalls.add(ev.call_id);
+        } else if (ev.type === 'subcall_finish') {
+            parent.activeChildCalls.delete(ev.call_id);
+        }
+    }
+
+    function recordDebugEvent(node, ev) {
+        const ts = Number(ev.ts_ms);
+        const eventCopy = Object.assign({}, ev, { ts_ms: Number.isFinite(ts) ? ts : null });
+        const lastEvent = node.events.length ? node.events[node.events.length - 1] : null;
+        const dedupeHeartbeat = lastEvent
+            && lastEvent.type === 'heartbeat'
+            && eventCopy.type === 'heartbeat'
+            && lastEvent.phase === eventCopy.phase
+            && !lastEvent.result_code
+            && !eventCopy.result_code;
+        if (dedupeHeartbeat) {
+            node.events[node.events.length - 1] = eventCopy;
+        } else {
+            node.events.push(eventCopy);
+        }
+        if (node.events.length > 40) {
+            node.events = node.events.slice(node.events.length - 40);
+        }
+        node.latestEvent = eventCopy;
+        node.skill = eventCopy.skill || node.skill;
+        node.depth = Math.max(node.depth, Number(eventCopy.depth || node.depth || 1));
+        if (eventCopy.parent_call_id && node.parentCallId !== eventCopy.parent_call_id) {
+            node.parentCallId = eventCopy.parent_call_id;
+        }
+        if (eventCopy.ts_ms != null) {
+            if (node.startedTs == null || eventCopy.ts_ms < node.startedTs) node.startedTs = eventCopy.ts_ms;
+            if (node.subtreeLastTs == null || eventCopy.ts_ms > node.subtreeLastTs) node.subtreeLastTs = eventCopy.ts_ms;
+        }
+        if (eventCopy.type === 'call_finish' || eventCopy.type === 'subcall_finish') {
+            node.finishedTs = eventCopy.ts_ms != null ? eventCopy.ts_ms : node.finishedTs;
+            node.resultCode = eventCopy.result_code || '';
+            node.failReason = eventCopy.fail_reason || '';
+        } else if (eventCopy.fail_reason && !node.failReason) {
+            node.failReason = eventCopy.fail_reason;
+        }
+        node.resultLabel = getDebugResultLabel(eventCopy)[0];
+        node.mocked = node.mocked || debugMockSkillIds.has(node.skill);
+    }
+
+    function linkDebugParentChild(node) {
+        if (!node.parentCallId) return;
+        const parent = debugTraceNodes.get(node.parentCallId);
+        if (!parent) return;
+        if (!parent.children.includes(node.callId)) {
+            parent.children.push(node.callId);
+        }
+        const rootIndex = debugTraceRootIds.indexOf(node.callId);
+        if (rootIndex >= 0) debugTraceRootIds.splice(rootIndex, 1);
+    }
+
+    function computeChildIntervalUnion(node) {
+        const ranges = [];
+        const nodeEnd = node.finishedTs != null ? node.finishedTs : node.subtreeLastTs;
+        for (const childId of node.children) {
+            const child = debugTraceNodes.get(childId);
+            if (!child || child.startedTs == null) continue;
+            const start = child.startedTs;
+            const end = child.finishedTs != null ? child.finishedTs : child.subtreeLastTs;
+            if (end == null || end < start) continue;
+            if (nodeEnd != null && start > nodeEnd) continue;
+            ranges.push([start, end]);
+        }
+        ranges.sort((a, b) => a[0] - b[0]);
+        let total = 0;
+        let cur = null;
+        for (const range of ranges) {
+            if (!cur) {
+                cur = range.slice();
+                continue;
+            }
+            if (range[0] <= cur[1]) {
+                cur[1] = Math.max(cur[1], range[1]);
+            } else {
+                total += Math.max(0, cur[1] - cur[0]);
+                cur = range.slice();
+            }
+        }
+        if (cur) total += Math.max(0, cur[1] - cur[0]);
+        return total;
+    }
+
+    function computeDebugNodeMetrics(node) {
+        const latest = node.latestEvent || {};
+        const elapsedMs = Number(latest.elapsed_ms);
+        const liveSubtreeMs = node.startedTs != null && node.subtreeLastTs != null
+            ? Math.max(0, node.subtreeLastTs - node.startedTs)
+            : 0;
+        const totalMs = node.resultCode
+            ? (Number.isFinite(elapsedMs) ? elapsedMs : liveSubtreeMs)
+            : liveSubtreeMs;
+        const childUnionMs = computeChildIntervalUnion(node);
+        const ownMs = Math.max(0, totalMs - childUnionMs);
+        const subtreeMs = Math.max(totalMs, liveSubtreeMs);
+        return {
+            totalMs,
+            ownMs,
+            childMs: Math.max(0, subtreeMs - ownMs),
+            subtreeMs,
+            childCount: node.children.length,
+            startClock: fmtClock(node.startedTs),
+        };
+    }
+
+    function evaluateDebugSelectionMatch(node) {
+        const search = debugFilters.search.trim().toLowerCase();
+        if (debugFilters.failedOnly && !isDebugNodeFailed(node)) return false;
+        if (debugFilters.waitingOnly && !isDebugNodeWaiting(node)) return false;
+        if (search && !(node.skill || '').toLowerCase().includes(search)) return false;
+        return true;
+    }
+
+    function hasActiveSelectionFilters() {
+        return !!(debugFilters.failedOnly || debugFilters.waitingOnly || debugFilters.search.trim());
+    }
+
+    function computeDebugVisibility(callId) {
+        const node = debugTraceNodes.get(callId);
+        if (!node) return { visible: false, selected: false, hasMatchedDescendant: false };
+        let hasMatchedDescendant = false;
+        let visibleChildCount = 0;
+        let hasFailureDescendant = isDebugNodeFailed(node);
+        let hasFailedDescendant = false;
+        let subtreeLastTs = node.latestEvent?.ts_ms != null ? node.latestEvent.ts_ms : node.subtreeLastTs;
+        for (const childId of node.children) {
+            const childState = computeDebugVisibility(childId);
+            if (childState.visible) visibleChildCount += 1;
+            if (childState.selected || childState.hasMatchedDescendant) hasMatchedDescendant = true;
+            const child = debugTraceNodes.get(childId);
+            if (child && (isDebugNodeFailed(child) || child.hasFailedDescendant)) {
+                hasFailedDescendant = true;
+            }
+            if (child?.hasFailureDescendant) hasFailureDescendant = true;
+            if (child?.subtreeLastTs != null) {
+                subtreeLastTs = subtreeLastTs == null ? child.subtreeLastTs : Math.max(subtreeLastTs, child.subtreeLastTs);
+            }
+        }
+        node.visibleChildCount = visibleChildCount;
+        node.hasFailureDescendant = hasFailureDescendant;
+        node.hasFailedDescendant = hasFailedDescendant;
+        node.subtreeLastTs = subtreeLastTs;
+
+        const selectionActive = hasActiveSelectionFilters();
+        const selected = evaluateDebugSelectionMatch(node);
+        let visible = selectionActive ? (selected || hasMatchedDescendant) : true;
+        if (debugFilters.hideSuccessfulLeaves && node.resultCode === 'pass' && node.visibleChildCount === 0) {
+            visible = false;
+        }
+        node.visible = visible;
+        node.selected = selected;
+        return { visible, selected, hasMatchedDescendant: selected || hasMatchedDescendant };
+    }
+
+    function findDebugFailureFocus() {
+        let winner = null;
+        for (const node of debugTraceNodes.values()) {
+            if (!isDebugNodeFailed(node) || node.hasFailedDescendant) continue;
+            const depth = node.depth || 1;
+            const ts = node.finishedTs != null ? node.finishedTs : (node.startedTs != null ? node.startedTs : Number.MAX_SAFE_INTEGER);
+            if (!winner || depth > winner.depth || (depth === winner.depth && ts < winner.ts)) {
+                winner = { callId: node.callId, depth, ts };
+            }
+        }
+        return winner ? winner.callId : '';
+    }
+
+    function applyDebugFailureFocus() {
+        const focusId = findDebugFailureFocus();
+        if (!focusId) return '';
+        const focusNode = debugTraceNodes.get(focusId);
+        if (!focusNode) return '';
+        const path = new Set();
+        let cursor = focusNode;
+        while (cursor) {
+            path.add(cursor.callId);
+            cursor = cursor.parentCallId ? debugTraceNodes.get(cursor.parentCallId) : null;
+        }
+        for (const node of debugTraceNodes.values()) {
+            if (path.has(node.callId)) {
+                node.collapsed = false;
+            } else if (node.children.length > 0 && !node.hasFailureDescendant) {
+                node.collapsed = true;
+            }
+        }
+        return focusId;
+    }
+
+    function createDebugSummaryPill(text, isWarn) {
+        const pill = document.createElement('div');
+        pill.className = 'debug-summary-pill' + (isWarn ? ' warn' : '');
+        pill.textContent = text;
+        return pill;
+    }
+
+    function renderDebugSummary() {
+        if (!debugSummaryEl) return;
+        debugSummaryEl.innerHTML = '';
+        const allNodes = Array.from(debugTraceNodes.values());
+        const visibleNodes = allNodes.filter((node) => node.visible);
+        const failedNodes = allNodes.filter((node) => isDebugNodeFailed(node));
+        const waitingNodes = allNodes.filter((node) => isDebugNodeWaiting(node));
+        const rootFailure = findDebugFailureFocus();
+        debugSummaryEl.appendChild(createDebugSummaryPill(`Nodes ${allNodes.length}`));
+        debugSummaryEl.appendChild(createDebugSummaryPill(`Visible ${visibleNodes.length}`));
+        debugSummaryEl.appendChild(createDebugSummaryPill(`Failed ${failedNodes.length}`, failedNodes.length > 0));
+        debugSummaryEl.appendChild(createDebugSummaryPill(`Waiting ${waitingNodes.length}`));
+        if (debugFilters.failedOnly && debugFilters.waitingOnly) {
+            debugSummaryEl.appendChild(createDebugSummaryPill('Failed only + Waiting only yields no matches under AND semantics.', true));
+        } else if (rootFailure) {
+            const node = debugTraceNodes.get(rootFailure);
+            debugSummaryEl.appendChild(createDebugSummaryPill(`Focus ${node?.skill || rootFailure}`, true));
+        }
+    }
+
+    function createDebugDetailBlock(label, value) {
+        const block = document.createElement('div');
+        block.className = 'debug-trace-detail';
+        const title = document.createElement('div');
+        title.className = 'debug-trace-detail-label';
+        title.textContent = label;
+        const body = document.createElement('div');
+        body.className = 'debug-trace-detail-body';
+        body.textContent = String(value);
+        block.appendChild(title);
+        block.appendChild(body);
+        return block;
+    }
+
+    function createDebugEventTimeline(node) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'debug-trace-events';
+        let lastTs = null;
+        for (const ev of node.events) {
+            const ts = Number(ev.ts_ms);
+            if (lastTs != null && Number.isFinite(ts) && ts - lastTs >= 1000) {
+                const gap = document.createElement('div');
+                gap.className = 'debug-trace-gap';
+                gap.textContent = `Gap ${fmtMs(ts - lastTs)}`;
+                wrapper.appendChild(gap);
+            }
+            const item = document.createElement('div');
+            item.className = 'debug-trace-event';
+            const top = document.createElement('div');
+            top.className = 'debug-trace-event-top';
+            const left = document.createElement('div');
+            const status = getDebugResultLabel(ev);
+            const typeEl = document.createElement('span');
+            typeEl.className = 'debug-trace-event-type';
+            typeEl.textContent = status[0];
+            left.appendChild(typeEl);
+            if (ev.phase) {
+                left.appendChild(document.createTextNode(` ${ev.phase}`));
+            }
+            const right = document.createElement('div');
+            const parts = [];
+            if (Number.isFinite(ts)) parts.push(fmtClock(ts));
+            if (ev.elapsed_ms != null) parts.push(fmtMs(Number(ev.elapsed_ms)));
+            right.textContent = parts.join('  ');
+            top.appendChild(left);
+            top.appendChild(right);
+            item.appendChild(top);
+            const meta = [];
+            if (ev.result_code) meta.push(`result=${ev.result_code}`);
+            if (ev.fail_reason) meta.push(`fail=${ev.fail_reason}`);
+            if (ev.prompt_tokens != null) meta.push(`prompt_tokens=${ev.prompt_tokens}`);
+            if (ev.completion_tokens != null) meta.push(`completion_tokens=${ev.completion_tokens}`);
+            if (ev.total_tokens != null) meta.push(`total_tokens=${ev.total_tokens}`);
+            if (ev.query && debugFilters.showContent) meta.push(`query=${ev.query}`);
+            if (ev.output && debugFilters.showContent) meta.push(`output=${ev.output}`);
+            if (meta.length) {
+                const metaEl = document.createElement('div');
+                metaEl.className = 'debug-trace-event-meta';
+                metaEl.textContent = meta.join('\n');
+                item.appendChild(metaEl);
+            }
+            wrapper.appendChild(item);
+            if (Number.isFinite(ts)) lastTs = ts;
+        }
+        return wrapper;
+    }
+
+    function renderDebugNode(callId, siblingPrevEndTs) {
+        const node = debugTraceNodes.get(callId);
+        if (!node || !node.visible) return null;
+        const metrics = computeDebugNodeMetrics(node);
+        const latest = node.latestEvent || {};
+        const status = getEffectiveDebugNodeStatus(node);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'debug-trace-node';
+        wrapper.dataset.callId = node.callId;
+
+        const card = document.createElement('div');
+        card.className = 'debug-trace-card';
+        if (isDebugNodeWaiting(node)) card.classList.add('waiting');
+        if (isDebugNodeFailed(node)) card.classList.add('failed');
+        if (node.callId === debugAutoFocusedFailureId) card.classList.add('focused');
+
+        const head = document.createElement('div');
+        head.className = 'debug-trace-head';
+
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'debug-trace-toggle';
+        toggle.textContent = node.collapsed ? '+' : '−';
+        toggle.setAttribute('aria-expanded', node.collapsed ? 'false' : 'true');
+
+        const badge = document.createElement('span');
+        badge.className = `debug-trace-badge ${status[1]}`;
+        badge.textContent = status[0];
+
+        const skill = document.createElement('div');
+        skill.className = 'debug-trace-skill';
+        skill.textContent = node.skill || 'unknown';
+
+        const timing = document.createElement('div');
+        timing.className = 'debug-trace-time';
+        timing.textContent = metrics.totalMs ? fmtMs(metrics.totalMs) : '';
+
+        head.appendChild(toggle);
+        head.appendChild(badge);
+        head.appendChild(skill);
+        head.appendChild(timing);
+        card.appendChild(head);
+
+        const summary = document.createElement('div');
+        summary.className = 'debug-trace-summary';
+        [
+            `own ${fmtMs(metrics.ownMs)}`,
+            `total ${fmtMs(metrics.subtreeMs)}`,
+            metrics.childCount > 0 ? `child ${fmtMs(metrics.childMs)}` : '',
+            `children ${metrics.childCount}`,
+            `start ${metrics.startClock}`,
+            getEffectiveDebugNodePhase(node) ? `phase ${getEffectiveDebugNodePhase(node)}` : '',
+            latest.prompt_tokens != null ? `prompt ${latest.prompt_tokens}` : '',
+            latest.completion_tokens != null ? `completion ${latest.completion_tokens}` : '',
+            latest.total_tokens != null ? `total_tokens ${latest.total_tokens}` : '',
+            node.resultCode ? `result ${node.resultCode}` : '',
+            node.mocked ? 'mocked' : '',
+        ].filter(Boolean).forEach((text) => {
+            const pill = document.createElement('div');
+            pill.className = 'debug-trace-summary-pill';
+            pill.textContent = text;
+            summary.appendChild(pill);
+        });
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'debug-trace-body';
+
+        const meta = document.createElement('div');
+        meta.className = 'debug-trace-meta';
+        [
+            latest.call_id ? `call_id=${latest.call_id}` : '',
+            latest.parent_call_id ? `parent=${latest.parent_call_id}` : '',
+            latest.depth ? `depth=${latest.depth}` : '',
+        ].filter(Boolean).forEach((part) => {
+            const code = document.createElement('code');
+            code.textContent = part;
+            meta.appendChild(code);
+        });
+        body.appendChild(meta);
+
+        const details = document.createElement('div');
+        details.className = 'debug-trace-details';
+        if (debugFilters.showContent) {
+            if (latest.query) details.appendChild(createDebugDetailBlock('Query', latest.query));
+            if (latest.output) details.appendChild(createDebugDetailBlock('Output', latest.output));
+        }
+        if (node.failReason) details.appendChild(createDebugDetailBlock('Failure', node.failReason));
+        details.appendChild(createDebugDetailBlock('Event Timeline', ''));
+        details.lastChild.querySelector('.debug-trace-detail-body').replaceWith(createDebugEventTimeline(node));
+        body.appendChild(details);
+
+        const children = document.createElement('div');
+        children.className = 'debug-trace-children';
+        let prevEndTs = null;
+        for (const childId of node.children) {
+            const child = debugTraceNodes.get(childId);
+            const childEl = renderDebugNode(childId, prevEndTs);
+            if (!childEl) continue;
+            if (prevEndTs != null && child?.startedTs != null && child.startedTs - prevEndTs >= 1000) {
+                const gap = document.createElement('div');
+                gap.className = 'debug-trace-gap';
+                gap.textContent = `Sibling gap ${fmtMs(child.startedTs - prevEndTs)}`;
+                children.appendChild(gap);
+            }
+            children.appendChild(childEl);
+            if (child?.finishedTs != null) prevEndTs = child.finishedTs;
+        }
+        if (children.childNodes.length) body.appendChild(children);
+
+        card.appendChild(body);
+        if (node.collapsed) card.classList.add('collapsed');
+        wrapper.appendChild(card);
+
+        const toggleNode = (event) => {
+            if (event) event.preventDefault();
+            debugUserTouchedTree = true;
+            node.collapsed = !node.collapsed;
+            renderDebugTraceTree();
+        };
+        head.addEventListener('click', () => toggleNode());
+        toggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleNode(event);
+        });
+        return wrapper;
+    }
+
+    function renderDebugTraceTree() {
+        if (!debugTreeEl) return;
+        for (const rootId of debugTraceRootIds) {
+            computeDebugVisibility(rootId);
+        }
+        if (!debugUserTouchedTree) {
+            debugAutoFocusedFailureId = applyDebugFailureFocus();
+        }
+        debugTreeEl.innerHTML = '';
+        let rendered = 0;
+        for (const rootId of debugTraceRootIds) {
+            const nodeEl = renderDebugNode(rootId, null);
+            if (!nodeEl) continue;
+            debugTreeEl.appendChild(nodeEl);
+            rendered += 1;
+        }
+        if (!rendered) {
+            const empty = document.createElement('div');
+            empty.className = 'debug-tree-empty' + (debugFilters.failedOnly && debugFilters.waitingOnly ? ' error' : '');
+            empty.textContent = debugTraceNodes.size
+                ? 'No trace nodes match the current filters.'
+                : 'Debug trace will appear here.';
+            debugTreeEl.appendChild(empty);
+        }
+        renderDebugSummary();
+        if (debugAutoFocusedFailureId) {
+            requestAnimationFrame(() => {
+                const target = debugTreeEl.querySelector(`[data-call-id="${debugAutoFocusedFailureId}"]`);
+                if (target) target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            });
+        }
+    }
+
+    function appendDebugTrace(ev) {
+        if (!ev) return;
+        const label = {
+            call_start: 'START',
+            call_finish: ev.result_code === 'pass' ? 'DONE' : 'FAIL',
+            subcall_start: 'START',
+            subcall_finish: ev.result_code === 'pass' ? 'DONE' : 'FAIL',
+            heartbeat: getHeartbeatLabel(ev),
+        }[ev.type] || 'INFO';
+        const depth = Math.max(1, Number(ev.depth || 1));
+        const indent = '  '.repeat(depth - 1);
+        const timing = ev.elapsed_ms != null ? `  ${(Number(ev.elapsed_ms) / 1000).toFixed(1)}s` : '';
+        if (debugTraceLogEl) {
+            debugTraceLogEl.value += `${indent}${label}  ${ev.skill || 'unknown'}${timing}\n`;
+            debugTraceLogEl.scrollTop = debugTraceLogEl.scrollHeight;
+        }
+
+        if (!debugTreeEl) return;
+        if (!ev.call_id) return;
+        const node = ensureDebugNode(ev);
+        recordDebugEvent(node, ev);
+        linkDebugParentChild(node);
+        updateDebugParentActiveChildState(ev);
+        if (!debugBatchRendering) renderDebugTraceTree();
+    }
+
+    function resetDebugTraceTree() {
+        debugTraceNodes = new Map();
+        debugTraceRootIds = [];
+        debugUserTouchedTree = false;
+        debugAutoFocusedFailureId = '';
+        debugMockSkillIds = new Set();
+        if (debugTreeEl) {
+            debugTreeEl.innerHTML = '<div class="debug-tree-empty">Debug trace will appear here.</div>';
+        }
+        if (debugTraceLogEl) {
+            debugTraceLogEl.value = '';
+        }
+        if (debugSummaryEl) {
+            debugSummaryEl.innerHTML = '';
+        }
+    }
+
+    function setDebugTraceMode(mode) {
+        debugTraceMode = mode === 'log' ? 'log' : 'tree';
+        if (debugTreeViewEl) debugTreeViewEl.hidden = debugTraceMode !== 'tree';
+        if (debugLogViewEl) debugLogViewEl.hidden = debugTraceMode !== 'log';
+        if (debugViewTreeBtn) debugViewTreeBtn.classList.toggle('active', debugTraceMode === 'tree');
+        if (debugViewLogBtn) debugViewLogBtn.classList.toggle('active', debugTraceMode === 'log');
+    }
+
     skillDataViewBtn?.addEventListener('click', () => {
         if (!skillDataViewer) return;
         const nextHidden = !skillDataViewer.hidden;
@@ -288,6 +1386,7 @@
         if (abortController) abortController.abort();
         abortController = new AbortController();
         outputEl.value = '';
+        resetTrace();
         metricsEl.style.display = 'none';
         ttftEl.textContent = 'TTFT: —';
         tpsEl.textContent = 'TPS: —';
@@ -307,7 +1406,10 @@
         try {
             const resp = await fetch(proxyUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Skill-Trace': '1',
+                },
                 body,
                 signal: abortController.signal,
             });
@@ -333,6 +1435,9 @@
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
             let buf = '';
+            let pendingEvent = '';
+            let sawDone = false;
+            let sawFinalResult = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -343,27 +1448,65 @@
 
                 for (const line of lines) {
                     const trimmed = line.trim();
+                    if (!trimmed) {
+                        pendingEvent = '';
+                        continue;
+                    }
+                    if (trimmed.startsWith(':')) continue;
+                    if (trimmed.startsWith('event:')) {
+                        pendingEvent = trimmed.slice(6).trim();
+                        continue;
+                    }
                     if (!trimmed.startsWith('data:')) continue;
                     const data = trimmed.slice(5).trim();
-                    if (data === '[DONE]') continue;
+                    if (data === '[DONE]') {
+                        sawDone = true;
+                        pendingEvent = '';
+                        continue;
+                    }
+
                     try {
                         const chunk = JSON.parse(data);
-                        const delta = chunk?.choices?.[0]?.delta?.content;
-                        if (delta) {
+                        if (pendingEvent === 'skill_trace') {
+                            appendTrace(chunk);
+                        } else if (pendingEvent === 'skill_result') {
+                            const content = extractTextContent(chunk?.choices?.[0]?.message?.content);
+                            outputEl.value = content;
+                            sawFinalResult = true;
                             if (firstTokenTime === 0) {
                                 firstTokenTime = performance.now();
                                 ttftEl.textContent = 'TTFT: ' + fmtMs(firstTokenTime - startTime);
                                 metricsEl.style.display = '';
                             }
-                            outputEl.value += delta;
-                            tokenCount++;
-                            if (firstTokenTime > 0) {
-                                const elapsed = (performance.now() - firstTokenTime) / 1000;
-                                if (elapsed > 0) tpsEl.textContent = 'TPS: ' + (tokenCount / elapsed).toFixed(1);
+                            tokenCount = Math.max(1, content.split(/\s+/).filter(Boolean).length);
+                            const elapsed = (performance.now() - firstTokenTime) / 1000;
+                            if (elapsed > 0) tpsEl.textContent = 'TPS: ' + (tokenCount / elapsed).toFixed(1);
+                        } else {
+                            const delta = chunk?.choices?.[0]?.delta?.content;
+                            if (delta) {
+                                if (firstTokenTime === 0) {
+                                    firstTokenTime = performance.now();
+                                    ttftEl.textContent = 'TTFT: ' + fmtMs(firstTokenTime - startTime);
+                                    metricsEl.style.display = '';
+                                }
+                                outputEl.value += delta;
+                                tokenCount++;
+                                if (firstTokenTime > 0) {
+                                    const elapsed = (performance.now() - firstTokenTime) / 1000;
+                                    if (elapsed > 0) tpsEl.textContent = 'TPS: ' + (tokenCount / elapsed).toFixed(1);
+                                }
                             }
                         }
                     } catch (_) {}
+                    pendingEvent = '';
                 }
+            }
+            if (!sawDone) {
+                throw new Error('Trace stream ended before [DONE].');
+            }
+            if (!sawFinalResult) {
+                setStatus('Failed. See trace for details.', true);
+                return;
             }
             setStatus('Done.', false);
         } catch (err) {
@@ -381,6 +1524,158 @@
     cancelBtn.addEventListener('click', () => {
         if (abortController) { abortController.abort(); abortController = null; }
     });
+
+    if (canManage && debugRunBtn) {
+        const setDebugPanelVisible = (visible) => {
+            if (!debugPanelBodyEl || !debugPanelToggleBtn) return;
+            debugPanelBodyEl.hidden = !visible;
+            debugPanelToggleBtn.textContent = visible ? 'Hide' : 'Show';
+            debugPanelToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        };
+        setDebugPanelVisible(false);
+        debugPanelToggleBtn?.addEventListener('click', () => {
+            const nextVisible = !!debugPanelBodyEl?.hidden;
+            setDebugPanelVisible(nextVisible);
+        });
+
+        const setDebugMocksVisible = (visible) => {
+            if (!debugMocksEditorEl || !debugMocksToggleBtn) return;
+            debugMocksEditorEl.hidden = !visible;
+            debugMocksToggleBtn.textContent = visible ? 'Hide' : 'Show';
+            debugMocksToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        };
+        setDebugMocksVisible(false);
+        debugMocksToggleBtn?.addEventListener('click', () => {
+            const nextVisible = !!debugMocksEditorEl?.hidden;
+            setDebugMocksVisible(nextVisible);
+        });
+        setDebugTraceMode('tree');
+        debugViewTreeBtn?.addEventListener('click', () => setDebugTraceMode('tree'));
+        debugViewLogBtn?.addEventListener('click', () => setDebugTraceMode('log'));
+        const syncDebugFilters = () => {
+            debugFilters.failedOnly = !!debugFilterFailedEl?.checked;
+            debugFilters.showContent = debugFilterShowContentEl ? !!debugFilterShowContentEl.checked : true;
+            debugFilters.search = debugFilterSearchEl?.value || '';
+            renderDebugTraceTree();
+        };
+        debugFilterFailedEl?.addEventListener('change', syncDebugFilters);
+        debugFilterShowContentEl?.addEventListener('change', syncDebugFilters);
+        debugFilterSearchEl?.addEventListener('input', syncDebugFilters);
+
+        debugRunBtn.addEventListener('click', async () => {
+            const prompt = (debugInputEl.value || '').trim();
+            if (!prompt) { setDebugStatus('Enter a debug query first.', true); return; }
+
+            let mocks = undefined;
+            const rawMocks = (debugMocksEl.value || '').trim();
+            if (rawMocks) {
+                try {
+                    mocks = JSON.parse(rawMocks);
+                    if (!mocks || Array.isArray(mocks) || typeof mocks !== 'object') {
+                        throw new Error('Mocks must be a JSON object.');
+                    }
+                } catch (err) {
+                    setDebugStatus(err.message || 'Invalid mocks JSON.', true);
+                    return;
+                }
+            }
+
+            if (debugAbortController) debugAbortController.abort();
+            debugAbortController = new AbortController();
+            resetDebugTraceTree();
+            debugOutputEl.value = '';
+            setDebugSending(true);
+            setDebugStatus('Running debug…', false);
+
+            const body = {
+                model: normalFuncname,
+                messages: [{ role: 'user', content: prompt }],
+                stream: true,
+            };
+            debugMockSkillIds = new Set(Object.keys(mocks || {}));
+            if (mocks) body.mocks = mocks;
+
+            try {
+                const resp = await fetch(`/proxy/skills/debug/${encodeURIComponent(owner)}/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                    signal: debugAbortController.signal,
+                });
+                if (!resp.ok) {
+                    const text = await resp.text();
+                    throw new Error(`HTTP ${resp.status}: ${text || 'request failed'}`);
+                }
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '';
+                let pendingEvent = '';
+                let sawDone = false;
+                let sawFinalResult = false;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    const lines = buf.split('\n');
+                    buf = lines.pop();
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                            pendingEvent = '';
+                            continue;
+                        }
+                        if (trimmed.startsWith(':')) continue;
+                        if (trimmed.startsWith('event:')) {
+                            pendingEvent = trimmed.slice(6).trim();
+                            continue;
+                        }
+                        if (!trimmed.startsWith('data:')) continue;
+                        const data = trimmed.slice(5).trim();
+                        if (data === '[DONE]') {
+                            sawDone = true;
+                            pendingEvent = '';
+                            continue;
+                        }
+                        try {
+                            const chunk = JSON.parse(data);
+                            if (pendingEvent === 'skill_trace') {
+                                appendDebugTrace(chunk);
+                            } else if (pendingEvent === 'skill_result') {
+                                debugOutputEl.value = extractTextContent(chunk?.choices?.[0]?.message?.content);
+                                sawFinalResult = true;
+                            }
+                        } catch (_) {}
+                        pendingEvent = '';
+                    }
+                }
+                if (!sawDone) {
+                    throw new Error('Debug trace stream ended before [DONE].');
+                }
+                if (!sawFinalResult) {
+                    setDebugStatus('Debug run failed. See trace for details.', true);
+                    return;
+                }
+                setDebugStatus('Debug complete.', false);
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    setDebugStatus('Cancelled.', false);
+                } else {
+                    setDebugStatus(err.message || String(err), true);
+                }
+            } finally {
+                debugAbortController = null;
+                setDebugSending(false);
+            }
+        });
+
+        debugCancelBtn.addEventListener('click', () => {
+            if (debugAbortController) {
+                debugAbortController.abort();
+                debugAbortController = null;
+            }
+        });
+
+    }
 
     function copyTextFromElement(id) {
         const el = document.getElementById(id);
