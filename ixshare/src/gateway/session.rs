@@ -359,11 +359,11 @@ async fn CallModelBackend(
     let client = Client::new();
 
     let mut model_messages = Vec::new();
-    model_messages.push(ModelMessage {
-        role: "system".to_string(),
-        content: "You are a helpful assistant.".to_string(),
-        tool_calls: None,
-    });
+            model_messages.push(ModelMessage {
+                role: "system".to_string(),
+                content: "You are a helpful assistant. When responding, ALWAYS use proper markdown formatting with explicit newlines:\n\n1. Use double newlines (\\n\\n) to separate paragraphs\n2. Use single newlines for line breaks within sections\n3. Format lists with each item on its own line\n4. Format tables with each row on its own line\n5. Use headers (###) on their own lines with blank lines before and after\n6. NEVER run text together without proper spacing\n\nYour responses should be well-formatted markdown that renders correctly.".to_string(),
+                tool_calls: None,
+            });
 
     for msg in messages {
         model_messages.push(ModelMessage {
@@ -752,7 +752,7 @@ pub async fn HandlePromptStream(
         let mut modelMessages = Vec::new();
         modelMessages.push(ModelMessage {
             role: "system".to_string(),
-            content: "You are a helpful assistant.".to_string(),
+            content: "You are a helpful assistant. When responding, ALWAYS use proper markdown formatting with explicit newlines:\n\n1. Use double newlines (\\n\\n) to separate paragraphs\n2. Use single newlines for line breaks within sections\n3. Format lists with each item on its own line\n4. Format tables with each row on its own line\n5. Use headers (###) on their own lines with blank lines before and after\n6. NEVER run text together without proper spacing\n\nYour responses should be well-formatted markdown that renders correctly.".to_string(),
             tool_calls: None,
         });
 

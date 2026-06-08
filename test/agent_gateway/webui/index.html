@@ -2,8 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agent Gateway - Session Chat</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js?v=4.3.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js?v=3.0.6"></script>
     <style>
         * {
             margin: 0;
@@ -67,6 +70,7 @@
             border-radius: 8px;
             line-height: 1.6;
             font-size: 0.95rem;
+            overflow-x: auto;
         }
 
         .message.user .message-content {
@@ -75,7 +79,95 @@
 
         .message.assistant .message-content {
             background: #16213e;
-            white-space: pre-wrap;
+            white-space: normal;
+        }
+
+        /* Markdown styles */
+        .message-content :where(h1, h2, h3, h4, h5, h6) {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
+        .message-content :where(h1) { font-size: 1.75em; }
+        .message-content :where(h2) { font-size: 1.5em; }
+        .message-content :where(h3) { font-size: 1.25em; }
+        .message-content :where(h4) { font-size: 1em; }
+
+        .message-content :where(p) {
+            margin: 0.8em 0;
+        }
+
+        .message-content :where(code) {
+            background: #0a0a15;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+        }
+
+        .message-content :where(pre) {
+            background: #0a0a15;
+            padding: 1em;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 0.8em 0;
+        }
+
+        .message-content :where(pre code) {
+            background: none;
+            padding: 0;
+            font-size: 0.85em;
+            line-height: 1.5;
+        }
+
+        .message-content :where(blockquote) {
+            border-left: 3px solid #e94560;
+            padding-left: 1em;
+            margin: 0.8em 0;
+            color: #888;
+        }
+
+        .message-content :where(ul, ol) {
+            padding-left: 1.5em;
+            margin: 0.8em 0;
+        }
+
+        .message-content :where(li) {
+            margin: 0.3em 0;
+        }
+
+        .message-content :where(table) {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 0.8em 0;
+        }
+
+        .message-content :where(th, td) {
+            border: 1px solid #0f3460;
+            padding: 0.5em 0.8em;
+            text-align: left;
+        }
+
+        .message-content :where(th) {
+            background: #0f3460;
+            font-weight: 600;
+        }
+
+        .message-content :where(a) {
+            color: #e94560;
+            text-decoration: none;
+        }
+
+        .message-content :where(a:hover) {
+            text-decoration: underline;
+        }
+
+        .message-content :where(hr) {
+            border: none;
+            border-top: 1px solid #0f3460;
+            margin: 1.5em 0;
         }
 
         .error {
@@ -137,6 +229,13 @@
             color: #888;
             font-size: 0.85rem;
             margin-left: 16px;
+            font-style: italic;
+        }
+
+        .message-content[style*="background: #1a3a2e"] {
+            font-family: monospace;
+            font-size: 0.9rem;
+            padding: 8px 12px;
         }
     </style>
 </head>
@@ -158,28 +257,17 @@
     </div>
 
     <script>
-        const API_BASE = window.location.origin;
-        let currentSessionId = null;
+        // Use the ixshare gateway endpoint that we tested
+        const API_BASE = "http://192.168.0.44:31501";
+        let currentSessionId = "auto";  // Will be set on first message
 
         async function createNewSession() {
-            const container = document.getElementById('chatContainer');
-            try {
-                const response = await fetch(`${API_BASE}/sessions`, { method: 'POST' });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
-                const data = await response.json();
-                currentSessionId = data.session.id;
-                updateSessionInfo();
-                clearChat();
-                addMessage('assistant', 'New session started! How can I help you?');
-            } catch (error) {
-                console.error('Create session error:', error);
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error';
-                errorDiv.textContent = 'Failed to create session: ' + error.message + '. Make sure the server is running at ' + API_BASE;
-                container.appendChild(errorDiv);
-                container.scrollTop = container.scrollHeight;
-            }
+            // Auto-create session is now handled by the prompt endpoint
+            // Just set a unique session ID for this chat
+            currentSessionId = "session-" + Date.now();
+            updateSessionInfo();
+            clearChat();
+            addMessage('assistant', 'New session started! How can I help you?');
         }
 
         function updateSessionInfo() {
@@ -218,13 +306,14 @@
             const sendBtn = document.getElementById('sendBtn');
             const message = input.value.trim();
             
-            if (!message || !currentSessionId) {
-                if (!currentSessionId) {
-                    await createNewSession();
-                    if (!currentSessionId) return;
-                } else {
-                    return;
-                }
+            if (!message) {
+                return;
+            }
+
+            // Generate a new session ID if this is the first message
+            if (!currentSessionId || currentSessionId === "auto") {
+                currentSessionId = "session-" + Date.now();
+                updateSessionInfo();
             }
 
             input.value = '';
@@ -246,36 +335,97 @@
                 const response = await fetch(`${API_BASE}/sessions/${currentSessionId}/prompt_stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message, stream: false })
+                    body: JSON.stringify({ message, stream: true })
                 });
 
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                thinkingDiv.remove();
-
+                
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let fullContent = '';
-
+                
+                // Create a new message div for streaming
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message assistant`;
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                messageDiv.appendChild(contentDiv);
+                container.insertBefore(messageDiv, thinkingDiv);
+                
+                // Configure marked
+                marked.setOptions({
+                    async: false,
+                    breaks: true,
+                    gfm: true,
+                    headerIds: false,
+                    mangle: false
+                });
+                
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
-                    const chunk = decoder.decode(value);
+                    
+                    const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
-
+                    
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            if (data === '[DONE]' || data.startsWith('{"message_id":')) continue;
-                            fullContent += data + '\n';
+                        if (!line.startsWith('data: ')) continue;
+                        
+                        const dataStr = line.slice(6);
+                        
+                        if (dataStr.trim() === '' || dataStr.trim() === '[DONE]') continue;
+                        if (line.trim().startsWith('event:')) continue;
+                        
+                        try {
+                            const data = JSON.parse(dataStr);
+                            
+                            if (data.content !== undefined && data.content !== null) {
+                                fullContent += data.content;
+                                // Accumulate only - don't render during streaming
+                            }
+                        } catch (e) {
+                            if (dataStr.trim()) {
+                                fullContent += dataStr;
+                            }
                         }
                     }
                 }
-
-                // Render raw text with newlines converted to <br>
-                const contentDiv = addMessage('assistant', '');
-                contentDiv.innerHTML = fullContent.replace(/\n/g, '<br>');
+                
+                // Render ONLY after stream completes
+                if (fullContent) {
+                    try {
+                        // HACK: The LLM in this environment sends text with ZERO newlines.
+                        // We must inject newlines before markdown structures for marked to work.
+                        // This is a workaround for broken LLM output.
+                        let processed = fullContent
+                            // Headers (##) at start of string
+                            .replace(/^##/, '\n\n##')
+                            // Headers (##) after any character
+                            .replace(/([^#\n])##/g, '$1\n\n##')
+                            // Bold headers followed by list items (**Title**- Item)
+                            .replace(/\*\*([^*]+)\*\*(-)/g, '\n\n**$1**\n$2')
+                            // List items (- or *) after non-list character
+                            .replace(/([^\n-])([-*] )/g, '$1\n$2')
+                            // Clean up excessive blank lines
+                            .replace(/\n{3,}/g, '\n\n');
+                        
+                        marked.setOptions({
+                            gfm: true,
+                            breaks: true,
+                            headerIds: false,
+                            mangle: false
+                        });
+                        
+                        const html = DOMPurify.sanitize(marked.parse(processed));
+                        contentDiv.innerHTML = html;
+                    } catch (e) {
+                        console.error('Markdown render error:', e);
+                        contentDiv.textContent = fullContent;
+                    }
+                }
+                
+                // Remove thinking indicator
+                thinkingDiv.remove();
 
             } catch (error) {
                 thinkingDiv.remove();
@@ -290,24 +440,29 @@
             }
         }
 
-        // Event listeners
-        document.getElementById('sendBtn').addEventListener('click', sendMessage);
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            // Event listeners
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
 
-        document.getElementById('messageInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
+            document.getElementById('messageInput').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
 
-        document.getElementById('messageInput').addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-        });
+            // Textarea auto-resize
+            document.getElementById('messageInput').addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+            });
 
-        // Auto-create session on load if needed
-        window.addEventListener('load', async () => {
-            await createNewSession();
+            // Auto-create session on load
+            currentSessionId = "session-" + Date.now();
+            updateSessionInfo();
+            clearChat();
+            addMessage('assistant', 'New session started! How can I help you?');
         });
     </script>
 </body>
