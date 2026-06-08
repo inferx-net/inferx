@@ -301,6 +301,32 @@
         color: #64748b;
         white-space: nowrap;
     }
+    .debug-trace-detail-toggle {
+        flex: 0 0 auto;
+        cursor: pointer;
+        color: #475569;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        background: transparent;
+        border: 0;
+        padding: 0;
+    }
+    .debug-trace-detail-toggle::before {
+        content: '+';
+        display: inline-block;
+        width: 14px;
+        margin-right: 6px;
+        color: #64748b;
+    }
+    .debug-trace-detail-toggle.expanded::before {
+        content: '−';
+    }
+    .debug-trace-details {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+    }
     .debug-trace-summary {
         display: flex;
         gap: 6px;
@@ -851,6 +877,7 @@
             failReason: '',
             resultLabel: 'START',
             collapsed: false,
+            detailsExpanded: false,
             mocked: false,
             hasFailureDescendant: false,
             hasFailedDescendant: false,
@@ -1190,6 +1217,12 @@
         skill.className = 'debug-trace-skill';
         skill.textContent = node.skill || 'unknown';
 
+        const detailsToggle = document.createElement('button');
+        detailsToggle.type = 'button';
+        detailsToggle.className = 'debug-trace-detail-toggle' + (node.detailsExpanded ? ' expanded' : '');
+        detailsToggle.textContent = node.detailsExpanded ? 'Details' : 'Details';
+        detailsToggle.setAttribute('aria-expanded', node.detailsExpanded ? 'true' : 'false');
+
         const timing = document.createElement('div');
         timing.className = 'debug-trace-time';
         timing.textContent = metrics.totalMs ? fmtMs(metrics.totalMs) : '';
@@ -1197,6 +1230,7 @@
         head.appendChild(toggle);
         head.appendChild(badge);
         head.appendChild(skill);
+        head.appendChild(detailsToggle);
         head.appendChild(timing);
         card.appendChild(head);
 
@@ -1220,7 +1254,6 @@
             pill.textContent = text;
             summary.appendChild(pill);
         });
-        card.appendChild(summary);
 
         const body = document.createElement('div');
         body.className = 'debug-trace-body';
@@ -1236,10 +1269,11 @@
             code.textContent = part;
             meta.appendChild(code);
         });
-        body.appendChild(meta);
 
         const details = document.createElement('div');
         details.className = 'debug-trace-details';
+        details.appendChild(summary);
+        if (meta.childNodes.length) details.appendChild(meta);
         if (debugFilters.showContent) {
             if (latest.query) details.appendChild(createDebugDetailBlock('Query', latest.query));
             if (latest.output) details.appendChild(createDebugDetailBlock('Output', latest.output));
@@ -1247,7 +1281,18 @@
         if (node.failReason) details.appendChild(createDebugDetailBlock('Failure', node.failReason));
         details.appendChild(createDebugDetailBlock('Event Timeline', ''));
         details.lastChild.querySelector('.debug-trace-detail-body').replaceWith(createDebugEventTimeline(node));
-        body.appendChild(details);
+        if (node.detailsExpanded) {
+            body.appendChild(details);
+        }
+        detailsToggle.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+        });
+        detailsToggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            debugUserTouchedTree = true;
+            node.detailsExpanded = !node.detailsExpanded;
+            renderDebugTraceTree();
+        });
 
         const children = document.createElement('div');
         children.className = 'debug-trace-children';
@@ -1272,12 +1317,18 @@
         wrapper.appendChild(card);
 
         const toggleNode = (event) => {
-            if (event) event.preventDefault();
+            if (event) {
+                const target = event.target;
+                if (target instanceof Element && target.closest('.debug-trace-detail-toggle')) {
+                    return;
+                }
+                event.preventDefault();
+            }
             debugUserTouchedTree = true;
             node.collapsed = !node.collapsed;
             renderDebugTraceTree();
         };
-        head.addEventListener('click', () => toggleNode());
+        head.addEventListener('click', (event) => toggleNode(event));
         toggle.addEventListener('click', (event) => {
             event.stopPropagation();
             toggleNode(event);
