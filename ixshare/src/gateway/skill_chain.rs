@@ -992,6 +992,46 @@ async fn execute_parallel_child_call(
 
     let mocked_result = context.debug_mocks.get(&skillep_id).cloned();
     let (tool_result, fail_reason, usage) = if let Some(mocked_result) = mocked_result {
+        if let Some(trace_state) = context.trace.as_ref() {
+            let child_trace = SkillChainChildTraceState {
+                call_id: Uuid::new_v4().to_string(),
+                skill: skillep_id.clone(),
+                started_at: Instant::now(),
+                local_root_call_id: Arc::new(Mutex::new(None)),
+            };
+            let _ = emit_trace_event(
+                trace_state,
+                "subcall_start",
+                &child_trace.call_id,
+                Some(&trace_state.root_call_id),
+                context.direct_child_depth,
+                &child_trace.skill,
+                None,
+                Some("child_call_start"),
+                Some(query.as_str()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+            let _ = emit_trace_event(
+                trace_state,
+                "subcall_finish",
+                &child_trace.call_id,
+                Some(&trace_state.root_call_id),
+                context.direct_child_depth,
+                &child_trace.skill,
+                Some(child_trace.started_at.elapsed().as_millis() as u64),
+                Some("child_call_end"),
+                None,
+                Some(mocked_result.as_str()),
+                Some("pass"),
+                None,
+                None,
+            )
+            .await;
+        }
         (mocked_result, None, None)
     } else {
         match context.current_depth.checked_add(1) {
@@ -2207,8 +2247,8 @@ mod tests {
         parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
         skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
         ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainRequestError, SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER,
-        SKILL_CHAIN_DEPTH_HEADER,
+        SkillChainRequestError, SkillChainTraceState, SkillTraceFailReason,
+        SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use futures::future::BoxFuture;
@@ -2216,8 +2256,10 @@ mod tests {
     use futures::FutureExt;
     use serde_json::{json, Value};
     use std::collections::HashMap;
+    use std::convert::Infallible;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
 
     #[test]
     fn parse_skill_chain_request_rejects_non_empty_top_level_tools() {
@@ -2516,6 +2558,64 @@ mod tests {
         assert_eq!(result.tool_call_id, "call_mock");
         assert_eq!(result.tool_result, "mock child result");
         assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_emits_trace_events_for_debug_mock_results() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let (tx, mut rx) = mpsc::channel::<Result<String, Infallible>>(8);
+        let trace = SkillChainTraceState {
+            tx,
+            root_call_id: "root_call".to_string(),
+            root_skill: "acme/skills/parent".to_string(),
+            started_at: Instant::now(),
+            include_content: true,
+        };
+
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_mock".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
+                        .to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: Some(trace),
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_mock");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
+
+        let start_chunk = rx.recv().await.unwrap().unwrap();
+        let finish_chunk = rx.recv().await.unwrap().unwrap();
+        assert!(start_chunk.contains("event: skill_trace"));
+        assert!(start_chunk.contains("\"type\":\"subcall_start\""));
+        assert!(start_chunk.contains("\"skill\":\"acme/default/pricing\""));
+        assert!(start_chunk.contains("\"query\":\"what now\""));
+
+        assert!(finish_chunk.contains("event: skill_trace"));
+        assert!(finish_chunk.contains("\"type\":\"subcall_finish\""));
+        assert!(finish_chunk.contains("\"result_code\":\"pass\""));
+        assert!(finish_chunk.contains("\"output\":\"mock child result\""));
     }
 
     #[tokio::test]
