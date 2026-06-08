@@ -96,6 +96,10 @@
         line-height: 1.4;
     }
     .playground-field textarea[readonly] { background: #f8fafc; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .playground-field textarea.autogrow {
+        max-height: 70vh;
+        overflow-y: auto;
+    }
     .playground-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .playground-metrics { display: flex; gap: 10px; flex-wrap: wrap; }
     .playground-metric {
@@ -570,7 +574,7 @@
             </div>
             <div class="playground-field">
                 <label for="skill-output">Output</label>
-                <textarea id="skill-output" rows="10" readonly placeholder="Response will appear here…"></textarea>
+                <textarea id="skill-output" class="autogrow" rows="6" readonly placeholder="Response will appear here…"></textarea>
             </div>
         </div>
     </section>
@@ -651,7 +655,7 @@
                 </div>
             <div class="playground-field">
                 <label for="skill-debug-output">Debug Result</label>
-                <textarea id="skill-debug-output" rows="8" readonly placeholder="Final debug result will appear here…"></textarea>
+                <textarea id="skill-debug-output" class="autogrow" rows="8" readonly placeholder="Final debug result will appear here…"></textarea>
             </div>
         </div>
     </section>
@@ -755,9 +759,16 @@
         return String(content);
     }
 
+    function autoResizeTextarea(el) {
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${Math.max(el.scrollHeight, 120)}px`;
+    }
+
     function resetTrace() {
         tracePanelEl.hidden = true;
         traceOutputEl.value = '';
+        autoResizeTextarea(outputEl);
     }
 
     function getHeartbeatLabel(ev) {
@@ -1437,6 +1448,7 @@
         if (abortController) abortController.abort();
         abortController = new AbortController();
         outputEl.value = '';
+        autoResizeTextarea(outputEl);
         resetTrace();
         metricsEl.style.display = 'none';
         ttftEl.textContent = 'TTFT: —';
@@ -1476,6 +1488,7 @@
                 const message = payload?.choices?.[0]?.message;
                 const content = extractTextContent(message?.content);
                 outputEl.value = content;
+                autoResizeTextarea(outputEl);
                 if (!content) {
                     throw new Error('Function returned an empty response.');
                 }
@@ -1523,6 +1536,7 @@
                         } else if (pendingEvent === 'skill_result') {
                             const content = extractTextContent(chunk?.choices?.[0]?.message?.content);
                             outputEl.value = content;
+                            autoResizeTextarea(outputEl);
                             sawFinalResult = true;
                             if (firstTokenTime === 0) {
                                 firstTokenTime = performance.now();
@@ -1541,6 +1555,7 @@
                                     metricsEl.style.display = '';
                                 }
                                 outputEl.value += delta;
+                                autoResizeTextarea(outputEl);
                                 tokenCount++;
                                 if (firstTokenTime > 0) {
                                     const elapsed = (performance.now() - firstTokenTime) / 1000;
@@ -1635,6 +1650,7 @@
             debugAbortController = new AbortController();
             resetDebugTraceTree();
             debugOutputEl.value = '';
+            autoResizeTextarea(debugOutputEl);
             setDebugSending(true);
             setDebugStatus('Running debug…', false);
 
@@ -1693,6 +1709,7 @@
                                 appendDebugTrace(chunk);
                             } else if (pendingEvent === 'skill_result') {
                                 debugOutputEl.value = extractTextContent(chunk?.choices?.[0]?.message?.content);
+                                autoResizeTextarea(debugOutputEl);
                                 sawFinalResult = true;
                             }
                         } catch (_) {}
