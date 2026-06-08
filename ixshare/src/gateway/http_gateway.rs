@@ -69,7 +69,6 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
-use crate::gateway::secret::compute_own_skill_tool_names;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -166,6 +165,8 @@ struct SkillMarketplaceQuery {
     tag: Option<String>,
     #[serde(default)]
     keyword: Option<String>,
+    #[serde(default)]
+    include_unpublished: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2428,6 +2429,7 @@ async fn ListSkillMarketplace(
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
+    let include_unpublished = params.include_unpublished && token.IsInferxAdmin();
     match gw
         .sqlSecret
         .ListMarketplaceSkills(
@@ -2435,6 +2437,7 @@ async fn ListSkillMarketplace(
             params.keyword.as_deref(),
             params.page,
             params.page_size,
+            include_unpublished,
         )
         .await
     {
@@ -2458,14 +2461,8 @@ async fn CreateSkillSubscription(
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
-    if !token.IsTenantAdmin(&subscriber_tenant) {
+    if !token.IsTenantAdmin(&subscriber_tenant) && !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
-    }
-
-    if subscriber_tenant.eq_ignore_ascii_case(req.owner_tenant.trim()) {
-        return Ok(skill_admin_response(Error::CommonError(
-            "cannot subscribe to your own skill".to_string(),
-        )));
     }
 
     let tool_alias = match req.tool_alias.as_deref() {
@@ -2484,22 +2481,6 @@ async fn CreateSkillSubscription(
         },
     };
 
-    let own_skills = match gw
-        .sqlSecret
-        .ListSkillDetailsByTenant(&subscriber_tenant)
-        .await
-    {
-        Ok(skills) => skills,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-    let own_tool_names = compute_own_skill_tool_names(&own_skills);
-    if own_tool_names.values().any(|name| name == &tool_alias) {
-        return Ok(skill_admin_response(Error::Exist(format!(
-            "tool_alias '{}' collides with an own skill tool name",
-            tool_alias
-        ))));
-    }
-
     match gw
         .sqlSecret
         .CreateSkillSubscription(
@@ -2509,6 +2490,7 @@ async fn CreateSkillSubscription(
             req.skillname.trim(),
             &tool_alias,
             &token.username,
+            token.IsInferxAdmin(),
         )
         .await
     {
@@ -2609,22 +2591,6 @@ async fn UpdateSkillSubscription(
         Ok(alias) => alias,
         Err(e) => return Ok(skill_admin_response(e)),
     };
-
-    let own_skills = match gw
-        .sqlSecret
-        .ListSkillDetailsByTenant(&subscriber_tenant)
-        .await
-    {
-        Ok(skills) => skills,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-    let own_tool_names = compute_own_skill_tool_names(&own_skills);
-    if own_tool_names.values().any(|name| name == &tool_alias) {
-        return Ok(skill_admin_response(Error::Exist(format!(
-            "tool_alias '{}' collides with an own skill tool name",
-            tool_alias
-        ))));
-    }
 
     match gw
         .sqlSecret

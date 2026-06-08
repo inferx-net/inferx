@@ -129,6 +129,20 @@
         font: inherit;
     }
 
+    .skills-marketplace-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #334155;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .skills-marketplace-toggle input {
+        margin: 0;
+        min-width: auto;
+    }
+
     .skills-marketplace-pager {
         display: flex;
         align-items: center;
@@ -150,6 +164,27 @@
     .skills-marketplace-description {
         color: #334155;
         min-width: 280px;
+    }
+
+    .skill-visibility-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 9px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.2;
+        margin-bottom: 6px;
+    }
+
+    .skill-visibility-badge.published {
+        background: #dcfce7;
+        color: #166534;
+    }
+
+    .skill-visibility-badge.unpublished {
+        background: #fef3c7;
+        color: #92400e;
     }
 
     .skills-readonly-note {
@@ -272,19 +307,58 @@
                     <th>Namespace</th>
                     <th>Name</th>
                     <th>Model</th>
+                    <th>MCP</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for skill in my_skills %}
-                <tr>
+                <tr
+                    data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                    data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                    data-skillname="{{ skill.get('skillname') }}"
+                >
                     <td>{{ skill.get('owner_namespace') }}</td>
                     <td><a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a></td>
                     <td>{{ skill.get('template_display_name') }}</td>
+                    <td>
+                        <div class="skill-card-alias" data-role="alias-display">
+                            {% if skill.get('is_subscribed') and skill.get('tool_alias') %}
+                            Exposed as <strong>{{ skill.get('tool_alias') }}</strong>
+                            {% else %}
+                            Not exposed
+                            {% endif %}
+                        </div>
+                    </td>
                     <td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>
                     <td>
                         <div class="ix-row-actions">
+                            {% if can_manage_subscriptions %}
+                            {% if skill.get('is_subscribed') %}
+                            <button
+                                class="ix-btn danger"
+                                type="button"
+                                data-action="unsubscribe-marketplace"
+                                data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                                data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                                data-skillname="{{ skill.get('skillname') }}"
+                            >
+                                Unsubscribe
+                            </button>
+                            {% else %}
+                            <button
+                                class="ix-btn"
+                                type="button"
+                                data-action="open-subscribe-modal"
+                                data-owner-tenant="{{ skill.get('owner_tenant') }}"
+                                data-owner-namespace="{{ skill.get('owner_namespace') }}"
+                                data-skillname="{{ skill.get('skillname') }}"
+                            >
+                                Subscribe
+                            </button>
+                            {% endif %}
+                            {% endif %}
                             {% if skill.get('is_published') %}
                             <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
                                 <button class="ix-btn secondary" type="submit">Unpublish</button>
@@ -311,7 +385,7 @@
         <div class="skills-header">
             <div>
                 <h2>My Subscribed Functions</h2>
-                <p class="skills-subtitle">External functions currently available to tenant <strong>{{ active_tenant }}</strong>.</p>
+                <p class="skills-subtitle">Functions currently exposed to tenant <strong>{{ active_tenant }}</strong> through MCP subscriptions.</p>
             </div>
         </div>
 
@@ -363,7 +437,13 @@
         <div class="skills-header">
             <div>
                 <h2>Public</h2>
-                <p class="skills-subtitle">Published functions from all tenants. Subscribe to expose selected external functions to your tenant.</p>
+                <p class="skills-subtitle">
+                    {% if is_inferx_admin and marketplace_include_unpublished %}
+                    Published and unpublished functions from all tenants. Subscribe to expose selected functions to your tenant.
+                    {% else %}
+                    Published functions from all tenants. Subscribe to expose selected external functions to your tenant.
+                    {% endif %}
+                </p>
             </div>
         </div>
         <div class="skills-marketplace-controls">
@@ -379,18 +459,24 @@
                 </label>
                 <input type="hidden" name="page" value="1">
                 <input type="hidden" name="page_size" value="{{ marketplace_page_size or 24 }}">
+                {% if is_inferx_admin %}
+                <label class="skills-marketplace-toggle">
+                    <input type="checkbox" name="include_unpublished" value="1" {% if marketplace_include_unpublished %}checked{% endif %}>
+                    Show drafts
+                </label>
+                {% endif %}
                 <button class="ix-btn" type="submit">Apply</button>
                 {% if marketplace_keyword %}
-                <a class="ix-btn secondary" href="{{ url_for('prefix.SkillMarketplace', page=1, page_size=marketplace_page_size or 24) }}">Clear</a>
+                <a class="ix-btn secondary" href="{% if is_inferx_admin and marketplace_include_unpublished %}{{ url_for('prefix.SkillMarketplace', page=1, page_size=marketplace_page_size or 24, include_unpublished=1) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=1, page_size=marketplace_page_size or 24) }}{% endif %}">Clear</a>
                 {% endif %}
             </form>
             <div class="skills-marketplace-pager">
                 <span>Page {{ marketplace_page or 1 }}</span>
                 {% if (marketplace_page or 1) > 1 %}
-                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24) }}{% endif %}">Previous</a>
+                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword, include_unpublished=1 if is_inferx_admin and marketplace_include_unpublished else None) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) - 1, page_size=marketplace_page_size or 24, include_unpublished=1 if is_inferx_admin and marketplace_include_unpublished else None) }}{% endif %}">Previous</a>
                 {% endif %}
                 {% if marketplace_has_next %}
-                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24) }}{% endif %}">Next</a>
+                <a class="ix-btn secondary" href="{% if marketplace_keyword %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24, keyword=marketplace_keyword, include_unpublished=1 if is_inferx_admin and marketplace_include_unpublished else None) }}{% else %}{{ url_for('prefix.SkillMarketplace', page=(marketplace_page or 1) + 1, page_size=marketplace_page_size or 24, include_unpublished=1 if is_inferx_admin and marketplace_include_unpublished else None) }}{% endif %}">Next</a>
                 {% endif %}
             </div>
         </div>
@@ -421,6 +507,11 @@
                     <td class="skills-marketplace-description">{{ skill.get('description') or 'No description provided.' }}</td>
                     <td>{% if skill.get('earning_type') == 'free' %}Free{% elif skill.get('user_price_microcents') is not none %}${{ '%.4f'|format((skill.get('user_price_microcents')|int) / 1000000) }}/run{% else %}Paid{% endif %}</td>
                     <td>
+                        <div>
+                            <span class="skill-visibility-badge {{ 'published' if skill.get('is_published') else 'unpublished' }}">
+                                {{ 'Published' if skill.get('is_published') else 'Unpublished' }}
+                            </span>
+                        </div>
                         <div class="skill-card-alias" data-role="alias-display">
                             {% if skill.get('is_subscribed') and skill.get('tool_alias') %}
                             Subscribed as <strong>{{ skill.get('tool_alias') }}</strong>
@@ -465,7 +556,7 @@
             </tbody>
         </table>
         {% else %}
-        <div class="skills-empty">No published functions are currently available.</div>
+        <div class="skills-empty">{% if is_inferx_admin and marketplace_include_unpublished %}No functions are currently available.{% else %}No published functions are currently available.{% endif %}</div>
         {% endif %}
     </section>
     {% endif %}
@@ -502,7 +593,6 @@
         const unsubscribeUrl = {{ url_for('prefix.SkillSubscriptionUnsubscribe') | tojson }};
         const updateAliasUrl = {{ url_for('prefix.SkillSubscriptionUpdateAlias') | tojson }};
 
-        const marketplaceRoot = document.getElementById('skills-marketplace');
         const subscriptionsRoot = document.getElementById('skills-subscriptions');
         const modal = document.getElementById('skill-subscribe-modal');
         const modalSkillText = document.getElementById('skill-subscribe-modal-skill');
@@ -534,40 +624,31 @@
             return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(alias);
         }
 
-        function setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, alias) {
-            if (!marketplaceRoot) return;
-            const card = marketplaceRoot.querySelector(`[data-owner-tenant="${CSS.escape(ownerTenant)}"][data-owner-namespace="${CSS.escape(ownerNamespace)}"][data-skillname="${CSS.escape(skillname)}"]`);
-            if (!card) return;
+        function setSkillSubscribed(ownerTenant, ownerNamespace, skillname, alias) {
+            const rows = document.querySelectorAll(
+                `[data-owner-tenant="${CSS.escape(ownerTenant)}"][data-owner-namespace="${CSS.escape(ownerNamespace)}"][data-skillname="${CSS.escape(skillname)}"]`
+            );
+            rows.forEach((row) => {
+                const aliasDisplay = row.querySelector('[data-role="alias-display"]');
+                if (aliasDisplay) {
+                    aliasDisplay.innerHTML = alias ? `Exposed as <strong>${alias}</strong>` : 'Not exposed';
+                    if (row.closest('#skills-marketplace')) {
+                        aliasDisplay.innerHTML = alias ? `Subscribed as <strong>${alias}</strong>` : 'Not subscribed';
+                    }
+                }
 
-            const aliasDisplay = card.querySelector('[data-role="alias-display"]');
-            if (aliasDisplay) {
-                aliasDisplay.innerHTML = alias ? `Subscribed as <strong>${alias}</strong>` : 'Not subscribed';
-            }
+                const actions = row.querySelector('.ix-row-actions');
+                if (!actions) return;
+                const subscribeButton = actions.querySelector('button[data-action="open-subscribe-modal"], button[data-action="unsubscribe-marketplace"]');
+                if (!subscribeButton) return;
 
-            const actions = card.querySelector('.ix-row-actions');
-            if (!actions) return;
-            actions.innerHTML = '';
-            if (alias) {
-                const button = document.createElement('button');
-                button.className = 'ix-btn danger';
-                button.type = 'button';
-                button.dataset.action = 'unsubscribe-marketplace';
-                button.dataset.ownerTenant = ownerTenant;
-                button.dataset.ownerNamespace = ownerNamespace;
-                button.dataset.skillname = skillname;
-                button.textContent = 'Unsubscribe';
-                actions.appendChild(button);
-            } else {
-                const button = document.createElement('button');
-                button.className = 'ix-btn';
-                button.type = 'button';
-                button.dataset.action = 'open-subscribe-modal';
-                button.dataset.ownerTenant = ownerTenant;
-                button.dataset.ownerNamespace = ownerNamespace;
-                button.dataset.skillname = skillname;
-                button.textContent = 'Subscribe';
-                actions.appendChild(button);
-            }
+                subscribeButton.className = alias ? 'ix-btn danger' : 'ix-btn';
+                subscribeButton.dataset.action = alias ? 'unsubscribe-marketplace' : 'open-subscribe-modal';
+                subscribeButton.dataset.ownerTenant = ownerTenant;
+                subscribeButton.dataset.ownerNamespace = ownerNamespace;
+                subscribeButton.dataset.skillname = skillname;
+                subscribeButton.textContent = alias ? 'Unsubscribe' : 'Subscribe';
+            });
         }
 
         function removeSubscriptionRow(ownerTenant, ownerNamespace, skillname) {
@@ -696,7 +777,7 @@
             }).then(parseJsonResponse);
         }
 
-        marketplaceRoot?.addEventListener('click', (event) => {
+        document.addEventListener('click', (event) => {
             const button = event.target.closest('button[data-action]');
             if (!button) return;
             const ownerTenant = button.dataset.ownerTenant || '';
@@ -708,7 +789,7 @@
                 if (!window.confirm('Unsubscribe from this function?')) return;
                 unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
                     .then(() => {
-                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');
+                        setSkillSubscribed(ownerTenant, ownerNamespace, skillname, '');
                         removeSubscriptionRow(ownerTenant, ownerNamespace, skillname);
                         window.location.reload();
                     })
@@ -768,7 +849,7 @@
                         }
                         if (aliasEdit) aliasEdit.hidden = true;
                         if (aliasInput) aliasInput.value = payload.tool_alias || '';
-                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || '');
+                        setSkillSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || '');
                     })
                     .catch((error) => {
                         if (aliasError) aliasError.textContent = error.message || 'Failed to update alias';
@@ -780,7 +861,7 @@
                 if (!window.confirm('Unsubscribe from this function?')) return;
                 unsubscribeSkill(ownerTenant, ownerNamespace, skillname)
                     .then(() => {
-                        setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, '');
+                        setSkillSubscribed(ownerTenant, ownerNamespace, skillname, '');
                         row.remove();
                         window.location.reload();
                     })
@@ -812,7 +893,7 @@
             submitSubscription(ownerTenant, ownerNamespace, skillname, alias)
                 .then((payload) => {
                     closeSubscribeModal();
-                    setMarketplaceSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || alias);
+                    setSkillSubscribed(ownerTenant, ownerNamespace, skillname, payload.tool_alias || alias);
                     upsertSubscriptionRow(payload);
                 })
                 .catch((error) => {

@@ -24,6 +24,21 @@
         padding: var(--ix-panel-padding);
     }
     .skill-panel h2 { margin: 0 0 12px 0; font-size: 18px; color: #1f2937; }
+    .skill-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+    }
+    .skill-panel-header h2 { margin: 0; }
+    .skill-panel-note {
+        margin: 4px 0 0 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+    }
     .skill-meta-grid {
         display: grid;
         grid-template-columns: 200px minmax(0, 1fr);
@@ -42,6 +57,32 @@
     .skill-status-badge.draft { background: #fef3c7; color: #92400e; }
     .playground-grid { display: grid; gap: 12px; }
     .playground-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #334155; }
+    .playground-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+        flex-wrap: wrap;
+    }
+    .playground-label-row label { margin-bottom: 0; }
+    .playground-toggle-btn {
+        border: 1px solid #d7dee8;
+        border-radius: 999px;
+        background: #fff;
+        color: #475569;
+        padding: 3px 10px;
+        font: inherit;
+        font-size: 12px;
+        line-height: 1.2;
+        cursor: pointer;
+    }
+    .playground-toggle-btn:hover { color: #1f2937; border-color: #b7c6dc; }
+    .playground-toggle-btn:focus-visible { outline: 2px solid #cbd5e1; outline-offset: 2px; }
+    #skill-debugger-body[hidden],
+    #skill-debug-mocks-editor[hidden] {
+        display: none !important;
+    }
     .playground-field textarea {
         width: 100%;
         box-sizing: border-box;
@@ -67,6 +108,12 @@
     }
     .playground-status { font-size: 13px; color: #475569; min-height: 1.4em; }
     .playground-status.error { color: #b91c1c; }
+    .playground-help {
+        margin: -4px 0 4px 0;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+    }
     .trace-panel {
         border: 1px solid #dbe3ef;
         border-radius: 4px;
@@ -504,15 +551,47 @@
 
     {% if can_manage %}
     <section class="skill-panel">
-        <h2>Skill Debugger</h2>
-        <div class="debug-grid">
+        <div class="skill-panel-header">
+            <div>
+                <h2>Debugger</h2>
+                <div class="skill-panel-note">
+                    This section is used to debug function calling with chain and output info. Click Show to expand it.
+                </div>
+            </div>
+            <button
+                id="skill-debugger-toggle"
+                class="playground-toggle-btn"
+                type="button"
+                aria-expanded="false"
+                aria-controls="skill-debugger-body"
+            >
+                Show
+            </button>
+        </div>
+        <div id="skill-debugger-body" class="debug-grid" hidden>
             <div class="playground-field">
                 <label for="skill-debug-input">Debug Query</label>
                 <textarea id="skill-debug-input" rows="4" placeholder="Run the skill with full trace content…">What's in the context?</textarea>
             </div>
             <div class="playground-field">
-                <label for="skill-debug-mocks">Sub-skill Mocks (JSON object)</label>
-                <textarea id="skill-debug-mocks" rows="5" placeholder='{"acme/default/pricer":"$25"}'></textarea>
+                <div class="playground-label-row">
+                    <label for="skill-debug-mocks">Sub-skill Mocks (JSON object)</label>
+                    <button
+                        id="skill-debug-mocks-toggle"
+                        class="playground-toggle-btn"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="skill-debug-mocks-editor"
+                    >
+                        Show
+                    </button>
+                </div>
+                <div class="playground-help">
+                    Optional. Use a JSON object that maps each child skill's canonical id `owner_tenant/namespace/skillname` to the mocked text result it should return during this debug run. Example: `{"acme/default/pricer":"$25","acme/default/tax":"$2"}`. Values must be strings.
+                </div>
+                <div id="skill-debug-mocks-editor" hidden>
+                    <textarea id="skill-debug-mocks" rows="5" placeholder='{"acme/default/pricer":"$25"}'></textarea>
+                </div>
             </div>
             <div class="playground-actions">
                 <button id="skill-debug-run-btn" class="ix-btn" type="button">Run Debug</button>
@@ -528,8 +607,6 @@
                     <div class="debug-toolbar">
                         <div class="debug-filter-row">
                             <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-failed"> Failed only</label>
-                            <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-waiting"> Waiting only</label>
-                            <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-hide-success"> Hide successful leaves</label>
                             <label class="debug-filter-chip"><input type="checkbox" id="skill-debug-filter-show-content" checked> Show content</label>
                             <input id="skill-debug-filter-search" class="debug-filter-search" type="search" placeholder="Filter by skill name">
                         </div>
@@ -584,8 +661,12 @@
     const traceOutputEl = document.getElementById('skill-trace-output');
     const skillDataViewBtn = document.getElementById('skill-data-view-btn');
     const skillDataViewer = document.getElementById('skill-data-viewer');
+    const debugPanelToggleBtn = document.getElementById('skill-debugger-toggle');
+    const debugPanelBodyEl = document.getElementById('skill-debugger-body');
     const debugInputEl = document.getElementById('skill-debug-input');
     const debugMocksEl = document.getElementById('skill-debug-mocks');
+    const debugMocksToggleBtn = document.getElementById('skill-debug-mocks-toggle');
+    const debugMocksEditorEl = document.getElementById('skill-debug-mocks-editor');
     const debugRunBtn = document.getElementById('skill-debug-run-btn');
     const debugCancelBtn = document.getElementById('skill-debug-cancel-btn');
     const debugStatusEl = document.getElementById('skill-debug-status');
@@ -597,8 +678,6 @@
     const debugTraceLogEl = document.getElementById('skill-debug-trace-log');
     const debugOutputEl = document.getElementById('skill-debug-output');
     const debugFilterFailedEl = document.getElementById('skill-debug-filter-failed');
-    const debugFilterWaitingEl = document.getElementById('skill-debug-filter-waiting');
-    const debugFilterHideSuccessEl = document.getElementById('skill-debug-filter-hide-success');
     const debugFilterShowContentEl = document.getElementById('skill-debug-filter-show-content');
     const debugFilterSearchEl = document.getElementById('skill-debug-filter-search');
     const debugSummaryEl = document.getElementById('skill-debug-summary');
@@ -614,8 +693,6 @@
     let debugMockSkillIds = new Set();
     let debugFilters = {
         failedOnly: false,
-        waitingOnly: false,
-        hideSuccessfulLeaves: false,
         showContent: true,
         search: '',
     };
@@ -1449,20 +1526,39 @@
     });
 
     if (canManage && debugRunBtn) {
+        const setDebugPanelVisible = (visible) => {
+            if (!debugPanelBodyEl || !debugPanelToggleBtn) return;
+            debugPanelBodyEl.hidden = !visible;
+            debugPanelToggleBtn.textContent = visible ? 'Hide' : 'Show';
+            debugPanelToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        };
+        setDebugPanelVisible(false);
+        debugPanelToggleBtn?.addEventListener('click', () => {
+            const nextVisible = !!debugPanelBodyEl?.hidden;
+            setDebugPanelVisible(nextVisible);
+        });
+
+        const setDebugMocksVisible = (visible) => {
+            if (!debugMocksEditorEl || !debugMocksToggleBtn) return;
+            debugMocksEditorEl.hidden = !visible;
+            debugMocksToggleBtn.textContent = visible ? 'Hide' : 'Show';
+            debugMocksToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        };
+        setDebugMocksVisible(false);
+        debugMocksToggleBtn?.addEventListener('click', () => {
+            const nextVisible = !!debugMocksEditorEl?.hidden;
+            setDebugMocksVisible(nextVisible);
+        });
         setDebugTraceMode('tree');
         debugViewTreeBtn?.addEventListener('click', () => setDebugTraceMode('tree'));
         debugViewLogBtn?.addEventListener('click', () => setDebugTraceMode('log'));
         const syncDebugFilters = () => {
             debugFilters.failedOnly = !!debugFilterFailedEl?.checked;
-            debugFilters.waitingOnly = !!debugFilterWaitingEl?.checked;
-            debugFilters.hideSuccessfulLeaves = !!debugFilterHideSuccessEl?.checked;
             debugFilters.showContent = debugFilterShowContentEl ? !!debugFilterShowContentEl.checked : true;
             debugFilters.search = debugFilterSearchEl?.value || '';
             renderDebugTraceTree();
         };
         debugFilterFailedEl?.addEventListener('change', syncDebugFilters);
-        debugFilterWaitingEl?.addEventListener('change', syncDebugFilters);
-        debugFilterHideSuccessEl?.addEventListener('change', syncDebugFilters);
         debugFilterShowContentEl?.addEventListener('change', syncDebugFilters);
         debugFilterSearchEl?.addEventListener('input', syncDebugFilters);
 

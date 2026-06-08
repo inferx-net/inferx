@@ -1147,6 +1147,7 @@ impl SqlSecret {
         keyword: Option<&str>,
         page: i64,
         page_size: i64,
+        include_unpublished: bool,
     ) -> Result<SkillMarketplacePage> {
         let keyword = keyword
             .map(|s| s.trim().to_string())
@@ -1186,9 +1187,13 @@ impl SqlSecret {
                AND ss.owner_namespace = s.owner_namespace
                AND ss.skillname = s.skillname
                AND ss.subscriber_tenant = $1
-            WHERE s.is_published = TRUE
+            WHERE TRUE
         "#
         .to_string();
+
+        if !include_unpublished {
+            query.push_str("\n              AND s.is_published = TRUE");
+        }
 
         if keyword.is_some() {
             query.push_str(
@@ -1733,6 +1738,7 @@ impl SqlSecret {
         skillname: &str,
         tool_alias: &str,
         subscribed_by: &str,
+        allow_unpublished: bool,
     ) -> Result<SkillSubscription> {
         let query = r#"
             INSERT INTO SkillSubscription (
@@ -1748,7 +1754,11 @@ impl SqlSecret {
             WHERE s.owner_tenant = $2
               AND s.owner_namespace = $3
               AND s.skillname = $4
-              AND s.is_published = TRUE
+              AND (
+                    s.is_published = TRUE
+                    OR s.owner_tenant = $1
+                    OR $7 = TRUE
+              )
             RETURNING
                 subscription_id,
                 subscriber_tenant,
@@ -1767,60 +1777,17 @@ impl SqlSecret {
             .bind(skillname)
             .bind(tool_alias)
             .bind(subscribed_by)
+            .bind(allow_unpublished)
             .fetch_optional(&self.pool)
             .await?;
 
         row.ok_or_else(|| {
             Error::NotExist(format!(
-                "published skill {}/{}/{} does not exist",
+                "published skill {}/{}/{} does not exist, or the unpublished skill is not owned by subscriber tenant {}",
                 owner_tenant, owner_namespace, skillname
+                , subscriber_tenant
             ))
         })
-    }
-
-    pub async fn GetOwnSkillsForTenant(
-        &self,
-        owner_tenant: &str,
-    ) -> Result<Vec<OwnSkillToolRoute>> {
-        let query = r#"
-            SELECT
-                owner_tenant,
-                owner_namespace,
-                skillname,
-                description
-            FROM Skill
-            WHERE owner_tenant = $1
-            ORDER BY skillname, owner_namespace
-        "#;
-
-        Ok(sqlx::query_as::<_, OwnSkillToolRoute>(query)
-            .bind(owner_tenant)
-            .fetch_all(&self.pool)
-            .await?)
-    }
-
-    pub async fn ListOwnSkillsByName(
-        &self,
-        owner_tenant: &str,
-        skillname: &str,
-    ) -> Result<Vec<OwnSkillToolRoute>> {
-        let query = r#"
-            SELECT
-                owner_tenant,
-                owner_namespace,
-                skillname,
-                description
-            FROM Skill
-            WHERE owner_tenant = $1
-              AND skillname = $2
-            ORDER BY owner_namespace
-        "#;
-
-        Ok(sqlx::query_as::<_, OwnSkillToolRoute>(query)
-            .bind(owner_tenant)
-            .bind(skillname)
-            .fetch_all(&self.pool)
-            .await?)
     }
 
     pub async fn GetSubscribedSkillRoute(
@@ -1853,27 +1820,6 @@ impl SqlSecret {
     }
 
     pub async fn GetToolsForTenant(&self, tenant: &str) -> Result<Vec<TenantToolRoute>> {
-        let own_skills = self.GetOwnSkillsForTenant(tenant).await?;
-        let own_tool_names = compute_own_skill_tool_names(&own_skills);
-
-        let mut tools: Vec<TenantToolRoute> = own_skills
-            .into_iter()
-            .map(|skill| TenantToolRoute {
-                tool_name: own_tool_names
-                    .get(&(
-                        skill.owner_tenant.clone(),
-                        skill.owner_namespace.clone(),
-                        skill.skillname.clone(),
-                    ))
-                    .cloned()
-                    .unwrap_or_else(|| skill.skillname.clone()),
-                description: skill.description,
-                owner_tenant: skill.owner_tenant,
-                owner_namespace: skill.owner_namespace,
-                skillname: skill.skillname,
-            })
-            .collect();
-
         let subscribed_query = r#"
             SELECT
                 ss.tool_alias AS tool_name,
@@ -1887,7 +1833,6 @@ impl SqlSecret {
              AND s.owner_namespace = ss.owner_namespace
              AND s.skillname = ss.skillname
             WHERE ss.subscriber_tenant = $1
-              AND s.is_published = TRUE
             ORDER BY ss.tool_alias, s.owner_tenant, s.owner_namespace, s.skillname
         "#;
 
@@ -1896,22 +1841,16 @@ impl SqlSecret {
             .fetch_all(&self.pool)
             .await?;
 
-        let own_names: std::collections::HashSet<String> =
-            tools.iter().map(|tool| tool.tool_name.clone()).collect();
-        for tool in subscribed {
-            if own_names.contains(&tool.tool_name) {
-                continue;
-            }
-            tools.push(TenantToolRoute {
+        Ok(subscribed
+            .into_iter()
+            .map(|tool| TenantToolRoute {
                 tool_name: tool.tool_name,
                 description: tool.description,
                 owner_tenant: tool.owner_tenant,
                 owner_namespace: tool.owner_namespace,
                 skillname: tool.skillname,
-            });
-        }
-
-        Ok(tools)
+            })
+            .collect())
     }
 
     pub async fn ListSkillSubscriptions(

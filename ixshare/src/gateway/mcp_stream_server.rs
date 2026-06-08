@@ -5,12 +5,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use super::secret::{compute_own_skill_tool_names, SqlSecret};
+use super::secret::SqlSecret;
 
 #[derive(Clone)]
 pub struct McpStreamServer {
     secret: Arc<SqlSecret>,
     gateway_base_url: String,
+    client: reqwest::Client,
 }
 
 impl McpStreamServer {
@@ -18,6 +19,7 @@ impl McpStreamServer {
         Self {
             secret,
             gateway_base_url,
+            client: reqwest::Client::new(),
         }
     }
 
@@ -126,6 +128,42 @@ impl McpStreamServer {
             .map_err(|e| Self::internal_error(format!("failed to notify progress: {}", e)))
     }
 
+    async fn try_notify_progress_message(
+        context: &RequestContext<RoleServer>,
+        message: String,
+    ) {
+        if let Err(e) = Self::notify_progress_message(context, message).await {
+            warn!("MCP progress notify failed: {}", e.message);
+        }
+    }
+
+    async fn handle_sse_message(
+        context: &RequestContext<RoleServer>,
+        message: SseMessage,
+        final_result: &mut Option<Value>,
+        saw_done: &mut bool,
+    ) -> Result<(), ErrorData> {
+        let SseMessage::Event { event, data } = message;
+        if data == "[DONE]" {
+            *saw_done = true;
+            return Ok(());
+        }
+        match event.as_deref() {
+            Some("skill_trace") => {
+                let event: SkillTraceEventPayload = serde_json::from_str(&data)
+                    .map_err(|e| Self::internal_error(format!("invalid trace event JSON: {}", e)))?;
+                Self::try_notify_progress_message(context, Self::format_trace_message(&event)).await;
+            }
+            Some("skill_result") => {
+                let json: Value = serde_json::from_str(&data)
+                    .map_err(|e| Self::internal_error(format!("invalid skill result JSON: {}", e)))?;
+                *final_result = Some(json);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn format_trace_message(event: &SkillTraceEventPayload) -> String {
         let timing = event
             .elapsed_ms
@@ -212,76 +250,26 @@ impl ServerHandler for McpStreamServer {
     ) -> Result<CallToolResult, ErrorData> {
         let (authorization, tenant) = self.resolve_tenant(&context).await?;
 
-        // Log the incoming MCP tool request
         let requested_name = request.name.to_string();
-        let query_arg = request
-            .arguments
-            .as_ref()
-            .and_then(|args| args.get("query"))
-            .and_then(|q| q.as_str())
-            .unwrap_or("");
-
-        error!(
-            "MCP call_tool: tool_name={}, tenant={}, query=\"{}\"",
-            requested_name, tenant, query_arg
+        info!(
+            "MCP call_tool: tool_name={}, tenant={}",
+            requested_name, tenant
         );
-
-        let own_skills = self
+        let subscription = self
             .secret
-            .GetOwnSkillsForTenant(&tenant)
+            .GetSubscribedSkillRoute(&tenant, &requested_name)
             .await
-            .map_err(|e| Self::internal_error(format!("failed to load own skills: {:?}", e)))?;
-        let own_tool_names = compute_own_skill_tool_names(&own_skills);
-
-        let requested_name = request.name.to_string();
-        let own_match = own_skills.iter().find(|skill| {
-            own_tool_names.get(&(
-                skill.owner_tenant.clone(),
-                skill.owner_namespace.clone(),
-                skill.skillname.clone(),
-            )) == Some(&requested_name)
-        });
-
-        let route = if let Some(skill) = own_match {
-            (
-                skill.owner_tenant.clone(),
-                skill.owner_namespace.clone(),
-                skill.skillname.clone(),
-            )
-        } else {
-            let same_name = self
-                .secret
-                .ListOwnSkillsByName(&tenant, &requested_name)
-                .await
-                .map_err(|e| {
-                    Self::internal_error(format!(
-                        "failed to check own-skill name ambiguity: {:?}",
-                        e
-                    ))
-                })?;
-            if same_name.len() > 1 {
-                return Err(Self::internal_error(format!(
-                    "ambiguous tool name '{}'; re-run list_tools and use the qualified name",
-                    requested_name
-                )));
-            }
-
-            let subscription = self
-                .secret
-                .GetSubscribedSkillRoute(&tenant, &requested_name)
-                .await
-                .map_err(|e| {
-                    Self::internal_error(format!("failed to load subscribed skill route: {:?}", e))
-                })?;
-            let Some(subscription) = subscription else {
-                return Err(Self::internal_error("unknown tool or not subscribed"));
-            };
-            (
-                subscription.owner_tenant,
-                subscription.owner_namespace,
-                subscription.skillname,
-            )
+            .map_err(|e| {
+                Self::internal_error(format!("failed to load subscribed skill route: {:?}", e))
+            })?;
+        let Some(subscription) = subscription else {
+            return Err(Self::internal_error("unknown tool or not subscribed"));
         };
+        let route = (
+            subscription.owner_tenant,
+            subscription.owner_namespace,
+            subscription.skillname,
+        );
 
         let query = request
             .arguments
@@ -291,7 +279,7 @@ impl ServerHandler for McpStreamServer {
             .unwrap_or("");
 
         let endpoint = self.skill_url(&route.0, &route.1, &route.2);
-        Self::notify_progress_message(&context, format!("Forwarding to {}", endpoint)).await?;
+        Self::try_notify_progress_message(&context, format!("Forwarding to {}", endpoint)).await;
 
         let body = json!({
             "messages": [{"role": "user", "content": query}],
@@ -300,17 +288,10 @@ impl ServerHandler for McpStreamServer {
             "stream": false
         });
 
-        // Log the forwarded request to the skill endpoint
-        error!(
-            "MCP forwarding: tool={} -> endpoint={}, query=\"{}\", request_body={}",
-            requested_name,
-            endpoint,
-            query,
-            serde_json::to_string(&body).unwrap_or_default()
-        );
+        info!("MCP forwarding: tool={} -> endpoint={}", requested_name, endpoint);
 
-        let client = reqwest::Client::new();
-        let response = client
+        let response = self
+            .client
             .post(&endpoint)
             .header("Authorization", authorization)
             .header("X-Tenant", tenant.clone())
@@ -365,36 +346,28 @@ impl ServerHandler for McpStreamServer {
                     line.pop();
                 }
                 if let Some(message) = parser.push_line(&line) {
-                    let SseMessage::Event { event, data } = message;
-                    if data == "[DONE]" {
-                        saw_done = true;
-                        continue;
-                    }
-                    match event.as_deref() {
-                        Some("skill_trace") => {
-                            let event: SkillTraceEventPayload = serde_json::from_str(&data)
-                                .map_err(|e| {
-                                    Self::internal_error(format!("invalid trace event JSON: {}", e))
-                                })?;
-                            Self::notify_progress_message(
-                                &context,
-                                Self::format_trace_message(&event),
-                            )
-                            .await?;
-                        }
-                        Some("skill_result") => {
-                            let json: Value = serde_json::from_str(&data).map_err(|e| {
-                                Self::internal_error(format!("invalid skill result JSON: {}", e))
-                            })?;
-                            final_result = Some(json);
-                        }
-                        _ => {}
-                    }
+                    Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
+                        .await?;
                 }
             }
         }
 
-        if !saw_done {
+        if !buf.is_empty() {
+            let mut line = std::mem::take(&mut buf);
+            if line.ends_with('\r') {
+                line.pop();
+            }
+            if let Some(message) = parser.push_line(&line) {
+                Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
+                    .await?;
+            }
+            if let Some(message) = parser.push_line("") {
+                Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
+                    .await?;
+            }
+        }
+
+        if !saw_done && final_result.is_none() {
             return Err(Self::internal_error("trace stream ended before [DONE]"));
         }
         let final_result = final_result
@@ -443,77 +416,8 @@ impl ServerHandler for McpStreamServer {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_own_skill_tool_names, McpStreamServer};
-    use crate::gateway::secret::OwnSkillToolRoute;
+    use super::McpStreamServer;
     use serde_json::json;
-
-    #[test]
-    fn own_skill_unique_name_stays_plain() {
-        let tools = vec![OwnSkillToolRoute {
-            owner_tenant: "acme".to_string(),
-            owner_namespace: "default".to_string(),
-            skillname: "pricing".to_string(),
-            description: None,
-        }];
-        let names = compute_own_skill_tool_names(&tools);
-        assert_eq!(
-            names.get(&(
-                "acme".to_string(),
-                "default".to_string(),
-                "pricing".to_string()
-            )),
-            Some(&"pricing".to_string())
-        );
-    }
-
-    #[test]
-    fn dotted_or_duplicate_own_skill_name_gets_qualified() {
-        let tools = vec![
-            OwnSkillToolRoute {
-                owner_tenant: "acme".to_string(),
-                owner_namespace: "default".to_string(),
-                skillname: "my.model".to_string(),
-                description: None,
-            },
-            OwnSkillToolRoute {
-                owner_tenant: "acme".to_string(),
-                owner_namespace: "other".to_string(),
-                skillname: "pricing".to_string(),
-                description: None,
-            },
-            OwnSkillToolRoute {
-                owner_tenant: "acme".to_string(),
-                owner_namespace: "default".to_string(),
-                skillname: "pricing".to_string(),
-                description: None,
-            },
-        ];
-        let names = compute_own_skill_tool_names(&tools);
-        assert_eq!(
-            names.get(&(
-                "acme".to_string(),
-                "default".to_string(),
-                "my.model".to_string()
-            )),
-            Some(&"my%2Emodel.default.acme".to_string())
-        );
-        assert_eq!(
-            names.get(&(
-                "acme".to_string(),
-                "default".to_string(),
-                "pricing".to_string()
-            )),
-            Some(&"pricing.default.acme".to_string())
-        );
-        assert_eq!(
-            names.get(&(
-                "acme".to_string(),
-                "other".to_string(),
-                "pricing".to_string()
-            )),
-            Some(&"pricing.other.acme".to_string())
-        );
-    }
 
     #[test]
     fn parse_text_response_extracts_message_content() {
