@@ -67,6 +67,150 @@
         gap: 14px;
     }
 
+    .skills-guide {
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 12px 16px;
+        display: grid;
+        gap: 8px;
+    }
+
+    .skills-guide-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .skills-guide h2 {
+        margin: 0;
+        font-size: 18px;
+        color: #1f2937;
+    }
+
+    .skills-guide p {
+        margin: 0;
+        color: #475569;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
+    .skills-guide-steps {
+        margin: 0;
+        padding-left: 18px;
+        color: #334155;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
+    .skills-guide-values {
+        display: grid;
+        gap: 10px;
+    }
+
+    .skills-guide-row {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+    }
+
+    .skills-guide-row strong {
+        color: #475569;
+        font-size: 13px;
+    }
+
+    .skills-guide-value {
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #fff;
+        padding: 6px 8px 6px 10px;
+        color: #334155;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .skills-guide-value-text {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .skills-guide-copy-btn {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid #c9d5e6;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #334155;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex: 0 0 auto;
+        position: relative;
+    }
+
+    .skills-guide-copy-btn:hover {
+        background: #f6faff;
+        border-color: #afc2db;
+    }
+
+    .skills-guide-copy-btn svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        pointer-events: none;
+    }
+
+    .skills-guide-copy-btn::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 6px);
+        transform: translateX(-50%);
+        background: #111827;
+        color: #ffffff;
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 3px 6px;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 10;
+    }
+
+    .skills-guide-copy-btn:hover::after,
+    .skills-guide-copy-btn:focus-visible::after {
+        opacity: 1;
+    }
+
+    .skills-guide-copy-btn.copied {
+        border-color: #16a34a;
+        color: #166534;
+        background: #f0fdf4;
+    }
+
+    .skills-guide-note {
+        color: #64748b;
+        font-size: 12px;
+    }
+
+    .skills-guide.expanded {
+        padding: 16px 18px;
+        gap: 12px;
+    }
+
     .skills-header {
         display: flex;
         justify-content: space-between;
@@ -289,6 +433,61 @@
         <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Functions</a>
         <a href="{{ url_for('prefix.SkillMarketplace') }}" class="{% if current_view == 'marketplace' %}active{% endif %}">Public</a>
     </nav>
+
+    <section class="skills-guide">
+        <div class="skills-guide-header">
+            <h2>How to Use Functions Through MCP</h2>
+            <button id="skills-guide-toggle" class="ix-btn secondary" type="button" aria-expanded="false" aria-controls="skills-guide-body">Show</button>
+        </div>
+        <div id="skills-guide-body" hidden>
+            <p>To use functions in agents such as OpenCode or OpenClaw, first subscribe the functions you want exposed to tenant <strong>{{ active_tenant }}</strong>, then configure your agent with the InferX MCP server URL and API key.</p>
+            <ol class="skills-guide-steps">
+                <li>Subscribe a function from the `Public` tab or your own functions.</li>
+                <li>Configure your MCP client or agent with the MCP server URL below.</li>
+                <li>Use the API key below when you config agent for authentication.</li>
+            </ol>
+            <div class="skills-guide-values">
+                <div class="skills-guide-row">
+                    <strong>MCP URL</strong>
+                    <div class="skills-guide-value">
+                        <span class="skills-guide-value-text">{{ mcp_server_url }}</span>
+                        <button
+                            type="button"
+                            class="skills-guide-copy-btn"
+                            data-copy-value="{{ mcp_server_url }}"
+                            data-tooltip="Copy"
+                            aria-label="Copy MCP URL"
+                            title="Copy MCP URL"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="10" height="10"></rect>
+                                <rect x="5" y="5" width="10" height="10"></rect>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="skills-guide-row">
+                    <strong>API Key</strong>
+                    <div class="skills-guide-value">
+                        <span class="skills-guide-value-text">{{ mcp_api_key_display }}</span>
+                        <button
+                            type="button"
+                            class="skills-guide-copy-btn"
+                            data-copy-value="{{ mcp_api_key_value if mcp_api_key_copyable else mcp_api_key_display }}"
+                            data-tooltip="Copy"
+                            aria-label="Copy API key"
+                            title="Copy API key"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="10" height="10"></rect>
+                                <rect x="5" y="5" width="10" height="10"></rect>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
     {% if current_view == 'my_skills' %}
     <section class="skills-section">
@@ -561,6 +760,61 @@
     </section>
     {% endif %}
 </div>
+
+<script>
+    (function () {
+        const guideEl = document.querySelector('.skills-guide');
+        const guideToggleBtn = document.getElementById('skills-guide-toggle');
+        const guideBodyEl = document.getElementById('skills-guide-body');
+        if (!guideEl || !guideToggleBtn || !guideBodyEl) return;
+
+        async function copyGuideValue(button) {
+            const text = String(button?.dataset?.copyValue || '');
+            if (!text) return;
+            const defaultTooltip = String(button.getAttribute('data-default-tooltip') || button.getAttribute('data-tooltip') || 'Copy');
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (_) {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
+
+            button.classList.add('copied');
+            button.setAttribute('data-tooltip', 'Copied');
+            window.setTimeout(() => {
+                button.classList.remove('copied');
+                button.setAttribute('data-tooltip', defaultTooltip);
+            }, 1200);
+        }
+
+        const setGuideVisible = (visible) => {
+            guideBodyEl.hidden = !visible;
+            guideEl.classList.toggle('expanded', visible);
+            guideToggleBtn.textContent = visible ? 'Hide' : 'Show';
+            guideToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        };
+
+        setGuideVisible(false);
+        guideEl.querySelectorAll('.skills-guide-copy-btn').forEach((button) => {
+            if (!button.hasAttribute('data-default-tooltip')) {
+                button.setAttribute('data-default-tooltip', button.getAttribute('data-tooltip') || 'Copy');
+            }
+        });
+        guideToggleBtn.addEventListener('click', () => {
+            setGuideVisible(!!guideBodyEl.hidden);
+        });
+        guideEl.querySelectorAll('.skills-guide-copy-btn').forEach((button) => {
+            button.addEventListener('click', () => copyGuideValue(button));
+        });
+    })();
+</script>
 
 {% if can_manage_subscriptions %}
 <div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>

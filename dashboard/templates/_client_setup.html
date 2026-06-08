@@ -185,6 +185,39 @@
 
 <section{% if section_class %} class="{{ section_class }}"{% else %} style="margin: 18px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff;"{% endif %}>
     <h3>Integration</h3>
+    {% if client_setup.integration_kind == 'skill_mcp' %}
+    <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+        Connect your MCP client to this InferX MCP server, then use the canonical function id below when referencing this skill from skill data or tool calls.
+    </p>
+    <div style="display: grid; gap: 12px;">
+        {{ client_setup_value_field(
+            'MCP Server URL',
+            client_setup.mcp_server_url,
+            client_setup.mcp_server_url
+        ) }}
+        {{ client_setup_value_field(
+            'API Key',
+            client_setup.api_key_display,
+            client_setup.api_key if client_setup.api_key_copyable else client_setup.api_key_display,
+            'Copy key' if client_setup.api_key_copyable else 'Copy',
+            'mono' if client_setup.api_key_copyable else ''
+        ) }}
+        {{ client_setup_value_field(
+            'Function ID',
+            client_setup.function_id,
+            client_setup.function_id,
+            'Copy id',
+            'mono'
+        ) }}
+    </div>
+    <p class="client-setup-note">
+        {% if client_setup.api_key_copyable %}
+        {% if client_setup.api_key_name %}Onboarding key `{{ client_setup.api_key_name }}` is ready for MCP client setup.{% else %}Your onboarding inference key is ready for MCP client setup.{% endif %} The visible value stays masked, but the copy button returns the full token.
+        {% else %}
+        An API key is typically required for MCP access. Until one is available, the field above keeps the expected token shape with a placeholder value.
+        {% endif %}
+    </p>
+    {% else %}
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
         Use these values in Dify, OpenWebUI, Continue, OpenCode, or any OpenAI-compatible client that asks for a base URL, API key, and model name.
     </p>
@@ -244,6 +277,7 @@
     <p style="margin: 12px 0 0 0; color: #64748b; font-size: var(--ix-font-size-caption);">
         This model does not expose a shared OpenAI-style <code>/v1</code> base URL.
     </p>
+    {% endif %}
     {% endif %}
 </section>
 <script>
