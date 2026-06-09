@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::secret::SqlSecret;
+use crate::print::verbose_category;
 
 #[derive(Clone)]
 pub struct McpStreamServer {
@@ -128,10 +129,7 @@ impl McpStreamServer {
             .map_err(|e| Self::internal_error(format!("failed to notify progress: {}", e)))
     }
 
-    async fn try_notify_progress_message(
-        context: &RequestContext<RoleServer>,
-        message: String,
-    ) {
+    async fn try_notify_progress_message(context: &RequestContext<RoleServer>, message: String) {
         if let Err(e) = Self::notify_progress_message(context, message).await {
             warn!("MCP progress notify failed: {}", e.message);
         }
@@ -150,13 +148,16 @@ impl McpStreamServer {
         }
         match event.as_deref() {
             Some("skill_trace") => {
-                let event: SkillTraceEventPayload = serde_json::from_str(&data)
-                    .map_err(|e| Self::internal_error(format!("invalid trace event JSON: {}", e)))?;
-                Self::try_notify_progress_message(context, Self::format_trace_message(&event)).await;
+                let event: SkillTraceEventPayload = serde_json::from_str(&data).map_err(|e| {
+                    Self::internal_error(format!("invalid trace event JSON: {}", e))
+                })?;
+                Self::try_notify_progress_message(context, Self::format_trace_message(&event))
+                    .await;
             }
             Some("skill_result") => {
-                let json: Value = serde_json::from_str(&data)
-                    .map_err(|e| Self::internal_error(format!("invalid skill result JSON: {}", e)))?;
+                let json: Value = serde_json::from_str(&data).map_err(|e| {
+                    Self::internal_error(format!("invalid skill result JSON: {}", e))
+                })?;
                 *final_result = Some(json);
             }
             _ => {}
@@ -288,7 +289,12 @@ impl ServerHandler for McpStreamServer {
             "stream": false
         });
 
-        info!("MCP forwarding: tool={} -> endpoint={}", requested_name, endpoint);
+        ctrace!(
+            verbose_category::MCP,
+            "MCP forwarding: tool={} -> endpoint={}",
+            requested_name,
+            endpoint
+        );
 
         let response = self
             .client

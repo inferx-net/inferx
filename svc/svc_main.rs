@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use ixshare::gateway::func_agent_mgr::GatewaySvc;
 use ixshare::gateway::metrics::{InitTracer, GATEWAY_METRICS};
-use ixshare::print::LOG;
+use ixshare::print::{init_verbose_logging_from_env, LOG};
 use tokio::sync::Notify;
 
 use ixshare::common::*;
@@ -104,6 +104,7 @@ async fn main() -> Result<()> {
 
     InitTracer().await;
     GATEWAY_METRICS.lock().await.Register().await;
+    init_verbose_logging_from_env();
 
     let runService = match std::env::var(RUN_SERVICE) {
         Err(_) => {

@@ -77,7 +77,7 @@ use crate::metastore::unique_id::UID;
 use crate::na;
 use crate::node_config::{GatewayConfig, NODE_CONFIG};
 use crate::peer_mgr::IxTcpClient;
-use crate::print::{set_trace_logging, trace_logging_enabled};
+use crate::print::{set_trace_logging, trace_logging_enabled, verbose_category};
 use inferxlib::data_obj::DataObject;
 use inferxlib::obj_mgr::func_mgr::{ApiType, FuncState, Function};
 
@@ -92,6 +92,7 @@ use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
 use super::gw_obj_repo::FuncDetail;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
+use super::log_admin::{DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
@@ -545,11 +546,11 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
-        resolve_skill_calling_tenant,
-        summarize_funccall_body_for_log,
+        resolve_skill_calling_tenant, summarize_funccall_body_for_log,
     };
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
+    use crate::gateway::log_admin::verbose_categories_mask_from_request;
     use crate::gateway::secret::SkillDetail;
     use axum::http::StatusCode;
     use hyper::body::Bytes;
@@ -675,6 +676,25 @@ mod tests {
         let skill = test_skill_detail();
         let err = resolve_skill_calling_tenant(&token, &skill, Some("tenant-b")).unwrap_err();
         assert!(matches!(err, Error::NoPermission));
+    }
+
+    #[test]
+    fn verbose_category_admin_request_rejects_unknown_categories() {
+        let categories = vec![
+            "mcp".to_owned(),
+            "schedulre".to_owned(),
+            "routing".to_owned(),
+            "schedulre".to_owned(),
+        ];
+        let err = verbose_categories_mask_from_request(&categories).unwrap_err();
+        assert_eq!(err, vec!["schedulre".to_owned()]);
+    }
+
+    #[test]
+    fn verbose_category_admin_request_rejects_whitespace_only_categories() {
+        let categories = vec!["mcp".to_owned(), "   ".to_owned()];
+        let err = verbose_categories_mask_from_request(&categories).unwrap_err();
+        assert_eq!(err, vec![String::new()]);
     }
 }
 
@@ -913,7 +933,8 @@ async fn TenantQuotaGuard(
     let tenant = match tenant_from_path(req.uri().path()) {
         Some(t) if !t.is_empty() => t,
         _ => {
-            trace!(
+            ctrace!(
+                verbose_category::ROUTING,
                 "TenantQuotaGuard skip: no tenant in path {}",
                 req.uri().path()
             );
@@ -924,7 +945,8 @@ async fn TenantQuotaGuard(
     let token = match req.extensions().get::<Arc<AccessToken>>() {
         Some(t) => t,
         None => {
-            trace!(
+            ctrace!(
+                verbose_category::ROUTING,
                 "TenantQuotaGuard skip: no token for tenant {} path {}",
                 tenant,
                 req.uri().path()
@@ -934,7 +956,8 @@ async fn TenantQuotaGuard(
     };
 
     if token.IsInferxAdmin() {
-        trace!(
+        ctrace!(
+            verbose_category::ROUTING,
             "TenantQuotaGuard skip: inferx admin tenant {} path {}",
             tenant,
             req.uri().path()
@@ -945,7 +968,8 @@ async fn TenantQuotaGuard(
     if let Some(resp) =
         enforce_tenant_quota_for_request(token, &gw, tenant, req.method(), req.uri().path())
     {
-        trace!(
+        ctrace!(
+            verbose_category::ROUTING,
             "TenantQuotaGuard block: tenant {} path {}",
             tenant,
             req.uri().path()
@@ -953,7 +977,8 @@ async fn TenantQuotaGuard(
         return Ok(resp);
     }
 
-    trace!(
+    ctrace!(
+        verbose_category::ROUTING,
         "TenantQuotaGuard allow: tenant {} path {}",
         tenant,
         req.uri().path()
@@ -1198,6 +1223,18 @@ impl HttpGateway {
             .route(
                 "/admin/usage/endpoints/:tenant/:endpoint_slug",
                 get(GetAdminEndpointTenantUsageByPeriod),
+            )
+            .route(
+                "/admin/log/verbose-categories",
+                get(GetVerboseCategories).put(PutVerboseCategories),
+            )
+            .route(
+                "/admin/log/verbose-categories/:category/enable",
+                post(EnableVerboseCategory),
+            )
+            .route(
+                "/admin/log/verbose-categories/:category/disable",
+                post(DisableVerboseCategory),
             )
             .route("/metrics", get(GetMetrics))
             .route("/debug/trace_logging/:state", post(SetTraceLogging))
@@ -1947,7 +1984,10 @@ pub async fn FuncCall1(
         Ok(route) => route,
         Err(e) => {
             let (errcode, message) = funccall_route_error_response(&namespace, &e);
-            trace!("FuncCall route resolution failed for {tenant}/{namespace}/{funcname}: {e:?}");
+            ctrace!(
+                verbose_category::ROUTING,
+                "FuncCall route resolution failed for {tenant}/{namespace}/{funcname}: {e:?}"
+            );
             let body = Body::from(message);
             let resp = Response::builder().status(errcode).body(body).unwrap();
             return Ok(resp);
@@ -2096,7 +2136,7 @@ pub(super) async fn dispatch_func_call(
                 (max_tokens, input_chars)
             })
             .unwrap_or_default();
-        info!("dispatch_func_call sending to pod pod={} path={} input_chars={} approx_input_tokens={} max_tokens={}",
+        ctrace!(verbose_category::ROUTING, "dispatch_func_call sending to pod pod={} path={} input_chars={} approx_input_tokens={} max_tokens={}",
             route.physical.funcname, remainPath, input_chars, input_chars / 4, max_tokens);
     }
     if trace_enabled {
@@ -3220,7 +3260,8 @@ async fn SkillCall(
             return Ok(skill_admin_response(e));
         }
     };
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "SkillCall prefix loaded skill={}/{}/{} prefix_len={}",
         owner_tenant,
         namespace,
@@ -3254,7 +3295,8 @@ async fn SkillCall(
             return Ok(skill_admin_response(e));
         }
     };
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "SkillCall GetFunc ok func={}/{}/{} version={}",
         skill.func_tenant,
         skill.func_namespace,
@@ -3276,7 +3318,8 @@ async fn SkillCall(
     } else {
         (calling_tenant.clone(), base_funcname, None)
     };
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "SkillCall dispatch logical={}/{}/{} physical={}/{}/{} remain={}",
         logical_tenant,
         SKILLS_NAMESPACE,
