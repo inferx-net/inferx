@@ -379,13 +379,13 @@ impl FuncAgentMgr {
                     pod_id
                 );
 
-                let endpoint_consumer_tenant =
-                    if worker.physical_tenant == "inferx" && worker.physical_namespace == "endpoint"
-                    {
-                        Some(worker.tenant.clone())
-                    } else {
-                        None
-                    };
+                let endpoint_consumer_tenant = if worker.physical_tenant == "inferx"
+                    && worker.physical_namespace == "endpoint"
+                {
+                    Some(worker.tenant.clone())
+                } else {
+                    None
+                };
 
                 leases.insert(
                     pod_key,
@@ -681,7 +681,8 @@ impl FuncAgent {
         match &*self.scaleoutPolicy.lock().unwrap() {
             ScaleOutPolicy::WaitQueueRatio(ratio) => {
                 if reqCnt as f64 > (1.0 + ratio.waitRatio) * totalSlotCnt as f64 {
-                    trace!(
+                    ctrace!(
+                        crate::print::verbose_category::FUNC_AGENT,
                         "NeedNewWorker the reqcnt is {}, totalSlotCnt {} reqcnt {}",
                         reqCnt,
                         totalSlotCnt,
@@ -728,7 +729,8 @@ impl FuncAgent {
             self.activeReqCnt.fetch_sub(timeoutReqCnt, Ordering::SeqCst);
             if self.NeedNewWorker().await {
                 if throttle.TryAcquire().await {
-                    trace!(
+                    ctrace!(
+                        crate::print::verbose_category::FUNC_AGENT,
                         "create new worker {} activereqcnt {} waitreqcnt {}",
                         self.FuncKey(),
                         self.ActiveReqCnt(),
@@ -789,7 +791,13 @@ impl FuncAgent {
                                 // Spawn background retry to return worker to scheduler
                                 Self::spawn_return_worker_retry(worker.clone(), true);
 
-                                trace!("Spawned background retry for WorkerFail: {}/{:?}/{:?}", worker.WorkerName(), worker.id, e);
+                                ctrace!(
+                                    crate::print::verbose_category::FUNC_AGENT,
+                                    "Spawned background retry for WorkerFail: {}/{:?}/{:?}",
+                                    worker.WorkerName(),
+                                    worker.id,
+                                    e
+                                );
                             }
                             WorkerUpdate::IdleTimeout(worker) => {
                                 // Remove from local tracking immediately to prevent reuse
@@ -798,7 +806,12 @@ impl FuncAgent {
                                 // Spawn background retry to return worker to scheduler
                                 Self::spawn_return_worker_retry(worker.clone(), false);
 
-                                trace!("Spawned background retry for IdleTimeout: {}/{:?}", worker.WorkerName(), worker.id);
+                                ctrace!(
+                                    crate::print::verbose_category::FUNC_AGENT,
+                                    "Spawned background retry for IdleTimeout: {}/{:?}",
+                                    worker.WorkerName(),
+                                    worker.id
+                                );
                             }
                             WorkerUpdate::WorkerLeaseFail((worker, e)) => {
                                 error!("Worker lease fail, worker: {}, error: {:?}", worker.WorkerName(), e);

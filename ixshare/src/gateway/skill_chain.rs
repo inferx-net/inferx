@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
 use super::http_gateway::{dispatch_func_call, HttpGateway, GATEWAY_CONFIG};
+use crate::print::verbose_category;
 
 const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
 const SKILL_CHAIN_DEPTH_HEADER: &str = "X-Chain-Depth";
@@ -376,7 +377,8 @@ fn log_trace_event_emitted(
     fail_reason: Option<SkillTraceFailReason>,
     usage: Option<&SkillTraceTokenUsage>,
 ) {
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "skill_chain trace_emit root_call_id={} root_skill={} event_type={} call_id={} parent_call_id={} depth={} skill={} elapsed_ms={} phase={} result_code={} fail_reason={} prompt_tokens={} completion_tokens={} total_tokens={} query={} output={}",
         trace.root_call_id,
         trace.root_skill,
@@ -494,7 +496,8 @@ async fn emit_trace_event(
 
 async fn emit_trace_skill_result(trace: &SkillChainTraceState, body: &[u8]) -> bool {
     let data = String::from_utf8_lossy(body);
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "skill_chain trace_emit root_call_id={} root_skill={} event_type=skill_result body_len={} body={}",
         trace.root_call_id,
         trace.root_skill,
@@ -509,7 +512,8 @@ async fn emit_trace_skill_result(trace: &SkillChainTraceState, body: &[u8]) -> b
 }
 
 async fn emit_trace_done(trace: &SkillChainTraceState) -> bool {
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "skill_chain trace_emit root_call_id={} root_skill={} event_type=done",
         trace.root_call_id, trace.root_skill
     );
@@ -1063,7 +1067,8 @@ async fn execute_parallel_child_call(
                     .await;
                 }
 
-                info!(
+                ctrace!(
+                    verbose_category::SKILL,
                     "skill_chain child_call logical={}/{}/{} tool_call_id={} child={}/{}/{} next_depth={} query_len={}",
                     context.logical_tenant,
                     context.logical_namespace,
@@ -1294,7 +1299,8 @@ async fn execute_parallel_child_call(
                             match child_result.skill_result {
                                 Some(bytes) => match parse_skill_response(&bytes) {
                                     Some(parsed_child) => {
-                                        info!(
+                                        ctrace!(
+                                            verbose_category::SKILL,
                                             "skill_chain child_call_ok logical={}/{}/{} tool_call_id={} child={}/{}/{} final_text_present={}",
                                             context.logical_tenant,
                                             context.logical_namespace,
@@ -1679,7 +1685,8 @@ async fn execute_skill_chain(
     skills_namespace: String,
     trace: Option<SkillChainTraceState>,
 ) -> Result<SkillChainFinalResponse, SkillChainExecutionError> {
-    info!(
+    ctrace!(
+        verbose_category::SKILL,
         "skill_chain start logical={}/{}/{} physical={}/{}/{} path={} depth={}",
         route.logical.tenant,
         route.logical.namespace,
@@ -1695,7 +1702,8 @@ async fn execute_skill_chain(
     let mut aggregate_usage: Option<SkillTraceTokenUsage> = None;
 
     loop {
-        info!(
+        ctrace!(
+            verbose_category::SKILL,
             "skill_chain model_turn logical={}/{}/{} history_len={} depth={}",
             route.logical.tenant,
             route.logical.namespace,
@@ -1786,7 +1794,8 @@ async fn execute_skill_chain(
                 }
             })
             .await?;
-        info!(
+        ctrace!(
+            verbose_category::SKILL,
             "skill_chain model_response logical={}/{}/{} status={} body_preview={}",
             route.logical.tenant,
             route.logical.namespace,
@@ -1819,7 +1828,8 @@ async fn execute_skill_chain(
         }
 
         if parsed.tool_calls.is_empty() {
-            info!(
+            ctrace!(
+                verbose_category::SKILL,
                 "skill_chain final_response logical={}/{}/{} status={} final_text_present={}",
                 route.logical.tenant,
                 route.logical.namespace,
@@ -1876,7 +1886,8 @@ async fn execute_skill_chain(
             continue;
         }
 
-        info!(
+        ctrace!(
+            verbose_category::SKILL,
             "skill_chain tool_turn logical={}/{}/{} tool_call_count={}",
             route.logical.tenant,
             route.logical.namespace,

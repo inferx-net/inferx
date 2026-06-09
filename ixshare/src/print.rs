@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use chrono::prelude::*;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicI32;
@@ -36,6 +37,47 @@ lazy_static! {
 
 /// Global switch for trace-level logging; used by the `trace!` macro.
 pub static TRACE_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
+pub static VERBOSE_LOG_MASK: AtomicU64 = AtomicU64::new(0);
+pub const INFERX_VERBOSE_LOG_ENV: &str = "INFERX_VERBOSE_LOG";
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct VerboseCategory {
+    pub mask: u64,
+    pub name: &'static str,
+    pub env_name: &'static str,
+}
+
+pub mod verbose_category {
+    use super::VerboseCategory;
+
+    pub const MCP: VerboseCategory = VerboseCategory {
+        mask: 1 << 0,
+        name: "MCP",
+        env_name: "mcp",
+    };
+    pub const SCHEDULER: VerboseCategory = VerboseCategory {
+        mask: 1 << 1,
+        name: "SCHEDULER",
+        env_name: "scheduler",
+    };
+    pub const FUNC_AGENT: VerboseCategory = VerboseCategory {
+        mask: 1 << 2,
+        name: "FUNC_AGENT",
+        env_name: "func_agent",
+    };
+    pub const ROUTING: VerboseCategory = VerboseCategory {
+        mask: 1 << 3,
+        name: "ROUTING",
+        env_name: "routing",
+    };
+    pub const SKILL: VerboseCategory = VerboseCategory {
+        mask: 1 << 4,
+        name: "SKILL",
+        env_name: "skill",
+    };
+
+    pub const ALL: &[VerboseCategory] = &[MCP, SCHEDULER, FUNC_AGENT, ROUTING, SKILL];
+}
 
 #[inline]
 pub fn trace_logging_enabled() -> bool {
@@ -45,6 +87,111 @@ pub fn trace_logging_enabled() -> bool {
 #[inline]
 pub fn set_trace_logging(enable: bool) {
     TRACE_LOG_ENABLED.store(enable, Ordering::SeqCst);
+}
+
+#[inline]
+pub fn verbose_category_enabled(category: VerboseCategory) -> bool {
+    VERBOSE_LOG_MASK.load(Ordering::Relaxed) & category.mask != 0
+}
+
+#[inline]
+pub fn verbose_log_mask() -> u64 {
+    VERBOSE_LOG_MASK.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn set_verbose_log_mask(mask: u64) {
+    VERBOSE_LOG_MASK.store(mask, Ordering::SeqCst);
+}
+
+#[inline]
+pub fn replace_verbose_log_mask(mask: u64) -> u64 {
+    VERBOSE_LOG_MASK.swap(mask, Ordering::SeqCst)
+}
+
+#[inline]
+pub fn enable_verbose_category(category: VerboseCategory) -> u64 {
+    VERBOSE_LOG_MASK.fetch_or(category.mask, Ordering::SeqCst)
+}
+
+#[inline]
+pub fn disable_verbose_category(category: VerboseCategory) -> u64 {
+    VERBOSE_LOG_MASK.fetch_and(!category.mask, Ordering::SeqCst)
+}
+
+pub fn parse_verbose_log_mask(input: &str) -> u64 {
+    parse_verbose_log_mask_internal(input).0
+}
+
+pub fn parse_verbose_log_mask_with_unknowns(input: &str) -> (u64, Vec<String>) {
+    parse_verbose_log_mask_internal(input)
+}
+
+pub fn mask_to_env_names(mask: u64) -> Vec<&'static str> {
+    verbose_category::ALL
+        .iter()
+        .filter(|cat| mask & cat.mask != 0)
+        .map(|cat| cat.env_name)
+        .collect()
+}
+
+pub fn verbose_category_by_env_name(input: &str) -> Option<VerboseCategory> {
+    let normalized = input.trim().to_ascii_lowercase();
+    verbose_category::ALL
+        .iter()
+        .copied()
+        .find(|cat| cat.env_name == normalized)
+}
+
+pub fn init_verbose_logging_from_env() -> u64 {
+    let raw = std::env::var(INFERX_VERBOSE_LOG_ENV).unwrap_or_default();
+    let (mask, unknowns) = parse_verbose_log_mask_with_unknowns(&raw);
+    set_verbose_log_mask(mask);
+
+    for unknown in unknowns {
+        crate::warn!(
+            "unknown verbose category in {}: {}",
+            INFERX_VERBOSE_LOG_ENV,
+            unknown
+        );
+    }
+
+    let enabled = mask_to_env_names(mask);
+    crate::info!(
+        "verbose categories initialized from {} raw='{}' categories={:?} mask={}",
+        INFERX_VERBOSE_LOG_ENV,
+        raw,
+        enabled,
+        mask
+    );
+    mask
+}
+
+fn parse_verbose_log_mask_internal(input: &str) -> (u64, Vec<String>) {
+    let mut mask = 0u64;
+    let mut unknowns = Vec::new();
+
+    for token in input.split(',') {
+        let normalized = token.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        match verbose_category::ALL
+            .iter()
+            .find(|cat| cat.env_name == normalized)
+            .copied()
+        {
+            Some(category) => mask |= category.mask,
+            None => {
+                if !unknowns.iter().any(|value| value == &normalized) {
+                    unknowns.push(normalized);
+                }
+            }
+        }
+    }
+
+    (mask, unknowns)
 }
 
 #[inline(always)]
@@ -300,9 +447,7 @@ impl Log {
                     }
                     println!(
                         "Rotated {} to {:?} after keeping {:?}",
-                        LOG_FILE_DEFAULT,
-                        target,
-                        retention
+                        LOG_FILE_DEFAULT, target, retention
                     );
                     self.delete_old_rotated_logs(retention);
                 }
@@ -310,10 +455,7 @@ impl Log {
                     ErrorKind::NotFound => {
                         // Another process already rotated, just reopen
                         if let Err(err) = self.reopen_default_log() {
-                            eprintln!(
-                                "Failed to reopen log after missing path: {:?}",
-                                err
-                            );
+                            eprintln!("Failed to reopen log after missing path: {:?}", err);
                         }
                     }
                     _ => {
@@ -367,11 +509,7 @@ impl Log {
                         if let Ok(modified) = metadata.modified() {
                             if now.duration_since(modified).unwrap_or_default() > retention {
                                 if let Err(err) = std::fs::remove_file(&path) {
-                                    eprintln!(
-                                        "Failed to delete rotated log {:?}: {:?}",
-                                        path,
-                                        err
-                                    );
+                                    eprintln!("Failed to delete rotated log {:?}: {:?}", path, err);
                                 }
                             }
                         }
@@ -582,4 +720,121 @@ macro_rules! trace {
             $crate::print::LOG.Print("TRACE", &s);
         }
     });
+}
+
+#[macro_export]
+macro_rules! ctrace {
+    ($category:expr, $($arg:tt)*) => ({
+        let category = $category;
+        if $crate::print::verbose_category_enabled(category) {
+            let s = &format!($($arg)*);
+            $crate::print::LOG.Print("CTRACE", &format!("[{}] {}", category.name, s));
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        disable_verbose_category, enable_verbose_category, mask_to_env_names,
+        parse_verbose_log_mask, parse_verbose_log_mask_with_unknowns, replace_verbose_log_mask,
+        set_verbose_log_mask, verbose_category, verbose_category_by_env_name, verbose_log_mask,
+    };
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static VERBOSE_MASK_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn verbose_categories_have_unique_masks() {
+        let mut seen = HashSet::new();
+        for category in verbose_category::ALL {
+            assert!(
+                seen.insert(category.mask),
+                "duplicate mask {}",
+                category.mask
+            );
+        }
+    }
+
+    #[test]
+    fn verbose_categories_have_unique_names() {
+        let mut seen = HashSet::new();
+        for category in verbose_category::ALL {
+            assert!(
+                seen.insert(category.name),
+                "duplicate name {}",
+                category.name
+            );
+        }
+    }
+
+    #[test]
+    fn verbose_categories_have_unique_env_names() {
+        let mut seen = HashSet::new();
+        for category in verbose_category::ALL {
+            assert!(
+                seen.insert(category.env_name),
+                "duplicate env_name {}",
+                category.env_name
+            );
+        }
+    }
+
+    #[test]
+    fn verbose_categories_round_trip_through_mask_to_env_names() {
+        let mask = verbose_category::ALL
+            .iter()
+            .fold(0u64, |acc, category| acc | category.mask);
+        let names = mask_to_env_names(mask);
+
+        for category in verbose_category::ALL {
+            assert!(names.contains(&category.env_name));
+            assert_eq!(
+                verbose_category_by_env_name(category.env_name),
+                Some(*category)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_verbose_log_mask_accepts_valid_categories_case_insensitively() {
+        let mask = parse_verbose_log_mask(" mcp , SCHEDULER , mcp ");
+        assert_eq!(
+            mask,
+            verbose_category::MCP.mask | verbose_category::SCHEDULER.mask
+        );
+    }
+
+    #[test]
+    fn parse_verbose_log_mask_collects_unknown_categories() {
+        let (mask, unknowns) =
+            parse_verbose_log_mask_with_unknowns("mcp, schedulre, routing, schedulre, nope");
+        assert_eq!(
+            mask,
+            verbose_category::MCP.mask | verbose_category::ROUTING.mask
+        );
+        assert_eq!(unknowns, vec!["schedulre".to_owned(), "nope".to_owned()]);
+    }
+
+    #[test]
+    fn verbose_mask_updates_work_as_expected() {
+        let _guard = VERBOSE_MASK_TEST_MUTEX.lock().unwrap();
+        let original = verbose_log_mask();
+        set_verbose_log_mask(0);
+        assert_eq!(enable_verbose_category(verbose_category::MCP), 0);
+        assert_eq!(verbose_log_mask(), verbose_category::MCP.mask);
+        assert_eq!(
+            enable_verbose_category(verbose_category::SCHEDULER),
+            verbose_category::MCP.mask
+        );
+        assert_eq!(
+            disable_verbose_category(verbose_category::MCP),
+            verbose_category::MCP.mask | verbose_category::SCHEDULER.mask
+        );
+        assert_eq!(
+            replace_verbose_log_mask(original),
+            verbose_category::SCHEDULER.mask
+        );
+    }
 }

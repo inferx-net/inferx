@@ -1778,7 +1778,8 @@ impl SchedulerHandler {
 
         for worker in &pods {
             let pod = &worker.pod;
-            trace!(
+            ctrace!(
+                crate::print::verbose_category::SCHEDULER,
                 "ProcessLeaseWorkerReq pod {:?} state {:?}",
                 pod.PodKey(),
                 worker.State()
@@ -1793,7 +1794,11 @@ impl SchedulerHandler {
                 let podKey = worker.pod.PodKey();
                 let remove = self.idlePods.pop(&podKey).is_some();
                 assert!(remove);
-                trace!("ProcessLeaseWorkerReq using idlepod work {:?}", &podKey);
+                ctrace!(
+                    crate::print::verbose_category::SCHEDULER,
+                    "ProcessLeaseWorkerReq using idlepod work {:?}",
+                    &podKey
+                );
 
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
@@ -1930,7 +1935,11 @@ impl SchedulerHandler {
             Ok(w) => w,
         };
 
-        trace!("ProcessReturnWorkerReq return pod {}", worker.pod.PodKey());
+        ctrace!(
+            crate::print::verbose_category::SCHEDULER,
+            "ProcessReturnWorkerReq return pod {}",
+            worker.pod.PodKey()
+        );
 
         if worker.State().IsIdle() {
             // when the scheduler restart, this issue will happen, fix this.
@@ -1960,7 +1969,13 @@ impl SchedulerHandler {
             .get_or_create(&nodelabel)
             .set(cnt as i64);
 
-        trace!("user GPU desc {:?} {} {}", &req.funcname, gpuCnt, cnt);
+        ctrace!(
+            crate::print::verbose_category::SCHEDULER,
+            "user GPU desc {:?} {} {}",
+            &req.funcname,
+            gpuCnt,
+            cnt
+        );
         // in case the gateway dead and recover and try to return an out of date pod
         // assert!(
         //     !worker.State().IsIdle(),

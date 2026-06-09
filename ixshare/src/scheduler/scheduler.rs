@@ -340,7 +340,8 @@ impl WorkerPod {
     }
 
     pub fn SetIdle(&self, src: SetIdleSource) {
-        trace!(
+        ctrace!(
+            crate::print::verbose_category::SCHEDULER,
             "Set pod {} Idle from {:?} src {:?}",
             self.pod.PodKey(),
             self.State(),
@@ -351,7 +352,11 @@ impl WorkerPod {
     }
 
     pub fn SetWorking(&self, gatewayId: i64) {
-        trace!("Set pod {} working", self.pod.PodKey());
+        ctrace!(
+            crate::print::verbose_category::SCHEDULER,
+            "Set pod {} working",
+            self.pod.PodKey()
+        );
         match *self.workerState.lock().unwrap() {
             WorkerPodState::Working(oldgatewayId) => {
                 error!(
