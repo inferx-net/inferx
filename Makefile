@@ -200,7 +200,7 @@ rundash:
 	VERSION=$(DASHBOARD_VERSION) envsubst < k8s/dashboard.yaml | sudo kubectl apply -f -
 
 stopdash:
-	sudo kubectl delete deployment inferx-dashboard
+	-sudo kubectl delete deployment inferx-dashboard
 
 stopkeycloak:
 	sudo kubectl delete deployment keycloak

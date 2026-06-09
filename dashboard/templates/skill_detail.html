@@ -96,6 +96,10 @@
         line-height: 1.4;
     }
     .playground-field textarea[readonly] { background: #f8fafc; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .playground-field textarea.autogrow {
+        max-height: 70vh;
+        overflow-y: auto;
+    }
     .playground-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .playground-metrics { display: flex; gap: 10px; flex-wrap: wrap; }
     .playground-metric {
@@ -300,6 +304,32 @@
         font-size: 12px;
         color: #64748b;
         white-space: nowrap;
+    }
+    .debug-trace-detail-toggle {
+        flex: 0 0 auto;
+        cursor: pointer;
+        color: #475569;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        background: transparent;
+        border: 0;
+        padding: 0;
+    }
+    .debug-trace-detail-toggle::before {
+        content: '+';
+        display: inline-block;
+        width: 14px;
+        margin-right: 6px;
+        color: #64748b;
+    }
+    .debug-trace-detail-toggle.expanded::before {
+        content: '−';
+    }
+    .debug-trace-details {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
     }
     .debug-trace-summary {
         display: flex;
@@ -544,7 +574,7 @@
             </div>
             <div class="playground-field">
                 <label for="skill-output">Output</label>
-                <textarea id="skill-output" rows="10" readonly placeholder="Response will appear here…"></textarea>
+                <textarea id="skill-output" class="autogrow" rows="6" readonly placeholder="Response will appear here…"></textarea>
             </div>
         </div>
     </section>
@@ -625,20 +655,12 @@
                 </div>
             <div class="playground-field">
                 <label for="skill-debug-output">Debug Result</label>
-                <textarea id="skill-debug-output" rows="8" readonly placeholder="Final debug result will appear here…"></textarea>
+                <textarea id="skill-debug-output" class="autogrow" rows="8" readonly placeholder="Final debug result will appear here…"></textarea>
             </div>
         </div>
     </section>
     {% endif %}
 
-    <section class="skill-panel">
-        <h2>Sample REST Call</h2>
-        <div class="copyable-area">
-            <button class="copyable-area-copy" type="button" onclick="copyTextFromElement('skill-restcall-copy')">Copy</button>
-            <textarea rows="10" readonly>{{ sample_rest_call_display }}</textarea>
-            <textarea id="skill-restcall-copy" hidden>{{ sample_rest_call }}</textarea>
-        </div>
-    </section>
 </div>
 
 <script>
@@ -729,9 +751,16 @@
         return String(content);
     }
 
+    function autoResizeTextarea(el) {
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${Math.max(el.scrollHeight, 120)}px`;
+    }
+
     function resetTrace() {
         tracePanelEl.hidden = true;
         traceOutputEl.value = '';
+        autoResizeTextarea(outputEl);
     }
 
     function getHeartbeatLabel(ev) {
@@ -851,6 +880,7 @@
             failReason: '',
             resultLabel: 'START',
             collapsed: false,
+            detailsExpanded: false,
             mocked: false,
             hasFailureDescendant: false,
             hasFailedDescendant: false,
@@ -1190,6 +1220,12 @@
         skill.className = 'debug-trace-skill';
         skill.textContent = node.skill || 'unknown';
 
+        const detailsToggle = document.createElement('button');
+        detailsToggle.type = 'button';
+        detailsToggle.className = 'debug-trace-detail-toggle' + (node.detailsExpanded ? ' expanded' : '');
+        detailsToggle.textContent = node.detailsExpanded ? 'Details' : 'Details';
+        detailsToggle.setAttribute('aria-expanded', node.detailsExpanded ? 'true' : 'false');
+
         const timing = document.createElement('div');
         timing.className = 'debug-trace-time';
         timing.textContent = metrics.totalMs ? fmtMs(metrics.totalMs) : '';
@@ -1197,6 +1233,7 @@
         head.appendChild(toggle);
         head.appendChild(badge);
         head.appendChild(skill);
+        head.appendChild(detailsToggle);
         head.appendChild(timing);
         card.appendChild(head);
 
@@ -1220,7 +1257,6 @@
             pill.textContent = text;
             summary.appendChild(pill);
         });
-        card.appendChild(summary);
 
         const body = document.createElement('div');
         body.className = 'debug-trace-body';
@@ -1236,10 +1272,11 @@
             code.textContent = part;
             meta.appendChild(code);
         });
-        body.appendChild(meta);
 
         const details = document.createElement('div');
         details.className = 'debug-trace-details';
+        details.appendChild(summary);
+        if (meta.childNodes.length) details.appendChild(meta);
         if (debugFilters.showContent) {
             if (latest.query) details.appendChild(createDebugDetailBlock('Query', latest.query));
             if (latest.output) details.appendChild(createDebugDetailBlock('Output', latest.output));
@@ -1247,7 +1284,18 @@
         if (node.failReason) details.appendChild(createDebugDetailBlock('Failure', node.failReason));
         details.appendChild(createDebugDetailBlock('Event Timeline', ''));
         details.lastChild.querySelector('.debug-trace-detail-body').replaceWith(createDebugEventTimeline(node));
-        body.appendChild(details);
+        if (node.detailsExpanded) {
+            body.appendChild(details);
+        }
+        detailsToggle.addEventListener('mousedown', (event) => {
+            event.stopPropagation();
+        });
+        detailsToggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            debugUserTouchedTree = true;
+            node.detailsExpanded = !node.detailsExpanded;
+            renderDebugTraceTree();
+        });
 
         const children = document.createElement('div');
         children.className = 'debug-trace-children';
@@ -1272,12 +1320,18 @@
         wrapper.appendChild(card);
 
         const toggleNode = (event) => {
-            if (event) event.preventDefault();
+            if (event) {
+                const target = event.target;
+                if (target instanceof Element && target.closest('.debug-trace-detail-toggle')) {
+                    return;
+                }
+                event.preventDefault();
+            }
             debugUserTouchedTree = true;
             node.collapsed = !node.collapsed;
             renderDebugTraceTree();
         };
-        head.addEventListener('click', () => toggleNode());
+        head.addEventListener('click', (event) => toggleNode(event));
         toggle.addEventListener('click', (event) => {
             event.stopPropagation();
             toggleNode(event);
@@ -1386,6 +1440,7 @@
         if (abortController) abortController.abort();
         abortController = new AbortController();
         outputEl.value = '';
+        autoResizeTextarea(outputEl);
         resetTrace();
         metricsEl.style.display = 'none';
         ttftEl.textContent = 'TTFT: —';
@@ -1425,6 +1480,7 @@
                 const message = payload?.choices?.[0]?.message;
                 const content = extractTextContent(message?.content);
                 outputEl.value = content;
+                autoResizeTextarea(outputEl);
                 if (!content) {
                     throw new Error('Function returned an empty response.');
                 }
@@ -1472,6 +1528,7 @@
                         } else if (pendingEvent === 'skill_result') {
                             const content = extractTextContent(chunk?.choices?.[0]?.message?.content);
                             outputEl.value = content;
+                            autoResizeTextarea(outputEl);
                             sawFinalResult = true;
                             if (firstTokenTime === 0) {
                                 firstTokenTime = performance.now();
@@ -1490,6 +1547,7 @@
                                     metricsEl.style.display = '';
                                 }
                                 outputEl.value += delta;
+                                autoResizeTextarea(outputEl);
                                 tokenCount++;
                                 if (firstTokenTime > 0) {
                                     const elapsed = (performance.now() - firstTokenTime) / 1000;
@@ -1584,6 +1642,7 @@
             debugAbortController = new AbortController();
             resetDebugTraceTree();
             debugOutputEl.value = '';
+            autoResizeTextarea(debugOutputEl);
             setDebugSending(true);
             setDebugStatus('Running debug…', false);
 
@@ -1642,6 +1701,7 @@
                                 appendDebugTrace(chunk);
                             } else if (pendingEvent === 'skill_result') {
                                 debugOutputEl.value = extractTextContent(chunk?.choices?.[0]?.message?.content);
+                                autoResizeTextarea(debugOutputEl);
                                 sawFinalResult = true;
                             }
                         } catch (_) {}
