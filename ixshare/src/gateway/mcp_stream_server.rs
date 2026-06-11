@@ -1,6 +1,6 @@
 use anyhow::Result as AResult;
 use futures::StreamExt;
-use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
+use rmcp::{model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -151,8 +151,24 @@ impl McpStreamServer {
                 let event: SkillTraceEventPayload = serde_json::from_str(&data).map_err(|e| {
                     Self::internal_error(format!("invalid trace event JSON: {}", e))
                 })?;
-                Self::try_notify_progress_message(context, Self::format_trace_message(&event))
-                    .await;
+                match context
+                    .peer
+                    .notify_progress(ProgressNotificationParam {
+                        progress_token: ProgressToken(NumberOrString::Number(0)),
+                        progress: 0.0,
+                        total: None,
+                        message: Some(Self::format_trace_message(&event)),
+                    })
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(ServiceError::TransportClosed) => {
+                        return Err(Self::internal_error("transport closed"));
+                    }
+                    Err(e) => {
+                        warn!("MCP progress notify failed: {}", e);
+                    }
+                }
             }
             Some("skill_result") => {
                 let json: Value = serde_json::from_str(&data).map_err(|e| {
