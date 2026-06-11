@@ -113,6 +113,51 @@ impl McpStreamServer {
         }
     }
 
+    fn summarize_value_for_log(value: &Value) -> String {
+        const MAX_LOG_BYTES: usize = 4096;
+        let text = value.to_string();
+        let bytes = text.as_bytes();
+        let preview = if bytes.len() > MAX_LOG_BYTES {
+            &bytes[..MAX_LOG_BYTES]
+        } else {
+            bytes
+        };
+        let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+        if bytes.len() > MAX_LOG_BYTES {
+            format!(
+                "{}...[truncated {} bytes]",
+                preview_text,
+                bytes.len() - MAX_LOG_BYTES
+            )
+        } else {
+            preview_text
+        }
+    }
+
+    fn summarize_str_for_log(text: &str) -> String {
+        const MAX_LOG_BYTES: usize = 4096;
+        let bytes = text.as_bytes();
+        let preview = if bytes.len() > MAX_LOG_BYTES {
+            &bytes[..MAX_LOG_BYTES]
+        } else {
+            bytes
+        };
+        let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+        if bytes.len() > MAX_LOG_BYTES {
+            format!("{}...[truncated {} bytes]", preview_text, bytes.len() - MAX_LOG_BYTES)
+        } else {
+            preview_text
+        }
+    }
+
+    fn query_schema_value() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"]
+        })
+    }
+
     async fn notify_progress_message(
         context: &RequestContext<RoleServer>,
         message: String,
@@ -358,9 +403,21 @@ impl ServerHandler for McpStreamServer {
 
         ctrace!(
             verbose_category::MCP,
-            "MCP forwarding: tool={} -> endpoint={}",
+            "MCP call_tool request: tool={} tenant={} owner={}/{}/{} query_len={} input_schema={}",
             requested_name,
-            endpoint
+            tenant,
+            route.0,
+            route.1,
+            route.2,
+            query.len(),
+            Self::summarize_value_for_log(&Self::query_schema_value())
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "MCP call_tool request payload: tool={} tenant={} query={}",
+            requested_name,
+            tenant,
+            Self::summarize_str_for_log(query)
         );
 
         let response = self
@@ -396,6 +453,21 @@ impl ServerHandler for McpStreamServer {
                 Self::internal_error(format!("failed to read endpoint response: {}", e))
             })?;
             let full_response = Self::parse_text_response(&body)?;
+            ctrace!(
+                verbose_category::MCP,
+                "MCP call_tool response: tool={} tenant={} final_text_present={} response_len={}",
+                requested_name,
+                tenant,
+                !full_response.is_empty(),
+                full_response.len()
+            );
+            ctrace!(
+                verbose_category::SKILL_PAYLOAD,
+                "MCP call_tool response payload: tool={} tenant={} response={}",
+                requested_name,
+                tenant,
+                Self::summarize_str_for_log(&full_response)
+            );
             return Ok(CallToolResult::success(vec![Content::text(full_response)]));
         }
 
@@ -471,7 +543,21 @@ impl ServerHandler for McpStreamServer {
             Self::resolve_skill_trace_outcome(final_result, terminal_failure, saw_done)?;
         let full_response = Self::extract_text_from_completion(&final_result)
             .ok_or_else(|| Self::internal_error("skill response did not contain final text"))?;
-
+        ctrace!(
+            verbose_category::MCP,
+            "MCP call_tool response: tool={} tenant={} final_text_present={} response_len={}",
+            requested_name,
+            tenant,
+            !full_response.is_empty(),
+            full_response.len()
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "MCP call_tool response payload: tool={} tenant={} response={}",
+            requested_name,
+            tenant,
+            Self::summarize_str_for_log(&full_response)
+        );
         Ok(CallToolResult::success(vec![Content::text(full_response)]))
     }
 
@@ -481,6 +567,7 @@ impl ServerHandler for McpStreamServer {
         context: RequestContext<RoleServer>,
     ) -> AResult<rmcp::model::ListToolsResult, ErrorData> {
         let (_, tenant) = self.resolve_tenant(&context).await?;
+        let query_schema = Self::query_schema_value();
         let tools = self
             .secret
             .GetToolsForTenant(&tenant)
@@ -491,17 +578,19 @@ impl ServerHandler for McpStreamServer {
                 Tool::new(
                     tool.tool_name,
                     tool.description.unwrap_or_default(),
-                    std::sync::Arc::new(
-                        serde_json::from_value(serde_json::json!({
-                            "type": "object",
-                            "properties": {"query": {"type": "string"}},
-                            "required": ["query"]
-                        }))
-                        .unwrap(),
-                    ),
+                    std::sync::Arc::new(serde_json::from_value(query_schema.clone()).unwrap()),
                 )
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let tool_names = tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+        ctrace!(
+            verbose_category::MCP,
+            "MCP list_tools tenant={} tool_count={} tool_names={:?} input_schema={}",
+            tenant,
+            tool_names.len(),
+            tool_names,
+            Self::summarize_value_for_log(&query_schema)
+        );
 
         Ok(rmcp::model::ListToolsResult {
             tools,
