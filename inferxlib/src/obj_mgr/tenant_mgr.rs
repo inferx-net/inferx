@@ -85,7 +85,7 @@ fn default_max_replica() -> u64 {
 }
 
 fn default_max_gpu() -> u64 {
-    2
+    4
 }
 
 fn default_max_standby() -> u64 {
