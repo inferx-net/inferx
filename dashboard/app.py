@@ -4934,7 +4934,7 @@ def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str 
     if keyword is not None and str(keyword).strip() != "":
         params["keyword"] = str(keyword).strip()
     if include_unpublished:
-        params["include_unpublished"] = "1"
+        params["include_unpublished"] = "true"
 
     resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), params=params, timeout=60)
     payload = response_json_or_none(resp)
