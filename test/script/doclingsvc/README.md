@@ -17,7 +17,10 @@ sudo docker build -t docling-api .
 ## Run
 
 ```bash
-sudo docker run --rm -it --name docling-api -p 8000:8000 docling-api
+# Set API_KEY environment variable
+sudo docker run --rm -it --name docling-api -p 8000:8000 \
+  -e API_KEY=your-secret-api-key \
+  docling-api
 ```
 
 ## API Endpoints
@@ -31,16 +34,18 @@ Health check endpoint
 ### POST `/convert`
 Convert a PDF document to Markdown.
 
+**Authentication:** Include API key in `Authorization` header as `Bearer <key>`.
+
 **With config via headers:**
 ```bash
 curl -X POST \
-  -H "X-Do-Ocr: true" \
-  -H "X-Do-Table-Structure: true" \
+  -H "Authorization: Bearer secret123" \
+  -H "X-Do-Table-Structure: false" \
   -F "file=@document.pdf" \
   http://localhost:8000/convert > output.md
 ```
 
-**Available headers:**
+**Available config headers:**
 | Header | Default |
 |--------|---------|
 | `X-Do-Ocr` | `false` |
@@ -54,22 +59,29 @@ curl -X POST \
 ## Example
 
 ```bash
-# Start service
-sudo docker run -d --name docling-api -p 8000:8000 docling-api
+# Start service with API key
+sudo docker run -it --rm --name docling-api -p 8000:8000 \
+  -e API_KEY=secret123 \
+  docling-api
 sleep 5
 
-# Convert with default settings
-curl -X POST -F "file=@document.pdf" http://localhost:8000/convert > output.md
+# Convert with authentication
+curl -X POST \
+  -H "Authorization: Bearer secret123" \
+  -F "file=@document.pdf" \
+  http://localhost:8000/convert > output.md
 
-# Convert with OCR enabled
-curl -X POST -H "X-Do-Ocr: true" -F "file=@document.pdf" http://localhost:8000/convert > output.md
-
-# Convert with tables
-curl -X POST -H "X-Do-Table-Structure: true" -F "file=@document.pdf" http://localhost:8000/convert > output.md
+# Convert with config
+curl -X POST \
+  -H "Authorization: Bearer secret123" \
+  -H "X-Do-Ocr: true" \
+  -F "file=@document.pdf" \
+  http://localhost:8000/convert > output.md
 ```
 
 ## Notes
 
 - OCR models are pre-downloaded during Docker build
 - Default is fastest (no OCR, no table extraction)
+- API key is required for all `/convert` requests
 - Use headers to enable specific features

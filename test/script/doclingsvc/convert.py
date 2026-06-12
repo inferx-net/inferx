@@ -11,6 +11,11 @@ app = Flask(__name__)
 # Use a writable directory for model cache
 os.environ["DOCLING_CACHE_DIR"] = "/app/.cache"
 
+# API Key configuration
+API_KEY = os.environ.get("API_KEY")
+if not API_KEY:
+    print("WARNING: API_KEY not set, API calls will fail with authorization error", file=sys.stderr)
+
 # Import docling only after Flask app is defined
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
@@ -55,6 +60,18 @@ def create_converter(do_ocr=False, do_table_structure=False,
 @app.route('/convert', methods=['POST'])
 def convert():
     """Convert document file to markdown using local Docling."""
+    
+    # Authenticate via API key in Authorization header
+    auth_header = request.headers.get('Authorization', '')
+    # Support both "Bearer <key>" and raw key formats
+    api_key = auth_header.replace('Bearer ', '').strip()
+    
+    if not API_KEY:
+        return {'error': 'API_KEY not configured on server'}, 500
+    
+    if not api_key or api_key != API_KEY:
+        return {'error': 'Authorization failed'}, 401
+    
     print("DEBUG: Received conversion request", file=sys.stderr)
     
     # Parse optional configuration from headers, JSON body, or form fields
