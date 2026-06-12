@@ -1735,10 +1735,14 @@ async fn execute_skill_chain(
         chain.current_depth
     );
 
-    let prefix = if prefix.trim().is_empty() {
-        SKILL_EP_CONSTRAINT.to_string()
+    let prefix = if GATEWAY_CONFIG.skillEPSystemPromptConstraint {
+        if prefix.trim().is_empty() {
+            SKILL_EP_CONSTRAINT.to_string()
+        } else {
+            format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+        }
     } else {
-        format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+        prefix
     };
 
     let child_http_client = reqwest::Client::new();

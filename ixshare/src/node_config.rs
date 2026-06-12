@@ -262,6 +262,7 @@ pub struct GatewayConfig {
     pub auditdbAddr: String,
     pub billingdbAddr: String,
     pub enforceBilling: bool,
+    pub skillEPSystemPromptConstraint: bool,
     pub secretStoreAddr: String,
     pub keycloakconfig: KeycloadConfig,
     pub inferxAdminApikey: String,
@@ -352,6 +353,20 @@ impl GatewayConfig {
             Err(_) => false,
         };
 
+        let skillEPSystemPromptConstraint = match std::env::var("SKILL_EP_CONSTRAINT") {
+            Ok(s) => match s.parse::<bool>() {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        "invalid SKILL_EP_CONSTRAINT value '{}', defaulting to false",
+                        &s
+                    );
+                    false
+                }
+            },
+            Err(_) => false,
+        };
+
         let keycloakUrl = match std::env::var("KEYCLOAK_URL") {
             Ok(s) => s,
             Err(_) => config.keycloakconfig.url.clone(),
@@ -410,6 +425,7 @@ impl GatewayConfig {
             auditdbAddr: auditdbAddr,
             billingdbAddr: billingdbAddr,
             enforceBilling: enforceBilling,
+            skillEPSystemPromptConstraint: skillEPSystemPromptConstraint,
             keycloakconfig: KeycloadConfig {
                 url: keycloakUrl,
                 realm: keycloakRealm,
