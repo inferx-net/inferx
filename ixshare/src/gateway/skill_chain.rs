@@ -28,6 +28,7 @@ const SKILL_TRACE_HEADER: &str = "X-Skill-Trace";
 const SKILL_TRACE_CONTENT_HEADER: &str = "X-Skill-Trace-Content";
 const SKILL_CHAIN_MAX_DEPTH: u32 = 5;
 const SKILL_CHAIN_TOOL_NAME: &str = "call_skillep";
+const SKILL_EP_CONSTRAINT: &str = "IMPORTANT: When using the call_skillep tool, you MUST only call skill endpoint IDs that are explicitly listed below. Do not invent or assume other skill endpoint IDs exist. If a skill endpoint is not listed below, do not call it.";
 const CLIENT_PROVIDED_TOOLS_ERROR: &str = "skill endpoint does not accept client-provided tools";
 const SKILL_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 #[derive(Clone, Debug)]
@@ -1733,6 +1734,12 @@ async fn execute_skill_chain(
         remain_path,
         chain.current_depth
     );
+
+    let prefix = if prefix.trim().is_empty() {
+        SKILL_EP_CONSTRAINT.to_string()
+    } else {
+        format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+    };
 
     let child_http_client = reqwest::Client::new();
     let mut aggregate_usage: Option<SkillTraceTokenUsage> = None;
