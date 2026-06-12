@@ -28,6 +28,7 @@ const SKILL_TRACE_HEADER: &str = "X-Skill-Trace";
 const SKILL_TRACE_CONTENT_HEADER: &str = "X-Skill-Trace-Content";
 const SKILL_CHAIN_MAX_DEPTH: u32 = 5;
 const SKILL_CHAIN_TOOL_NAME: &str = "call_skillep";
+const SKILL_EP_CONSTRAINT: &str = "IMPORTANT: When using the call_skillep tool, you MUST only call skill endpoint IDs that are explicitly listed below. Do not invent or assume other skill endpoint IDs exist. If a skill endpoint is not listed below, do not call it.";
 const CLIENT_PROVIDED_TOOLS_ERROR: &str = "skill endpoint does not accept client-provided tools";
 const SKILL_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 #[derive(Clone, Debug)]
@@ -845,20 +846,37 @@ fn json_text(value: &Value) -> Option<String> {
     }
 }
 
-fn summarize_response_body_for_log(body: &[u8]) -> String {
+fn summarize_value_for_log(value: &Value) -> String {
     const MAX_LOG_BYTES: usize = 4096;
-    let preview = if body.len() > MAX_LOG_BYTES {
-        &body[..MAX_LOG_BYTES]
+    let text = value.to_string();
+    let bytes = text.as_bytes();
+    let preview = if bytes.len() > MAX_LOG_BYTES {
+        &bytes[..MAX_LOG_BYTES]
     } else {
-        body
+        bytes
     };
-    let text = String::from_utf8_lossy(preview).replace('\n', "\\n");
-    if body.len() > MAX_LOG_BYTES {
+    let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+    if bytes.len() > MAX_LOG_BYTES {
         format!(
             "{}...[truncated {} bytes]",
-            text,
-            body.len() - MAX_LOG_BYTES
+            preview_text,
+            bytes.len() - MAX_LOG_BYTES
         )
+    } else {
+        preview_text
+    }
+}
+
+fn summarize_bytes_for_log(bytes: &[u8]) -> String {
+    const MAX_LOG_BYTES: usize = 4096;
+    let preview = if bytes.len() > MAX_LOG_BYTES {
+        &bytes[..MAX_LOG_BYTES]
+    } else {
+        bytes
+    };
+    let text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+    if bytes.len() > MAX_LOG_BYTES {
+        format!("{}...[truncated {} bytes]", text, bytes.len() - MAX_LOG_BYTES)
     } else {
         text
     }
@@ -872,6 +890,25 @@ fn latest_user_query(history: &[Value]) -> Option<String> {
         }
         obj.get("content").and_then(json_text)
     })
+}
+
+fn summarize_tool_calls_for_log(tool_calls: &[ParsedSkillToolCall]) -> String {
+    let summarized = tool_calls
+        .iter()
+        .map(|call| {
+            let (skillep_id, query_len) = match parse_skillep_tool_args(&call.arguments) {
+                Ok((skillep_id, query)) => (skillep_id, query.len().to_string()),
+                Err(_) => ("-".to_string(), "invalid".to_string()),
+            };
+            serde_json::json!({
+                "id": call.id,
+                "name": call.name,
+                "skillep_id": skillep_id,
+                "query_len": query_len,
+            })
+        })
+        .collect::<Vec<_>>();
+    summarize_value_for_log(&Value::Array(summarized))
 }
 
 fn child_result_usage(result: &ParallelChildResult) -> Option<&SkillTraceTokenUsage> {
@@ -1698,6 +1735,12 @@ async fn execute_skill_chain(
         chain.current_depth
     );
 
+    let prefix = if prefix.trim().is_empty() {
+        SKILL_EP_CONSTRAINT.to_string()
+    } else {
+        format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+    };
+
     let child_http_client = reqwest::Client::new();
     let mut aggregate_usage: Option<SkillTraceTokenUsage> = None;
 
@@ -1718,6 +1761,28 @@ async fn execute_skill_chain(
                     "service failure: failed to build request body",
                 )
             })?;
+        ctrace!(
+            verbose_category::SKILL,
+            "skill_chain model_request logical={}/{}/{} depth={} latest_user_query={} tools={}",
+            route.logical.tenant,
+            route.logical.namespace,
+            route.logical.funcname,
+            chain.current_depth,
+            latest_user_query(&chain.history).unwrap_or_else(|| "-".to_string()),
+            chain.template
+                .get("tools")
+                .map(summarize_value_for_log)
+                .unwrap_or_else(|| "-".to_string())
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "skill_chain model_request payload logical={}/{}/{} depth={} body={}",
+            route.logical.tenant,
+            route.logical.namespace,
+            route.logical.funcname,
+            chain.current_depth,
+            summarize_bytes_for_log(&body_bytes)
+        );
 
         let mut model_headers = chain.headers.clone();
         model_headers.remove(SKILL_CHAIN_CHILD_HEADER);
@@ -1794,15 +1859,6 @@ async fn execute_skill_chain(
                 }
             })
             .await?;
-        ctrace!(
-            verbose_category::SKILL,
-            "skill_chain model_response logical={}/{}/{} status={} body_preview={}",
-            route.logical.tenant,
-            route.logical.namespace,
-            route.logical.funcname,
-            status,
-            summarize_response_body_for_log(&resp_bytes)
-        );
         let parsed = match parse_skill_response(&resp_bytes) {
             Some(parsed) => parsed,
             None => {
@@ -1819,6 +1875,28 @@ async fn execute_skill_chain(
                 });
             }
         };
+        ctrace!(
+            verbose_category::SKILL,
+            "skill_chain model_response logical={}/{}/{} status={} final_text_present={} tool_calls={}",
+            route.logical.tenant,
+            route.logical.namespace,
+            route.logical.funcname,
+            status,
+            parsed
+                .final_text
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
+            summarize_tool_calls_for_log(&parsed.tool_calls)
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "skill_chain model_response payload logical={}/{}/{} body={}",
+            route.logical.tenant,
+            route.logical.namespace,
+            route.logical.funcname,
+            summarize_bytes_for_log(&resp_bytes)
+        );
         if let Some(usage) = parsed.usage.as_ref() {
             if let Some(aggregate) = aggregate_usage.as_mut() {
                 aggregate.add_assign(usage);

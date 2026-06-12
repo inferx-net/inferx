@@ -700,7 +700,7 @@
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
-        const billingPaymentUrl = 'https://buy.stripe.com/4gM00c6Ia5ftcAB4d64Vy03';
+        const billingPaymentUrl = 'https://buy.stripe.com/3cIcMY8Qi5ftastaBu4Vy04';
         const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
         const loginUrl = '{{ hosturl }}' + "login";
@@ -1005,13 +1005,13 @@
 
             if (quotaExceeded) {
                 text.replaceChildren(
-                    document.createTextNode('Your credit has run out. InferX currently offers $20/month/model while in beta to continue using the service. Use the '),
+                    document.createTextNode('Your credit has run out. InferX currently offers $10/month/model while in beta to continue using the service. Use the '),
                     link,
                     document.createTextNode(' to set it up.'),
                 );
             } else {
                 text.replaceChildren(
-                    document.createTextNode('InferX currently offers $20/month/model while in beta when your credit runs out. Use the '),
+                    document.createTextNode('InferX currently offers $10/month/model while in beta when your credit runs out. Use the '),
                     link,
                     document.createTextNode(' to set it up.'),
                 );

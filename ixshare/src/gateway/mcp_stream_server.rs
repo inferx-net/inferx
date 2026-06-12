@@ -1,6 +1,6 @@
 use anyhow::Result as AResult;
 use futures::StreamExt;
-use rmcp::{model::*, service::RequestContext, ErrorData, RoleServer, ServerHandler};
+use rmcp::{model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -113,6 +113,51 @@ impl McpStreamServer {
         }
     }
 
+    fn summarize_value_for_log(value: &Value) -> String {
+        const MAX_LOG_BYTES: usize = 4096;
+        let text = value.to_string();
+        let bytes = text.as_bytes();
+        let preview = if bytes.len() > MAX_LOG_BYTES {
+            &bytes[..MAX_LOG_BYTES]
+        } else {
+            bytes
+        };
+        let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+        if bytes.len() > MAX_LOG_BYTES {
+            format!(
+                "{}...[truncated {} bytes]",
+                preview_text,
+                bytes.len() - MAX_LOG_BYTES
+            )
+        } else {
+            preview_text
+        }
+    }
+
+    fn summarize_str_for_log(text: &str) -> String {
+        const MAX_LOG_BYTES: usize = 4096;
+        let bytes = text.as_bytes();
+        let preview = if bytes.len() > MAX_LOG_BYTES {
+            &bytes[..MAX_LOG_BYTES]
+        } else {
+            bytes
+        };
+        let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
+        if bytes.len() > MAX_LOG_BYTES {
+            format!("{}...[truncated {} bytes]", preview_text, bytes.len() - MAX_LOG_BYTES)
+        } else {
+            preview_text
+        }
+    }
+
+    fn query_schema_value() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"]
+        })
+    }
+
     async fn notify_progress_message(
         context: &RequestContext<RoleServer>,
         message: String,
@@ -139,6 +184,7 @@ impl McpStreamServer {
         context: &RequestContext<RoleServer>,
         message: SseMessage,
         final_result: &mut Option<Value>,
+        terminal_failure: &mut Option<String>,
         saw_done: &mut bool,
     ) -> Result<(), ErrorData> {
         let SseMessage::Event { event, data } = message;
@@ -151,8 +197,25 @@ impl McpStreamServer {
                 let event: SkillTraceEventPayload = serde_json::from_str(&data).map_err(|e| {
                     Self::internal_error(format!("invalid trace event JSON: {}", e))
                 })?;
-                Self::try_notify_progress_message(context, Self::format_trace_message(&event))
-                    .await;
+                update_terminal_failure(&event, terminal_failure);
+                match context
+                    .peer
+                    .notify_progress(ProgressNotificationParam {
+                        progress_token: ProgressToken(NumberOrString::Number(0)),
+                        progress: 0.0,
+                        total: None,
+                        message: Some(Self::format_trace_message(&event)),
+                    })
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(ServiceError::TransportClosed) => {
+                        return Err(Self::internal_error("transport closed"));
+                    }
+                    Err(e) => {
+                        warn!("MCP progress notify failed: {}", e);
+                    }
+                }
             }
             Some("skill_result") => {
                 let json: Value = serde_json::from_str(&data).map_err(|e| {
@@ -163,6 +226,28 @@ impl McpStreamServer {
             _ => {}
         }
         Ok(())
+    }
+
+    // Resolves the terminal state of a skill trace stream into Ok(result) or Err.
+    // Extracted as a pure function so the failure-path logic can be unit-tested without
+    // a live MCP transport or SSE stream.
+    fn resolve_skill_trace_outcome(
+        final_result: Option<Value>,
+        terminal_failure: Option<String>,
+        saw_done: bool,
+    ) -> Result<Value, ErrorData> {
+        if !saw_done && final_result.is_none() {
+            return Err(Self::internal_error("trace stream ended before [DONE]"));
+        }
+        match final_result {
+            Some(v) => Ok(v),
+            None => {
+                let msg = terminal_failure
+                    .as_deref()
+                    .unwrap_or("trace stream missing skill_result");
+                Err(Self::internal_error(msg))
+            }
+        }
     }
 
     fn format_trace_message(event: &SkillTraceEventPayload) -> String {
@@ -183,6 +268,29 @@ impl McpStreamServer {
             }
             _ => format!("{}: {}", event.skill, event.event_type),
         }
+    }
+}
+
+fn update_terminal_failure(event: &SkillTraceEventPayload, terminal_failure: &mut Option<String>) {
+    if event.depth == 1
+        && event.event_type == "call_finish"
+        && event.result_code.as_deref() == Some("fail")
+    {
+        *terminal_failure = Some(format!(
+            "{}: {}",
+            event.skill,
+            format_skill_fail_reason(event.fail_reason.as_deref())
+        ));
+    }
+}
+
+fn format_skill_fail_reason(reason: Option<&str>) -> &'static str {
+    match reason {
+        Some("timeout") => "skill timed out",
+        Some("transport_error") => "skill transport error",
+        Some("invalid_response") => "skill returned invalid response",
+        Some("max_depth") => "skill exceeded max chain depth",
+        _ => "skill failed",
     }
 }
 
@@ -227,11 +335,15 @@ struct SkillTraceEventPayload {
     event_type: String,
     skill: String,
     #[serde(default)]
+    depth: u32,
+    #[serde(default)]
     phase: Option<String>,
     #[serde(default)]
     elapsed_ms: Option<u64>,
     #[serde(default)]
     result_code: Option<String>,
+    #[serde(default)]
+    fail_reason: Option<String>,
     #[serde(default)]
     parent_call_id: Option<String>,
 }
@@ -291,9 +403,21 @@ impl ServerHandler for McpStreamServer {
 
         ctrace!(
             verbose_category::MCP,
-            "MCP forwarding: tool={} -> endpoint={}",
+            "MCP call_tool request: tool={} tenant={} owner={}/{}/{} query_len={} input_schema={}",
             requested_name,
-            endpoint
+            tenant,
+            route.0,
+            route.1,
+            route.2,
+            query.len(),
+            Self::summarize_value_for_log(&Self::query_schema_value())
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "MCP call_tool request payload: tool={} tenant={} query={}",
+            requested_name,
+            tenant,
+            Self::summarize_str_for_log(query)
         );
 
         let response = self
@@ -329,12 +453,28 @@ impl ServerHandler for McpStreamServer {
                 Self::internal_error(format!("failed to read endpoint response: {}", e))
             })?;
             let full_response = Self::parse_text_response(&body)?;
+            ctrace!(
+                verbose_category::MCP,
+                "MCP call_tool response: tool={} tenant={} final_text_present={} response_len={}",
+                requested_name,
+                tenant,
+                !full_response.is_empty(),
+                full_response.len()
+            );
+            ctrace!(
+                verbose_category::SKILL_PAYLOAD,
+                "MCP call_tool response payload: tool={} tenant={} response={}",
+                requested_name,
+                tenant,
+                Self::summarize_str_for_log(&full_response)
+            );
             return Ok(CallToolResult::success(vec![Content::text(full_response)]));
         }
 
         let mut parser = SseParser::default();
         let mut buf = String::new();
         let mut final_result: Option<Value> = None;
+        let mut terminal_failure: Option<String> = None;
         let mut saw_done = false;
         let mut stream = response.bytes_stream();
 
@@ -352,8 +492,14 @@ impl ServerHandler for McpStreamServer {
                     line.pop();
                 }
                 if let Some(message) = parser.push_line(&line) {
-                    Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
-                        .await?;
+                    Self::handle_sse_message(
+                        &context,
+                        message,
+                        &mut final_result,
+                        &mut terminal_failure,
+                        &mut saw_done,
+                    )
+                    .await?;
                 }
             }
         }
@@ -364,23 +510,54 @@ impl ServerHandler for McpStreamServer {
                 line.pop();
             }
             if let Some(message) = parser.push_line(&line) {
-                Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
-                    .await?;
+                Self::handle_sse_message(
+                    &context,
+                    message,
+                    &mut final_result,
+                    &mut terminal_failure,
+                    &mut saw_done,
+                )
+                .await?;
             }
             if let Some(message) = parser.push_line("") {
-                Self::handle_sse_message(&context, message, &mut final_result, &mut saw_done)
-                    .await?;
+                Self::handle_sse_message(
+                    &context,
+                    message,
+                    &mut final_result,
+                    &mut terminal_failure,
+                    &mut saw_done,
+                )
+                .await?;
             }
         }
 
-        if !saw_done && final_result.is_none() {
-            return Err(Self::internal_error("trace stream ended before [DONE]"));
+        if saw_done {
+            if let Some(ref failure) = terminal_failure {
+                warn!(
+                    "MCP call_tool failed: tool={} reason={}",
+                    requested_name, failure
+                );
+            }
         }
-        let final_result = final_result
-            .ok_or_else(|| Self::internal_error("trace stream missing skill_result"))?;
+        let final_result =
+            Self::resolve_skill_trace_outcome(final_result, terminal_failure, saw_done)?;
         let full_response = Self::extract_text_from_completion(&final_result)
             .ok_or_else(|| Self::internal_error("skill response did not contain final text"))?;
-
+        ctrace!(
+            verbose_category::MCP,
+            "MCP call_tool response: tool={} tenant={} final_text_present={} response_len={}",
+            requested_name,
+            tenant,
+            !full_response.is_empty(),
+            full_response.len()
+        );
+        ctrace!(
+            verbose_category::SKILL_PAYLOAD,
+            "MCP call_tool response payload: tool={} tenant={} response={}",
+            requested_name,
+            tenant,
+            Self::summarize_str_for_log(&full_response)
+        );
         Ok(CallToolResult::success(vec![Content::text(full_response)]))
     }
 
@@ -390,6 +567,7 @@ impl ServerHandler for McpStreamServer {
         context: RequestContext<RoleServer>,
     ) -> AResult<rmcp::model::ListToolsResult, ErrorData> {
         let (_, tenant) = self.resolve_tenant(&context).await?;
+        let query_schema = Self::query_schema_value();
         let tools = self
             .secret
             .GetToolsForTenant(&tenant)
@@ -400,17 +578,19 @@ impl ServerHandler for McpStreamServer {
                 Tool::new(
                     tool.tool_name,
                     tool.description.unwrap_or_default(),
-                    std::sync::Arc::new(
-                        serde_json::from_value(serde_json::json!({
-                            "type": "object",
-                            "properties": {"query": {"type": "string"}},
-                            "required": ["query"]
-                        }))
-                        .unwrap(),
-                    ),
+                    std::sync::Arc::new(serde_json::from_value(query_schema.clone()).unwrap()),
                 )
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let tool_names = tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+        ctrace!(
+            verbose_category::MCP,
+            "MCP list_tools tenant={} tool_count={} tool_names={:?} input_schema={}",
+            tenant,
+            tool_names.len(),
+            tool_names,
+            Self::summarize_value_for_log(&query_schema)
+        );
 
         Ok(rmcp::model::ListToolsResult {
             tools,
@@ -422,7 +602,7 @@ impl ServerHandler for McpStreamServer {
 
 #[cfg(test)]
 mod tests {
-    use super::McpStreamServer;
+    use super::{McpStreamServer, SkillTraceEventPayload, format_skill_fail_reason, update_terminal_failure};
     use serde_json::json;
 
     #[test]
@@ -436,5 +616,83 @@ mod tests {
             McpStreamServer::parse_text_response(&serde_json::to_vec(&body).unwrap()).unwrap(),
             "final answer"
         );
+    }
+
+    #[test]
+    fn resolve_outcome_returns_failure_message_when_skill_failed() {
+        let result = McpStreamServer::resolve_skill_trace_outcome(
+            None,
+            Some("skill timed out".to_string()),
+            true,
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "skill timed out");
+    }
+
+    #[test]
+    fn resolve_outcome_returns_skill_result_even_with_terminal_failure_set() {
+        let skill_result = json!({"choices": [{"message": {"content": "done"}}]});
+        let result = McpStreamServer::resolve_skill_trace_outcome(
+            Some(skill_result.clone()),
+            Some("skill timed out".to_string()),
+            true,
+        );
+        assert_eq!(result.unwrap(), skill_result);
+    }
+
+    fn make_call_finish(depth: u32, result_code: &str, fail_reason: Option<&str>) -> SkillTraceEventPayload {
+        SkillTraceEventPayload {
+            event_type: "call_finish".to_string(),
+            skill: "acme/default/pricing".to_string(),
+            depth,
+            phase: None,
+            elapsed_ms: None,
+            result_code: Some(result_code.to_string()),
+            fail_reason: fail_reason.map(str::to_string),
+            parent_call_id: None,
+        }
+    }
+
+    #[test]
+    fn update_terminal_failure_sets_message_for_root_call_finish_fail() {
+        let event = make_call_finish(1, "fail", Some("timeout"));
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert_eq!(terminal_failure.as_deref(), Some("acme/default/pricing: skill timed out"));
+    }
+
+    #[test]
+    fn update_terminal_failure_ignores_non_root_depth() {
+        let event = make_call_finish(2, "fail", Some("timeout"));
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert!(terminal_failure.is_none());
+    }
+
+    #[test]
+    fn update_terminal_failure_ignores_pass_result() {
+        let event = make_call_finish(1, "pass", None);
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert!(terminal_failure.is_none());
+    }
+
+    #[test]
+    fn update_terminal_failure_parses_fail_reason_from_serde() {
+        let json = r#"{"type":"call_finish","skill":"acme/default/pricing","depth":1,"result_code":"fail","fail_reason":"invalid_response"}"#;
+        let event: SkillTraceEventPayload = serde_json::from_str(json).unwrap();
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert_eq!(terminal_failure.as_deref(), Some("acme/default/pricing: skill returned invalid response"));
+    }
+
+    #[test]
+    fn format_skill_fail_reason_maps_known_reasons() {
+        assert_eq!(format_skill_fail_reason(Some("timeout")), "skill timed out");
+        assert_eq!(format_skill_fail_reason(Some("transport_error")), "skill transport error");
+        assert_eq!(format_skill_fail_reason(Some("invalid_response")), "skill returned invalid response");
+        assert_eq!(format_skill_fail_reason(Some("max_depth")), "skill exceeded max chain depth");
+        assert_eq!(format_skill_fail_reason(None), "skill failed");
+        assert_eq!(format_skill_fail_reason(Some("unknown_code")), "skill failed");
     }
 }
