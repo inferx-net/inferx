@@ -148,12 +148,61 @@
         background: #f1f5f9;
         color: #475569;
     }
+
+    .skill-import-dropdown {
+        position: relative;
+        display: inline-block;
+    }
+
+    .skill-import-menu {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        margin-top: 2px;
+        background: #fff;
+        border: 1px solid #b7c6dc;
+        border-radius: 4px;
+        z-index: 100;
+        min-width: 130px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+
+    .skill-import-menu.open {
+        display: block;
+    }
+
+    .skill-import-menu-item {
+        display: block;
+        padding: 8px 14px;
+        cursor: pointer;
+        white-space: nowrap;
+        color: #334155;
+        font-size: 0.9em;
+    }
+
+    .skill-import-menu-item:hover {
+        background: #f1f5f9;
+    }
 </style>
 
 <div class="skill-create-page">
-    <div>
-        <h1>Create Function</h1>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h1 style="margin:0;">Create Function</h1>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="skill-import-dropdown">
+                <button type="button" id="skill-import-btn" class="ix-btn secondary" style="margin:0;">Import ▾</button>
+                <div id="skill-import-menu" class="skill-import-menu">
+                    <span class="skill-import-menu-item" id="skill-import-from-file-label">From file</span>
+                    <span class="skill-import-menu-item" id="skill-import-from-folder-label">From folder</span>
+                </div>
+            </div>
+            <span id="skill-import-status" style="color:#475569;font-size:0.9em;"></span>
+        </div>
     </div>
+    <input id="skill-file-input" type="file" accept=".md" style="display:none">
+    <input id="skill-folder-input" type="file" webkitdirectory style="display:none">
+    <p style="margin:0;color:#64748b;font-size:0.9em;">Use <strong>Import</strong> to pre-fill Function Name, Description, and Function Data from an existing skill. Folder import merges <code>SKILL.md</code> with its <code>references/</code> files — only local files in the <code>references/</code> subfolder are inlined; external links are not fetched.</p>
 
     {% if error_message %}
     <div class="skill-error" role="alert">{{ error_message }}</div>
@@ -221,11 +270,6 @@
             <div class="skill-field">
                 <label for="prefix">Function Data — Provide system context for every user request</label>
                 <textarea id="prefix" name="prefix" placeholder="Enter function data here...">{{ form_data.get('prefix', '') }}</textarea>
-                <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <label for="skill-prefix-file-input" class="ix-btn secondary" style="cursor:pointer;margin:0;">Load from file</label>
-                    <input id="skill-prefix-file-input" type="file" style="display:none">
-                    <span id="skill-prefix-file-status" style="color:#475569;font-size:0.9em;"></span>
-                </div>
             </div>
         </div>
 
@@ -249,8 +293,13 @@
         const skillnameInput = document.getElementById('skillname');
         const descriptionTextarea = document.getElementById('description');
         const prefixTextarea = document.getElementById('prefix');
-        const prefixFileInput = document.getElementById('skill-prefix-file-input');
-        const prefixFileStatus = document.getElementById('skill-prefix-file-status');
+        const importBtn = document.getElementById('skill-import-btn');
+        const importMenu = document.getElementById('skill-import-menu');
+        const fromFileLabel = document.getElementById('skill-import-from-file-label');
+        const fromFolderLabel = document.getElementById('skill-import-from-folder-label');
+        const fileInput = document.getElementById('skill-file-input');
+        const folderInput = document.getElementById('skill-folder-input');
+        const importStatus = document.getElementById('skill-import-status');
 
         function currentTenant() { return String(hiddenTenantInput.value || '').trim(); }
         function currentNamespace() { return String(hiddenNamespaceInput.value || '').trim(); }
@@ -259,27 +308,159 @@
         function syncButtons() {
             const templateInput = document.getElementById('template_id');
             const templateReady = !!(templateInput && String(templateInput.value || '').trim());
-            if (submitBtn) submitBtn.disabled = !targetReady() || !templateReady || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
+            if (submitBtn) submitBtn.disabled = !targetReady() || !templateReady || !skillnameInput.value.trim() || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
         }
 
+        skillnameInput.addEventListener('input', syncButtons);
         descriptionTextarea.addEventListener('input', syncButtons);
         prefixTextarea.addEventListener('input', syncButtons);
 
-        prefixFileInput.addEventListener('change', () => {
-            const file = prefixFileInput.files && prefixFileInput.files[0];
+        // Import dropdown toggle
+        importBtn.addEventListener('click', () => { importMenu.classList.toggle('open'); });
+        document.addEventListener('click', (e) => {
+            if (!importBtn.contains(e.target) && !importMenu.contains(e.target)) importMenu.classList.remove('open');
+        });
+        fromFileLabel.addEventListener('click', () => { fileInput.click(); importMenu.classList.remove('open'); });
+        fromFolderLabel.addEventListener('click', () => { folderInput.click(); importMenu.classList.remove('open'); });
+
+        // Parse frontmatter per spec §Step 2
+        function parseFrontmatter(text) {
+            if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+            text = text.replace(/\r\n/g, '\n');
+            const lines = text.split('\n');
+            if (lines[0] !== '---') return [{}, text];
+            let closeIdx = -1;
+            for (let i = 1; i < lines.length; i++) {
+                if (lines[i] === '---') { closeIdx = i; break; }
+            }
+            if (closeIdx === -1) return [{}, text];
+            const fmLines = lines.slice(1, closeIdx);
+            const bodyLines = lines.slice(closeIdx + 1);
+            while (bodyLines.length && bodyLines[0] === '') bodyLines.shift();
+            const body = bodyLines.join('\n');
+            const fields = {};
+            const lineRe = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/;
+            for (const line of fmLines) {
+                const m = line.match(lineRe);
+                if (m) {
+                    let val = m[2].trim();
+                    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
+                    fields[m[1]] = val;
+                }
+            }
+            return [fields, body];
+        }
+
+        // Normalize local markdown links per spec §Step 3
+        function normalizeLinks(body) {
+            function isLocal(target) {
+                if (target.startsWith('http://') || target.startsWith('https://')) return false;
+                return target.split('#')[0].endsWith('.md');
+            }
+            function labelFrom(target) {
+                const base = target.split('#')[0].split('/').pop().slice(0, -3);
+                return base.replace(/[-_]/g, ' ');
+            }
+            function isPathLike(display) { return display.includes('/') || display.endsWith('.md'); }
+            function subst(display, target) {
+                return isPathLike(display) ? `the "${labelFrom(target)}" reference below` : display;
+            }
+            function stripWrappers(line) {
+                let s = line.replace(/^[ \t]+/, '');
+                s = s.replace(/^(> )+/, '');
+                s = s.replace(/^[-*] /, '');
+                s = s.replace(/^\d+\. /, '');
+                s = s.replace(/^\[[ xX]\] /, '');
+                s = s.replace(/[.,;:!?]$/, '').trim();
+                return s;
+            }
+            return body.split('\n').map(line => {
+                const locals = [];
+                let m;
+                const re = /\[([^\]]*)\]\(([^)]*)\)/g;
+                while ((m = re.exec(line)) !== null) {
+                    if (isLocal(m[2])) locals.push({ full: m[0], display: m[1], target: m[2], index: m.index });
+                }
+                if (!locals.length) return line;
+                if (locals.length === 1 && stripWrappers(line) === locals[0].full) return null;
+                let out = line;
+                for (let i = locals.length - 1; i >= 0; i--) {
+                    const lk = locals[i];
+                    out = out.slice(0, lk.index) + subst(lk.display, lk.target) + out.slice(lk.index + lk.full.length);
+                }
+                return out;
+            }).filter(l => l !== null).join('\n');
+        }
+
+        function readFileAsText(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+                reader.readAsText(file);
+            });
+        }
+
+        // From file handler
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files && fileInput.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                prefixTextarea.value = e.target.result;
-                prefixFileStatus.textContent = `Loaded: ${file.name}`;
-                prefixFileInput.value = '';
+            readFileAsText(file).then(text => {
+                const [fields, body] = parseFrontmatter(text);
+                if (fields.name && !skillnameInput.value.trim()) skillnameInput.value = fields.name;
+                if (fields.description && !descriptionTextarea.value.trim()) descriptionTextarea.value = fields.description;
+                prefixTextarea.value = body;
+                importStatus.textContent = '';
+                fileInput.value = '';
                 syncButtons();
-            };
-            reader.onerror = () => {
-                prefixFileStatus.textContent = 'Failed to read file.';
-                prefixFileStatus.style.color = '#b91c1c';
-            };
-            reader.readAsText(file);
+            }).catch(err => {
+                importStatus.textContent = `Error: ${err.message}`;
+                importStatus.style.color = '#b91c1c';
+            });
+        });
+
+        // From folder handler
+        folderInput.addEventListener('change', () => {
+            const files = Array.from(folderInput.files || []);
+            if (!files.length) return;
+            const folderName = files[0].webkitRelativePath.split('/')[0];
+            const mainNames = ['SKILL.md', 'skill.md', 'Skill.md'];
+            const mainFile = files.find(f => {
+                const parts = f.webkitRelativePath.split('/');
+                return parts.length === 2 && mainNames.includes(parts[1]);
+            });
+            if (!mainFile) {
+                importStatus.textContent = 'Error: No SKILL.md found in folder root';
+                importStatus.style.color = '#b91c1c';
+                return;
+            }
+            const refFiles = files.filter(f => {
+                const parts = f.webkitRelativePath.split('/');
+                return parts.length === 3 && parts[1] === 'references' && parts[2].endsWith('.md');
+            }).sort((a, b) => a.webkitRelativePath.split('/')[2].localeCompare(b.webkitRelativePath.split('/')[2]));
+
+            readFileAsText(mainFile).then(mainText => {
+                const [fields, rawBody] = parseFrontmatter(mainText);
+                const body = normalizeLinks(rawBody);
+                if (fields.name && !skillnameInput.value.trim()) skillnameInput.value = fields.name;
+                if (fields.description && !descriptionTextarea.value.trim()) descriptionTextarea.value = fields.description;
+                return Promise.all(refFiles.map(f => readFileAsText(f).then(t => {
+                    const [, refBody] = parseFrontmatter(t);
+                    return { filename: f.webkitRelativePath.split('/')[2], body: normalizeLinks(refBody) };
+                }))).then(refs => {
+                    const parts = [body.trimEnd()];
+                    for (const ref of refs) {
+                        parts.push(`\n\n---\n\n## Reference: references/${ref.filename}\n\n${ref.body.trimEnd()}`);
+                    }
+                    prefixTextarea.value = parts.join('') + '\n';
+                    importStatus.textContent = '';
+                    folderInput.value = '';
+                    syncButtons();
+                });
+            }).catch(err => {
+                importStatus.textContent = `Error: ${err.message}`;
+                importStatus.style.color = '#b91c1c';
+            });
         });
 
         // deploy target controller
@@ -315,7 +496,7 @@
             modelEl.textContent = option.dataset.model || '';
         }
 
-        templateSelect?.addEventListener('change', updateTemplateDetail);
+        templateSelect?.addEventListener('change', () => { updateTemplateDetail(); syncButtons(); });
         if (templateSelect) updateTemplateDetail();
         syncButtons();
     })();
