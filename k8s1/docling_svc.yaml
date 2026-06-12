@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doclingsvc
+  labels:
+    app: doclingsvc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doclingsvc
+  template:
+    metadata:
+      labels:
+        app: doclingsvc
+    spec:
+      nodeSelector:
+        inferx_storage: data  
+      containers:
+        - name: doclingsvc
+          image: inferx/inferx_docling_svc:v0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: API_KEY
+              value: "secret123"
+          volumeMounts:
+            - name: opt-inferx-kb
+              mountPath: /opt/inferx/kb
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: opt-inferx-kb
+          hostPath:
+            path: /opt/inferx/kb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doclingsvc
+  labels:
+    app: doclingsvc
+spec:
+  type: NodePort
+  selector:
+    app: doclingsvc
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
