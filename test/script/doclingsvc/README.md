@@ -11,7 +11,7 @@ REST API service for converting PDF documents to Markdown using Docling.
 ## Build
 
 ```bash
-sudo docker build -t docling-api .
+sudo docker build -t docker.io/inferx/inferx_dockling_svc:V0.1.0 .
 ```
 
 ## Run
@@ -60,10 +60,9 @@ curl -X POST \
 
 ```bash
 # Start service with API key
-sudo docker run -it --rm --name docling-api -p 8000:8000 \
+sudo docker run -it --rm --name inferx_dockling_svc -p 8000:8000 \
   -e API_KEY=secret123 \
-  docling-api
-sleep 5
+  docker.io/inferx/inferx_dockling_svc:V0.1.0
 
 # Convert with authentication
 curl -X POST \
