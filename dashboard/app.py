@@ -196,6 +196,7 @@ OPEN_CODE_CONFIG_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "integ
 KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
 SKILLS_DIR = Path("/opt/inferx/skills")
 FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
+METADATA_GEN_MODEL = os.getenv("METADATA_GEN_MODEL", "").strip()
 
 
 def load_max_gpu_vram_mb_override():
@@ -8164,6 +8165,7 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         success_message=success_message,
         deploy_target=deploy_target,
         skill_templates=skill_templates,
+        metadata_gen_model_configured=bool(METADATA_GEN_MODEL and "/" in METADATA_GEN_MODEL),
     )
 
 
@@ -8224,6 +8226,8 @@ def SkillCreate():
 @prefix_bp.route("/skill_save", methods=["POST"])
 @require_login
 def SkillSave():
+    raw_allowed = str(request.form.get("allowed_child_skilleps", "") or "").strip()
+    allowed_child_skilleps = [s.strip() for s in raw_allowed.split(",") if s.strip()]
     form_data = {
         "skillname": str(request.form.get("skillname", "") or "").strip(),
         "tenant": str(request.form.get("tenant", "") or "").strip(),
@@ -8249,18 +8253,21 @@ def SkillSave():
         if not form_data["prefix"].strip():
             raise ValueError("System prompt is required")
 
+        payload = {
+            "template_id": template_id,
+            "description": form_data["description"] or None,
+            "prefix": form_data["prefix"],
+            "serving_mode": "dedicated",
+            "has_cache": False,
+            "gpu_billing_target": form_data["gpu_billing_target"],
+            "allowed_child_skilleps": allowed_child_skilleps,
+        }
+
         create_skill(
             form_data["tenant"],
             form_data["namespace"],
             form_data["skillname"],
-            {
-                "template_id": template_id,
-                "description": form_data["description"] or None,
-                "prefix": form_data["prefix"],
-                "serving_mode": "dedicated",
-                "has_cache": False,
-                "gpu_billing_target": form_data["gpu_billing_target"],
-            },
+            payload,
         )
     except ValueError as e:
         return render_skill_create_page(form_data=form_data, error_message=str(e))
@@ -8386,6 +8393,130 @@ def SkillSubscriptionUpdateAlias():
         return json_error(f"failed to update subscription alias: {e}", 502)
 
     return jsonify(updated)
+
+
+@prefix_bp.route("/generate_skills", methods=["GET"])
+@require_login
+def GenerateSkills():
+    tenant = str(request.args.get("tenant", "") or "").strip()
+    namespace = str(request.args.get("namespace", "") or "").strip()
+    keyword = str(request.args.get("keyword", "") or "").strip()
+    if not tenant or not namespace:
+        return json_error("tenant and namespace are required", 400)
+    try:
+        own_skills = list_namespace_skills(tenant, namespace)
+    except Exception:
+        own_skills = []
+    try:
+        marketplace_payload = list_marketplace_skills(keyword=keyword or None, page_size=50, active_tenant=tenant)
+        marketplace_items = marketplace_payload.get("items", []) if isinstance(marketplace_payload, dict) else []
+    except Exception:
+        marketplace_items = []
+
+    seen = set()
+    results = []
+
+    def add_item(row, is_own):
+        ot = str(row.get("owner_tenant", "") or "").strip()
+        ns = str(row.get("owner_namespace", "") or "").strip()
+        sn = str(row.get("skillname", "") or "").strip()
+        if not ot or not ns or not sn:
+            return
+        key = f"{ot}/{ns}/{sn}"
+        if key in seen:
+            return
+        if is_own and keyword:
+            kw = keyword.lower()
+            haystack = " ".join([sn, str(row.get("description", "") or ""), str(row.get("template_display_name", "") or "")]).lower()
+            if kw not in haystack:
+                return
+        seen.add(key)
+        results.append({
+            "skillep_id": key,
+            "name": sn,
+            "template_display_name": str(row.get("template_display_name", "") or ""),
+            "description": str(row.get("description", "") or ""),
+        })
+
+    for row in own_skills:
+        add_item(row, is_own=True)
+    for row in marketplace_items:
+        add_item(row, is_own=False)
+
+    return jsonify(results)
+
+
+@prefix_bp.route("/generate_skill_metadata", methods=["POST"])
+@require_login
+def GenerateSkillMetadata():
+    if not METADATA_GEN_MODEL or "/" not in METADATA_GEN_MODEL:
+        return json_error("METADATA_GEN_MODEL is not configured", 503)
+    namespace, modelname = METADATA_GEN_MODEL.split("/", 1)
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    if not tenant:
+        return json_error("no active tenant", 400)
+    req_data = request.get_json(silent=True) or {}
+    subskills = req_data.get("subskills", [])
+    if not isinstance(subskills, list) or not subskills:
+        return json_error("subskills list is required", 400)
+
+    skills_summary = "\n".join(
+        f"- {s.get('name', '')}: {s.get('description', '') or '(no description)'}"
+        for s in subskills
+    )
+    prompt = (
+        f"Given these sub-skills:\n{skills_summary}\n\n"
+        "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
+        "{\"description\": \"<1-2 sentence description of a parent skill that routes to these sub-skills>\"}"
+    )
+
+    url = f"{get_gateway_url()}/funccall/{tenant}/{namespace}/{modelname}/v1/chat/completions"
+    try:
+        resp = requests.post(
+            url,
+            headers=gateway_request_headers(json_body=True),
+            json={"messages": [{"role": "user", "content": prompt}], "stream": False, "chat_template_kwargs": {"enable_thinking": False}},
+            timeout=30,
+        )
+    except Exception as e:
+        return json_error(f"metadata generation request failed: {e}", 502)
+
+    if not resp.ok:
+        return json_error(f"metadata generation failed: HTTP {resp.status_code}", 502)
+
+    payload = response_json_or_none(resp)
+    try:
+        llm_text = (
+            payload["choices"][0]["message"]["content"]
+            if payload and payload.get("choices")
+            else ""
+        )
+    except (KeyError, IndexError, TypeError):
+        llm_text = ""
+
+    how_to_use = "\n## How to use\n" + "\n".join(
+        f"- **{s.get('name', '')}**: call {s.get('skillep_id', '')}"
+        for s in subskills
+    )
+
+    import json as _json
+    try:
+        parsed = _json.loads(llm_text.strip())
+    except Exception:
+        parsed = {}
+    description = str(parsed.get("description", "") or "").strip()
+    subskill_lines = [
+        f"- **{s.get('name', '')}** (`{s.get('skillep_id', '')}`): {s.get('description', '') or '(no description)'}"
+        for s in subskills
+    ]
+    prefix_parts = [
+        "You are a routing assistant. Analyze the user's request and call the most relevant sub-skill.",
+        "## Available Sub-skills\n" + "\n".join(subskill_lines),
+    ]
+    prefix_parts.append(how_to_use)
+    prefix = "\n\n".join(prefix_parts)
+
+    return jsonify({"description": description, "prefix": prefix})
 
 
 def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):

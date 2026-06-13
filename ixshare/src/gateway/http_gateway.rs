@@ -126,6 +126,8 @@ struct SkillCreateRequest {
     gpu_billing_target: Option<String>,
     #[serde(default)]
     earning_type: Option<String>,
+    #[serde(default)]
+    allowed_child_skilleps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -612,6 +614,7 @@ mod tests {
             consumer_revision: None,
             template_is_active: true,
             template_created_at: None,
+            allowed_child_skilleps: None,
         }
     }
 
@@ -3061,6 +3064,7 @@ async fn CreateSkill(
             &gpu_billing_target,
             req.template_id,
             false,
+            req.allowed_child_skilleps.as_deref(),
             &token.username,
         )
         .await
@@ -3108,10 +3112,16 @@ async fn GetSkill(
     {
         return Ok(skill_admin_response(Error::NoPermission));
     }
+    let mut body = serde_json::to_value(&skill).unwrap();
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("allowed_child_skilleps");
+        }
+    }
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/json")
-        .body(Body::from(serde_json::to_vec(&skill).unwrap()))
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap())
 }
 
@@ -3371,6 +3381,7 @@ async fn SkillCall(
         remainPath,
         prefix.as_str(),
         SKILLS_NAMESPACE,
+        skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
     )
     .await
@@ -3475,6 +3486,7 @@ async fn RunSkillDebug(
         "/v1/chat/completions".to_string(),
         prefix.as_str(),
         SKILLS_NAMESPACE,
+        skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
     )
     .await

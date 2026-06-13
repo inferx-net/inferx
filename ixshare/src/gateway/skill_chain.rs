@@ -10,7 +10,7 @@ use hyper::header::CONTENT_TYPE;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -72,6 +72,7 @@ struct ParallelChildTaskContext {
     logical_tenant: String,
     logical_namespace: String,
     logical_funcname: String,
+    allowed_skillep_ids: Option<Arc<HashSet<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -620,33 +621,63 @@ where
     }
 }
 
-fn skill_chain_tool_definition() -> Value {
-    serde_json::json!([{
-        "type": "function",
-        "function": {
-            "name": SKILL_CHAIN_TOOL_NAME,
-            "description": "Call another InferX skill endpoint",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "skillep_id": {
-                        "type": "string",
-                        "description": "Canonical skill endpoint id owner_tenant/namespace/skillname"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "User request to send to the child skill"
+fn skill_chain_tool_definition(allowed: Option<&HashSet<String>>) -> Value {
+    match allowed {
+        Some(ids) if ids.is_empty() => serde_json::json!([]),
+        Some(ids) => {
+            let mut enum_vals: Vec<&str> = ids.iter().map(String::as_str).collect();
+            enum_vals.sort_unstable();
+            serde_json::json!([{
+                "type": "function",
+                "function": {
+                    "name": SKILL_CHAIN_TOOL_NAME,
+                    "description": "Call another InferX skill endpoint",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skillep_id": {
+                                "type": "string",
+                                "description": "Canonical skill endpoint id owner_tenant/namespace/skillname",
+                                "enum": enum_vals
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "User request to send to the child skill"
+                            }
+                        },
+                        "required": ["skillep_id", "query"]
                     }
-                },
-                "required": ["skillep_id", "query"]
-            }
+                }
+            }])
         }
-    }])
+        None => serde_json::json!([{
+            "type": "function",
+            "function": {
+                "name": SKILL_CHAIN_TOOL_NAME,
+                "description": "Call another InferX skill endpoint",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skillep_id": {
+                            "type": "string",
+                            "description": "Canonical skill endpoint id owner_tenant/namespace/skillname"
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "User request to send to the child skill"
+                        }
+                    },
+                    "required": ["skillep_id", "query"]
+                }
+            }
+        }])
+    }
 }
 
 fn parse_skill_chain_request(
     headers: &HeaderMap,
     body_bytes: &[u8],
+    allowed: Option<&HashSet<String>>,
 ) -> Result<SkillChainRequestState, SkillChainRequestError> {
     let mut body: Value =
         serde_json::from_slice(body_bytes).map_err(|_| SkillChainRequestError::BadRequest)?;
@@ -702,7 +733,7 @@ fn parse_skill_chain_request(
         1
     };
 
-    obj.insert("tools".to_string(), skill_chain_tool_definition());
+    obj.insert("tools".to_string(), skill_chain_tool_definition(allowed));
     obj.insert("stream".to_string(), Value::Bool(false));
 
     Ok(SkillChainRequestState {
@@ -969,6 +1000,34 @@ fn log_invalid_skillep_id(
     );
 }
 
+#[cfg(test)]
+fn log_skillep_not_allowed(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    eprintln!(
+        "skill_chain skillep_not_allowed logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
+#[cfg(not(test))]
+fn log_skillep_not_allowed(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    warn!(
+        "skill_chain skillep_not_allowed logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
 fn copy_forwarded_child_headers(
     parent_headers: &HeaderMap,
     child_req: reqwest::RequestBuilder,
@@ -1030,6 +1089,25 @@ async fn execute_parallel_child_call(
             };
         }
     };
+
+    if let Some(allowed) = &context.allowed_skillep_ids {
+        if !allowed.contains(&skillep_id) {
+            log_skillep_not_allowed(
+                &context.logical_tenant,
+                &context.logical_namespace,
+                &context.logical_funcname,
+                &task.call.id,
+                &skillep_id,
+            );
+            return ParallelChildResult {
+                original_index: task.original_index,
+                tool_call_id,
+                tool_result: "Error: skill endpoint not in allowed list".to_string(),
+                fail_reason: None,
+                usage: None,
+            };
+        }
+    }
 
     let mocked_result = context.debug_mocks.get(&skillep_id).cloned();
     let (tool_result, fail_reason, usage) = if let Some(mocked_result) = mocked_result {
@@ -1720,6 +1798,7 @@ async fn execute_skill_chain(
     remain_path: String,
     prefix: String,
     skills_namespace: String,
+    allowed_skillep_ids: Option<Arc<HashSet<String>>>,
     trace: Option<SkillChainTraceState>,
 ) -> Result<SkillChainFinalResponse, SkillChainExecutionError> {
     ctrace!(
@@ -1991,6 +2070,7 @@ async fn execute_skill_chain(
             logical_tenant: route.logical.tenant.clone(),
             logical_namespace: route.logical.namespace.clone(),
             logical_funcname: route.logical.funcname.clone(),
+            allowed_skillep_ids: allowed_skillep_ids.clone(),
         };
         let child_tasks = FuturesUnordered::new();
         for (original_index, call) in parsed.tool_calls.into_iter().enumerate() {
@@ -2033,8 +2113,13 @@ pub(super) async fn handle_skill_call_chain(
     remain_path: String,
     prefix: &str,
     skills_namespace: &str,
+    allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
 ) -> Result<Response, StatusCode> {
+    let allowed: Option<HashSet<String>> = allowed_child_skilleps
+        .map(|ids| ids.iter().cloned().collect());
+    let allowed_ref = allowed.as_ref();
+
     let (req_parts, req_body) = req.into_parts();
     let req_headers = req_parts.headers.clone();
     let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
@@ -2047,7 +2132,7 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes) {
+    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
         Ok(chain) => chain,
         Err(SkillChainRequestError::BadRequest)
             if req_headers.get(SKILL_CHAIN_CHILD_HEADER).is_some() =>
@@ -2100,6 +2185,8 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
+    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
+
     if !skill_trace_enabled(&req_headers) {
         return match execute_skill_chain(
             gw,
@@ -2110,6 +2197,7 @@ pub(super) async fn handle_skill_call_chain(
             remain_path,
             prefix.to_string(),
             skills_namespace.to_string(),
+            allowed_arc,
             None,
         )
         .await
@@ -2162,6 +2250,7 @@ pub(super) async fn handle_skill_call_chain(
             remain_path_for_task,
             prefix_for_task,
             skills_namespace_for_task,
+            allowed_arc,
             Some(trace.clone()),
         );
         tokio::pin!(exec);
@@ -2221,8 +2310,13 @@ pub(super) async fn handle_skill_debug_call(
     remain_path: String,
     prefix: &str,
     skills_namespace: &str,
+    allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
 ) -> Result<Response, StatusCode> {
+    let allowed: Option<HashSet<String>> = allowed_child_skilleps
+        .map(|ids| ids.iter().cloned().collect());
+    let allowed_ref = allowed.as_ref();
+
     let (req_parts, req_body) = req.into_parts();
     let req_headers = req_parts.headers.clone();
     let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
@@ -2235,7 +2329,7 @@ pub(super) async fn handle_skill_debug_call(
         }
     };
 
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes) {
+    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
         Ok(chain) => chain,
         Err(SkillChainRequestError::ClientProvidedTools) => {
             return Ok(Response::builder()
@@ -2250,6 +2344,8 @@ pub(super) async fn handle_skill_debug_call(
                 .unwrap())
         }
     };
+
+    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
 
     let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
     let trace = SkillChainTraceState {
@@ -2284,6 +2380,7 @@ pub(super) async fn handle_skill_debug_call(
             remain_path_for_task,
             prefix_for_task,
             skills_namespace_for_task,
+            allowed_arc,
             Some(trace.clone()),
         );
         tokio::pin!(exec);
@@ -2348,7 +2445,7 @@ mod tests {
     use futures::stream::FuturesUnordered;
     use futures::FutureExt;
     use serde_json::{json, Value};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::convert::Infallible;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -2360,7 +2457,7 @@ mod tests {
         let body =
             br#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}]}"#;
         assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
+            parse_skill_chain_request(&headers, body, None).unwrap_err(),
             SkillChainRequestError::ClientProvidedTools
         );
     }
@@ -2369,13 +2466,13 @@ mod tests {
     fn parse_skill_chain_request_injects_tool_for_empty_tools() {
         let headers = HeaderMap::new();
         let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
-        let parsed = parse_skill_chain_request(&headers, body).unwrap();
+        let parsed = parse_skill_chain_request(&headers, body, None).unwrap();
         assert_eq!(parsed.current_depth, 1);
         assert_eq!(parsed.history.len(), 1);
         assert_eq!(parsed.template.get("stream"), Some(&Value::Bool(false)));
         assert_eq!(
             parsed.template.get("tools"),
-            Some(&skill_chain_tool_definition())
+            Some(&skill_chain_tool_definition(None))
         );
         let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
         let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
@@ -2396,7 +2493,7 @@ mod tests {
         headers.insert(SKILL_CHAIN_DEPTH_HEADER, HeaderValue::from_static("0"));
         let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
         assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
+            parse_skill_chain_request(&headers, body, None).unwrap_err(),
             SkillChainRequestError::BadRequest
         );
     }
@@ -2575,6 +2672,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2607,6 +2705,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2644,6 +2743,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2690,6 +2790,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2749,5 +2850,197 @@ mod tests {
             results[1].fail_reason,
             Some(SkillTraceFailReason::TransportError)
         );
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase1_none_gives_unconstrained_tool() {
+        let tools = skill_chain_tool_definition(None);
+        let arr = tools.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let props = &arr[0]["function"]["parameters"]["properties"]["skillep_id"];
+        assert!(props.get("enum").is_none());
+        assert_eq!(props["type"].as_str().unwrap(), "string");
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase2_empty_gives_no_tools() {
+        let tools = skill_chain_tool_definition(Some(&HashSet::new()));
+        assert_eq!(tools.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase2_non_empty_gives_enum() {
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/pricing".to_string());
+        let tools = skill_chain_tool_definition(Some(&allowed));
+        let arr = tools.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let enum_vals = arr[0]["function"]["parameters"]["properties"]["skillep_id"]["enum"]
+            .as_array()
+            .unwrap();
+        assert_eq!(enum_vals.len(), 1);
+        assert_eq!(enum_vals[0].as_str().unwrap(), "acme/default/pricing");
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_blocks_empty_allowlist() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_blocked".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(HashSet::new())),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_blocked");
+        assert_eq!(
+            result.tool_result,
+            "Error: skill endpoint not in allowed list"
+        );
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_permits_listed_skillep_id() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/pricing".to_string());
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_ok".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(allowed)),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_ok");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_blocks_unlisted_skillep_id() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/search".to_string());
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_notallowed".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(allowed)),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_notallowed");
+        assert_eq!(
+            result.tool_result,
+            "Error: skill endpoint not in allowed list"
+        );
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_phase1_none_allowlist_passthrough() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_pass".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_pass");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
     }
 }

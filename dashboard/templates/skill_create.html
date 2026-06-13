@@ -265,6 +265,18 @@
             </div>
         </div>
 
+        <div class="skill-panel" id="subskills-panel">
+            <h2>Sub-skills</h2>
+            <p style="margin:0 0 10px;color:#475569;font-size:0.9em;">Select the child skill endpoints this function is allowed to call. Leave empty for a standalone (non-chain) function.</p>
+            <div id="subskill-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="button" id="select-subskills-btn" class="ix-btn secondary" style="margin:0;">Select Sub-skills</button>
+                <button type="button" id="generate-metadata-btn" class="ix-btn secondary" style="margin:0;" disabled>Generate Metadata</button>
+                <span id="generate-metadata-status" style="color:#475569;font-size:0.9em;"></span>
+            </div>
+            <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="">
+        </div>
+
         <div class="skill-panel">
             <h2>Function Data</h2>
             <div class="skill-field">
@@ -280,6 +292,24 @@
             <button id="skill-create-submit-btn" class="ix-btn" type="submit"{% if not sc_deploy_target.resolved %} disabled{% endif %}>Create Skill</button>
         </div>
     </form>
+</div>
+
+<!-- Sub-skills selection dialog -->
+<div id="subskills-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:6px;padding:20px;width:min(560px,90vw);max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:1.05em;">Select Sub-skills</strong>
+            <button type="button" id="subskills-dialog-close" style="background:none;border:none;cursor:pointer;font-size:1.2em;color:#64748b;">✕</button>
+        </div>
+        <input id="subskills-search" type="text" placeholder="Search by name or description…" style="padding:8px 10px;border:1px solid #b7c6dc;border-radius:4px;font:inherit;">
+        <div id="subskills-results" style="overflow-y:auto;flex:1;border:1px solid #e2e8f0;border-radius:4px;min-height:100px;max-height:300px;">
+            <div id="subskills-loading" style="padding:12px;color:#64748b;">Loading…</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button type="button" id="subskills-cancel-btn" class="ix-btn secondary" style="margin:0;">Cancel</button>
+            <button type="button" id="subskills-confirm-btn" class="ix-btn" style="margin:0;">Confirm</button>
+        </div>
+    </div>
 </div>
 
 {% include '_catalog_deploy_target_script.html' %}
@@ -499,6 +529,180 @@
         templateSelect?.addEventListener('change', () => { updateTemplateDetail(); syncButtons(); });
         if (templateSelect) updateTemplateDetail();
         syncButtons();
+    })();
+</script>
+<script>
+    (function () {
+        const METADATA_GEN_MODEL_CONFIGURED = {{ (metadata_gen_model_configured | tojson) if metadata_gen_model_configured is defined else 'false' }};
+        const hiddenTenantInput = document.getElementById('skill-target-tenant-input');
+        const hiddenNamespaceInput = document.getElementById('skill-target-namespace-input');
+        const selectBtn = document.getElementById('select-subskills-btn');
+        const generateBtn = document.getElementById('generate-metadata-btn');
+        const generateStatus = document.getElementById('generate-metadata-status');
+        const chipsContainer = document.getElementById('subskill-chips');
+        const allowedInput = document.getElementById('allowed-child-skilleps-input');
+        const dialog = document.getElementById('subskills-dialog');
+        const dialogClose = document.getElementById('subskills-dialog-close');
+        const dialogCancel = document.getElementById('subskills-cancel-btn');
+        const dialogConfirm = document.getElementById('subskills-confirm-btn');
+        const searchInput = document.getElementById('subskills-search');
+        const resultsContainer = document.getElementById('subskills-results');
+        const loadingEl = document.getElementById('subskills-loading');
+
+        let selectedSkills = [];
+        let dialogChecked = {};
+        let searchTimeout = null;
+        let allResults = [];
+
+        function updateAllowedInput() {
+            allowedInput.value = selectedSkills.map(s => s.skillep_id).join(',');
+        }
+
+        function renderChips() {
+            chipsContainer.innerHTML = '';
+            selectedSkills.forEach(skill => {
+                const chip = document.createElement('span');
+                chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:20px;font-size:0.85em;color:#0369a1;';
+                chip.textContent = skill.skillep_id;
+                const rm = document.createElement('button');
+                rm.type = 'button';
+                rm.textContent = '×';
+                rm.style.cssText = 'background:none;border:none;cursor:pointer;padding:0;font-size:1.1em;color:#0369a1;line-height:1;';
+                rm.addEventListener('click', () => {
+                    selectedSkills = selectedSkills.filter(s => s.skillep_id !== skill.skillep_id);
+                    renderChips();
+                    updateAllowedInput();
+                    syncGenerateBtn();
+                });
+                chip.appendChild(rm);
+                chipsContainer.appendChild(chip);
+            });
+        }
+
+        function syncGenerateBtn() {
+            generateBtn.disabled = selectedSkills.length === 0 || !METADATA_GEN_MODEL_CONFIGURED;
+        }
+
+        function renderResults(items) {
+            resultsContainer.innerHTML = '';
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'padding:12px;color:#64748b;';
+                empty.textContent = 'No skills found.';
+                resultsContainer.appendChild(empty);
+                return;
+            }
+            items.forEach(item => {
+                const row = document.createElement('label');
+                row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = item.skillep_id;
+                cb.checked = !!dialogChecked[item.skillep_id];
+                cb.dataset.skill = JSON.stringify(item);
+                cb.style.marginTop = '2px';
+                cb.addEventListener('change', () => {
+                    if (cb.checked) dialogChecked[item.skillep_id] = item;
+                    else delete dialogChecked[item.skillep_id];
+                });
+                const info = document.createElement('div');
+                const strong = document.createElement('strong');
+                strong.style.cssText = 'font-size:0.9em;';
+                strong.textContent = item.skillep_id;
+                info.appendChild(strong);
+                if (item.description) {
+                    const desc = document.createElement('div');
+                    desc.style.cssText = 'color:#64748b;font-size:0.82em;margin-top:2px;';
+                    desc.textContent = item.description;
+                    info.appendChild(desc);
+                }
+                row.appendChild(cb);
+                row.appendChild(info);
+                resultsContainer.appendChild(row);
+            });
+        }
+
+        function fetchSkills(keyword) {
+            const tenant = String(hiddenTenantInput.value || '').trim();
+            const namespace = String(hiddenNamespaceInput.value || '').trim();
+            if (!tenant || !namespace) {
+                resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Select a tenant and namespace first.</div>';
+                return;
+            }
+            loadingEl && (loadingEl.style.display = 'block');
+            resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Loading…</div>';
+            const params = new URLSearchParams({ tenant, namespace });
+            if (keyword) params.set('keyword', keyword);
+            fetch(`{{ url_for('prefix.GenerateSkills') }}?${params}`)
+                .then(r => r.json())
+                .then(data => {
+                    allResults = Array.isArray(data) ? data : [];
+                    renderResults(allResults);
+                })
+                .catch(() => {
+                    resultsContainer.innerHTML = '<div style="padding:12px;color:#b91c1c;">Failed to load skills.</div>';
+                });
+        }
+
+        selectBtn.addEventListener('click', () => {
+            dialogChecked = {};
+            selectedSkills.forEach(s => { dialogChecked[s.skillep_id] = s; });
+            dialog.style.display = 'flex';
+            searchInput.value = '';
+            fetchSkills('');
+            searchInput.focus();
+        });
+
+        [dialogClose, dialogCancel].forEach(el => {
+            el.addEventListener('click', () => { dialog.style.display = 'none'; });
+        });
+
+        dialog.addEventListener('click', e => {
+            if (e.target === dialog) dialog.style.display = 'none';
+        });
+
+        dialogConfirm.addEventListener('click', () => {
+            selectedSkills = Object.values(dialogChecked);
+            dialog.style.display = 'none';
+            renderChips();
+            updateAllowedInput();
+            syncGenerateBtn();
+        });
+
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => fetchSkills(searchInput.value.trim()), 300);
+        });
+
+        generateBtn.addEventListener('click', () => {
+            if (!selectedSkills.length) return;
+            generateBtn.disabled = true;
+            generateStatus.textContent = 'Generating…';
+            generateStatus.style.color = '#475569';
+            fetch('{{ url_for("prefix.GenerateSkillMetadata") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subskills: selectedSkills }),
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) throw new Error(data.error);
+                    const descEl = document.getElementById('description');
+                    const prefixEl = document.getElementById('prefix');
+                    if (data.description && descEl) descEl.value = data.description;
+                    if (data.prefix && prefixEl) prefixEl.value = data.prefix;
+                    generateStatus.textContent = 'Metadata generated.';
+                    generateStatus.style.color = '#16a34a';
+                    if (window.syncButtons) window.syncButtons();
+                })
+                .catch(err => {
+                    generateStatus.textContent = `Error: ${err.message}`;
+                    generateStatus.style.color = '#b91c1c';
+                })
+                .finally(() => { generateBtn.disabled = selectedSkills.length === 0 || !METADATA_GEN_MODEL_CONFIGURED; });
+        });
+
+        syncGenerateBtn();
     })();
 </script>
 {% endblock %}

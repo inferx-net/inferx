@@ -165,6 +165,7 @@ pub struct SkillDetail {
     pub consumer_revision: Option<i64>,
     pub template_is_active: bool,
     pub template_created_at: Option<chrono::NaiveDateTime>,
+    pub allowed_child_skilleps: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -1452,6 +1453,7 @@ impl SqlSecret {
         gpu_billing_target: &str,
         template_id: i64,
         has_cache: bool,
+        allowed_child_skilleps: Option<&[String]>,
         created_by: &str,
     ) -> Result<SkillDetail> {
         let mut tx = self.pool.begin().await?;
@@ -1491,14 +1493,16 @@ impl SqlSecret {
                     template_id,
                     has_cache,
                     cache_status,
+                    allowed_child_skilleps,
                     created_by
-                ) VALUES ($1, 1, $2, $3, 'none', $4)
+                ) VALUES ($1, 1, $2, $3, 'none', $4, $5)
                 RETURNING revision_id
             "#,
         )
         .bind(skill_id)
         .bind(template_id)
         .bind(has_cache)
+        .bind(allowed_child_skilleps)
         .bind(created_by)
         .fetch_one(&mut *tx)
         .await?;
@@ -1557,7 +1561,8 @@ impl SqlSecret {
                 st.consumer_funcname,
                 st.consumer_revision,
                 st.is_active AS template_is_active,
-                st.created_at AS template_created_at
+                st.created_at AS template_created_at,
+                sr.allowed_child_skilleps
             FROM Skill s
             JOIN SkillRevision sr
                 ON sr.revision_id = s.active_revision_id
@@ -1615,7 +1620,8 @@ impl SqlSecret {
                 st.consumer_funcname,
                 st.consumer_revision,
                 st.is_active AS template_is_active,
-                st.created_at AS template_created_at
+                st.created_at AS template_created_at,
+                sr.allowed_child_skilleps
             FROM Skill s
             JOIN SkillRevision sr
                 ON sr.revision_id = s.active_revision_id

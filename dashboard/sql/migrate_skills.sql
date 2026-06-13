@@ -101,3 +101,5 @@ BEGIN
         EXECUTE 'ALTER TABLE SkillSubscription DROP CONSTRAINT ' || quote_ident(v_constraint_name);
     END IF;
 END$$;
+
+ALTER TABLE SkillRevision ADD COLUMN IF NOT EXISTS allowed_child_skilleps TEXT[] DEFAULT NULL;
