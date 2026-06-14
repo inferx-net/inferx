@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
 use super::http_gateway::{dispatch_func_call, HttpGateway, GATEWAY_CONFIG};
+use super::mcp_stream_server::SkillCallRequest;
 use crate::print::verbose_category;
 
 const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
@@ -516,7 +517,8 @@ async fn emit_trace_done(trace: &SkillChainTraceState) -> bool {
     ctrace!(
         verbose_category::SKILL,
         "skill_chain trace_emit root_call_id={} root_skill={} event_type=done",
-        trace.root_call_id, trace.root_skill
+        trace.root_call_id,
+        trace.root_skill
     );
     send_trace_chunk(&trace.tx, "data: [DONE]\n\n".to_string()).await
 }
@@ -705,6 +707,13 @@ fn parse_skill_chain_request(
     obj.insert("tools".to_string(), skill_chain_tool_definition());
     obj.insert("stream".to_string(), Value::Bool(false));
 
+    let skill_trace = headers
+        .get(SKILL_TRACE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "0".to_string());
+    obj.insert(SKILL_TRACE_HEADER.to_string(), Value::String(skill_trace));
+
     Ok(SkillChainRequestState {
         template: body,
         history: messages,
@@ -714,13 +723,39 @@ fn parse_skill_chain_request(
     })
 }
 
+fn parse_skill_chain_request_with_template(
+    template: Value,
+) -> Result<SkillChainRequestState, SkillChainRequestError> {
+    let obj = template
+        .as_object()
+        .ok_or(SkillChainRequestError::BadRequest)?;
+    let messages = obj
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or(SkillChainRequestError::BadRequest)?;
+    let history: Vec<Value> = messages.to_vec();
+
+    Ok(SkillChainRequestState {
+        template,
+        history,
+        headers: HeaderMap::new(),
+        current_depth: 1,
+        debug_mocks: std::collections::HashMap::new(),
+    })
+}
+
 fn build_skill_chain_request_body(
     template: &Value,
     history: &[Value],
+    calling_tenant: Option<&str>,
 ) -> Result<Vec<u8>, StatusCode> {
     let mut body = template.clone();
     let obj = body.as_object_mut().ok_or(StatusCode::BAD_REQUEST)?;
     obj.insert("messages".to_string(), Value::Array(history.to_vec()));
+    if let Some(tenant) = calling_tenant {
+        obj.insert("X-Tenant".to_string(), Value::String(tenant.to_string()));
+    }
     serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
@@ -876,7 +911,11 @@ fn summarize_bytes_for_log(bytes: &[u8]) -> String {
     };
     let text = String::from_utf8_lossy(preview).replace('\n', "\\n");
     if bytes.len() > MAX_LOG_BYTES {
-        format!("{}...[truncated {} bytes]", text, bytes.len() - MAX_LOG_BYTES)
+        format!(
+            "{}...[truncated {} bytes]",
+            text,
+            bytes.len() - MAX_LOG_BYTES
+        )
     } else {
         text
     }
@@ -1755,12 +1794,13 @@ async fn execute_skill_chain(
             chain.current_depth
         );
         let body_bytes =
-            build_skill_chain_request_body(&chain.template, &chain.history).map_err(|status| {
-                SkillChainExecutionError::Response(
-                    status,
-                    "service failure: failed to build request body",
-                )
-            })?;
+            build_skill_chain_request_body(&chain.template, &chain.history, Some(&calling_tenant))
+                .map_err(|status| {
+                    SkillChainExecutionError::Response(
+                        status,
+                        "service failure: failed to build request body",
+                    )
+                })?;
         ctrace!(
             verbose_category::SKILL,
             "skill_chain model_request logical={}/{}/{} depth={} latest_user_query={} tools={}",
@@ -1769,7 +1809,8 @@ async fn execute_skill_chain(
             route.logical.funcname,
             chain.current_depth,
             latest_user_query(&chain.history).unwrap_or_else(|| "-".to_string()),
-            chain.template
+            chain
+                .template
                 .get("tools")
                 .map(summarize_value_for_log)
                 .unwrap_or_else(|| "-".to_string())
@@ -1787,7 +1828,6 @@ async fn execute_skill_chain(
         let mut model_headers = chain.headers.clone();
         model_headers.remove(SKILL_CHAIN_CHILD_HEADER);
         model_headers.remove(SKILL_CHAIN_DEPTH_HEADER);
-        model_headers.remove(SKILL_TRACE_HEADER);
         model_headers.remove("X-Skill-Trace-Content");
         model_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -2021,7 +2061,7 @@ async fn execute_skill_chain(
 
 pub(super) async fn handle_skill_call_chain(
     gw: &HttpGateway,
-    req: Request,
+    skill_call_req: SkillCallRequest,
     route: FuncRouteTarget,
     display_skill_id: String,
     calling_tenant: String,
@@ -2029,74 +2069,37 @@ pub(super) async fn handle_skill_call_chain(
     remain_path: String,
     prefix: &str,
     skills_namespace: &str,
-    max_body_bytes: usize,
+    _max_body_bytes: usize,
 ) -> Result<Response, StatusCode> {
-    let (req_parts, req_body) = req.into_parts();
-    let req_headers = req_parts.headers.clone();
-    let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
-        Ok(bytes) => bytes,
+    let SkillCallRequest {
+        messages,
+        max_tokens,
+        temperature,
+        stream,
+        ..
+    } = skill_call_req;
+
+    let mut template = serde_json::json!({
+        "messages": messages,
+        "stream": stream,
+    });
+
+    template["max_tokens"] = serde_json::json!(max_tokens);
+    template["temperature"] = serde_json::json!(temperature);
+
+    let chain = match parse_skill_chain_request_with_template(template) {
+        Ok(chain) => chain,
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from("service failure: invalid request body"))
-                .unwrap())
-        }
-    };
-
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes) {
-        Ok(chain) => chain,
-        Err(SkillChainRequestError::BadRequest)
-            if req_headers.get(SKILL_CHAIN_CHILD_HEADER).is_some() =>
-        {
-            warn!(
-                "skill_chain invalid child depth logical={}/{}/{} path={}",
-                route.logical.tenant, route.logical.namespace, route.logical.funcname, remain_path
-            );
-            return Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        serde_json::to_vec(&serde_json::json!({
-                            "id": "skill-chain-error",
-                            "object": "chat.completion",
-                            "created": Utc::now().timestamp(),
-                            "choices": [{
-                                "index": 0,
-                                "message": {"role": "assistant", "content": "Error: invalid chain depth"},
-                                "finish_reason": "stop"
-                            }]
-                        }))
-                        .unwrap(),
-                    ))
-                    .unwrap());
-        }
-        Err(SkillChainRequestError::ClientProvidedTools) => {
-            warn!(
-                "skill_chain rejected client_provided_tools logical={}/{}/{} path={}",
-                route.logical.tenant, route.logical.namespace, route.logical.funcname, remain_path
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(CLIENT_PROVIDED_TOOLS_ERROR))
-                .unwrap());
-        }
-        Err(SkillChainRequestError::BadRequest) => {
-            warn!(
-                "skill_chain invalid request logical={}/{}/{} path={} status={}",
-                route.logical.tenant,
-                route.logical.namespace,
-                route.logical.funcname,
-                remain_path,
-                StatusCode::BAD_REQUEST
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
                 .unwrap());
         }
     };
 
-    if !skill_trace_enabled(&req_headers) {
+    let enable_trace = true;
+
+    if !enable_trace {
         return match execute_skill_chain(
             gw,
             chain,
@@ -2131,7 +2134,7 @@ pub(super) async fn handle_skill_call_chain(
         root_call_id: Uuid::new_v4().to_string(),
         root_skill: display_skill_id,
         started_at: Instant::now(),
-        include_content: skill_trace_content_enabled(&req_headers),
+        include_content: false,
     };
 
     let gw = gw.clone();
@@ -2373,7 +2376,8 @@ mod tests {
             parsed.template.get("tools"),
             Some(&skill_chain_tool_definition())
         );
-        let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
+        let rebuilt =
+            build_skill_chain_request_body(&parsed.template, &parsed.history, None).unwrap();
         let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
         assert_eq!(
             rebuilt_json

@@ -69,6 +69,7 @@ use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
 use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::mcp_stream_server::SkillCallRequest;
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -92,7 +93,9 @@ use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
 use super::gw_obj_repo::FuncDetail;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
-use super::log_admin::{DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories};
+use super::log_admin::{
+    DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories,
+};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
@@ -3195,6 +3198,7 @@ async fn SkillCall(
     }
 
     let remainPath = format!("/{}", subpath);
+    let is_post = req.method() == axum::http::Method::POST;
 
     let skill = match gw
         .sqlSecret
@@ -3227,11 +3231,28 @@ async fn SkillCall(
             .unwrap());
     }
 
-    let tenant_hint = req.headers().get("X-Tenant").and_then(|v| v.to_str().ok());
-    let calling_tenant = match resolve_skill_calling_tenant(&token, &skill, tenant_hint) {
-        Ok(tenant) => tenant,
-        Err(e) => return Ok(skill_admin_response(e)),
+    let (req_parts, req_body) = req.into_parts();
+    let req_bytes = match axum::body::to_bytes(req_body, FUNCCALL_MAX_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
+                .unwrap())
+        }
     };
+
+    let skill_call_req: SkillCallRequest = match serde_json::from_slice(&req_bytes) {
+        Ok(req) => req,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
+                .unwrap())
+        }
+    };
+
+    let calling_tenant = skill_call_req.tenant.clone();
 
     if !token.IsInferxAdmin() {
         let payer = if skill.gpu_billing_target == "owner" {
@@ -3347,10 +3368,11 @@ async fn SkillCall(
         caller_tenant,
     };
 
-    if req.method() != axum::http::Method::POST || !remainPath.starts_with("/v1/chat/completions") {
+    if !is_post || !remainPath.starts_with("/v1/chat/completions") {
+        let new_req = Request::from_parts(req_parts, Body::from(req_bytes));
         return dispatch_func_call(
             &gw,
-            req,
+            new_req,
             route,
             calling_tenant,
             SKILLS_NAMESPACE.to_string(),
@@ -3363,7 +3385,7 @@ async fn SkillCall(
 
     handle_skill_call_chain(
         &gw,
-        req,
+        skill_call_req,
         route,
         format!("{}/{}/{}", owner_tenant, namespace, skillname),
         calling_tenant,

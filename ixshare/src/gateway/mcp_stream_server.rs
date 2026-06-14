@@ -7,18 +7,20 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-#[derive(Debug, serde::Serialize)]
-struct CompletionsRequest {
-    messages: Vec<Message>,
-    max_tokens: usize,
-    temperature: f64,
-    stream: bool,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SkillCallRequest {
+    pub messages: Vec<Message>,
+    pub max_tokens: usize,
+    pub temperature: f64,
+    pub stream: bool,
+    pub skill_trace: String,
+    pub tenant: String,
 }
 
-#[derive(Debug, serde::Serialize)]
-struct Message {
-    role: String,
-    content: String,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
 }
 
 use super::secret::SqlSecret;
@@ -453,7 +455,7 @@ impl ServerHandler for McpStreamServer {
         );
         Self::try_notify_progress_message(&context, format!("Forwarding to {}", endpoint)).await;
 
-        let body = CompletionsRequest {
+        let body = SkillCallRequest {
             messages: vec![Message {
                 role: "user".to_string(),
                 content: query.to_string(),
@@ -461,6 +463,8 @@ impl ServerHandler for McpStreamServer {
             max_tokens: 5000,
             temperature: 0.0,
             stream: false,
+            skill_trace: "1".to_string(),
+            tenant: tenant.clone(),
         };
 
         let body_json = serde_json::to_value(&body).unwrap();
@@ -488,8 +492,6 @@ impl ServerHandler for McpStreamServer {
             .client
             .post(&endpoint)
             .header("Authorization", authorization)
-            .header("X-Tenant", tenant.clone())
-            .header("X-Skill-Trace", "1")
             .json(&body_json)
             .send()
             .await
