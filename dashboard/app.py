@@ -8272,6 +8272,8 @@ def SkillSave():
 @prefix_bp.route("/skill/publish/<owner>/<ns>/<name>", methods=["POST"])
 @require_login
 def SkillPublish(owner, ns, name):
+    if not is_inferx_admin_user():
+        return json_error("Only InferX admins can publish skills", 403)
     try:
         post_skill_state_action(owner, ns, name, "publish")
     except Exception as e:
@@ -8282,6 +8284,8 @@ def SkillPublish(owner, ns, name):
 @prefix_bp.route("/skill/unpublish/<owner>/<ns>/<name>", methods=["POST"])
 @require_login
 def SkillUnpublish(owner, ns, name):
+    if not is_inferx_admin_user():
+        return json_error("Only InferX admins can unpublish skills", 403)
     try:
         post_skill_state_action(owner, ns, name, "unpublish")
     except Exception as e:

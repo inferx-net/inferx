@@ -3154,7 +3154,7 @@ async fn PublishSkill(
     State(gw): State<HttpGateway>,
     Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+    if !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
     }
     match gw
@@ -3175,7 +3175,7 @@ async fn UnpublishSkill(
     State(gw): State<HttpGateway>,
     Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+    if !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
     }
     match gw

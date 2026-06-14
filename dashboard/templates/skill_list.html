@@ -558,6 +558,7 @@
                             </button>
                             {% endif %}
                             {% endif %}
+                            {% if is_inferx_admin %}
                             {% if skill.get('is_published') %}
                             <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
                                 <button class="ix-btn secondary" type="submit">Unpublish</button>
@@ -566,6 +567,7 @@
                             <form method="post" action="{{ url_for('prefix.SkillPublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
                                 <button class="ix-btn secondary" type="submit">Publish</button>
                             </form>
+                            {% endif %}
                             {% endif %}
                             <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this skill?');">
                                 <button class="ix-btn danger" type="submit">Delete</button>
