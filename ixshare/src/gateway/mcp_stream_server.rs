@@ -153,7 +153,47 @@ impl McpStreamServer {
     fn query_schema_value() -> Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"query": {"type": "string"}},
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": r#"The complete context required for the skill to perform its task.
+
+Build the query using the following structure:
+
+[Current User Request]
+The user's latest request or question.
+
+[Goal]
+The objective that this skill is expected to achieve.
+
+[Relevant Context]
+A compressed summary of prior conversation, facts, assumptions, and intermediate conclusions that are necessary for this skill.
+Do NOT include irrelevant conversation history.
+Preserve important decisions, user preferences, constraints, and previously discovered information.
+
+[Previous Results]
+Summaries of outputs from prior skills or reasoning steps that this skill depends on.
+Include only information needed to continue the task.
+
+[Constraints]
+Any requirements, limitations, formatting instructions, policies, budgets, deadlines, technologies, or other constraints.
+
+[Open Questions]
+Any unresolved questions or ambiguities that this skill should help answer.
+
+Guidelines:
+
+- Compress history aggressively.
+- Keep facts, decisions, and conclusions.
+- Remove greetings, small talk, and redundant discussion.
+- Preserve the user's intent rather than exact wording.
+- Include enough context so the skill can operate independently without access to the full conversation.
+- Prefer concise summaries over raw transcripts.
+- Include all information that could affect the correctness of the result.
+- When in doubt, keep important decisions and constraints.
+- The resulting query should be self-contained and understandable without additional context."#
+                }
+            },
             "required": ["query"]
         })
     }
