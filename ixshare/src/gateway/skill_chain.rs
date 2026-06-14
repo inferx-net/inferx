@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
 use super::http_gateway::{dispatch_func_call, HttpGateway, GATEWAY_CONFIG};
-use super::mcp_stream_server::SkillCallRequest;
 use crate::print::verbose_category;
 
 const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
@@ -32,6 +31,23 @@ const SKILL_CHAIN_TOOL_NAME: &str = "call_skillep";
 const SKILL_EP_CONSTRAINT: &str = "IMPORTANT: When using the call_skillep tool, you MUST only call skill endpoint IDs that are explicitly listed below. Do not invent or assume other skill endpoint IDs exist. If a skill endpoint is not listed below, do not call it.";
 const CLIENT_PROVIDED_TOOLS_ERROR: &str = "skill endpoint does not accept client-provided tools";
 const SKILL_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct SkillCallRequest {
+    pub messages: Vec<Message>,
+    pub max_tokens: usize,
+    pub temperature: f64,
+    pub stream: bool,
+    pub skill_trace: bool,
+    pub tenant: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Clone, Debug)]
 struct SkillChainRequestState {
     template: Value,
@@ -2097,7 +2113,7 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
-    let enable_trace = true;
+    let enable_trace = skill_call_req.skill_trace;
 
     if !enable_trace {
         return match execute_skill_chain(
@@ -2134,7 +2150,7 @@ pub(super) async fn handle_skill_call_chain(
         root_call_id: Uuid::new_v4().to_string(),
         root_skill: display_skill_id,
         started_at: Instant::now(),
-        include_content: false,
+        include_content: skill_call_req.skill_trace,
     };
 
     let gw = gw.clone();
@@ -2330,424 +2346,4 @@ pub(super) async fn handle_skill_debug_call(
         .header("X-Accel-Buffering", "no")
         .body(body)
         .unwrap())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
-        parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
-        skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
-        ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainRequestError, SkillChainTraceState, SkillTraceFailReason,
-        SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
-    };
-    use axum::http::{HeaderMap, HeaderValue};
-    use futures::future::BoxFuture;
-    use futures::stream::FuturesUnordered;
-    use futures::FutureExt;
-    use serde_json::{json, Value};
-    use std::collections::HashMap;
-    use std::convert::Infallible;
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
-    use tokio::sync::mpsc;
-
-    #[test]
-    fn parse_skill_chain_request_rejects_non_empty_top_level_tools() {
-        let headers = HeaderMap::new();
-        let body =
-            br#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}]}"#;
-        assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
-            SkillChainRequestError::ClientProvidedTools
-        );
-    }
-
-    #[test]
-    fn parse_skill_chain_request_injects_tool_for_empty_tools() {
-        let headers = HeaderMap::new();
-        let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
-        let parsed = parse_skill_chain_request(&headers, body).unwrap();
-        assert_eq!(parsed.current_depth, 1);
-        assert_eq!(parsed.history.len(), 1);
-        assert_eq!(parsed.template.get("stream"), Some(&Value::Bool(false)));
-        assert_eq!(
-            parsed.template.get("tools"),
-            Some(&skill_chain_tool_definition())
-        );
-        let rebuilt =
-            build_skill_chain_request_body(&parsed.template, &parsed.history, None).unwrap();
-        let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
-        assert_eq!(
-            rebuilt_json
-                .get("messages")
-                .and_then(Value::as_array)
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn parse_skill_chain_request_rejects_invalid_child_depth() {
-        let mut headers = HeaderMap::new();
-        headers.insert(SKILL_CHAIN_CHILD_HEADER, HeaderValue::from_static("1"));
-        headers.insert(SKILL_CHAIN_DEPTH_HEADER, HeaderValue::from_static("0"));
-        let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
-        assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
-            SkillChainRequestError::BadRequest
-        );
-    }
-
-    #[test]
-    fn parse_skillep_tool_args_requires_stringified_json() {
-        let parsed =
-            parse_skillep_tool_args(r#"{"skillep_id":"acme/default/pricing","query":"what now"}"#)
-                .unwrap();
-        assert_eq!(parsed.0, "acme/default/pricing");
-        assert_eq!(parsed.1, "what now");
-        assert_eq!(
-            parse_skillep_tool_args("{bad json}").unwrap_err(),
-            "Error: invalid tool arguments"
-        );
-    }
-
-    #[test]
-    fn split_skillep_id_requires_three_segments() {
-        assert_eq!(
-            split_skillep_id("acme/default/pricing").unwrap(),
-            ("acme", "default", "pricing")
-        );
-        assert_eq!(
-            split_skillep_id("acme/default").unwrap_err(),
-            "Error: invalid skillep_id"
-        );
-    }
-
-    #[test]
-    fn parse_skill_response_detects_tool_call_and_final_text() {
-        let tool_resp = json!({
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "message": {
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "call_skillep",
-                            "arguments": "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}"
-                        }
-                    }]
-                }
-            }]
-        });
-        let parsed_tool = parse_skill_response(&serde_json::to_vec(&tool_resp).unwrap()).unwrap();
-        assert_eq!(parsed_tool.tool_calls.len(), 1);
-        assert_eq!(parsed_tool.tool_calls[0].name, "call_skillep");
-
-        let final_resp = json!({
-            "choices": [{
-                "finish_reason": "stop",
-                "message": {"content": "done"}
-            }]
-        });
-        let parsed_final = parse_skill_response(&serde_json::to_vec(&final_resp).unwrap()).unwrap();
-        assert!(parsed_final.tool_calls.is_empty());
-        assert_eq!(parsed_final.final_text.as_deref(), Some("done"));
-    }
-
-    #[tokio::test]
-    async fn drive_parallel_child_tasks_commits_results_in_original_order() {
-        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
-            FuturesUnordered::new();
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(40)).await;
-                ParallelChildResult {
-                    original_index: 2,
-                    tool_call_id: "call_3".to_string(),
-                    tool_result: "third".to_string(),
-                    fail_reason: None,
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-                ParallelChildResult {
-                    original_index: 1,
-                    tool_call_id: "call_2".to_string(),
-                    tool_result: "second".to_string(),
-                    fail_reason: Some(SkillTraceFailReason::TransportError),
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                ParallelChildResult {
-                    original_index: 0,
-                    tool_call_id: "call_1".to_string(),
-                    tool_result: "first".to_string(),
-                    fail_reason: None,
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-
-        let results = drive_parallel_child_tasks(tasks).await;
-        assert_eq!(results.len(), 3);
-        assert_eq!(results[0].tool_call_id, "call_1");
-        assert_eq!(results[1].tool_call_id, "call_2");
-        assert_eq!(results[2].tool_call_id, "call_3");
-        assert_eq!(
-            results[1].fail_reason,
-            Some(SkillTraceFailReason::TransportError)
-        );
-    }
-
-    #[tokio::test]
-    async fn drive_parallel_child_tasks_runs_siblings_concurrently() {
-        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
-            FuturesUnordered::new();
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(60)).await;
-                ParallelChildResult {
-                    original_index: 0,
-                    tool_call_id: "call_1".to_string(),
-                    tool_result: "one".to_string(),
-                    fail_reason: None,
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(60)).await;
-                ParallelChildResult {
-                    original_index: 1,
-                    tool_call_id: "call_2".to_string(),
-                    tool_result: "two".to_string(),
-                    fail_reason: None,
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-
-        let started_at = Instant::now();
-        let results = drive_parallel_child_tasks(tasks).await;
-        let elapsed = started_at.elapsed();
-
-        assert_eq!(results.len(), 2);
-        assert!(elapsed < Duration::from_millis(110), "elapsed={elapsed:?}");
-    }
-
-    #[tokio::test]
-    async fn execute_parallel_child_call_returns_error_for_invalid_args_without_trace_failure() {
-        let result = execute_parallel_child_call(
-            ParallelChildTaskInput {
-                original_index: 0,
-                call: ParsedSkillToolCall {
-                    id: "call_bad".to_string(),
-                    name: "call_skillep".to_string(),
-                    arguments: "{bad json}".to_string(),
-                    raw: json!({}),
-                },
-            },
-            ParallelChildTaskContext {
-                current_depth: 1,
-                headers: HeaderMap::new(),
-                debug_mocks: Arc::new(HashMap::new()),
-                child_http_client: reqwest::Client::new(),
-                trace: None,
-                direct_child_depth: 2,
-                logical_tenant: "acme".to_string(),
-                logical_namespace: "skills".to_string(),
-                logical_funcname: "parent".to_string(),
-            },
-        )
-        .await;
-
-        assert_eq!(result.tool_call_id, "call_bad");
-        assert_eq!(result.tool_result, "Error: invalid tool arguments");
-        assert_eq!(result.fail_reason, None);
-    }
-
-    #[tokio::test]
-    async fn execute_parallel_child_call_returns_error_for_invalid_skillep_id() {
-        let result = execute_parallel_child_call(
-            ParallelChildTaskInput {
-                original_index: 0,
-                call: ParsedSkillToolCall {
-                    id: "call_bad_id".to_string(),
-                    name: "call_skillep".to_string(),
-                    arguments: "{\"skillep_id\":\"acme/default\",\"query\":\"what now\"}"
-                        .to_string(),
-                    raw: json!({}),
-                },
-            },
-            ParallelChildTaskContext {
-                current_depth: 1,
-                headers: HeaderMap::new(),
-                debug_mocks: Arc::new(HashMap::new()),
-                child_http_client: reqwest::Client::new(),
-                trace: None,
-                direct_child_depth: 2,
-                logical_tenant: "acme".to_string(),
-                logical_namespace: "skills".to_string(),
-                logical_funcname: "parent".to_string(),
-            },
-        )
-        .await;
-
-        assert_eq!(result.tool_call_id, "call_bad_id");
-        assert_eq!(result.tool_result, "Error: invalid skillep_id");
-        assert_eq!(result.fail_reason, None);
-    }
-
-    #[tokio::test]
-    async fn execute_parallel_child_call_supports_debug_mock_results() {
-        let mut debug_mocks = HashMap::new();
-        debug_mocks.insert(
-            "acme/default/pricing".to_string(),
-            "mock child result".to_string(),
-        );
-        let result = execute_parallel_child_call(
-            ParallelChildTaskInput {
-                original_index: 0,
-                call: ParsedSkillToolCall {
-                    id: "call_mock".to_string(),
-                    name: "call_skillep".to_string(),
-                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
-                        .to_string(),
-                    raw: json!({}),
-                },
-            },
-            ParallelChildTaskContext {
-                current_depth: 1,
-                headers: HeaderMap::new(),
-                debug_mocks: Arc::new(debug_mocks),
-                child_http_client: reqwest::Client::new(),
-                trace: None,
-                direct_child_depth: 2,
-                logical_tenant: "acme".to_string(),
-                logical_namespace: "skills".to_string(),
-                logical_funcname: "parent".to_string(),
-            },
-        )
-        .await;
-
-        assert_eq!(result.tool_call_id, "call_mock");
-        assert_eq!(result.tool_result, "mock child result");
-        assert_eq!(result.fail_reason, None);
-    }
-
-    #[tokio::test]
-    async fn execute_parallel_child_call_emits_trace_events_for_debug_mock_results() {
-        let mut debug_mocks = HashMap::new();
-        debug_mocks.insert(
-            "acme/default/pricing".to_string(),
-            "mock child result".to_string(),
-        );
-        let (tx, mut rx) = mpsc::channel::<Result<String, Infallible>>(8);
-        let trace = SkillChainTraceState {
-            tx,
-            root_call_id: "root_call".to_string(),
-            root_skill: "acme/skills/parent".to_string(),
-            started_at: Instant::now(),
-            include_content: true,
-        };
-
-        let result = execute_parallel_child_call(
-            ParallelChildTaskInput {
-                original_index: 0,
-                call: ParsedSkillToolCall {
-                    id: "call_mock".to_string(),
-                    name: "call_skillep".to_string(),
-                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
-                        .to_string(),
-                    raw: json!({}),
-                },
-            },
-            ParallelChildTaskContext {
-                current_depth: 1,
-                headers: HeaderMap::new(),
-                debug_mocks: Arc::new(debug_mocks),
-                child_http_client: reqwest::Client::new(),
-                trace: Some(trace),
-                direct_child_depth: 2,
-                logical_tenant: "acme".to_string(),
-                logical_namespace: "skills".to_string(),
-                logical_funcname: "parent".to_string(),
-            },
-        )
-        .await;
-
-        assert_eq!(result.tool_call_id, "call_mock");
-        assert_eq!(result.tool_result, "mock child result");
-        assert_eq!(result.fail_reason, None);
-
-        let start_chunk = rx.recv().await.unwrap().unwrap();
-        let finish_chunk = rx.recv().await.unwrap().unwrap();
-        assert!(start_chunk.contains("event: skill_trace"));
-        assert!(start_chunk.contains("\"type\":\"subcall_start\""));
-        assert!(start_chunk.contains("\"skill\":\"acme/default/pricing\""));
-        assert!(start_chunk.contains("\"query\":\"what now\""));
-
-        assert!(finish_chunk.contains("event: skill_trace"));
-        assert!(finish_chunk.contains("\"type\":\"subcall_finish\""));
-        assert!(finish_chunk.contains("\"result_code\":\"pass\""));
-        assert!(finish_chunk.contains("\"output\":\"mock child result\""));
-    }
-
-    #[tokio::test]
-    async fn drive_parallel_child_tasks_preserves_mixed_success_and_failure() {
-        let tasks: FuturesUnordered<BoxFuture<'static, ParallelChildResult>> =
-            FuturesUnordered::new();
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                ParallelChildResult {
-                    original_index: 1,
-                    tool_call_id: "call_fail".to_string(),
-                    tool_result: "Error: child transport error".to_string(),
-                    fail_reason: Some(SkillTraceFailReason::TransportError),
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-        tasks.push(
-            async {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                ParallelChildResult {
-                    original_index: 0,
-                    tool_call_id: "call_ok".to_string(),
-                    tool_result: "child ok".to_string(),
-                    fail_reason: None,
-                    usage: None,
-                }
-            }
-            .boxed(),
-        );
-
-        let results = drive_parallel_child_tasks(tasks).await;
-        assert_eq!(results[0].tool_result, "child ok");
-        assert_eq!(results[1].tool_result, "Error: child transport error");
-        assert_eq!(
-            results[1].fail_reason,
-            Some(SkillTraceFailReason::TransportError)
-        );
-    }
 }

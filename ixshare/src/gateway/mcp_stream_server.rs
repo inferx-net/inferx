@@ -7,24 +7,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct SkillCallRequest {
-    pub messages: Vec<Message>,
-    pub max_tokens: usize,
-    pub temperature: f64,
-    pub stream: bool,
-    pub skill_trace: String,
-    pub tenant: String,
-}
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Message {
-    pub role: String,
-    pub content: String,
-}
 
 use super::secret::SqlSecret;
-use crate::print::verbose_category;
+use crate::{gateway::skill_chain::{Message, SkillCallRequest}, print::verbose_category};
 
 #[derive(Clone)]
 pub struct McpStreamServer {
@@ -463,7 +449,7 @@ impl ServerHandler for McpStreamServer {
             max_tokens: 5000,
             temperature: 0.0,
             stream: false,
-            skill_trace: "1".to_string(),
+            skill_trace: true,
             tenant: tenant.clone(),
         };
 
