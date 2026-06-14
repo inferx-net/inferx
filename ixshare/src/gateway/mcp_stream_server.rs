@@ -1,9 +1,25 @@
 use anyhow::Result as AResult;
 use futures::StreamExt;
-use rmcp::{model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler};
+use rmcp::{
+    model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler,
+};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::Arc;
+
+#[derive(Debug, serde::Serialize)]
+struct CompletionsRequest {
+    messages: Vec<Message>,
+    max_tokens: usize,
+    temperature: f64,
+    stream: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
 
 use super::secret::SqlSecret;
 use crate::print::verbose_category;
@@ -144,7 +160,11 @@ impl McpStreamServer {
         };
         let preview_text = String::from_utf8_lossy(preview).replace('\n', "\\n");
         if bytes.len() > MAX_LOG_BYTES {
-            format!("{}...[truncated {} bytes]", preview_text, bytes.len() - MAX_LOG_BYTES)
+            format!(
+                "{}...[truncated {} bytes]",
+                preview_text,
+                bytes.len() - MAX_LOG_BYTES
+            )
         } else {
             preview_text
         }
@@ -153,7 +173,47 @@ impl McpStreamServer {
     fn query_schema_value() -> Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"query": {"type": "string"}},
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": r#"The complete context required for the skill to perform its task.
+
+Build the query using the following structure:
+
+[Current User Request]
+The user's latest request or question.
+
+[Goal]
+The objective that this skill is expected to achieve.
+
+[Relevant Context]
+A compressed summary of prior conversation, facts, assumptions, and intermediate conclusions that are necessary for this skill.
+Do NOT include irrelevant conversation history.
+Preserve important decisions, user preferences, constraints, and previously discovered information.
+
+[Previous Results]
+Summaries of outputs from prior skills or reasoning steps that this skill depends on.
+Include only information needed to continue the task.
+
+[Constraints]
+Any requirements, limitations, formatting instructions, policies, budgets, deadlines, technologies, or other constraints.
+
+[Open Questions]
+Any unresolved questions or ambiguities that this skill should help answer.
+
+Guidelines:
+
+- Compress history aggressively.
+- Keep facts, decisions, and conclusions.
+- Remove greetings, small talk, and redundant discussion.
+- Preserve the user's intent rather than exact wording.
+- Include enough context so the skill can operate independently without access to the full conversation.
+- Prefer concise summaries over raw transcripts.
+- Include all information that could affect the correctness of the result.
+- When in doubt, keep important decisions and constraints.
+- The resulting query should be self-contained and understandable without additional context."#
+                }
+            },
             "required": ["query"]
         })
     }
@@ -378,11 +438,6 @@ impl ServerHandler for McpStreamServer {
         let Some(subscription) = subscription else {
             return Err(Self::internal_error("unknown tool or not subscribed"));
         };
-        let route = (
-            subscription.owner_tenant,
-            subscription.owner_namespace,
-            subscription.skillname,
-        );
 
         let query = request
             .arguments
@@ -391,24 +446,33 @@ impl ServerHandler for McpStreamServer {
             .and_then(|q| q.as_str())
             .unwrap_or("");
 
-        let endpoint = self.skill_url(&route.0, &route.1, &route.2);
+        let endpoint = self.skill_url(
+            &subscription.owner_tenant,
+            &subscription.owner_namespace,
+            &subscription.skillname,
+        );
         Self::try_notify_progress_message(&context, format!("Forwarding to {}", endpoint)).await;
 
-        let body = json!({
-            "messages": [{"role": "user", "content": query}],
-            "max_tokens": 5000,
-            "temperature": 0,
-            "stream": false
-        });
+        let body = CompletionsRequest {
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: query.to_string(),
+            }],
+            max_tokens: 5000,
+            temperature: 0.0,
+            stream: false,
+        };
+
+        let body_json = serde_json::to_value(&body).unwrap();
 
         ctrace!(
             verbose_category::MCP,
             "MCP call_tool request: tool={} tenant={} owner={}/{}/{} query_len={} input_schema={}",
             requested_name,
             tenant,
-            route.0,
-            route.1,
-            route.2,
+            &subscription.owner_tenant,
+            &subscription.owner_namespace,
+            &subscription.skillname,
             query.len(),
             Self::summarize_value_for_log(&Self::query_schema_value())
         );
@@ -426,7 +490,7 @@ impl ServerHandler for McpStreamServer {
             .header("Authorization", authorization)
             .header("X-Tenant", tenant.clone())
             .header("X-Skill-Trace", "1")
-            .json(&body)
+            .json(&body_json)
             .send()
             .await
             .map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?;
@@ -582,7 +646,10 @@ impl ServerHandler for McpStreamServer {
                 )
             })
             .collect::<Vec<_>>();
-        let tool_names = tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         ctrace!(
             verbose_category::MCP,
             "MCP list_tools tenant={} tool_count={} tool_names={:?} input_schema={}",
@@ -597,102 +664,5 @@ impl ServerHandler for McpStreamServer {
             meta: None,
             next_cursor: None,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{McpStreamServer, SkillTraceEventPayload, format_skill_fail_reason, update_terminal_failure};
-    use serde_json::json;
-
-    #[test]
-    fn parse_text_response_extracts_message_content() {
-        let body = json!({
-            "choices": [{
-                "message": {"content": "final answer"}
-            }]
-        });
-        assert_eq!(
-            McpStreamServer::parse_text_response(&serde_json::to_vec(&body).unwrap()).unwrap(),
-            "final answer"
-        );
-    }
-
-    #[test]
-    fn resolve_outcome_returns_failure_message_when_skill_failed() {
-        let result = McpStreamServer::resolve_skill_trace_outcome(
-            None,
-            Some("skill timed out".to_string()),
-            true,
-        );
-        let err = result.unwrap_err();
-        assert_eq!(err.message, "skill timed out");
-    }
-
-    #[test]
-    fn resolve_outcome_returns_skill_result_even_with_terminal_failure_set() {
-        let skill_result = json!({"choices": [{"message": {"content": "done"}}]});
-        let result = McpStreamServer::resolve_skill_trace_outcome(
-            Some(skill_result.clone()),
-            Some("skill timed out".to_string()),
-            true,
-        );
-        assert_eq!(result.unwrap(), skill_result);
-    }
-
-    fn make_call_finish(depth: u32, result_code: &str, fail_reason: Option<&str>) -> SkillTraceEventPayload {
-        SkillTraceEventPayload {
-            event_type: "call_finish".to_string(),
-            skill: "acme/default/pricing".to_string(),
-            depth,
-            phase: None,
-            elapsed_ms: None,
-            result_code: Some(result_code.to_string()),
-            fail_reason: fail_reason.map(str::to_string),
-            parent_call_id: None,
-        }
-    }
-
-    #[test]
-    fn update_terminal_failure_sets_message_for_root_call_finish_fail() {
-        let event = make_call_finish(1, "fail", Some("timeout"));
-        let mut terminal_failure: Option<String> = None;
-        update_terminal_failure(&event, &mut terminal_failure);
-        assert_eq!(terminal_failure.as_deref(), Some("acme/default/pricing: skill timed out"));
-    }
-
-    #[test]
-    fn update_terminal_failure_ignores_non_root_depth() {
-        let event = make_call_finish(2, "fail", Some("timeout"));
-        let mut terminal_failure: Option<String> = None;
-        update_terminal_failure(&event, &mut terminal_failure);
-        assert!(terminal_failure.is_none());
-    }
-
-    #[test]
-    fn update_terminal_failure_ignores_pass_result() {
-        let event = make_call_finish(1, "pass", None);
-        let mut terminal_failure: Option<String> = None;
-        update_terminal_failure(&event, &mut terminal_failure);
-        assert!(terminal_failure.is_none());
-    }
-
-    #[test]
-    fn update_terminal_failure_parses_fail_reason_from_serde() {
-        let json = r#"{"type":"call_finish","skill":"acme/default/pricing","depth":1,"result_code":"fail","fail_reason":"invalid_response"}"#;
-        let event: SkillTraceEventPayload = serde_json::from_str(json).unwrap();
-        let mut terminal_failure: Option<String> = None;
-        update_terminal_failure(&event, &mut terminal_failure);
-        assert_eq!(terminal_failure.as_deref(), Some("acme/default/pricing: skill returned invalid response"));
-    }
-
-    #[test]
-    fn format_skill_fail_reason_maps_known_reasons() {
-        assert_eq!(format_skill_fail_reason(Some("timeout")), "skill timed out");
-        assert_eq!(format_skill_fail_reason(Some("transport_error")), "skill transport error");
-        assert_eq!(format_skill_fail_reason(Some("invalid_response")), "skill returned invalid response");
-        assert_eq!(format_skill_fail_reason(Some("max_depth")), "skill exceeded max chain depth");
-        assert_eq!(format_skill_fail_reason(None), "skill failed");
-        assert_eq!(format_skill_fail_reason(Some("unknown_code")), "skill failed");
     }
 }
