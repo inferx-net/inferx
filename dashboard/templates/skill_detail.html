@@ -495,7 +495,7 @@
                 <button class="ix-btn" type="submit">Publish</button>
             </form>
             {% endif %}
-            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this function? This cannot be undone.');" style="display:inline;">
+            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this skill? This cannot be undone.');" style="display:inline;">
                 <button class="ix-btn danger" type="submit">Delete</button>
             </form>
             {% endif %}
@@ -530,7 +530,7 @@
             {% endif %}
             <strong>Created By</strong>
             <div>{{ skill.get('revision_created_by') or '—' }}</div>
-            <strong>Function Data</strong>
+            <strong>Skill Data</strong>
             <div>
                 {% if can_manage %}
                 <button class="ix-btn secondary" type="button" id="skill-data-view-btn">View</button>
@@ -544,8 +544,8 @@
 
     {% if can_manage %}
     <section class="skill-panel" id="skill-data-viewer" hidden>
-        <h2>Function Data</h2>
-        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No function data found.">{{ skill_prefix_text }}</textarea>
+        <h2>Skill Data</h2>
+        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No skill data found.">{{ skill_prefix_text }}</textarea>
     </section>
     {% endif %}
 

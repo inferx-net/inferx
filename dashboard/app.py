@@ -5276,9 +5276,9 @@ def build_skill_form_context(*, roles=None):
         roles = listroles()
     deploy_target = build_catalog_deploy_target_selector_context(roles=roles)
     deploy_target = dict(deploy_target)
-    deploy_target["resolved_summary_label"] = "Function path:"
-    deploy_target["unresolved_summary_label"] = "Function path not selected:"
-    deploy_target["action_label"] = "Create Function"
+    deploy_target["resolved_summary_label"] = "Skill path:"
+    deploy_target["unresolved_summary_label"] = "Skill path not selected:"
+    deploy_target["action_label"] = "Create Skill"
     deploy_target["preferred_namespace_value"] = "default"
     templates = list_active_skill_templates()
     return {
@@ -8177,23 +8177,11 @@ def ListSkillsLegacy():
 
 @prefix_bp.route("/listskills/myskills", methods=["GET"])
 @require_login
-def ListSkillsMySkillsLegacy():
-    return redirect(url_for("prefix.ListSkills"))
-
-
-@prefix_bp.route("/listskills/marketplace", methods=["GET"])
-@require_login
-def ListSkillsMarketplaceLegacy():
-    return redirect(url_for("prefix.SkillMarketplace"))
-
-
-@prefix_bp.route("/listfunctions/myfunctions", methods=["GET"])
-@require_login
 def ListSkills():
     try:
         context = load_skill_dashboard_context(skills_view="my_skills")
     except Exception as e:
-        return json_error(f"failed to load functions: {e}", 500)
+        return json_error(f"failed to load skills: {e}", 500)
 
     return render_template(
         "skill_list.html",
@@ -8202,7 +8190,7 @@ def ListSkills():
     )
 
 
-@prefix_bp.route("/listfunctions/public", methods=["GET"])
+@prefix_bp.route("/listskills/public", methods=["GET"])
 @require_login
 def SkillMarketplace():
     try:

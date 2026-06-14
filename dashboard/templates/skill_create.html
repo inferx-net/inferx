@@ -187,8 +187,27 @@
 </style>
 
 <div class="skill-create-page">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <h1 style="margin:0;">Create Function</h1>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h1 style="margin:0;">Create Skill</h1>
+    </div>
+
+    <div class="skill-panel">
+        <h2 style="margin:0 0 12px 0;">Skill Type</h2>
+        <div class="skill-inline-options">
+            <label>
+                <input type="radio" name="skill_type_choice" id="skill-type-standalone" value="standalone" checked>
+                Standalone Skill
+            </label>
+            <label>
+                <input type="radio" name="skill_type_choice" id="skill-type-orchestrator" value="orchestrator">
+                Orchestrator Skill
+            </label>
+        </div>
+        <p id="skill-type-desc-standalone" style="margin:8px 0 0;color:#475569;font-size:0.9em;">Handles requests directly using its own instructions, context, and model.</p>
+        <p id="skill-type-desc-orchestrator" style="display:none;margin:8px 0 0;color:#475569;font-size:0.9em;">Analyzes the request and calls one or more other skills.</p>
+    </div>
+
+    <div id="skill-import-section">
         <div style="display:flex;align-items:center;gap:10px;">
             <div class="skill-import-dropdown">
                 <button type="button" id="skill-import-btn" class="ix-btn secondary" style="margin:0;">Import ▾</button>
@@ -199,10 +218,10 @@
             </div>
             <span id="skill-import-status" style="color:#475569;font-size:0.9em;"></span>
         </div>
+        <p style="margin:6px 0 0;color:#64748b;font-size:0.9em;"><strong>Folder import</strong> requires a folder with <code>SKILL.md</code> at the root and merges any <code>references/</code> files to pre-fill Skill Name, Description, and System Prompt. <strong>File import</strong> reads a single <code>.md</code> file.</p>
     </div>
     <input id="skill-file-input" type="file" accept=".md" style="display:none">
     <input id="skill-folder-input" type="file" webkitdirectory style="display:none">
-    <p style="margin:0;color:#64748b;font-size:0.9em;">Use <strong>Import</strong> to pre-fill Function Name, Description, and Function Data from an existing skill. Folder import merges <code>SKILL.md</code> with its <code>references/</code> files — only local files in the <code>references/</code> subfolder are inlined; external links are not fetched.</p>
 
     {% if error_message %}
     <div class="skill-error" role="alert">{{ error_message }}</div>
@@ -212,16 +231,28 @@
         <input id="skill-target-tenant-input" type="hidden" name="tenant" value="{{ sc_selected_tenant }}">
         <input id="skill-target-namespace-input" type="hidden" name="namespace" value="{{ sc_selected_namespace or (sc_current_namespace_options[0].value if sc_single_fixed else '') }}">
 
+        <div class="skill-panel" id="subskills-panel" style="display:none;">
+            <h2>Sub-skills</h2>
+            <p style="margin:0 0 10px;color:#475569;font-size:0.9em;">Select the skill endpoints this orchestrator is allowed to call.</p>
+            <div id="subskill-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="button" id="select-subskills-btn" class="ix-btn secondary" style="margin:0;">Select Sub-skills</button>
+                <button type="button" id="generate-metadata-btn" class="ix-btn secondary" style="margin:0;" disabled>Generate Metadata</button>
+                <span id="generate-metadata-status" style="color:#475569;font-size:0.9em;"></span>
+            </div>
+            <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="">
+        </div>
+
         <div class="skill-panel">
             <h2>Identity</h2>
             <div class="skill-field" style="margin-bottom:14px;">
-                <label for="skillname">Function Name</label>
+                <label for="skillname">Skill Name</label>
                 <input id="skillname" name="skillname" type="text" required pattern="^[a-zA-Z0-9][a-zA-Z0-9-]*$" value="{{ form_data.get('skillname', '') }}">
             </div>
 
             {% if sc_single_fixed %}
             <div class="catalog-deploy-target-summary" style="margin-bottom:0;">
-                <strong>Function path:</strong>
+                <strong>Skill path:</strong>
                 <span>{% if (sc_tenant_options | length) != 1 %}{{ sc_selected_tenant }} / {% endif %}{{ sc_selected_namespace or sc_current_namespace_options[0].value }}</span>
             </div>
             {% else %}
@@ -230,7 +261,7 @@
 
             <div class="skill-field" style="margin-top:14px;">
                 <label for="description">Description</label>
-                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this function does" required>{{ form_data.get('description', '') }}</textarea>
+                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this skill does" required>{{ form_data.get('description', '') }}</textarea>
             </div>
         </div>
 
@@ -265,23 +296,11 @@
             </div>
         </div>
 
-        <div class="skill-panel" id="subskills-panel">
-            <h2>Sub-skills</h2>
-            <p style="margin:0 0 10px;color:#475569;font-size:0.9em;">Select the child skill endpoints this function is allowed to call. Leave empty for a standalone (non-chain) function.</p>
-            <div id="subskill-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-                <button type="button" id="select-subskills-btn" class="ix-btn secondary" style="margin:0;">Select Sub-skills</button>
-                <button type="button" id="generate-metadata-btn" class="ix-btn secondary" style="margin:0;" disabled>Generate Metadata</button>
-                <span id="generate-metadata-status" style="color:#475569;font-size:0.9em;"></span>
-            </div>
-            <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="">
-        </div>
-
         <div class="skill-panel">
-            <h2>Function Data</h2>
+            <h2>System Prompt</h2>
             <div class="skill-field">
-                <label for="prefix">Function Data — Provide system context for every user request</label>
-                <textarea id="prefix" name="prefix" placeholder="Enter function data here...">{{ form_data.get('prefix', '') }}</textarea>
+                <label for="prefix" id="prefix-label">System Prompt — Provide instructions and context for every request</label>
+                <textarea id="prefix" name="prefix" placeholder="Enter system prompt here...">{{ form_data.get('prefix', '') }}</textarea>
             </div>
         </div>
 
@@ -313,6 +332,26 @@
 </div>
 
 {% include '_catalog_deploy_target_script.html' %}
+<script>
+    (function () {
+        const importSection = document.getElementById('skill-import-section');
+        const subskillsPanel = document.getElementById('subskills-panel');
+        const typeDescStandalone = document.getElementById('skill-type-desc-standalone');
+        const typeDescOrchestrator = document.getElementById('skill-type-desc-orchestrator');
+
+        function applySkillType(type) {
+            const isOrchestrator = type === 'orchestrator';
+            importSection.style.display = isOrchestrator ? 'none' : '';
+            subskillsPanel.style.display = isOrchestrator ? '' : 'none';
+            typeDescStandalone.style.display = isOrchestrator ? 'none' : '';
+            typeDescOrchestrator.style.display = isOrchestrator ? '' : 'none';
+        }
+
+        document.querySelectorAll('input[name="skill_type_choice"]').forEach(radio => {
+            radio.addEventListener('change', () => applySkillType(radio.value));
+        });
+    })();
+</script>
 <script>
     (function () {
         const hiddenTenantInput = document.getElementById('skill-target-tenant-input');
