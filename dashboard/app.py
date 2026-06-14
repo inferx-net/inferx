@@ -197,6 +197,8 @@ KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
 SKILLS_DIR = Path("/opt/inferx/skills")
 FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
 METADATA_GEN_MODEL = os.getenv("METADATA_GEN_MODEL", "").strip()
+DOCLING_URL = os.getenv("DOCLING_URL", "").strip().rstrip("/")
+DOCLING_TOKEN = os.getenv("DOCLING_TOKEN", "secret123")
 
 
 def load_max_gpu_vram_mb_override():
@@ -8166,6 +8168,7 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         deploy_target=deploy_target,
         skill_templates=skill_templates,
         metadata_gen_model_configured=bool(METADATA_GEN_MODEL and "/" in METADATA_GEN_MODEL),
+        docling_configured=bool(DOCLING_URL),
     )
 
 
@@ -8505,6 +8508,79 @@ def GenerateSkillMetadata():
     prefix = "\n\n".join(prefix_parts)
 
     return jsonify({"description": description, "prefix": prefix})
+
+
+@prefix_bp.route("/convert_pdf_metadata", methods=["POST"])
+@require_login
+def ConvertPdfMetadata():
+    if not DOCLING_URL:
+        return json_error("DOCLING_URL is not configured", 503)
+    if "file" not in request.files:
+        return json_error("no file uploaded", 400)
+    pdf_file = request.files["file"]
+    if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+        return json_error("uploaded file must be a PDF", 400)
+
+    # Convert PDF → markdown via docling
+    try:
+        docling_resp = requests.post(
+            f"{DOCLING_URL}/convert",
+            headers={"Authorization": f"Bearer {DOCLING_TOKEN}", "X-Do-Table-Structure": "false"},
+            files={"file": (pdf_file.filename, pdf_file.stream, "application/pdf")},
+            timeout=120,
+        )
+    except Exception as e:
+        return json_error(f"docling request failed: {e}", 502)
+
+    if not docling_resp.ok:
+        return json_error(f"docling conversion failed: HTTP {docling_resp.status_code}", 502)
+
+    markdown = docling_resp.text or ""
+
+    # Use LLM to generate skillname + description from the markdown
+    skillname = ""
+    description = ""
+    if METADATA_GEN_MODEL and "/" in METADATA_GEN_MODEL:
+        namespace_part, modelname = METADATA_GEN_MODEL.split("/", 1)
+        tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+        if tenant:
+            snippet = markdown[:6000]
+            prompt = (
+                "You are analyzing a document that has been converted to markdown. "
+                "Your task is to propose metadata for an AI skill that answers questions about this document.\n\n"
+                "Important: the skill does NOT perform the capabilities described in the document. "
+                "It is a Q&A assistant that helps users understand and navigate the document's content.\n\n"
+                "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
+                "{\"skillname\": \"<kebab-case name, 2-4 words, describing the document topic>\", "
+                "\"description\": \"<1-2 sentence description clarifying this skill answers questions about the document, not that it performs the described features>\"}\n\n"
+                f"Document content (may be truncated):\n{snippet}"
+            )
+            llm_url = f"{get_gateway_url()}/funccall/{tenant}/{namespace_part}/{modelname}/v1/chat/completions"
+            try:
+                llm_resp = requests.post(
+                    llm_url,
+                    headers=gateway_request_headers(json_body=True),
+                    json={"messages": [{"role": "user", "content": prompt}], "stream": False, "chat_template_kwargs": {"enable_thinking": False}},
+                    timeout=30,
+                )
+                if llm_resp.ok:
+                    payload = response_json_or_none(llm_resp)
+                    llm_text = ""
+                    try:
+                        llm_text = payload["choices"][0]["message"]["content"] if payload and payload.get("choices") else ""
+                    except (KeyError, IndexError, TypeError):
+                        pass
+                    import json as _json
+                    try:
+                        parsed = _json.loads(llm_text.strip())
+                        skillname = str(parsed.get("skillname", "") or "").strip()
+                        description = str(parsed.get("description", "") or "").strip()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    return jsonify({"skillname": skillname, "description": description, "prefix": markdown})
 
 
 def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):

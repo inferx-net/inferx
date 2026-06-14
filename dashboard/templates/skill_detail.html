@@ -1456,6 +1456,7 @@
             model: normalFuncname,
             messages: [{ role: 'user', content: prompt }],
             stream: true,
+            chat_template_kwargs: { enable_thinking: false },
         });
 
         try {
