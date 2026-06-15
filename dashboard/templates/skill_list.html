@@ -310,6 +310,10 @@
         min-width: 280px;
     }
 
+    .skills-marketplace-description {
+        text-align: left !important;
+    }
+
     .skill-visibility-badge {
         display: inline-flex;
         align-items: center;
@@ -613,7 +617,7 @@
                         <a href="{{ url_for('prefix.SkillDetail', owner=row.get('owner_tenant'), ns=row.get('owner_namespace'), name=row.get('skillname')) }}">{{ row.get('skillname') }}</a>
                     </td>
                     <td>{{ row.get('owner_tenant') }}/{{ row.get('owner_namespace') }}</td>
-                    <td>{{ row.get('description') or '—' }}</td>
+                    <td class="skills-marketplace-description">{{ row.get('description') or '—' }}</td>
                     <td>
                         {% if can_manage_subscriptions %}
                         <div class="ix-row-actions">
@@ -689,7 +693,6 @@
                     <th>Skill</th>
                     <th>Owner</th>
                     <th>Description</th>
-                    <th>Price</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
@@ -705,8 +708,7 @@
                         <a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a>
                     </td>
                     <td>{{ skill.get('owner_tenant') }}/{{ skill.get('owner_namespace') }}</td>
-                    <td class="skills-marketplace-description">{{ skill.get('description') or 'No description provided.' }}</td>
-                    <td>{% if skill.get('earning_type') == 'free' %}Free{% elif skill.get('user_price_microcents') is not none %}${{ '%.4f'|format((skill.get('user_price_microcents')|int) / 1000000) }}/run{% else %}Paid{% endif %}</td>
+                    <td class="skills-marketplace-description">{{ skill.get('description') or '—' }}</td>
                     <td>
                         <div>
                             <span class="skill-visibility-badge {{ 'published' if skill.get('is_published') else 'unpublished' }}">
