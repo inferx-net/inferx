@@ -3,10 +3,57 @@ use futures::StreamExt;
 use rmcp::{model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::secret::SqlSecret;
 use crate::print::verbose_category;
+
+/// Maps per-request UUIDs to `CancellationToken`s so that `call_tool` can
+/// propagate `context.ct` through the loopback HTTP boundary into
+/// `handle_skill_call_chain`.  The HTTP handler extracts the UUID from the
+/// `X-Mcp-Cancel-Id` request header and retrieves the live token here.
+pub struct McpCancelRegistry {
+    tokens: Mutex<HashMap<String, CancellationToken>>,
+}
+
+static MCP_CANCEL_REGISTRY: OnceLock<McpCancelRegistry> = OnceLock::new();
+
+impl McpCancelRegistry {
+    pub fn global() -> &'static Self {
+        MCP_CANCEL_REGISTRY.get_or_init(|| McpCancelRegistry {
+            tokens: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Insert a token and return the UUID key for retrieval.
+    pub fn register(&self, token: CancellationToken) -> String {
+        let id = Uuid::new_v4().to_string();
+        self.tokens.lock().unwrap().insert(id.clone(), token);
+        id
+    }
+
+    /// Look up a token by UUID. Returns `None` if already removed or never registered.
+    pub fn lookup(&self, id: &str) -> Option<CancellationToken> {
+        self.tokens.lock().unwrap().get(id).cloned()
+    }
+
+    fn remove(&self, id: &str) {
+        self.tokens.lock().unwrap().remove(id);
+    }
+}
+
+/// Removes the registry entry on drop — handles the case where `call_tool` is
+/// cancelled mid-execution and the normal cleanup path is skipped.
+struct McpCancelGuard(String);
+
+impl Drop for McpCancelGuard {
+    fn drop(&mut self) {
+        McpCancelRegistry::global().remove(&self.0);
+    }
+}
 
 #[derive(Clone)]
 pub struct McpStreamServer {
@@ -460,16 +507,31 @@ impl ServerHandler for McpStreamServer {
             Self::summarize_str_for_log(query)
         );
 
-        let response = self
-            .client
-            .post(&endpoint)
-            .header("Authorization", authorization)
-            .header("X-Tenant", tenant.clone())
-            .header("X-Skill-Trace", "1")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?;
+        let ct = context.ct.clone();
+        // Register a child token in the global registry so that the loopback HTTP
+        // handler (RunSkill) can retrieve it by UUID and pass it explicitly into
+        // handle_skill_call_chain / execute_skill_chain.  The child is automatically
+        // cancelled when ct fires, and the guard cleans up the registry entry on drop.
+        let child_ct = ct.child_token();
+        let cancel_id = McpCancelRegistry::global().register(child_ct);
+        let _cancel_guard = McpCancelGuard(cancel_id.clone());
+
+        let response = tokio::select! {
+            _ = ct.cancelled() => {
+                return Err(Self::internal_error("request cancelled"));
+            }
+            result = self
+                .client
+                .post(&endpoint)
+                .header("Authorization", authorization)
+                .header("X-Tenant", tenant.clone())
+                .header("X-Skill-Trace", "1")
+                .header("X-Mcp-Cancel-Id", &cancel_id)
+                .json(&body)
+                .send() => {
+                result.map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -489,9 +551,14 @@ impl ServerHandler for McpStreamServer {
             .map(|v| v.to_ascii_lowercase())
             .unwrap_or_default();
         if !content_type.contains("text/event-stream") {
-            let body = response.bytes().await.map_err(|e| {
-                Self::internal_error(format!("failed to read endpoint response: {}", e))
-            })?;
+            let body = tokio::select! {
+                _ = ct.cancelled() => {
+                    return Err(Self::internal_error("request cancelled"));
+                }
+                result = response.bytes() => {
+                    result.map_err(|e| Self::internal_error(format!("failed to read endpoint response: {}", e)))?
+                }
+            };
             let full_response = Self::parse_text_response(&body)?;
             ctrace!(
                 verbose_category::MCP,
@@ -518,7 +585,14 @@ impl ServerHandler for McpStreamServer {
         let mut saw_done = false;
         let mut stream = response.bytes_stream();
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = tokio::select! {
+                _ = ct.cancelled() => {
+                    return Err(Self::internal_error("request cancelled"));
+                }
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else { break };
             let chunk = chunk.map_err(|e| {
                 Self::internal_error(format!("failed to read endpoint response: {}", e))
             })?;

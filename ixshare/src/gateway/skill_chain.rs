@@ -16,6 +16,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
@@ -817,7 +818,7 @@ fn parse_skillep_tool_args(arguments: &str) -> core::result::Result<(String, Str
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Error: invalid skillep_id".to_string())?;
+        .ok_or_else(|| "Error: missing or empty skillep_id. Expected format: owner_tenant/namespace/skillname.".to_string())?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -836,7 +837,10 @@ fn split_skillep_id(skillep_id: &str) -> core::result::Result<(&str, &str, &str)
         || skillname.is_empty()
         || parts.next().is_some()
     {
-        return Err("Error: invalid skillep_id".to_string());
+        return Err(format!(
+            "Error: invalid skillep_id '{}'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value.",
+            skillep_id
+        ));
     }
     Ok((owner_tenant, namespace, skillname))
 }
@@ -1630,7 +1634,7 @@ async fn read_child_trace_sse(
     let mut saw_done = false;
     let mut stream = resp.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
+    'outer: while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ChildTraceReadError {
             message: e.to_string(),
             fail_reason: SkillTraceFailReason::TransportError,
@@ -1651,7 +1655,7 @@ async fn read_child_trace_sse(
                     SseMessage::Event { event, data } => {
                         if data == "[DONE]" {
                             saw_done = true;
-                            continue;
+                            break 'outer;
                         }
                         match event.as_deref() {
                             Some("skill_trace") => {
@@ -1800,6 +1804,7 @@ async fn execute_skill_chain(
     skills_namespace: String,
     allowed_skillep_ids: Option<Arc<HashSet<String>>>,
     trace: Option<SkillChainTraceState>,
+    cancel_token: CancellationToken,
 ) -> Result<SkillChainFinalResponse, SkillChainExecutionError> {
     ctrace!(
         verbose_category::SKILL,
@@ -1828,6 +1833,12 @@ async fn execute_skill_chain(
     let mut aggregate_usage: Option<SkillTraceTokenUsage> = None;
 
     loop {
+        if cancel_token.is_cancelled() {
+            return Err(SkillChainExecutionError::Response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service failure: chain cancelled",
+            ));
+        }
         ctrace!(
             verbose_category::SKILL,
             "skill_chain model_turn logical={}/{}/{} history_len={} depth={}",
@@ -2115,6 +2126,7 @@ pub(super) async fn handle_skill_call_chain(
     skills_namespace: &str,
     allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
+    cancel_token: CancellationToken,
 ) -> Result<Response, StatusCode> {
     let allowed: Option<HashSet<String>> = allowed_child_skilleps
         .map(|ids| ids.iter().cloned().collect());
@@ -2199,6 +2211,7 @@ pub(super) async fn handle_skill_call_chain(
             skills_namespace.to_string(),
             allowed_arc,
             None,
+            cancel_token,
         )
         .await
         {
@@ -2233,6 +2246,23 @@ pub(super) async fn handle_skill_call_chain(
     let remain_path_for_task = remain_path.clone();
     let prefix_for_task = prefix.to_string();
     let skills_namespace_for_task = skills_namespace.to_string();
+    let cancel_token_for_task = cancel_token;
+    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
+    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
+    // checks in execute_skill_chain fire when the SSE client drops the connection,
+    // exactly as they do for MCP callers whose token is sourced from context.ct.
+    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
+    // execution completes normally, so the SSE channel closes without waiting for
+    // the HTTP client to disconnect.
+    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel_for_watcher = cancel_token_for_task.clone();
+    let tx_for_watcher = tx.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
+            _ = exec_done_rx => {}
+        }
+    });
 
     tokio::spawn(async move {
         let root_query = latest_user_query(&chain.history);
@@ -2252,11 +2282,13 @@ pub(super) async fn handle_skill_call_chain(
             skills_namespace_for_task,
             allowed_arc,
             Some(trace.clone()),
+            cancel_token_for_task.clone(),
         );
         tokio::pin!(exec);
 
         let result = tokio::select! {
             _ = trace_for_closed.tx.closed() => return,
+            _ = cancel_token_for_task.cancelled() => return,
             result = &mut exec => result,
         };
 
@@ -2287,6 +2319,7 @@ pub(super) async fn handle_skill_call_chain(
             }
         }
         let _ = emit_trace_done(&trace).await;
+        let _ = exec_done_tx.send(());
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -2312,6 +2345,7 @@ pub(super) async fn handle_skill_debug_call(
     skills_namespace: &str,
     allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
+    cancel_token: CancellationToken,
 ) -> Result<Response, StatusCode> {
     let allowed: Option<HashSet<String>> = allowed_child_skilleps
         .map(|ids| ids.iter().cloned().collect());
@@ -2363,6 +2397,23 @@ pub(super) async fn handle_skill_debug_call(
     let remain_path_for_task = remain_path.clone();
     let prefix_for_task = prefix.to_string();
     let skills_namespace_for_task = skills_namespace.to_string();
+    let cancel_token_for_task = cancel_token;
+    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
+    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
+    // checks in execute_skill_chain fire when the SSE client drops the connection,
+    // exactly as they do for MCP callers whose token is sourced from context.ct.
+    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
+    // execution completes normally, so the SSE channel closes without waiting for
+    // the HTTP client to disconnect.
+    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel_for_watcher = cancel_token_for_task.clone();
+    let tx_for_watcher = tx.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
+            _ = exec_done_rx => {}
+        }
+    });
 
     tokio::spawn(async move {
         let root_query = latest_user_query(&chain.history);
@@ -2382,11 +2433,13 @@ pub(super) async fn handle_skill_debug_call(
             skills_namespace_for_task,
             allowed_arc,
             Some(trace.clone()),
+            cancel_token_for_task.clone(),
         );
         tokio::pin!(exec);
 
         let result = tokio::select! {
             _ = trace_for_closed.tx.closed() => return,
+            _ = cancel_token_for_task.cancelled() => return,
             result = &mut exec => result,
         };
 
@@ -2417,6 +2470,7 @@ pub(super) async fn handle_skill_debug_call(
             }
         }
         let _ = emit_trace_done(&trace).await;
+        let _ = exec_done_tx.send(());
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -2435,10 +2489,10 @@ mod tests {
     use super::{
         build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
         parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
-        skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
+        read_child_trace_sse, skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
         ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainRequestError, SkillChainTraceState, SkillTraceFailReason,
-        SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
+        SkillChainChildTraceState, SkillChainRequestError, SkillChainTraceState,
+        SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use futures::future::BoxFuture;
@@ -2447,7 +2501,7 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::{HashMap, HashSet};
     use std::convert::Infallible;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
@@ -2519,7 +2573,7 @@ mod tests {
         );
         assert_eq!(
             split_skillep_id("acme/default").unwrap_err(),
-            "Error: invalid skillep_id"
+            "Error: invalid skillep_id 'acme/default'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value."
         );
     }
 
@@ -2711,7 +2765,7 @@ mod tests {
         .await;
 
         assert_eq!(result.tool_call_id, "call_bad_id");
-        assert_eq!(result.tool_result, "Error: invalid skillep_id");
+        assert_eq!(result.tool_result, "Error: invalid skillep_id 'acme/default'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value.");
         assert_eq!(result.fail_reason, None);
     }
 
@@ -3042,5 +3096,81 @@ mod tests {
         assert_eq!(result.tool_call_id, "call_pass");
         assert_eq!(result.tool_result, "mock child result");
         assert_eq!(result.fail_reason, None);
+    }
+
+    // Regression: read_child_trace_sse must return promptly after [DONE] even when
+    // the server keeps the HTTP connection open (never sends the final chunked EOF).
+    // Before the fix, the watcher's tx clone kept the mpsc channel alive indefinitely,
+    // causing read_child_trace_sse to block in stream.next() after [DONE] was seen.
+    #[tokio::test]
+    async fn read_child_trace_sse_completes_at_done_without_transport_eof() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A complete child skill trace that ends with [DONE].
+        // The server will NOT close the connection afterwards, simulating the
+        // watcher-sender deadlock that existed before the break 'outer fix.
+        let sse_payload = concat!(
+            "event: skill_trace\n",
+            "data: {\"type\":\"call_start\",\"call_id\":\"c1\",\"parent_call_id\":null,\"depth\":1,\"skill\":\"acme/default/child\",\"ts_ms\":0}\n\n",
+            "event: skill_trace\n",
+            "data: {\"type\":\"call_finish\",\"call_id\":\"c1\",\"parent_call_id\":null,\"depth\":1,\"skill\":\"acme/default/child\",\"ts_ms\":1,\"result_code\":\"pass\"}\n\n",
+            "event: skill_result\n",
+            "data: {\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"42\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            // Send all SSE data as one HTTP/1.1 chunked response, then hang.
+            let chunk = format!("{:x}\r\n{}\r\n", sse_payload.len(), sse_payload);
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n{}",
+                chunk
+            );
+            socket.write_all(http_resp.as_bytes()).await.unwrap();
+            // Intentionally omit the terminal "0\r\n\r\n" chunk so EOF never arrives.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let resp = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}", port))
+            .send()
+            .await
+            .unwrap();
+
+        let (tx, _rx) = mpsc::channel::<Result<String, Infallible>>(32);
+        let trace = SkillChainTraceState {
+            tx,
+            root_call_id: "root_id".to_string(),
+            root_skill: "acme/default/parent".to_string(),
+            started_at: Instant::now(),
+            include_content: false,
+        };
+        let child_trace = SkillChainChildTraceState {
+            call_id: "child_call_id".to_string(),
+            skill: "acme/default/child".to_string(),
+            started_at: Instant::now(),
+            local_root_call_id: Arc::new(Mutex::new(None)),
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_child_trace_sse(&trace, &child_trace, 2, resp),
+        )
+        .await
+        .expect("read_child_trace_sse must complete after [DONE] without waiting for transport EOF");
+
+        let result = result.unwrap();
+        assert!(result.skill_result.is_some(), "skill_result must be captured");
+        assert_eq!(
+            result.terminal_result_code.as_deref(),
+            Some("pass"),
+            "call_finish result_code must be forwarded"
+        );
     }
 }

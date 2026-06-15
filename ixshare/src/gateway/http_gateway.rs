@@ -51,6 +51,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -68,7 +69,7 @@ use crate::audit::{
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
-use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::mcp_stream_server::{McpCancelRegistry, McpStreamServer};
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -3371,6 +3372,13 @@ async fn SkillCall(
         .await;
     }
 
+    let cancel_token = req
+        .headers()
+        .get("X-Mcp-Cancel-Id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| McpCancelRegistry::global().lookup(id))
+        .unwrap_or_else(CancellationToken::new);
+
     handle_skill_call_chain(
         &gw,
         req,
@@ -3383,6 +3391,7 @@ async fn SkillCall(
         SKILLS_NAMESPACE,
         skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
+        cancel_token,
     )
     .await
 }
@@ -3476,6 +3485,13 @@ async fn RunSkillDebug(
         caller_tenant,
     };
 
+    let cancel_token = req
+        .headers()
+        .get("X-Mcp-Cancel-Id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| McpCancelRegistry::global().lookup(id))
+        .unwrap_or_else(CancellationToken::new);
+
     handle_skill_debug_call(
         &gw,
         req,
@@ -3488,6 +3504,7 @@ async fn RunSkillDebug(
         SKILLS_NAMESPACE,
         skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
+        cancel_token,
     )
     .await
 }
