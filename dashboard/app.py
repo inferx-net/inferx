@@ -8154,6 +8154,8 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         "template_id": "",
         "prefix": "",
         "gpu_billing_target": "caller",
+        "allowed_child_skilleps": [],
+        "allowed_child_skilleps_json": "[]",
     }
     if isinstance(form_data, dict):
         merged_form_data.update(form_data)
@@ -8227,6 +8229,8 @@ def SkillSave():
         "description": str(request.form.get("description", "") or "").strip(),
         "gpu_billing_target": str(request.form.get("gpu_billing_target", "caller") or "caller").strip().lower(),
         "prefix": str(request.form.get("prefix", "") or ""),
+        "allowed_child_skilleps": allowed_child_skilleps,
+        "allowed_child_skilleps_json": str(request.form.get("allowed_child_skilleps_json", "") or "[]"),
     }
 
     try:

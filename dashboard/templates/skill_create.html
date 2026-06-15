@@ -259,7 +259,8 @@
     <form id="skill-create-form" method="post" action="{{ url_for('prefix.SkillSave') }}">
         <input id="skill-target-tenant-input" type="hidden" name="tenant" value="{{ sc_selected_tenant }}">
         <input id="skill-target-namespace-input" type="hidden" name="namespace" value="{{ sc_selected_namespace or (sc_current_namespace_options[0].value if sc_single_fixed else '') }}">
-        <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="">
+        <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="{{ form_data.get('allowed_child_skilleps', []) | join(',') }}">
+        <input type="hidden" name="allowed_child_skilleps_json" id="allowed-child-skilleps-json-input" value="{{ form_data.get('allowed_child_skilleps_json', '[]') }}">
         <input type="hidden" name="gpu_billing_target" value="{{ form_data.get('gpu_billing_target', 'caller') }}">
 
         <!-- Identity panel -->
@@ -328,7 +329,7 @@
 
         <div class="skill-actions" id="form-actions" style="display:none;">
             <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Cancel</a>
-            <button id="skill-create-submit-btn" class="ix-btn" type="submit"{% if not sc_deploy_target.resolved %} disabled{% endif %}>Create Skill</button>
+            <button id="skill-create-submit-btn" class="ix-btn" type="submit">Create Skill</button>
         </div>
     </form>
 </div>
@@ -393,6 +394,7 @@
     const pdfInput = document.getElementById('skill-pdf-input');
     const pdfStatus = document.getElementById('skill-pdf-status');
     const allowedInput = document.getElementById('allowed-child-skilleps-input');
+    const allowedJsonInput = document.getElementById('allowed-child-skilleps-json-input');
     const chipsContainer = document.getElementById('subskill-chips');
     const generateBtn = document.getElementById('generate-metadata-btn');
     const generateStatus = document.getElementById('generate-metadata-status');
@@ -402,11 +404,7 @@
     function currentNamespace() { return String(hiddenNamespaceInput?.value || '').trim(); }
 
     function syncSubmitBtn() {
-        const templateInput = document.getElementById('template_id');
-        const templateReady = !!(templateInput && String(templateInput.value || '').trim());
-        const targetReady = currentTenant() !== '' && currentNamespace() !== '';
-        const fieldsReady = !!(skillnameInput?.value.trim() && descriptionTextarea?.value.trim() && prefixTextarea?.value.trim());
-        if (submitBtn) submitBtn.disabled = !targetReady || !templateReady || !fieldsReady;
+        if (submitBtn) submitBtn.disabled = false;
     }
 
     skillnameInput?.addEventListener('input', syncSubmitBtn);
@@ -665,6 +663,7 @@
     // --- Orchestrator: sub-skills ---
     function updateAllowedInput() {
         if (allowedInput) allowedInput.value = selectedSubskills.map(s => s.skillep_id).join(',');
+        if (allowedJsonInput) allowedJsonInput.value = JSON.stringify(selectedSubskills);
     }
 
     function syncGenerateBtn() {
@@ -816,7 +815,25 @@
             .finally(() => { syncGenerateBtn(); });
     });
 
+    document.getElementById('skill-create-form')?.addEventListener('submit', () => {
+        updateAllowedInput();
+    });
+
     // --- Init ---
+    let restoredSubskills = [];
+    try { restoredSubskills = JSON.parse(allowedJsonInput?.value || '[]'); } catch (e) {}
+    if (!Array.isArray(restoredSubskills)) restoredSubskills = [];
+    if (restoredSubskills.length) {
+        selectedSubskills = restoredSubskills;
+        renderChips();
+        syncGenerateBtn();
+        updateAllowedInput();
+        const orchestratorRadio = document.querySelector('input[name="create_mode"][value="orchestrator"]');
+        if (orchestratorRadio) orchestratorRadio.checked = true;
+        applyMode('orchestrator');
+    } else {
+        applyMode('scratch');
+    }
     syncGenerateBtn();
     if (!DOCLING_CONFIGURED) {
         const pdfLabel = document.getElementById('pdf-mode-label');
@@ -826,7 +843,6 @@
         const helpPdf = document.getElementById('mode-help-import-pdf');
         if (helpPdf) helpPdf.innerHTML += ' <em>(Set DOCLING_URL to enable.)</em>';
     }
-    applyMode('scratch');
 })();
 </script>
 {% endblock %}
