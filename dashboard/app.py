@@ -8657,11 +8657,28 @@ def SkillDetail():
     except Exception as e:
         return json_error(f"failed to load roles: {e}", 502)
 
-    can_manage = has_admin_role_for_model(roles, owner, ns) or is_inferx_admin_user()
+    is_inferx_admin = is_inferx_admin_user()
+    can_manage = has_admin_role_for_model(roles, owner, ns) or is_inferx_admin
     if not can_manage and not skill.get("is_published"):
         return Response("No permission", status=403)
 
     active_tenant = resolve_active_tenant_name(roles)
+    can_manage_subscriptions = has_admin_role_for_model(roles, active_tenant) or is_inferx_admin
+    is_subscribed = False
+    tool_alias = None
+    if active_tenant:
+        try:
+            for sub in list_skill_subscriptions(active_tenant=active_tenant):
+                if (
+                    str(sub.get("owner_tenant", "") or "").strip().lower() == owner.strip().lower()
+                    and str(sub.get("owner_namespace", "") or "").strip().lower() == ns.strip().lower()
+                    and str(sub.get("skillname", "") or "").strip().lower() == name.strip().lower()
+                ):
+                    is_subscribed = True
+                    tool_alias = sub.get("tool_alias")
+                    break
+        except Exception:
+            pass
     onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or owner)
     normal_funcname = str(skill.get("normal_funcname", "") or "").strip()
 
@@ -8734,6 +8751,10 @@ def SkillDetail():
         client_setup=client_setup,
         opencode_download_href=opencode_download_href,
         can_manage=can_manage,
+        is_inferx_admin=is_inferx_admin,
+        can_manage_subscriptions=can_manage_subscriptions,
+        is_subscribed=is_subscribed,
+        tool_alias=tool_alias,
         skill_prefix_text=skill_prefix_text,
     )
 

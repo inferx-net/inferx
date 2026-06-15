@@ -475,6 +475,28 @@
     @media (max-width: 720px) {
         .skill-meta-grid { grid-template-columns: 1fr; }
     }
+    .skill-subscribe-modal[hidden] { display: none; }
+    .skill-subscribe-modal {
+        position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
+        display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000;
+    }
+    .skill-subscribe-dialog {
+        width: min(100%, 480px); background: #fff; border-radius: 6px;
+        border: 1px solid #d7dee8; padding: 18px; display: grid; gap: 14px;
+        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.18);
+    }
+    .skill-subscribe-dialog h3 { margin: 0; font-size: 20px; color: #111827; }
+    .skill-subscribe-form { display: grid; gap: 12px; }
+    .skill-subscribe-form label { display: block; margin-bottom: 6px; color: #0f172a; font-weight: 600; }
+    .skill-subscribe-form p { margin: 0; }
+    .skill-subscribe-form input {
+        width: 100%; box-sizing: border-box; padding: 8px 10px;
+        border: 1px solid #b7c6dc; border-radius: 4px; background: #fff; color: #1f2937; font: inherit;
+    }
+    .skill-subscribe-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .skill-subscribe-meta { color: #475569; font-size: 14px; }
+    .skill-validation-error { color: #b91c1c; font-size: 13px; }
+    .skill-validation-hint { color: #475569; font-size: 13px; }
 </style>
 
 <div class="skill-detail-page">
@@ -485,7 +507,15 @@
         </div>
         <div class="skill-detail-actions">
             <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Back</a>
+            {% if can_manage_subscriptions %}
+            {% if is_subscribed %}
+            <button class="ix-btn danger" type="button" id="skill-detail-unsubscribe-btn">Unsubscribe</button>
+            {% else %}
+            <button class="ix-btn" type="button" id="skill-detail-subscribe-btn">Subscribe</button>
+            {% endif %}
+            {% endif %}
             {% if can_manage %}
+            {% if is_inferx_admin %}
             {% if skill.get('is_published') %}
             <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=owner, ns=ns, name=name) }}" style="display:inline;">
                 <button class="ix-btn secondary" type="submit">Unpublish</button>
@@ -494,6 +524,7 @@
             <form method="post" action="{{ url_for('prefix.SkillPublish', owner=owner, ns=ns, name=name) }}" style="display:inline;">
                 <button class="ix-btn" type="submit">Publish</button>
             </form>
+            {% endif %}
             {% endif %}
             <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this skill? This cannot be undone.');" style="display:inline;">
                 <button class="ix-btn danger" type="submit">Delete</button>
@@ -1751,4 +1782,118 @@
     window.copyTextFromElement = copyTextFromElement;
 })();
 </script>
+
+{% if can_manage_subscriptions %}
+<div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>
+    <div class="skill-subscribe-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-subscribe-modal-title">
+        <div>
+            <h3 id="skill-subscribe-modal-title">Subscribe to Skill</h3>
+            <p class="skill-subscribe-meta">{{ owner }}/{{ ns }}/{{ name }}</p>
+        </div>
+        <div class="skill-subscribe-form">
+            <div>
+                <label for="skill-subscribe-alias-input">Tool alias</label>
+                <input id="skill-subscribe-alias-input" type="text" value="">
+                <p class="skill-validation-hint">Agents will call this skill as "<span id="skill-subscribe-alias-preview"></span>"</p>
+                <div id="skill-subscribe-alias-error" class="skill-validation-error"></div>
+            </div>
+            <div class="skill-subscribe-actions">
+                <button id="skill-subscribe-confirm-btn" class="ix-btn" type="button" disabled>Subscribe</button>
+                <button id="skill-subscribe-cancel-btn" class="ix-btn secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const ownerTenant = {{ owner | tojson }};
+    const ownerNamespace = {{ ns | tojson }};
+    const skillname = {{ name | tojson }};
+    const subscribeUrl = {{ url_for('prefix.SkillSubscriptionSubscribe') | tojson }};
+    const unsubscribeUrl = {{ url_for('prefix.SkillSubscriptionUnsubscribe') | tojson }};
+
+    const modal = document.getElementById('skill-subscribe-modal');
+    const aliasInput = document.getElementById('skill-subscribe-alias-input');
+    const aliasPreview = document.getElementById('skill-subscribe-alias-preview');
+    const aliasError = document.getElementById('skill-subscribe-alias-error');
+    const confirmBtn = document.getElementById('skill-subscribe-confirm-btn');
+    const cancelBtn = document.getElementById('skill-subscribe-cancel-btn');
+    const subscribeBtn = document.getElementById('skill-detail-subscribe-btn');
+    const unsubscribeBtn = document.getElementById('skill-detail-unsubscribe-btn');
+
+    function isAliasValid(alias) {
+        return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(alias);
+    }
+
+    function parseJsonResponse(response) {
+        return response.text().then((text) => {
+            let payload = null;
+            try { payload = text ? JSON.parse(text) : null; } catch (_) {}
+            if (!response.ok) {
+                throw new Error((payload && (payload.error || payload.message)) || text || `HTTP ${response.status}`);
+            }
+            return payload;
+        });
+    }
+
+    function validateAlias() {
+        const alias = String(aliasInput.value || '').trim();
+        if (aliasPreview) aliasPreview.textContent = alias.toLowerCase();
+        const valid = isAliasValid(alias);
+        if (aliasError) aliasError.textContent = valid ? '' : 'Alias may contain only letters, numbers, hyphens, underscores, and periods.';
+        if (confirmBtn) confirmBtn.disabled = !valid;
+    }
+
+    function openModal() {
+        aliasInput.value = `${skillname}.${ownerNamespace}.${ownerTenant}`;
+        if (aliasError) aliasError.textContent = '';
+        modal.hidden = false;
+        validateAlias();
+        window.setTimeout(() => aliasInput.focus(), 0);
+    }
+
+    function closeModal() {
+        modal.hidden = true;
+        aliasInput.value = '';
+        if (aliasError) aliasError.textContent = '';
+        if (confirmBtn) confirmBtn.disabled = true;
+    }
+
+    subscribeBtn?.addEventListener('click', openModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    aliasInput?.addEventListener('input', validateAlias);
+
+    confirmBtn?.addEventListener('click', () => {
+        const alias = String(aliasInput.value || '').trim().toLowerCase();
+        if (!isAliasValid(alias)) return;
+        fetch(subscribeUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner_tenant: ownerTenant, owner_namespace: ownerNamespace, skillname, tool_alias: alias }),
+        }).then(parseJsonResponse).then(() => {
+            closeModal();
+            window.location.reload();
+        }).catch((err) => {
+            if (aliasError) aliasError.textContent = err.message || 'Failed to subscribe';
+        });
+    });
+
+    unsubscribeBtn?.addEventListener('click', () => {
+        if (!window.confirm('Unsubscribe from this skill?')) return;
+        fetch(unsubscribeUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner_tenant: ownerTenant, owner_namespace: ownerNamespace, skillname }),
+        }).then(parseJsonResponse).then(() => {
+            window.location.reload();
+        }).catch((err) => {
+            window.alert(err.message || 'Failed to unsubscribe');
+        });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}
