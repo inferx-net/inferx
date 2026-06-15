@@ -8509,7 +8509,7 @@ def GenerateSkillMetadata():
         for s in subskills
     ]
     prefix_parts = [
-        "You are a routing assistant. Analyze the user's request and call the most relevant sub-skill.",
+        "You are an orchestrator skill. Analyze the user's request, call one or more sub-skills as needed, and aggregate their results when appropriate to fulfill it.",
         "## Available Sub-skills\n" + "\n".join(subskill_lines),
     ]
     prefix_parts.append(how_to_use)

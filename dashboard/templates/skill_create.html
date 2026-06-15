@@ -862,6 +862,7 @@
         updateAllowedInput();
         syncGenerateBtn();
         showFormPanels();
+        if (selectedSubskills.length > 0 && METADATA_GEN_MODEL_CONFIGURED) triggerGenerateMetadata();
     });
 
     searchInput?.addEventListener('input', () => {
@@ -869,10 +870,10 @@
         searchTimeout = setTimeout(() => fetchSkills(searchInput.value.trim()), 300);
     });
 
-    generateBtn?.addEventListener('click', () => {
-        if (!selectedSubskills.length) return;
-        generateBtn.disabled = true;
-        if (generateStatus) { generateStatus.textContent = 'Generating…'; generateStatus.style.color = '#475569'; }
+    function triggerGenerateMetadata() {
+        if (!selectedSubskills.length || !METADATA_GEN_MODEL_CONFIGURED) return;
+        if (generateBtn) { generateBtn.disabled = true; generateBtn.classList.add('skill-busy'); }
+        if (generateStatus) { generateStatus.textContent = 'Generating…'; generateStatus.style.color = '#475569'; generateStatus.classList.add('skill-waiting-status'); }
         fetch('{{ url_for("prefix.GenerateSkillMetadata") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -889,8 +890,14 @@
             .catch(err => {
                 if (generateStatus) { generateStatus.textContent = `Error: ${err.message}`; generateStatus.style.color = '#b91c1c'; }
             })
-            .finally(() => { syncGenerateBtn(); });
-    });
+            .finally(() => {
+                if (generateBtn) generateBtn.classList.remove('skill-busy');
+                if (generateStatus) generateStatus.classList.remove('skill-waiting-status');
+                syncGenerateBtn();
+            });
+    }
+
+    generateBtn?.addEventListener('click', triggerGenerateMetadata);
 
     document.getElementById('skill-create-form')?.addEventListener('submit', () => {
         updateAllowedInput();

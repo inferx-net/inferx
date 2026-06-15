@@ -561,6 +561,20 @@
             {% endif %}
             <strong>Created By</strong>
             <div>{{ skill.get('revision_created_by') or '—' }}</div>
+            {% set subskills = skill.get('allowed_child_skilleps') or [] %}
+            {% if subskills %}
+            <strong>Sub-skills</strong>
+            <div>
+                {% for ep in subskills %}
+                {% set parts = ep.split('/') %}
+                {% if parts | length == 3 %}
+                <a href="{{ url_for('prefix.SkillDetail', owner=parts[0], ns=parts[1], name=parts[2]) }}">{{ ep }}</a>{% if not loop.last %}<br>{% endif %}
+                {% else %}
+                <span>{{ ep }}</span>{% if not loop.last %}<br>{% endif %}
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
             <strong>Skill Data</strong>
             <div>
                 {% if can_manage %}
