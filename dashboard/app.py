@@ -8530,12 +8530,23 @@ def ConvertPdfMetadata():
         return json_error("uploaded file must be a PDF", 400)
 
     # Convert PDF → markdown via docling
+    kb_toolkit_wiki = "https://github.com/inferx-net/inferx/wiki/InferX-Knowledge-Base-Toolkit-How-to"
+
     try:
         docling_resp = requests.post(
             f"{DOCLING_URL}/convert",
             headers={"Authorization": f"Bearer {DOCLING_TOKEN}", "X-Do-Table-Structure": "false"},
             files={"file": (pdf_file.filename, pdf_file.stream, "application/pdf")},
-            timeout=120,
+            timeout=300,
+        )
+    except requests.exceptions.Timeout:
+        return (
+            jsonify({
+                "error": "docling request timed out after 300 seconds. Convert the document locally using the guide below.",
+                "help_url": kb_toolkit_wiki,
+                "help_label": "InferX Knowledge Base Toolkit guide",
+            }),
+            504,
         )
     except Exception as e:
         return json_error(f"docling request failed: {e}", 502)

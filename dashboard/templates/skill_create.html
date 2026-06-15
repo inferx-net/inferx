@@ -186,6 +186,38 @@
         gap: 10px;
         flex-wrap: wrap;
     }
+
+    .skill-waiting-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .skill-waiting-status::before {
+        content: "";
+        width: 14px;
+        height: 14px;
+        border: 2px solid #cbd5e1;
+        border-top-color: #2563eb;
+        border-radius: 999px;
+        animation: skill-spinner 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+
+    .skill-busy {
+        opacity: 0.75;
+        cursor: wait;
+    }
+
+    .skill-status-link {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    @keyframes skill-spinner {
+        to { transform: rotate(360deg); }
+    }
 </style>
 
 <div class="skill-create-page">
@@ -196,26 +228,26 @@
     <!-- 4 create mode options -->
     <div class="skill-panel">
         <div class="skill-mode-grid">
-            <label class="skill-mode-option">
-                <input type="radio" name="create_mode" value="scratch" checked>
-                Create from scratch
+            <label class="skill-mode-option" id="pdf-mode-label">
+                <input type="radio" name="create_mode" value="import-pdf" checked>
+                Create document skill
             </label>
             <label class="skill-mode-option">
                 <input type="radio" name="create_mode" value="import-folder">
                 Import from existing skill
             </label>
-            <label class="skill-mode-option" id="pdf-mode-label">
-                <input type="radio" name="create_mode" value="import-pdf">
-                Create document skill
-            </label>
             <label class="skill-mode-option">
                 <input type="radio" name="create_mode" value="orchestrator">
                 Create orchestrator skill
             </label>
+            <label class="skill-mode-option">
+                <input type="radio" name="create_mode" value="scratch">
+                Create from scratch
+            </label>
         </div>
-        <p id="mode-help-scratch" class="skill-mode-help">Fill in all sections manually to define your skill.</p>
+        <p id="mode-help-scratch" class="skill-mode-help" style="display:none;">Fill in all sections manually to define your skill.</p>
         <p id="mode-help-import-folder" class="skill-mode-help" style="display:none;">Create a skill from a local skill folder — its contents will prefill the form for you to review and edit. Skill files must be self-contained; external references are not supported.</p>
-        <p id="mode-help-import-pdf" class="skill-mode-help" style="display:none;">Create a skill from a document — the document will be converted to skill data and used as the System Prompt, with skill name and description suggested automatically. Currently only PDF files are supported.</p>
+        <p id="mode-help-import-pdf" class="skill-mode-help">Create a skill from a document — the document will be converted to skill data and used as the System Prompt, with skill name and description suggested automatically. Currently only PDF files are supported. For large documents, you can convert the file locally using the <a href="https://github.com/inferx-net/inferx/wiki/InferX-Knowledge-Base-Toolkit-How-to" target="_blank" rel="noopener noreferrer">InferX Knowledge Base Toolkit guide</a>.</p>
         <p id="mode-help-orchestrator" class="skill-mode-help" style="display:none;">Create an orchestrator skill which calls other skills. Metadata will be created automatically for you to review and edit.</p>
     </div>
 
@@ -360,7 +392,7 @@
     const deployTargetState = {{ sc_deploy_target | tojson }};
 
     // --- State ---
-    let currentMode = 'scratch';
+    let currentMode = 'import-pdf';
     let folderImported = false;
     let pdfImported = false;
     let selectedSubskills = [];
@@ -392,12 +424,44 @@
     const folderInput = document.getElementById('skill-folder-input');
     const importStatus = document.getElementById('skill-import-status');
     const pdfInput = document.getElementById('skill-pdf-input');
+    const pdfImportBtn = document.getElementById('skill-import-pdf-btn');
     const pdfStatus = document.getElementById('skill-pdf-status');
     const allowedInput = document.getElementById('allowed-child-skilleps-input');
     const allowedJsonInput = document.getElementById('allowed-child-skilleps-json-input');
     const chipsContainer = document.getElementById('subskill-chips');
     const generateBtn = document.getElementById('generate-metadata-btn');
     const generateStatus = document.getElementById('generate-metadata-status');
+
+    function renderPdfStatus(message, link) {
+        if (!pdfStatus) return;
+        pdfStatus.textContent = '';
+        if (message) {
+            pdfStatus.append(document.createTextNode(message));
+        }
+        if (link && link.href && link.label) {
+            if (message) pdfStatus.append(document.createTextNode(' '));
+            const anchor = document.createElement('a');
+            anchor.href = link.href;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.className = 'skill-status-link';
+            anchor.textContent = link.label;
+            pdfStatus.append(anchor);
+        }
+    }
+
+    function setPdfLoadingState(isLoading, message) {
+        if (pdfImportBtn) {
+            pdfImportBtn.disabled = isLoading;
+            pdfImportBtn.classList.toggle('skill-busy', isLoading);
+            pdfImportBtn.textContent = isLoading ? 'Importing Document…' : 'Import from Document';
+        }
+        if (pdfStatus) {
+            renderPdfStatus(message || '');
+            pdfStatus.style.color = isLoading ? '#475569' : pdfStatus.style.color;
+            pdfStatus.classList.toggle('skill-waiting-status', isLoading);
+        }
+    }
 
     // --- Submit button ---
     function currentTenant() { return String(hiddenTenantInput?.value || '').trim(); }
@@ -435,7 +499,8 @@
         if (descriptionTextarea) descriptionTextarea.value = '';
         if (prefixTextarea) prefixTextarea.value = '';
         if (importStatus) { importStatus.textContent = ''; importStatus.style.color = ''; }
-        if (pdfStatus) { pdfStatus.textContent = ''; pdfStatus.style.color = ''; }
+        if (pdfStatus) { renderPdfStatus(''); pdfStatus.style.color = ''; pdfStatus.classList.remove('skill-waiting-status'); }
+        setPdfLoadingState(false, '');
         renderChips();
         updateAllowedInput();
         syncGenerateBtn();
@@ -596,8 +661,7 @@
     pdfInput?.addEventListener('change', () => {
         const file = pdfInput.files && pdfInput.files[0];
         if (!file) return;
-        if (pdfStatus) { pdfStatus.textContent = 'Converting and generating metadata…'; pdfStatus.style.color = '#475569'; }
-        document.getElementById('skill-import-pdf-btn').disabled = true;
+        setPdfLoadingState(true, 'Converting document and generating metadata...');
 
         const formData = new FormData();
         formData.append('file', file);
@@ -605,21 +669,34 @@
         fetch('{{ url_for("prefix.ConvertPdfMetadata") }}', { method: 'POST', body: formData })
             .then(r => r.json())
             .then(data => {
-                if (data.error) throw new Error(data.error);
+                if (data.error) throw data;
                 if (data.skillname && skillnameInput && !skillnameInput.value.trim()) skillnameInput.value = data.skillname;
                 if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
                 if (data.prefix && prefixTextarea) prefixTextarea.value = data.prefix;
-                if (pdfStatus) { pdfStatus.textContent = 'Imported.'; pdfStatus.style.color = '#16a34a'; }
+                setPdfLoadingState(false, 'Imported.');
+                if (pdfStatus) pdfStatus.style.color = '#16a34a';
                 pdfInput.value = '';
                 pdfImported = true;
                 showFormPanels();
                 syncSubmitBtn();
             })
             .catch(err => {
-                if (pdfStatus) { pdfStatus.textContent = `Error: ${err.message}`; pdfStatus.style.color = '#b91c1c'; }
+                const message = err && typeof err === 'object' && 'error' in err ? err.error : `Error: ${err.message}`;
+                const link = err && typeof err === 'object' && err.help_url ? {
+                    href: err.help_url,
+                    label: err.help_label || err.help_url,
+                } : null;
+                setPdfLoadingState(false, '');
+                renderPdfStatus(message, link);
+                if (pdfStatus) pdfStatus.style.color = '#b91c1c';
             })
             .finally(() => {
-                document.getElementById('skill-import-pdf-btn').disabled = false;
+                if (pdfImportBtn) {
+                    pdfImportBtn.disabled = false;
+                    pdfImportBtn.classList.remove('skill-busy');
+                    pdfImportBtn.textContent = 'Import from Document';
+                }
+                if (pdfStatus) pdfStatus.classList.remove('skill-waiting-status');
             });
     });
 
@@ -832,7 +909,7 @@
         if (orchestratorRadio) orchestratorRadio.checked = true;
         applyMode('orchestrator');
     } else {
-        applyMode('scratch');
+        applyMode('import-pdf');
     }
     syncGenerateBtn();
     if (!DOCLING_CONFIGURED) {
@@ -842,6 +919,9 @@
         if (pdfRadio) pdfRadio.disabled = true;
         const helpPdf = document.getElementById('mode-help-import-pdf');
         if (helpPdf) helpPdf.innerHTML += ' <em>(Set DOCLING_URL to enable.)</em>';
+        const scratchRadio = document.querySelector('input[name="create_mode"][value="scratch"]');
+        if (scratchRadio) scratchRadio.checked = true;
+        applyMode('scratch');
     }
 })();
 </script>
