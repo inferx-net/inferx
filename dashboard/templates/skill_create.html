@@ -229,6 +229,53 @@
         max-height: 56vh;
     }
 
+    .subskills-section + .subskills-section {
+        border-top: 1px solid #dbe4f0;
+    }
+
+    .subskills-section-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        background: #eef4fb;
+        border-bottom: 1px solid #dbe4f0;
+        color: #334155;
+        font-size: 0.9em;
+        font-weight: 600;
+    }
+
+    .subskills-section-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .subskills-section-toggle {
+        border: 0;
+        background: transparent;
+        padding: 0;
+        cursor: pointer;
+        color: #1d4ed8;
+        font: inherit;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .subskills-section-toggle:hover {
+        text-decoration: underline;
+    }
+
+    .subskills-section-count {
+        color: #64748b;
+        font-weight: 500;
+    }
+
     .subskills-result-row {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
@@ -236,14 +283,7 @@
         align-items: start;
         padding: 10px 12px;
         border-bottom: 1px solid #f1f5f9;
-    }
-
-    .subskills-result-row:nth-child(odd) {
-        background: #ffffff;
-    }
-
-    .subskills-result-row:nth-child(even) {
-        background: #f8fafc;
+        background: #fff;
     }
 
     .subskills-result-row:last-child {
@@ -913,17 +953,48 @@
 
     let dialogChecked = {};
     let searchTimeout = null;
+    let subskillsSectionCollapsed = {
+        own: false,
+        public: false,
+    };
 
-    function renderResults(items) {
-        if (!resultsContainer) return;
-        resultsContainer.innerHTML = '';
-        if (!items.length) {
-            const empty = document.createElement('div');
-            empty.style.cssText = 'padding:12px;color:#64748b;';
-            empty.textContent = 'No skills found.';
-            resultsContainer.appendChild(empty);
-            return;
-        }
+    function createSection(sectionKey, title, items) {
+        const section = document.createElement('div');
+        section.className = 'subskills-section';
+
+        const header = document.createElement('div');
+        header.className = 'subskills-section-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'subskills-section-title';
+
+        const label = document.createElement('span');
+        label.textContent = title;
+        titleWrap.appendChild(label);
+
+        const count = document.createElement('span');
+        count.className = 'subskills-section-count';
+        count.textContent = `${items.length} skill${items.length === 1 ? '' : 's'}`;
+        titleWrap.appendChild(count);
+        header.appendChild(titleWrap);
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'subskills-section-toggle';
+
+        const body = document.createElement('div');
+        const isCollapsed = !!subskillsSectionCollapsed[sectionKey];
+        body.hidden = isCollapsed;
+        toggleBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+        toggleBtn.addEventListener('click', () => {
+            const nextCollapsed = !body.hidden;
+            body.hidden = nextCollapsed;
+            subskillsSectionCollapsed[sectionKey] = nextCollapsed;
+            toggleBtn.textContent = nextCollapsed ? 'Show' : 'Hide';
+        });
+        header.appendChild(toggleBtn);
+        section.appendChild(header);
+
         items.forEach(item => {
             const row = document.createElement('div');
             row.className = 'subskills-result-row';
@@ -974,8 +1045,32 @@
                 row.appendChild(info);
                 row.appendChild(spacer);
             }
-            resultsContainer.appendChild(row);
+            body.appendChild(row);
         });
+
+        section.appendChild(body);
+        return section;
+    }
+
+    function renderResults(items) {
+        if (!resultsContainer) return;
+        resultsContainer.innerHTML = '';
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:12px;color:#64748b;';
+            empty.textContent = 'No skills found.';
+            resultsContainer.appendChild(empty);
+            return;
+        }
+        const ownItems = items.filter(item => item.source === 'own');
+        const publicItems = items.filter(item => item.source !== 'own');
+
+        if (ownItems.length) {
+            resultsContainer.appendChild(createSection('own', 'My Skills', ownItems));
+        }
+        if (publicItems.length) {
+            resultsContainer.appendChild(createSection('public', 'Public Skills', publicItems));
+        }
     }
 
     function fetchSkills(keyword) {
