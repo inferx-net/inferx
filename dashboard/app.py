@@ -8448,6 +8448,7 @@ def GenerateSkills():
             "name": sn,
             "template_display_name": str(row.get("template_display_name", "") or ""),
             "description": str(row.get("description", "") or ""),
+            "source": "own" if is_own else "public",
         })
 
     for row in own_skills:
