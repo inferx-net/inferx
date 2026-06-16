@@ -3081,6 +3081,20 @@ def maybe_log_proxy_gateway_request(path, upstream_url, method, headers, cookies
     )
 
 
+def maybe_log_gateway_response(context, upstream_url, status_code=None, body_bytes=None, error=None):
+    if not DEBUG_PROXY_GATEWAY_REQUESTS:
+        return
+
+    app.logger.warning(
+        "dashboard gateway response context=%s upstream=%s status=%s error=%s body=%s",
+        context,
+        upstream_url,
+        status_code,
+        error,
+        summarize_request_body_for_log(body_bytes),
+    )
+
+
 def parse_named_command_arg(commands, flag_name):
     if not isinstance(commands, list):
         return ""
@@ -8575,12 +8589,33 @@ def ConvertPdfMetadata():
                 f"Document content (may be truncated):\n{snippet}"
             )
             llm_url = f"{get_gateway_url()}/funccall/{tenant}/{namespace_part}/{modelname}/v1/chat/completions"
+            llm_headers = gateway_request_headers(json_body=True)
+            llm_body = {
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            maybe_log_proxy_gateway_request(
+                "convert_pdf_metadata/llm",
+                llm_url,
+                "POST",
+                llm_headers,
+                request.cookies,
+                json.dumps(llm_body).encode("utf-8"),
+                30,
+            )
             try:
                 llm_resp = requests.post(
                     llm_url,
-                    headers=gateway_request_headers(json_body=True),
-                    json={"messages": [{"role": "user", "content": prompt}], "stream": False, "chat_template_kwargs": {"enable_thinking": False}},
+                    headers=llm_headers,
+                    json=llm_body,
                     timeout=30,
+                )
+                maybe_log_gateway_response(
+                    "convert_pdf_metadata/llm",
+                    llm_url,
+                    status_code=llm_resp.status_code,
+                    body_bytes=llm_resp.content,
                 )
                 if llm_resp.ok:
                     payload = response_json_or_none(llm_resp)
@@ -8594,9 +8629,21 @@ def ConvertPdfMetadata():
                         parsed = _json.loads(llm_text.strip())
                         skillname = str(parsed.get("skillname", "") or "").strip()
                         description = str(parsed.get("description", "") or "").strip()
-                    except Exception:
+                    except Exception as e:
+                        maybe_log_gateway_response(
+                            "convert_pdf_metadata/llm_parse",
+                            llm_url,
+                            status_code=llm_resp.status_code,
+                            error=f"failed to parse metadata json: {e}",
+                            body_bytes=llm_text.encode("utf-8", errors="replace"),
+                        )
                         pass
-            except Exception:
+            except Exception as e:
+                maybe_log_gateway_response(
+                    "convert_pdf_metadata/llm",
+                    llm_url,
+                    error=str(e),
+                )
                 pass
 
     return jsonify({"skillname": skillname, "description": description, "prefix": markdown})

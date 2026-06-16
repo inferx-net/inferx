@@ -675,6 +675,19 @@ fn skill_chain_tool_definition(allowed: Option<&HashSet<String>>) -> Value {
     }
 }
 
+fn apply_skill_chain_tools(obj: &mut Map<String, Value>, allowed: Option<&HashSet<String>>) {
+    let tools = skill_chain_tool_definition(allowed);
+    match &tools {
+        Value::Array(arr) if arr.is_empty() => {
+            obj.remove("tools");
+        }
+        _ => {
+            obj.insert("tools".to_string(), tools);
+        }
+    }
+    obj.remove("tool_choice");
+}
+
 fn parse_skill_chain_request(
     headers: &HeaderMap,
     body_bytes: &[u8],
@@ -734,7 +747,7 @@ fn parse_skill_chain_request(
         1
     };
 
-    obj.insert("tools".to_string(), skill_chain_tool_definition(allowed));
+    apply_skill_chain_tools(obj, allowed);
     obj.insert("stream".to_string(), Value::Bool(false));
 
     Ok(SkillChainRequestState {
@@ -2538,6 +2551,21 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn parse_skill_chain_request_omits_tools_for_empty_allowlist() {
+        let headers = HeaderMap::new();
+        let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
+        let allowed = HashSet::new();
+        let parsed = parse_skill_chain_request(&headers, body, Some(&allowed)).unwrap();
+        assert_eq!(parsed.current_depth, 1);
+        assert!(parsed.template.get("tools").is_none());
+
+        let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
+        let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
+        assert!(rebuilt_json.get("tools").is_none());
+        assert_eq!(rebuilt_json.get("stream"), Some(&Value::Bool(false)));
     }
 
     #[test]
