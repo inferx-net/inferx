@@ -8522,13 +8522,128 @@ def GenerateSkillMetadata():
         for s in subskills
     ]
     prefix_parts = [
-        "You are an orchestrator skill. Analyze the user's request, call one or more sub-skills as needed, and aggregate their results when appropriate to fulfill it.",
+        "You are an Orchestrator Skill. Your role is to analyze user requests and coordinate sub-skills.\n\n"
+        "## Core Rules\n\n"
+        "1. **Assess relevance between the request and each skill**\n"
+        "   - For each available sub-skill, determine whether the user's question falls within its capability scope.\n"
+        "   - **Only call a skill when it is clearly relevant.** When uncertain, default to NOT calling it.\n\n"
+        "2. **Conditions that require a skill call**\n"
+        "   - The user explicitly mentions a domain that matches the skill's coverage (e.g., \"financial data\" -> call financial analysis skill).\n"
+        "   - The question requires specialized knowledge that only this skill can provide.\n"
+        "   - The question refers to content that is contained in a specific document skill.\n\n"
+        "3. **Conditions that do NOT require a skill call**\n"
+        "   - The question is unrelated to all available skills.\n"
+        "   - General knowledge is sufficient to answer (no specific document or tool needed).\n"
+        "   - The question is very short or trivial (e.g., \"hello\"), where no skill is needed.\n\n"
+        "4. **When calling multiple skills**\n"
+        "   - If the question covers multiple relevant domains, you MAY call multiple sub-skills in parallel.\n"
+        "   - After receiving results, you MUST aggregate them into a unified, coherent answer.\n"
+        "   - If only one skill is relevant, call only that one.\n\n"
+        "5. **Output format**\n"
+        "   - If you call any skills: Start with a brief explanation of which skills you are calling, then present the final integrated answer.\n"
+        "   - If you call no skills: Answer the user's question directly. Do not mention that you chose not to call any skills.\n\n"
+        "## Decision Reference Examples\n"
+        "- User asks: \"What's the weather today?\" + You have a weather skill -> Call it.\n"
+        "- User asks: \"What's the weather today?\" + You have NO weather skill -> Do NOT call. Respond: \"I cannot check the weather.\"\n"
+        "- User asks: \"Summarize this employee handbook\" + You have a document skill for it -> Call it.\n"
+        "- User asks: \"What is artificial intelligence?\" + General knowledge question -> Consider NOT calling any skill; answer from your own knowledge.\n\n"
+        "Now, analyze the user's request and follow the rules above.",
         "## Available Sub-skills\n" + "\n".join(subskill_lines),
     ]
     prefix_parts.append(how_to_use)
     prefix = "\n\n".join(prefix_parts)
 
     return jsonify({"description": description, "prefix": prefix})
+
+
+def generate_document_skill_metadata(markdown: str, *, tenant: str):
+    skillname = ""
+    description = ""
+    metadata_error = ""
+
+    if not METADATA_GEN_MODEL or "/" not in METADATA_GEN_MODEL:
+        return skillname, description, "METADATA_GEN_MODEL is not configured"
+    if not tenant:
+        return skillname, description, "no active tenant"
+
+    namespace_part, modelname = METADATA_GEN_MODEL.split("/", 1)
+    snippet = (markdown or "")[:6000]
+    prompt = (
+        "You are analyzing a document that has been converted to markdown. "
+        "Your task is to propose metadata for an AI skill that answers questions about this document.\n\n"
+        "Important: the skill does NOT perform the capabilities described in the document. "
+        "It is a Q&A assistant that helps users understand and navigate the document's content.\n\n"
+        "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
+        "{\"skillname\": \"<kebab-case name, 2-4 words, describing the document topic>\", "
+        "\"description\": \"<1-2 sentence description clarifying this skill answers questions about the document, not that it performs the described features>\"}\n\n"
+        f"Document content (may be truncated):\n{snippet}"
+    )
+    llm_url = f"{get_gateway_url()}/funccall/{tenant}/{namespace_part}/{modelname}/v1/chat/completions"
+    llm_headers = gateway_request_headers(json_body=True)
+    llm_body = {
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    maybe_log_proxy_gateway_request(
+        "document_skill_metadata/llm",
+        llm_url,
+        "POST",
+        llm_headers,
+        request.cookies,
+        json.dumps(llm_body).encode("utf-8"),
+        30,
+    )
+    try:
+        llm_resp = requests.post(
+            llm_url,
+            headers=llm_headers,
+            json=llm_body,
+            timeout=30,
+        )
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm",
+            llm_url,
+            status_code=llm_resp.status_code,
+            body_bytes=llm_resp.content,
+        )
+    except Exception as e:
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm",
+            llm_url,
+            error=str(e),
+        )
+        return skillname, description, f"metadata generation request failed: {e}"
+
+    if not llm_resp.ok:
+        return skillname, description, f"metadata generation failed: HTTP {llm_resp.status_code}"
+
+    payload = response_json_or_none(llm_resp)
+    llm_text = ""
+    try:
+        llm_text = payload["choices"][0]["message"]["content"] if payload and payload.get("choices") else ""
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    import json as _json
+    try:
+        parsed = _json.loads((llm_text or "").strip())
+    except Exception as e:
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm_parse",
+            llm_url,
+            status_code=llm_resp.status_code,
+            error=f"failed to parse metadata json: {e}",
+            body_bytes=llm_text.encode("utf-8", errors="replace"),
+        )
+        return skillname, description, "metadata generation returned invalid JSON"
+
+    skillname = str(parsed.get("skillname", "") or "").strip()
+    description = str(parsed.get("description", "") or "").strip()
+    if not skillname or not description:
+        return skillname, description, "metadata generation returned empty skill name or description"
+
+    return skillname, description, metadata_error
 
 
 @prefix_bp.route("/convert_pdf_metadata", methods=["POST"])
@@ -8570,82 +8685,22 @@ def ConvertPdfMetadata():
     markdown = docling_resp.text or ""
 
     # Use LLM to generate skillname + description from the markdown
-    skillname = ""
-    description = ""
-    if METADATA_GEN_MODEL and "/" in METADATA_GEN_MODEL:
-        namespace_part, modelname = METADATA_GEN_MODEL.split("/", 1)
-        tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
-        if tenant:
-            snippet = markdown[:6000]
-            prompt = (
-                "You are analyzing a document that has been converted to markdown. "
-                "Your task is to propose metadata for an AI skill that answers questions about this document.\n\n"
-                "Important: the skill does NOT perform the capabilities described in the document. "
-                "It is a Q&A assistant that helps users understand and navigate the document's content.\n\n"
-                "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
-                "{\"skillname\": \"<kebab-case name, 2-4 words, describing the document topic>\", "
-                "\"description\": \"<1-2 sentence description clarifying this skill answers questions about the document, not that it performs the described features>\"}\n\n"
-                f"Document content (may be truncated):\n{snippet}"
-            )
-            llm_url = f"{get_gateway_url()}/funccall/{tenant}/{namespace_part}/{modelname}/v1/chat/completions"
-            llm_headers = gateway_request_headers(json_body=True)
-            llm_body = {
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "chat_template_kwargs": {"enable_thinking": False},
-            }
-            maybe_log_proxy_gateway_request(
-                "convert_pdf_metadata/llm",
-                llm_url,
-                "POST",
-                llm_headers,
-                request.cookies,
-                json.dumps(llm_body).encode("utf-8"),
-                30,
-            )
-            try:
-                llm_resp = requests.post(
-                    llm_url,
-                    headers=llm_headers,
-                    json=llm_body,
-                    timeout=30,
-                )
-                maybe_log_gateway_response(
-                    "convert_pdf_metadata/llm",
-                    llm_url,
-                    status_code=llm_resp.status_code,
-                    body_bytes=llm_resp.content,
-                )
-                if llm_resp.ok:
-                    payload = response_json_or_none(llm_resp)
-                    llm_text = ""
-                    try:
-                        llm_text = payload["choices"][0]["message"]["content"] if payload and payload.get("choices") else ""
-                    except (KeyError, IndexError, TypeError):
-                        pass
-                    import json as _json
-                    try:
-                        parsed = _json.loads(llm_text.strip())
-                        skillname = str(parsed.get("skillname", "") or "").strip()
-                        description = str(parsed.get("description", "") or "").strip()
-                    except Exception as e:
-                        maybe_log_gateway_response(
-                            "convert_pdf_metadata/llm_parse",
-                            llm_url,
-                            status_code=llm_resp.status_code,
-                            error=f"failed to parse metadata json: {e}",
-                            body_bytes=llm_text.encode("utf-8", errors="replace"),
-                        )
-                        pass
-            except Exception as e:
-                maybe_log_gateway_response(
-                    "convert_pdf_metadata/llm",
-                    llm_url,
-                    error=str(e),
-                )
-                pass
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    skillname, description, metadata_error = generate_document_skill_metadata(markdown, tenant=tenant)
 
-    return jsonify({"skillname": skillname, "description": description, "prefix": markdown})
+    return jsonify({"skillname": skillname, "description": description, "prefix": markdown, "metadata_error": metadata_error})
+
+
+@prefix_bp.route("/generate_document_skill_metadata", methods=["POST"])
+@require_login
+def GenerateDocumentSkillMetadata():
+    req_data = request.get_json(silent=True) or {}
+    markdown = str(req_data.get("prefix", "") or "")
+    if not markdown.strip():
+        return json_error("prefix is required", 400)
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    skillname, description, metadata_error = generate_document_skill_metadata(markdown, tenant=tenant)
+    return jsonify({"skillname": skillname, "description": description, "metadata_error": metadata_error})
 
 
 def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):

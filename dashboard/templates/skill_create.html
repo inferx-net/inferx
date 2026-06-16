@@ -209,6 +209,91 @@
         cursor: wait;
     }
 
+    .subskills-dialog-card {
+        background: #fff;
+        border-radius: 6px;
+        padding: 20px;
+        width: min(860px, 94vw);
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .subskills-results {
+        overflow-y: auto;
+        flex: 1;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        min-height: 180px;
+        max-height: 56vh;
+    }
+
+    .subskills-result-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .subskills-result-row:nth-child(odd) {
+        background: #ffffff;
+    }
+
+    .subskills-result-row:nth-child(even) {
+        background: #f8fafc;
+    }
+
+    .subskills-result-row:last-child {
+        border-bottom: 0;
+    }
+
+    .subskills-result-checkbox {
+        margin-top: 2px;
+    }
+
+    .subskills-result-main {
+        min-width: 0;
+    }
+
+    .subskills-result-id {
+        font-size: 0.9em;
+        word-break: break-word;
+    }
+
+    .subskills-result-name-btn {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        color: inherit;
+    }
+
+    .subskills-result-desc {
+        color: #64748b;
+        font-size: 0.82em;
+        margin-top: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .subskills-result-desc[hidden] {
+        display: none !important;
+    }
+
+    .subskills-detail-btn {
+        min-height: 28px;
+        padding: 4px 10px;
+        font-size: 12px;
+        line-height: 1.2;
+        align-self: start;
+    }
+
     .skill-status-link {
         color: inherit;
         text-decoration: underline;
@@ -265,6 +350,7 @@
     <div id="mode-action-import-pdf" style="display:none;">
         <div class="skill-mode-action">
             <button type="button" id="skill-import-pdf-btn" class="ix-btn secondary" style="margin:0;">Import from Document</button>
+            <button type="button" id="skill-regenerate-pdf-metadata-btn" class="ix-btn secondary" style="margin:0;display:none;">Regenerate Metadata</button>
             <span id="skill-pdf-status" style="color:#475569;font-size:0.9em;"></span>
         </div>
     </div>
@@ -368,13 +454,13 @@
 
 <!-- Sub-skills selection dialog -->
 <div id="subskills-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:6px;padding:20px;width:min(560px,90vw);max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+    <div class="subskills-dialog-card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
             <strong style="font-size:1.05em;">Select Sub-skills</strong>
             <button type="button" id="subskills-dialog-close" style="background:none;border:none;cursor:pointer;font-size:1.2em;color:#64748b;">✕</button>
         </div>
         <input id="subskills-search" type="text" placeholder="Search by name or description…" style="padding:8px 10px;border:1px solid #b7c6dc;border-radius:4px;font:inherit;">
-        <div id="subskills-results" style="overflow-y:auto;flex:1;border:1px solid #e2e8f0;border-radius:4px;min-height:100px;max-height:300px;">
+        <div id="subskills-results" class="subskills-results">
             <div id="subskills-loading" style="padding:12px;color:#64748b;">Loading…</div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;">
@@ -425,6 +511,7 @@
     const importStatus = document.getElementById('skill-import-status');
     const pdfInput = document.getElementById('skill-pdf-input');
     const pdfImportBtn = document.getElementById('skill-import-pdf-btn');
+    const pdfRegenerateBtn = document.getElementById('skill-regenerate-pdf-metadata-btn');
     const pdfStatus = document.getElementById('skill-pdf-status');
     const allowedInput = document.getElementById('allowed-child-skilleps-input');
     const allowedJsonInput = document.getElementById('allowed-child-skilleps-json-input');
@@ -450,11 +537,20 @@
         }
     }
 
+    function setPdfMetadataRetryVisible(visible) {
+        if (!pdfRegenerateBtn) return;
+        pdfRegenerateBtn.style.display = visible ? '' : 'none';
+    }
+
     function setPdfLoadingState(isLoading, message) {
         if (pdfImportBtn) {
             pdfImportBtn.disabled = isLoading;
             pdfImportBtn.classList.toggle('skill-busy', isLoading);
             pdfImportBtn.textContent = isLoading ? 'Importing Document…' : 'Import from Document';
+        }
+        if (pdfRegenerateBtn) {
+            pdfRegenerateBtn.disabled = isLoading;
+            pdfRegenerateBtn.classList.toggle('skill-busy', isLoading);
         }
         if (pdfStatus) {
             renderPdfStatus(message || '');
@@ -500,6 +596,7 @@
         if (prefixTextarea) prefixTextarea.value = '';
         if (importStatus) { importStatus.textContent = ''; importStatus.style.color = ''; }
         if (pdfStatus) { renderPdfStatus(''); pdfStatus.style.color = ''; pdfStatus.classList.remove('skill-waiting-status'); }
+        setPdfMetadataRetryVisible(false);
         setPdfLoadingState(false, '');
         renderChips();
         updateAllowedInput();
@@ -673,8 +770,10 @@
                 if (data.skillname && skillnameInput && !skillnameInput.value.trim()) skillnameInput.value = data.skillname;
                 if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
                 if (data.prefix && prefixTextarea) prefixTextarea.value = data.prefix;
-                setPdfLoadingState(false, 'Imported.');
-                if (pdfStatus) pdfStatus.style.color = '#16a34a';
+                const metadataError = String(data.metadata_error || '').trim();
+                setPdfLoadingState(false, metadataError ? `Imported document, but metadata generation failed: ${metadataError}` : 'Imported.');
+                if (pdfStatus) pdfStatus.style.color = metadataError ? '#b45309' : '#16a34a';
+                setPdfMetadataRetryVisible(true);
                 pdfInput.value = '';
                 pdfImported = true;
                 showFormPanels();
@@ -696,6 +795,41 @@
                     pdfImportBtn.classList.remove('skill-busy');
                     pdfImportBtn.textContent = 'Import from Document';
                 }
+                if (pdfStatus) pdfStatus.classList.remove('skill-waiting-status');
+            });
+    });
+
+    pdfRegenerateBtn?.addEventListener('click', () => {
+        const prefix = String(prefixTextarea?.value || '').trim();
+        if (!prefix) {
+            renderPdfStatus('Import a document first so there is skill data to analyze.');
+            if (pdfStatus) pdfStatus.style.color = '#b91c1c';
+            return;
+        }
+        setPdfLoadingState(true, 'Regenerating metadata...');
+        fetch('{{ url_for("prefix.GenerateDocumentSkillMetadata") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prefix }),
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw data;
+                if (data.skillname && skillnameInput) skillnameInput.value = data.skillname;
+                if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
+                const metadataError = String(data.metadata_error || '').trim();
+                setPdfLoadingState(false, metadataError ? `Metadata regeneration failed: ${metadataError}` : 'Metadata regenerated.');
+                if (pdfStatus) pdfStatus.style.color = metadataError ? '#b45309' : '#16a34a';
+                setPdfMetadataRetryVisible(true);
+                syncSubmitBtn();
+            })
+            .catch(err => {
+                const message = err && typeof err === 'object' && 'error' in err ? err.error : `Error: ${err.message}`;
+                setPdfLoadingState(false, message);
+                if (pdfStatus) pdfStatus.style.color = '#b91c1c';
+                setPdfMetadataRetryVisible(true);
+            })
+            .finally(() => {
                 if (pdfStatus) pdfStatus.classList.remove('skill-waiting-status');
             });
     });
@@ -791,31 +925,55 @@
             return;
         }
         items.forEach(item => {
-            const row = document.createElement('label');
-            row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;';
+            const row = document.createElement('div');
+            row.className = 'subskills-result-row';
             const cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.value = item.skillep_id;
             cb.checked = !!dialogChecked[item.skillep_id];
-            cb.dataset.skill = JSON.stringify(item);
-            cb.style.marginTop = '2px';
+            cb.className = 'subskills-result-checkbox';
             cb.addEventListener('change', () => {
                 if (cb.checked) dialogChecked[item.skillep_id] = item;
                 else delete dialogChecked[item.skillep_id];
             });
             const info = document.createElement('div');
+            info.className = 'subskills-result-main';
+            const nameBtn = document.createElement('button');
+            nameBtn.type = 'button';
+            nameBtn.className = 'subskills-result-name-btn';
             const strong = document.createElement('strong');
-            strong.style.cssText = 'font-size:0.9em;';
+            strong.className = 'subskills-result-id';
             strong.textContent = item.skillep_id;
-            info.appendChild(strong);
+            nameBtn.appendChild(strong);
+            nameBtn.addEventListener('click', () => {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            info.appendChild(nameBtn);
             if (item.description) {
+                const detailBtn = document.createElement('button');
+                detailBtn.type = 'button';
+                detailBtn.className = 'ix-btn secondary subskills-detail-btn';
+                detailBtn.textContent = 'Show Detail';
                 const desc = document.createElement('div');
-                desc.style.cssText = 'color:#64748b;font-size:0.82em;margin-top:2px;';
+                desc.className = 'subskills-result-desc';
                 desc.textContent = item.description;
+                desc.hidden = true;
+                detailBtn.addEventListener('click', () => {
+                    const nextVisible = desc.hidden;
+                    desc.hidden = !nextVisible;
+                    detailBtn.textContent = nextVisible ? 'Hide Detail' : 'Show Detail';
+                });
                 info.appendChild(desc);
+                row.appendChild(cb);
+                row.appendChild(info);
+                row.appendChild(detailBtn);
+            } else {
+                const spacer = document.createElement('div');
+                row.appendChild(cb);
+                row.appendChild(info);
+                row.appendChild(spacer);
             }
-            row.appendChild(cb);
-            row.appendChild(info);
             resultsContainer.appendChild(row);
         });
     }
