@@ -534,7 +534,7 @@
                             {% endif %}
                         </div>
                     </td>
-                    <td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>
+                    <td>{{ 'Published' if skill.get('is_published') else 'Unpublished' }}</td>
                     <td>
                         <div class="ix-row-actions">
                             {% if can_manage_subscriptions %}
@@ -667,7 +667,7 @@
                 {% if is_inferx_admin %}
                 <label class="skills-marketplace-toggle">
                     <input type="checkbox" name="include_unpublished" value="1" {% if marketplace_include_unpublished %}checked{% endif %}>
-                    Show drafts
+                    Show unpublished
                 </label>
                 {% endif %}
                 <button class="ix-btn" type="submit">Apply</button>

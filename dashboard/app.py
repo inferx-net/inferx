@@ -8412,12 +8412,11 @@ def SkillSubscriptionUpdateAlias():
 @require_login
 def GenerateSkills():
     tenant = str(request.args.get("tenant", "") or "").strip()
-    namespace = str(request.args.get("namespace", "") or "").strip()
     keyword = str(request.args.get("keyword", "") or "").strip()
-    if not tenant or not namespace:
-        return json_error("tenant and namespace are required", 400)
+    if not tenant:
+        return json_error("tenant is required", 400)
     try:
-        own_skills = list_namespace_skills(tenant, namespace)
+        own_skills = list_tenant_skills(tenant)
     except Exception:
         own_skills = []
     try:

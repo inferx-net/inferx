@@ -822,13 +822,12 @@
 
     function fetchSkills(keyword) {
         const tenant = currentTenant();
-        const namespace = currentNamespace();
-        if (!tenant || !namespace) {
-            if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Select a tenant and namespace first.</div>';
+        if (!tenant) {
+            if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Select a tenant first.</div>';
             return;
         }
         if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Loading…</div>';
-        const params = new URLSearchParams({ tenant, namespace });
+        const params = new URLSearchParams({ tenant });
         if (keyword) params.set('keyword', keyword);
         fetch(`{{ url_for('prefix.GenerateSkills') }}?${params}`)
             .then(r => r.json())

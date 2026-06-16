@@ -54,7 +54,7 @@
         font-weight: 700;
     }
     .skill-status-badge.published { background: #dcfce7; color: #166534; }
-    .skill-status-badge.draft { background: #fef3c7; color: #92400e; }
+    .skill-status-badge.unpublished { background: #fef3c7; color: #92400e; }
     .playground-grid { display: grid; gap: 12px; }
     .playground-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #334155; }
     .playground-label-row {
@@ -541,7 +541,7 @@
                 {% if skill.get('is_published') %}
                 <span class="skill-status-badge published">Published</span>
                 {% else %}
-                <span class="skill-status-badge draft">Draft</span>
+                <span class="skill-status-badge unpublished">Unpublished</span>
                 {% endif %}
             </div>
             <strong>Owner</strong><div>{{ owner }} / {{ ns }}</div>

@@ -3222,15 +3222,16 @@ async fn SkillCall(
         Err(e) => return Ok(skill_admin_response(e)),
     };
 
-    if !skill.is_published
-        && !token.IsNamespaceInferenceUser(&owner_tenant, &namespace)
-        && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
-    {
-        return Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("service failure: not found"))
-            .unwrap());
-    }
+    // TODO: Revisit this decision in the future based on user experience considerations.
+    // if !skill.is_published
+    //     && !token.IsNamespaceInferenceUser(&owner_tenant, &namespace)
+    //     && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
+    // {
+    //     return Ok(Response::builder()
+    //         .status(StatusCode::NOT_FOUND)
+    //         .body(Body::from("service failure: not found"))
+    //         .unwrap());
+    // }
     if skill.has_cache && skill.cache_status != "ready" {
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
