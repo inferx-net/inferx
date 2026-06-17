@@ -5,7 +5,10 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 #[derive(Debug, serde::Serialize)]
 struct CompletionsRequest {
@@ -23,6 +26,50 @@ struct Message {
 
 use super::secret::SqlSecret;
 use crate::print::verbose_category;
+
+/// Maps per-request UUIDs to `CancellationToken`s so that `call_tool` can
+/// propagate `context.ct` through the loopback HTTP boundary into
+/// `handle_skill_call_chain`.  The HTTP handler extracts the UUID from the
+/// `X-Mcp-Cancel-Id` request header and retrieves the live token here.
+pub struct McpCancelRegistry {
+    tokens: Mutex<HashMap<String, CancellationToken>>,
+}
+
+static MCP_CANCEL_REGISTRY: OnceLock<McpCancelRegistry> = OnceLock::new();
+
+impl McpCancelRegistry {
+    pub fn global() -> &'static Self {
+        MCP_CANCEL_REGISTRY.get_or_init(|| McpCancelRegistry {
+            tokens: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Insert a token and return the UUID key for retrieval.
+    pub fn register(&self, token: CancellationToken) -> String {
+        let id = Uuid::new_v4().to_string();
+        self.tokens.lock().unwrap().insert(id.clone(), token);
+        id
+    }
+
+    /// Look up a token by UUID. Returns `None` if already removed or never registered.
+    pub fn lookup(&self, id: &str) -> Option<CancellationToken> {
+        self.tokens.lock().unwrap().get(id).cloned()
+    }
+
+    fn remove(&self, id: &str) {
+        self.tokens.lock().unwrap().remove(id);
+    }
+}
+
+/// Removes the registry entry on drop — handles the case where `call_tool` is
+/// cancelled mid-execution and the normal cleanup path is skipped.
+struct McpCancelGuard(String);
+
+impl Drop for McpCancelGuard {
+    fn drop(&mut self) {
+        McpCancelRegistry::global().remove(&self.0);
+    }
+}
 
 #[derive(Clone)]
 pub struct McpStreamServer {
@@ -463,8 +510,6 @@ impl ServerHandler for McpStreamServer {
             stream: false,
         };
 
-        let body_json = serde_json::to_value(&body).unwrap();
-
         ctrace!(
             verbose_category::MCP,
             "MCP call_tool request: tool={} tenant={} owner={}/{}/{} query_len={} input_schema={}",
@@ -484,16 +529,31 @@ impl ServerHandler for McpStreamServer {
             Self::summarize_str_for_log(query)
         );
 
-        let response = self
-            .client
-            .post(&endpoint)
-            .header("Authorization", authorization)
-            .header("X-Tenant", tenant.clone())
-            .header("X-Skill-Trace", "1")
-            .json(&body_json)
-            .send()
-            .await
-            .map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?;
+        let ct = context.ct.clone();
+        // Register a child token in the global registry so that the loopback HTTP
+        // handler (RunSkill) can retrieve it by UUID and pass it explicitly into
+        // handle_skill_call_chain / execute_skill_chain.  The child is automatically
+        // cancelled when ct fires, and the guard cleans up the registry entry on drop.
+        let child_ct = ct.child_token();
+        let cancel_id = McpCancelRegistry::global().register(child_ct);
+        let _cancel_guard = McpCancelGuard(cancel_id.clone());
+
+        let response = tokio::select! {
+            _ = ct.cancelled() => {
+                return Err(Self::internal_error("request cancelled"));
+            }
+            result = self
+                .client
+                .post(&endpoint)
+                .header("Authorization", authorization)
+                .header("X-Tenant", tenant.clone())
+                .header("X-Skill-Trace", "1")
+                .header("X-Mcp-Cancel-Id", &cancel_id)
+                .json(&body)
+                .send() => {
+                result.map_err(|e| Self::internal_error(format!("failed to connect to endpoint: {}", e)))?
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -513,9 +573,14 @@ impl ServerHandler for McpStreamServer {
             .map(|v| v.to_ascii_lowercase())
             .unwrap_or_default();
         if !content_type.contains("text/event-stream") {
-            let body = response.bytes().await.map_err(|e| {
-                Self::internal_error(format!("failed to read endpoint response: {}", e))
-            })?;
+            let body = tokio::select! {
+                _ = ct.cancelled() => {
+                    return Err(Self::internal_error("request cancelled"));
+                }
+                result = response.bytes() => {
+                    result.map_err(|e| Self::internal_error(format!("failed to read endpoint response: {}", e)))?
+                }
+            };
             let full_response = Self::parse_text_response(&body)?;
             ctrace!(
                 verbose_category::MCP,
@@ -542,7 +607,14 @@ impl ServerHandler for McpStreamServer {
         let mut saw_done = false;
         let mut stream = response.bytes_stream();
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = tokio::select! {
+                _ = ct.cancelled() => {
+                    return Err(Self::internal_error("request cancelled"));
+                }
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else { break };
             let chunk = chunk.map_err(|e| {
                 Self::internal_error(format!("failed to read endpoint response: {}", e))
             })?;
@@ -664,5 +736,122 @@ impl ServerHandler for McpStreamServer {
             meta: None,
             next_cursor: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        format_skill_fail_reason, update_terminal_failure, McpStreamServer, SkillTraceEventPayload,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn parse_text_response_extracts_message_content() {
+        let body = json!({
+            "choices": [{
+                "message": {"content": "final answer"}
+            }]
+        });
+        assert_eq!(
+            McpStreamServer::parse_text_response(&serde_json::to_vec(&body).unwrap()).unwrap(),
+            "final answer"
+        );
+    }
+
+    #[test]
+    fn resolve_outcome_returns_failure_message_when_skill_failed() {
+        let result = McpStreamServer::resolve_skill_trace_outcome(
+            None,
+            Some("skill timed out".to_string()),
+            true,
+        );
+        assert_eq!(result.unwrap_err().message, "skill timed out");
+    }
+
+    #[test]
+    fn resolve_outcome_returns_skill_result_even_with_terminal_failure_set() {
+        let skill_result = json!({"choices": [{"message": {"content": "done"}}]});
+        let result = McpStreamServer::resolve_skill_trace_outcome(
+            Some(skill_result.clone()),
+            Some("skill timed out".to_string()),
+            true,
+        );
+        assert_eq!(result.unwrap(), skill_result);
+    }
+
+    fn make_call_finish(
+        depth: u32,
+        result_code: &str,
+        fail_reason: Option<&str>,
+    ) -> SkillTraceEventPayload {
+        SkillTraceEventPayload {
+            event_type: "call_finish".to_string(),
+            skill: "acme/default/pricing".to_string(),
+            depth,
+            phase: None,
+            elapsed_ms: None,
+            result_code: Some(result_code.to_string()),
+            fail_reason: fail_reason.map(str::to_string),
+            parent_call_id: None,
+        }
+    }
+
+    #[test]
+    fn update_terminal_failure_sets_message_for_root_call_finish_fail() {
+        let event = make_call_finish(1, "fail", Some("timeout"));
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert_eq!(
+            terminal_failure.as_deref(),
+            Some("acme/default/pricing: skill timed out")
+        );
+    }
+
+    #[test]
+    fn update_terminal_failure_ignores_non_root_depth() {
+        let event = make_call_finish(2, "fail", Some("timeout"));
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert!(terminal_failure.is_none());
+    }
+
+    #[test]
+    fn update_terminal_failure_ignores_pass_result() {
+        let event = make_call_finish(1, "pass", None);
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert!(terminal_failure.is_none());
+    }
+
+    #[test]
+    fn update_terminal_failure_parses_fail_reason_from_serde() {
+        let json = r#"{"type":"call_finish","skill":"acme/default/pricing","depth":1,"result_code":"fail","fail_reason":"invalid_response"}"#;
+        let event: SkillTraceEventPayload = serde_json::from_str(json).unwrap();
+        let mut terminal_failure: Option<String> = None;
+        update_terminal_failure(&event, &mut terminal_failure);
+        assert_eq!(
+            terminal_failure.as_deref(),
+            Some("acme/default/pricing: skill returned invalid response")
+        );
+    }
+
+    #[test]
+    fn format_skill_fail_reason_maps_known_reasons() {
+        assert_eq!(format_skill_fail_reason(Some("timeout")), "skill timed out");
+        assert_eq!(
+            format_skill_fail_reason(Some("transport_error")),
+            "skill transport error"
+        );
+        assert_eq!(
+            format_skill_fail_reason(Some("invalid_response")),
+            "skill returned invalid response"
+        );
+        assert_eq!(
+            format_skill_fail_reason(Some("max_depth")),
+            "skill exceeded max chain depth"
+        );
+        assert_eq!(format_skill_fail_reason(None), "skill failed");
+        assert_eq!(format_skill_fail_reason(Some("unknown_code")), "skill failed");
     }
 }

@@ -51,6 +51,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use serde_json::Value;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -68,7 +69,7 @@ use crate::audit::{
 use crate::common::*;
 use crate::gateway::auth_layer::auth_transform_keycloaktoken;
 use crate::gateway::func_worker::QHttpCallClientDirect;
-use crate::gateway::mcp_stream_server::McpStreamServer;
+use crate::gateway::mcp_stream_server::{McpCancelRegistry, McpStreamServer};
 use crate::gateway::tokenizer::{CountKnowledgeBaseTokens, ModelsFuncCall};
 use crate::ixmeta::req_watching_service_client::ReqWatchingServiceClient;
 use crate::ixmeta::ReqWatchRequest;
@@ -126,6 +127,8 @@ struct SkillCreateRequest {
     gpu_billing_target: Option<String>,
     #[serde(default)]
     earning_type: Option<String>,
+    #[serde(default)]
+    allowed_child_skilleps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -612,6 +615,7 @@ mod tests {
             consumer_revision: None,
             template_is_active: true,
             template_created_at: None,
+            allowed_child_skilleps: None,
         }
     }
 
@@ -3061,6 +3065,7 @@ async fn CreateSkill(
             &gpu_billing_target,
             req.template_id,
             false,
+            req.allowed_child_skilleps.as_deref(),
             &token.username,
         )
         .await
@@ -3108,10 +3113,16 @@ async fn GetSkill(
     {
         return Ok(skill_admin_response(Error::NoPermission));
     }
+    let mut body = serde_json::to_value(&skill).unwrap();
+    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("allowed_child_skilleps");
+        }
+    }
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/json")
-        .body(Body::from(serde_json::to_vec(&skill).unwrap()))
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap())
 }
 
@@ -3144,7 +3155,7 @@ async fn PublishSkill(
     State(gw): State<HttpGateway>,
     Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+    if !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
     }
     match gw
@@ -3165,7 +3176,7 @@ async fn UnpublishSkill(
     State(gw): State<HttpGateway>,
     Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) {
+    if !token.IsInferxAdmin() {
         return Ok(skill_admin_response(Error::NoPermission));
     }
     match gw
@@ -3211,15 +3222,16 @@ async fn SkillCall(
         Err(e) => return Ok(skill_admin_response(e)),
     };
 
-    if !skill.is_published
-        && !token.IsNamespaceInferenceUser(&owner_tenant, &namespace)
-        && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
-    {
-        return Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("service failure: not found"))
-            .unwrap());
-    }
+    // TODO: Revisit this decision in the future based on user experience considerations.
+    // if !skill.is_published
+    //     && !token.IsNamespaceInferenceUser(&owner_tenant, &namespace)
+    //     && !token.IsNamespaceAdmin(&owner_tenant, &namespace)
+    // {
+    //     return Ok(Response::builder()
+    //         .status(StatusCode::NOT_FOUND)
+    //         .body(Body::from("service failure: not found"))
+    //         .unwrap());
+    // }
     if skill.has_cache && skill.cache_status != "ready" {
         return Ok(Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -3361,6 +3373,13 @@ async fn SkillCall(
         .await;
     }
 
+    let cancel_token = req
+        .headers()
+        .get("X-Mcp-Cancel-Id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| McpCancelRegistry::global().lookup(id))
+        .unwrap_or_else(CancellationToken::new);
+
     handle_skill_call_chain(
         &gw,
         req,
@@ -3371,7 +3390,9 @@ async fn SkillCall(
         remainPath,
         prefix.as_str(),
         SKILLS_NAMESPACE,
+        skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
+        cancel_token,
     )
     .await
 }
@@ -3465,6 +3486,13 @@ async fn RunSkillDebug(
         caller_tenant,
     };
 
+    let cancel_token = req
+        .headers()
+        .get("X-Mcp-Cancel-Id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| McpCancelRegistry::global().lookup(id))
+        .unwrap_or_else(CancellationToken::new);
+
     handle_skill_debug_call(
         &gw,
         req,
@@ -3475,7 +3503,9 @@ async fn RunSkillDebug(
         "/v1/chat/completions".to_string(),
         prefix.as_str(),
         SKILLS_NAMESPACE,
+        skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
+        cancel_token,
     )
     .await
 }

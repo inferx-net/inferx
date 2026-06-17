@@ -183,8 +183,26 @@
 </div>
 {%- endmacro %}
 
+{% if not client_setup_inline %}
 <section{% if section_class %} class="{{ section_class }}"{% else %} style="margin: 18px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff;"{% endif %}>
+    {% if client_setup_toggle_id %}
+    <div class="skill-panel-header">
+        <h3 style="margin: 0;">Integration</h3>
+        <button
+            id="{{ client_setup_toggle_id }}"
+            class="playground-toggle-btn"
+            type="button"
+            aria-expanded="{{ 'true' if client_setup_toggle_default_visible else 'false' }}"
+            aria-controls="{{ client_setup_body_id }}"
+        >
+            {{ 'Hide' if client_setup_toggle_default_visible else 'Show' }}
+        </button>
+    </div>
+    <div id="{{ client_setup_body_id }}"{% if not client_setup_toggle_default_visible %} hidden{% endif %}>
+    {% else %}
     <h3>Integration</h3>
+    {% endif %}
+{% endif %}
     {% if client_setup.integration_kind == 'skill_mcp' %}
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
         Connect your MCP client to this InferX MCP server, then use the canonical function id below when referencing this skill from skill data or tool calls.
@@ -203,7 +221,7 @@
             'mono' if client_setup.api_key_copyable else ''
         ) }}
         {{ client_setup_value_field(
-            'Function ID',
+            'Skill ID',
             client_setup.function_id,
             client_setup.function_id,
             'Copy id',
@@ -279,7 +297,12 @@
     </p>
     {% endif %}
     {% endif %}
+    {% if not client_setup_inline and client_setup_toggle_id %}
+    </div>
+    {% endif %}
+{% if not client_setup_inline %}
 </section>
+{% endif %}
 <script>
     (function () {
         if (window.copyClientSetupValue) {

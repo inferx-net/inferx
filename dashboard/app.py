@@ -196,6 +196,9 @@ OPEN_CODE_CONFIG_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "integ
 KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
 SKILLS_DIR = Path("/opt/inferx/skills")
 FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
+METADATA_GEN_MODEL = os.getenv("METADATA_GEN_MODEL", "").strip()
+DOCLING_URL = os.getenv("DOCLING_URL", "").strip().rstrip("/")
+DOCLING_TOKEN = os.getenv("DOCLING_TOKEN", "secret123")
 
 
 def load_max_gpu_vram_mb_override():
@@ -3078,6 +3081,20 @@ def maybe_log_proxy_gateway_request(path, upstream_url, method, headers, cookies
     )
 
 
+def maybe_log_gateway_response(context, upstream_url, status_code=None, body_bytes=None, error=None):
+    if not DEBUG_PROXY_GATEWAY_REQUESTS:
+        return
+
+    app.logger.warning(
+        "dashboard gateway response context=%s upstream=%s status=%s error=%s body=%s",
+        context,
+        upstream_url,
+        status_code,
+        error,
+        summarize_request_body_for_log(body_bytes),
+    )
+
+
 def parse_named_command_arg(commands, flag_name):
     if not isinstance(commands, list):
         return ""
@@ -5275,9 +5292,9 @@ def build_skill_form_context(*, roles=None):
         roles = listroles()
     deploy_target = build_catalog_deploy_target_selector_context(roles=roles)
     deploy_target = dict(deploy_target)
-    deploy_target["resolved_summary_label"] = "Function path:"
-    deploy_target["unresolved_summary_label"] = "Function path not selected:"
-    deploy_target["action_label"] = "Create Function"
+    deploy_target["resolved_summary_label"] = "Skill path:"
+    deploy_target["unresolved_summary_label"] = "Skill path not selected:"
+    deploy_target["action_label"] = "Create Skill"
     deploy_target["preferred_namespace_value"] = "default"
     templates = list_active_skill_templates()
     return {
@@ -8151,6 +8168,8 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         "template_id": "",
         "prefix": "",
         "gpu_billing_target": "caller",
+        "allowed_child_skilleps": [],
+        "allowed_child_skilleps_json": "[]",
     }
     if isinstance(form_data, dict):
         merged_form_data.update(form_data)
@@ -8164,6 +8183,8 @@ def render_skill_create_page(*, form_data=None, error_message="", success_messag
         success_message=success_message,
         deploy_target=deploy_target,
         skill_templates=skill_templates,
+        metadata_gen_model_configured=bool(METADATA_GEN_MODEL and "/" in METADATA_GEN_MODEL),
+        docling_configured=bool(DOCLING_URL),
     )
 
 
@@ -8175,23 +8196,11 @@ def ListSkillsLegacy():
 
 @prefix_bp.route("/listskills/myskills", methods=["GET"])
 @require_login
-def ListSkillsMySkillsLegacy():
-    return redirect(url_for("prefix.ListSkills"))
-
-
-@prefix_bp.route("/listskills/marketplace", methods=["GET"])
-@require_login
-def ListSkillsMarketplaceLegacy():
-    return redirect(url_for("prefix.SkillMarketplace"))
-
-
-@prefix_bp.route("/listfunctions/myfunctions", methods=["GET"])
-@require_login
 def ListSkills():
     try:
         context = load_skill_dashboard_context(skills_view="my_skills")
     except Exception as e:
-        return json_error(f"failed to load functions: {e}", 500)
+        return json_error(f"failed to load skills: {e}", 500)
 
     return render_template(
         "skill_list.html",
@@ -8200,7 +8209,7 @@ def ListSkills():
     )
 
 
-@prefix_bp.route("/listfunctions/public", methods=["GET"])
+@prefix_bp.route("/listskills/public", methods=["GET"])
 @require_login
 def SkillMarketplace():
     try:
@@ -8224,6 +8233,8 @@ def SkillCreate():
 @prefix_bp.route("/skill_save", methods=["POST"])
 @require_login
 def SkillSave():
+    raw_allowed = str(request.form.get("allowed_child_skilleps", "") or "").strip()
+    allowed_child_skilleps = [s.strip() for s in raw_allowed.split(",") if s.strip()]
     form_data = {
         "skillname": str(request.form.get("skillname", "") or "").strip(),
         "tenant": str(request.form.get("tenant", "") or "").strip(),
@@ -8232,6 +8243,8 @@ def SkillSave():
         "description": str(request.form.get("description", "") or "").strip(),
         "gpu_billing_target": str(request.form.get("gpu_billing_target", "caller") or "caller").strip().lower(),
         "prefix": str(request.form.get("prefix", "") or ""),
+        "allowed_child_skilleps": allowed_child_skilleps,
+        "allowed_child_skilleps_json": str(request.form.get("allowed_child_skilleps_json", "") or "[]"),
     }
 
     try:
@@ -8249,18 +8262,21 @@ def SkillSave():
         if not form_data["prefix"].strip():
             raise ValueError("System prompt is required")
 
+        payload = {
+            "template_id": template_id,
+            "description": form_data["description"] or None,
+            "prefix": form_data["prefix"],
+            "serving_mode": "dedicated",
+            "has_cache": False,
+            "gpu_billing_target": form_data["gpu_billing_target"],
+            "allowed_child_skilleps": allowed_child_skilleps,
+        }
+
         create_skill(
             form_data["tenant"],
             form_data["namespace"],
             form_data["skillname"],
-            {
-                "template_id": template_id,
-                "description": form_data["description"] or None,
-                "prefix": form_data["prefix"],
-                "serving_mode": "dedicated",
-                "has_cache": False,
-                "gpu_billing_target": form_data["gpu_billing_target"],
-            },
+            payload,
         )
     except ValueError as e:
         return render_skill_create_page(form_data=form_data, error_message=str(e))
@@ -8274,6 +8290,8 @@ def SkillSave():
 @prefix_bp.route("/skill/publish/<owner>/<ns>/<name>", methods=["POST"])
 @require_login
 def SkillPublish(owner, ns, name):
+    if not is_inferx_admin_user():
+        return json_error("Only InferX admins can publish skills", 403)
     try:
         post_skill_state_action(owner, ns, name, "publish")
     except Exception as e:
@@ -8284,6 +8302,8 @@ def SkillPublish(owner, ns, name):
 @prefix_bp.route("/skill/unpublish/<owner>/<ns>/<name>", methods=["POST"])
 @require_login
 def SkillUnpublish(owner, ns, name):
+    if not is_inferx_admin_user():
+        return json_error("Only InferX admins can unpublish skills", 403)
     try:
         post_skill_state_action(owner, ns, name, "unpublish")
     except Exception as e:
@@ -8388,6 +8408,302 @@ def SkillSubscriptionUpdateAlias():
     return jsonify(updated)
 
 
+@prefix_bp.route("/generate_skills", methods=["GET"])
+@require_login
+def GenerateSkills():
+    tenant = str(request.args.get("tenant", "") or "").strip()
+    keyword = str(request.args.get("keyword", "") or "").strip()
+    if not tenant:
+        return json_error("tenant is required", 400)
+    try:
+        own_skills = list_tenant_skills(tenant)
+    except Exception:
+        own_skills = []
+    try:
+        marketplace_payload = list_marketplace_skills(keyword=keyword or None, page_size=50, active_tenant=tenant)
+        marketplace_items = marketplace_payload.get("items", []) if isinstance(marketplace_payload, dict) else []
+    except Exception:
+        marketplace_items = []
+
+    seen = set()
+    results = []
+
+    def add_item(row, is_own):
+        ot = str(row.get("owner_tenant", "") or "").strip()
+        ns = str(row.get("owner_namespace", "") or "").strip()
+        sn = str(row.get("skillname", "") or "").strip()
+        if not ot or not ns or not sn:
+            return
+        key = f"{ot}/{ns}/{sn}"
+        if key in seen:
+            return
+        if is_own and keyword:
+            kw = keyword.lower()
+            haystack = " ".join([sn, str(row.get("description", "") or ""), str(row.get("template_display_name", "") or "")]).lower()
+            if kw not in haystack:
+                return
+        seen.add(key)
+        results.append({
+            "skillep_id": key,
+            "name": sn,
+            "template_display_name": str(row.get("template_display_name", "") or ""),
+            "description": str(row.get("description", "") or ""),
+            "source": "own" if is_own else "public",
+        })
+
+    for row in own_skills:
+        add_item(row, is_own=True)
+    for row in marketplace_items:
+        add_item(row, is_own=False)
+
+    return jsonify(results)
+
+
+@prefix_bp.route("/generate_skill_metadata", methods=["POST"])
+@require_login
+def GenerateSkillMetadata():
+    if not METADATA_GEN_MODEL or "/" not in METADATA_GEN_MODEL:
+        return json_error("METADATA_GEN_MODEL is not configured", 503)
+    namespace, modelname = METADATA_GEN_MODEL.split("/", 1)
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    if not tenant:
+        return json_error("no active tenant", 400)
+    req_data = request.get_json(silent=True) or {}
+    subskills = req_data.get("subskills", [])
+    if not isinstance(subskills, list) or not subskills:
+        return json_error("subskills list is required", 400)
+
+    skills_summary = "\n".join(
+        f"- {s.get('name', '')}: {s.get('description', '') or '(no description)'}"
+        for s in subskills
+    )
+    prompt = (
+        f"Given these sub-skills:\n{skills_summary}\n\n"
+        "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
+        "{\"description\": \"<1-2 sentence description of a parent skill that routes to these sub-skills>\"}"
+    )
+
+    url = f"{get_gateway_url()}/funccall/{tenant}/{namespace}/{modelname}/v1/chat/completions"
+    try:
+        resp = requests.post(
+            url,
+            headers=gateway_request_headers(json_body=True),
+            json={"messages": [{"role": "user", "content": prompt}], "stream": False, "chat_template_kwargs": {"enable_thinking": False}},
+            timeout=30,
+        )
+    except Exception as e:
+        return json_error(f"metadata generation request failed: {e}", 502)
+
+    if not resp.ok:
+        return json_error(f"metadata generation failed: HTTP {resp.status_code}", 502)
+
+    payload = response_json_or_none(resp)
+    try:
+        llm_text = (
+            payload["choices"][0]["message"]["content"]
+            if payload and payload.get("choices")
+            else ""
+        )
+    except (KeyError, IndexError, TypeError):
+        llm_text = ""
+
+    how_to_use = "\n## How to use\n" + "\n".join(
+        f"- **{s.get('name', '')}**: call {s.get('skillep_id', '')}"
+        for s in subskills
+    )
+
+    import json as _json
+    try:
+        parsed = _json.loads(llm_text.strip())
+    except Exception:
+        parsed = {}
+    description = str(parsed.get("description", "") or "").strip()
+    subskill_lines = [
+        f"- **{s.get('name', '')}** (`{s.get('skillep_id', '')}`): {s.get('description', '') or '(no description)'}"
+        for s in subskills
+    ]
+    prefix_parts = [
+        "You are an Orchestrator Skill. Your role is to analyze user requests and coordinate sub-skills.\n\n"
+        "## Core Rules\n\n"
+        "1. **Assess relevance between the request and each skill**\n"
+        "   - For each available sub-skill, determine whether the user's question falls within its capability scope.\n"
+        "   - **Only call a skill when it is clearly relevant.** When uncertain, default to NOT calling it.\n\n"
+        "2. **Conditions that require a skill call**\n"
+        "   - The user explicitly mentions a domain that matches the skill's coverage (e.g., \"financial data\" -> call financial analysis skill).\n"
+        "   - The question requires specialized knowledge that only this skill can provide.\n"
+        "   - The question refers to content that is contained in a specific document skill.\n\n"
+        "3. **Conditions that do NOT require a skill call**\n"
+        "   - The question is unrelated to all available skills.\n"
+        "   - General knowledge is sufficient to answer (no specific document or tool needed).\n"
+        "   - The question is very short or trivial (e.g., \"hello\"), where no skill is needed.\n\n"
+        "4. **When calling multiple skills**\n"
+        "   - If the question covers multiple relevant domains, you MAY call multiple sub-skills in parallel.\n"
+        "   - After receiving results, you MUST aggregate them into a unified, coherent answer.\n"
+        "   - If only one skill is relevant, call only that one.\n\n"
+        "5. **Output format**\n"
+        "   - If you call any skills: Start with a brief explanation of which skills you are calling, then present the final integrated answer.\n"
+        "   - If you call no skills: Answer the user's question directly. Do not mention that you chose not to call any skills.\n\n"
+        "## Decision Reference Examples\n"
+        "- User asks: \"What's the weather today?\" + You have a weather skill -> Call it.\n"
+        "- User asks: \"What's the weather today?\" + You have NO weather skill -> Do NOT call. Respond: \"I cannot check the weather.\"\n"
+        "- User asks: \"Summarize this employee handbook\" + You have a document skill for it -> Call it.\n"
+        "- User asks: \"What is artificial intelligence?\" + General knowledge question -> Consider NOT calling any skill; answer from your own knowledge.\n\n"
+        "Now, analyze the user's request and follow the rules above.",
+        "## Available Sub-skills\n" + "\n".join(subskill_lines),
+    ]
+    prefix_parts.append(how_to_use)
+    prefix = "\n\n".join(prefix_parts)
+
+    return jsonify({"description": description, "prefix": prefix})
+
+
+def generate_document_skill_metadata(markdown: str, *, tenant: str):
+    skillname = ""
+    description = ""
+    metadata_error = ""
+
+    if not METADATA_GEN_MODEL or "/" not in METADATA_GEN_MODEL:
+        return skillname, description, "METADATA_GEN_MODEL is not configured"
+    if not tenant:
+        return skillname, description, "no active tenant"
+
+    namespace_part, modelname = METADATA_GEN_MODEL.split("/", 1)
+    snippet = (markdown or "")[:6000]
+    prompt = (
+        "You are analyzing a document that has been converted to markdown. "
+        "Your task is to propose metadata for an AI skill that answers questions about this document.\n\n"
+        "Important: the skill does NOT perform the capabilities described in the document. "
+        "It is a Q&A assistant that helps users understand and navigate the document's content.\n\n"
+        "Respond with valid JSON only, no explanation, no markdown fences. Use this exact schema:\n"
+        "{\"skillname\": \"<kebab-case name, 2-4 words, describing the document topic>\", "
+        "\"description\": \"<1-2 sentence description clarifying this skill answers questions about the document, not that it performs the described features>\"}\n\n"
+        f"Document content (may be truncated):\n{snippet}"
+    )
+    llm_url = f"{get_gateway_url()}/funccall/{tenant}/{namespace_part}/{modelname}/v1/chat/completions"
+    llm_headers = gateway_request_headers(json_body=True)
+    llm_body = {
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    maybe_log_proxy_gateway_request(
+        "document_skill_metadata/llm",
+        llm_url,
+        "POST",
+        llm_headers,
+        request.cookies,
+        json.dumps(llm_body).encode("utf-8"),
+        30,
+    )
+    try:
+        llm_resp = requests.post(
+            llm_url,
+            headers=llm_headers,
+            json=llm_body,
+            timeout=30,
+        )
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm",
+            llm_url,
+            status_code=llm_resp.status_code,
+            body_bytes=llm_resp.content,
+        )
+    except Exception as e:
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm",
+            llm_url,
+            error=str(e),
+        )
+        return skillname, description, f"metadata generation request failed: {e}"
+
+    if not llm_resp.ok:
+        return skillname, description, f"metadata generation failed: HTTP {llm_resp.status_code}"
+
+    payload = response_json_or_none(llm_resp)
+    llm_text = ""
+    try:
+        llm_text = payload["choices"][0]["message"]["content"] if payload and payload.get("choices") else ""
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    import json as _json
+    try:
+        parsed = _json.loads((llm_text or "").strip())
+    except Exception as e:
+        maybe_log_gateway_response(
+            "document_skill_metadata/llm_parse",
+            llm_url,
+            status_code=llm_resp.status_code,
+            error=f"failed to parse metadata json: {e}",
+            body_bytes=llm_text.encode("utf-8", errors="replace"),
+        )
+        return skillname, description, "metadata generation returned invalid JSON"
+
+    skillname = str(parsed.get("skillname", "") or "").strip()
+    description = str(parsed.get("description", "") or "").strip()
+    if not skillname or not description:
+        return skillname, description, "metadata generation returned empty skill name or description"
+
+    return skillname, description, metadata_error
+
+
+@prefix_bp.route("/convert_pdf_metadata", methods=["POST"])
+@require_login
+def ConvertPdfMetadata():
+    if not DOCLING_URL:
+        return json_error("DOCLING_URL is not configured", 503)
+    if "file" not in request.files:
+        return json_error("no file uploaded", 400)
+    pdf_file = request.files["file"]
+    if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+        return json_error("uploaded file must be a PDF", 400)
+
+    # Convert PDF → markdown via docling
+    kb_toolkit_wiki = "https://github.com/inferx-net/inferx/wiki/InferX-Knowledge-Base-Toolkit-How-to"
+
+    try:
+        docling_resp = requests.post(
+            f"{DOCLING_URL}/convert",
+            headers={"Authorization": f"Bearer {DOCLING_TOKEN}", "X-Do-Table-Structure": "false"},
+            files={"file": (pdf_file.filename, pdf_file.stream, "application/pdf")},
+            timeout=300,
+        )
+    except requests.exceptions.Timeout:
+        return (
+            jsonify({
+                "error": "docling request timed out after 300 seconds. Convert the document locally using the guide below.",
+                "help_url": kb_toolkit_wiki,
+                "help_label": "InferX Knowledge Base Toolkit guide",
+            }),
+            504,
+        )
+    except Exception as e:
+        return json_error(f"docling request failed: {e}", 502)
+
+    if not docling_resp.ok:
+        return json_error(f"docling conversion failed: HTTP {docling_resp.status_code}", 502)
+
+    markdown = docling_resp.text or ""
+
+    # Use LLM to generate skillname + description from the markdown
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    skillname, description, metadata_error = generate_document_skill_metadata(markdown, tenant=tenant)
+
+    return jsonify({"skillname": skillname, "description": description, "prefix": markdown, "metadata_error": metadata_error})
+
+
+@prefix_bp.route("/generate_document_skill_metadata", methods=["POST"])
+@require_login
+def GenerateDocumentSkillMetadata():
+    req_data = request.get_json(silent=True) or {}
+    markdown = str(req_data.get("prefix", "") or "")
+    if not markdown.strip():
+        return json_error("prefix is required", 400)
+    tenant = session.get("active_tenant_name", session.get("tenant_name", ""))
+    skillname, description, metadata_error = generate_document_skill_metadata(markdown, tenant=tenant)
+    return jsonify({"skillname": skillname, "description": description, "metadata_error": metadata_error})
+
+
 def get_skill_detail(owner_tenant: str, namespace: str, skillname: str):
     url = f"{apihostaddr}/skills/{owner_tenant}/{namespace}/{skillname}"
     resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
@@ -8458,11 +8774,28 @@ def SkillDetail():
     except Exception as e:
         return json_error(f"failed to load roles: {e}", 502)
 
-    can_manage = has_admin_role_for_model(roles, owner, ns) or is_inferx_admin_user()
+    is_inferx_admin = is_inferx_admin_user()
+    can_manage = has_admin_role_for_model(roles, owner, ns) or is_inferx_admin
     if not can_manage and not skill.get("is_published"):
         return Response("No permission", status=403)
 
     active_tenant = resolve_active_tenant_name(roles)
+    can_manage_subscriptions = has_admin_role_for_model(roles, active_tenant) or is_inferx_admin
+    is_subscribed = False
+    tool_alias = None
+    if active_tenant:
+        try:
+            for sub in list_skill_subscriptions(active_tenant=active_tenant):
+                if (
+                    str(sub.get("owner_tenant", "") or "").strip().lower() == owner.strip().lower()
+                    and str(sub.get("owner_namespace", "") or "").strip().lower() == ns.strip().lower()
+                    and str(sub.get("skillname", "") or "").strip().lower() == name.strip().lower()
+                ):
+                    is_subscribed = True
+                    tool_alias = sub.get("tool_alias")
+                    break
+        except Exception:
+            pass
     onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or owner)
     normal_funcname = str(skill.get("normal_funcname", "") or "").strip()
 
@@ -8535,6 +8868,10 @@ def SkillDetail():
         client_setup=client_setup,
         opencode_download_href=opencode_download_href,
         can_manage=can_manage,
+        is_inferx_admin=is_inferx_admin,
+        can_manage_subscriptions=can_manage_subscriptions,
+        is_subscribed=is_subscribed,
+        tool_alias=tool_alias,
         skill_prefix_text=skill_prefix_text,
     )
 

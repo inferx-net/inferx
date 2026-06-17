@@ -10,12 +10,13 @@ use hyper::header::CONTENT_TYPE;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
@@ -72,6 +73,7 @@ struct ParallelChildTaskContext {
     logical_tenant: String,
     logical_namespace: String,
     logical_funcname: String,
+    allowed_skillep_ids: Option<Arc<HashSet<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -620,33 +622,76 @@ where
     }
 }
 
-fn skill_chain_tool_definition() -> Value {
-    serde_json::json!([{
-        "type": "function",
-        "function": {
-            "name": SKILL_CHAIN_TOOL_NAME,
-            "description": "Call another InferX skill endpoint",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "skillep_id": {
-                        "type": "string",
-                        "description": "Canonical skill endpoint id owner_tenant/namespace/skillname"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "User request to send to the child skill"
+fn skill_chain_tool_definition(allowed: Option<&HashSet<String>>) -> Value {
+    match allowed {
+        Some(ids) if ids.is_empty() => serde_json::json!([]),
+        Some(ids) => {
+            let mut enum_vals: Vec<&str> = ids.iter().map(String::as_str).collect();
+            enum_vals.sort_unstable();
+            serde_json::json!([{
+                "type": "function",
+                "function": {
+                    "name": SKILL_CHAIN_TOOL_NAME,
+                    "description": "Call another InferX skill endpoint",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skillep_id": {
+                                "type": "string",
+                                "description": "Canonical skill endpoint id owner_tenant/namespace/skillname",
+                                "enum": enum_vals
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "User request to send to the child skill"
+                            }
+                        },
+                        "required": ["skillep_id", "query"]
                     }
-                },
-                "required": ["skillep_id", "query"]
-            }
+                }
+            }])
         }
-    }])
+        None => serde_json::json!([{
+            "type": "function",
+            "function": {
+                "name": SKILL_CHAIN_TOOL_NAME,
+                "description": "Call another InferX skill endpoint",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skillep_id": {
+                            "type": "string",
+                            "description": "Canonical skill endpoint id owner_tenant/namespace/skillname"
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "User request to send to the child skill"
+                        }
+                    },
+                    "required": ["skillep_id", "query"]
+                }
+            }
+        }])
+    }
+}
+
+fn apply_skill_chain_tools(obj: &mut Map<String, Value>, allowed: Option<&HashSet<String>>) {
+    let tools = skill_chain_tool_definition(allowed);
+    match &tools {
+        Value::Array(arr) if arr.is_empty() => {
+            obj.remove("tools");
+        }
+        _ => {
+            obj.insert("tools".to_string(), tools);
+        }
+    }
+    obj.remove("tool_choice");
 }
 
 fn parse_skill_chain_request(
     headers: &HeaderMap,
     body_bytes: &[u8],
+    allowed: Option<&HashSet<String>>,
 ) -> Result<SkillChainRequestState, SkillChainRequestError> {
     let mut body: Value =
         serde_json::from_slice(body_bytes).map_err(|_| SkillChainRequestError::BadRequest)?;
@@ -702,7 +747,7 @@ fn parse_skill_chain_request(
         1
     };
 
-    obj.insert("tools".to_string(), skill_chain_tool_definition());
+    apply_skill_chain_tools(obj, allowed);
     obj.insert("stream".to_string(), Value::Bool(false));
 
     Ok(SkillChainRequestState {
@@ -786,7 +831,7 @@ fn parse_skillep_tool_args(arguments: &str) -> core::result::Result<(String, Str
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Error: invalid skillep_id".to_string())?;
+        .ok_or_else(|| "Error: missing or empty skillep_id. Expected format: owner_tenant/namespace/skillname.".to_string())?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -805,7 +850,10 @@ fn split_skillep_id(skillep_id: &str) -> core::result::Result<(&str, &str, &str)
         || skillname.is_empty()
         || parts.next().is_some()
     {
-        return Err("Error: invalid skillep_id".to_string());
+        return Err(format!(
+            "Error: invalid skillep_id '{}'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value.",
+            skillep_id
+        ));
     }
     Ok((owner_tenant, namespace, skillname))
 }
@@ -969,6 +1017,34 @@ fn log_invalid_skillep_id(
     );
 }
 
+#[cfg(test)]
+fn log_skillep_not_allowed(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    eprintln!(
+        "skill_chain skillep_not_allowed logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
+#[cfg(not(test))]
+fn log_skillep_not_allowed(
+    logical_tenant: &str,
+    logical_namespace: &str,
+    logical_funcname: &str,
+    tool_call_id: &str,
+    skillep_id: &str,
+) {
+    warn!(
+        "skill_chain skillep_not_allowed logical={}/{}/{} tool_call_id={} skillep_id={}",
+        logical_tenant, logical_namespace, logical_funcname, tool_call_id, skillep_id
+    );
+}
+
 fn copy_forwarded_child_headers(
     parent_headers: &HeaderMap,
     child_req: reqwest::RequestBuilder,
@@ -1030,6 +1106,25 @@ async fn execute_parallel_child_call(
             };
         }
     };
+
+    if let Some(allowed) = &context.allowed_skillep_ids {
+        if !allowed.contains(&skillep_id) {
+            log_skillep_not_allowed(
+                &context.logical_tenant,
+                &context.logical_namespace,
+                &context.logical_funcname,
+                &task.call.id,
+                &skillep_id,
+            );
+            return ParallelChildResult {
+                original_index: task.original_index,
+                tool_call_id,
+                tool_result: "Error: skill endpoint not in allowed list".to_string(),
+                fail_reason: None,
+                usage: None,
+            };
+        }
+    }
 
     let mocked_result = context.debug_mocks.get(&skillep_id).cloned();
     let (tool_result, fail_reason, usage) = if let Some(mocked_result) = mocked_result {
@@ -1552,7 +1647,7 @@ async fn read_child_trace_sse(
     let mut saw_done = false;
     let mut stream = resp.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
+    'outer: while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ChildTraceReadError {
             message: e.to_string(),
             fail_reason: SkillTraceFailReason::TransportError,
@@ -1573,7 +1668,7 @@ async fn read_child_trace_sse(
                     SseMessage::Event { event, data } => {
                         if data == "[DONE]" {
                             saw_done = true;
-                            continue;
+                            break 'outer;
                         }
                         match event.as_deref() {
                             Some("skill_trace") => {
@@ -1720,7 +1815,9 @@ async fn execute_skill_chain(
     remain_path: String,
     prefix: String,
     skills_namespace: String,
+    allowed_skillep_ids: Option<Arc<HashSet<String>>>,
     trace: Option<SkillChainTraceState>,
+    cancel_token: CancellationToken,
 ) -> Result<SkillChainFinalResponse, SkillChainExecutionError> {
     ctrace!(
         verbose_category::SKILL,
@@ -1735,16 +1832,26 @@ async fn execute_skill_chain(
         chain.current_depth
     );
 
-    let prefix = if prefix.trim().is_empty() {
-        SKILL_EP_CONSTRAINT.to_string()
+    let prefix = if GATEWAY_CONFIG.skillEPSystemPromptConstraint {
+        if prefix.trim().is_empty() {
+            SKILL_EP_CONSTRAINT.to_string()
+        } else {
+            format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+        }
     } else {
-        format!("{}\n\n{}", SKILL_EP_CONSTRAINT, prefix.trim())
+        prefix
     };
 
     let child_http_client = reqwest::Client::new();
     let mut aggregate_usage: Option<SkillTraceTokenUsage> = None;
 
     loop {
+        if cancel_token.is_cancelled() {
+            return Err(SkillChainExecutionError::Response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service failure: chain cancelled",
+            ));
+        }
         ctrace!(
             verbose_category::SKILL,
             "skill_chain model_turn logical={}/{}/{} history_len={} depth={}",
@@ -1987,6 +2094,7 @@ async fn execute_skill_chain(
             logical_tenant: route.logical.tenant.clone(),
             logical_namespace: route.logical.namespace.clone(),
             logical_funcname: route.logical.funcname.clone(),
+            allowed_skillep_ids: allowed_skillep_ids.clone(),
         };
         let child_tasks = FuturesUnordered::new();
         for (original_index, call) in parsed.tool_calls.into_iter().enumerate() {
@@ -2029,8 +2137,14 @@ pub(super) async fn handle_skill_call_chain(
     remain_path: String,
     prefix: &str,
     skills_namespace: &str,
+    allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
+    cancel_token: CancellationToken,
 ) -> Result<Response, StatusCode> {
+    let allowed: Option<HashSet<String>> = allowed_child_skilleps
+        .map(|ids| ids.iter().cloned().collect());
+    let allowed_ref = allowed.as_ref();
+
     let (req_parts, req_body) = req.into_parts();
     let req_headers = req_parts.headers.clone();
     let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
@@ -2043,7 +2157,7 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes) {
+    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
         Ok(chain) => chain,
         Err(SkillChainRequestError::BadRequest)
             if req_headers.get(SKILL_CHAIN_CHILD_HEADER).is_some() =>
@@ -2096,6 +2210,8 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
+    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
+
     if !skill_trace_enabled(&req_headers) {
         return match execute_skill_chain(
             gw,
@@ -2106,7 +2222,9 @@ pub(super) async fn handle_skill_call_chain(
             remain_path,
             prefix.to_string(),
             skills_namespace.to_string(),
+            allowed_arc,
             None,
+            cancel_token,
         )
         .await
         {
@@ -2141,6 +2259,23 @@ pub(super) async fn handle_skill_call_chain(
     let remain_path_for_task = remain_path.clone();
     let prefix_for_task = prefix.to_string();
     let skills_namespace_for_task = skills_namespace.to_string();
+    let cancel_token_for_task = cancel_token;
+    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
+    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
+    // checks in execute_skill_chain fire when the SSE client drops the connection,
+    // exactly as they do for MCP callers whose token is sourced from context.ct.
+    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
+    // execution completes normally, so the SSE channel closes without waiting for
+    // the HTTP client to disconnect.
+    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel_for_watcher = cancel_token_for_task.clone();
+    let tx_for_watcher = tx.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
+            _ = exec_done_rx => {}
+        }
+    });
 
     tokio::spawn(async move {
         let root_query = latest_user_query(&chain.history);
@@ -2158,12 +2293,15 @@ pub(super) async fn handle_skill_call_chain(
             remain_path_for_task,
             prefix_for_task,
             skills_namespace_for_task,
+            allowed_arc,
             Some(trace.clone()),
+            cancel_token_for_task.clone(),
         );
         tokio::pin!(exec);
 
         let result = tokio::select! {
             _ = trace_for_closed.tx.closed() => return,
+            _ = cancel_token_for_task.cancelled() => return,
             result = &mut exec => result,
         };
 
@@ -2194,6 +2332,7 @@ pub(super) async fn handle_skill_call_chain(
             }
         }
         let _ = emit_trace_done(&trace).await;
+        let _ = exec_done_tx.send(());
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -2217,8 +2356,14 @@ pub(super) async fn handle_skill_debug_call(
     remain_path: String,
     prefix: &str,
     skills_namespace: &str,
+    allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
+    cancel_token: CancellationToken,
 ) -> Result<Response, StatusCode> {
+    let allowed: Option<HashSet<String>> = allowed_child_skilleps
+        .map(|ids| ids.iter().cloned().collect());
+    let allowed_ref = allowed.as_ref();
+
     let (req_parts, req_body) = req.into_parts();
     let req_headers = req_parts.headers.clone();
     let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
@@ -2231,7 +2376,7 @@ pub(super) async fn handle_skill_debug_call(
         }
     };
 
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes) {
+    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
         Ok(chain) => chain,
         Err(SkillChainRequestError::ClientProvidedTools) => {
             return Ok(Response::builder()
@@ -2246,6 +2391,8 @@ pub(super) async fn handle_skill_debug_call(
                 .unwrap())
         }
     };
+
+    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
 
     let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
     let trace = SkillChainTraceState {
@@ -2263,6 +2410,23 @@ pub(super) async fn handle_skill_debug_call(
     let remain_path_for_task = remain_path.clone();
     let prefix_for_task = prefix.to_string();
     let skills_namespace_for_task = skills_namespace.to_string();
+    let cancel_token_for_task = cancel_token;
+    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
+    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
+    // checks in execute_skill_chain fire when the SSE client drops the connection,
+    // exactly as they do for MCP callers whose token is sourced from context.ct.
+    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
+    // execution completes normally, so the SSE channel closes without waiting for
+    // the HTTP client to disconnect.
+    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel_for_watcher = cancel_token_for_task.clone();
+    let tx_for_watcher = tx.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
+            _ = exec_done_rx => {}
+        }
+    });
 
     tokio::spawn(async move {
         let root_query = latest_user_query(&chain.history);
@@ -2280,12 +2444,15 @@ pub(super) async fn handle_skill_debug_call(
             remain_path_for_task,
             prefix_for_task,
             skills_namespace_for_task,
+            allowed_arc,
             Some(trace.clone()),
+            cancel_token_for_task.clone(),
         );
         tokio::pin!(exec);
 
         let result = tokio::select! {
             _ = trace_for_closed.tx.closed() => return,
+            _ = cancel_token_for_task.cancelled() => return,
             result = &mut exec => result,
         };
 
@@ -2316,6 +2483,7 @@ pub(super) async fn handle_skill_debug_call(
             }
         }
         let _ = emit_trace_done(&trace).await;
+        let _ = exec_done_tx.send(());
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -2334,19 +2502,19 @@ mod tests {
     use super::{
         build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
         parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
-        skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
+        read_child_trace_sse, skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
         ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainRequestError, SkillChainTraceState, SkillTraceFailReason,
-        SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
+        SkillChainChildTraceState, SkillChainRequestError, SkillChainTraceState,
+        SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use futures::future::BoxFuture;
     use futures::stream::FuturesUnordered;
     use futures::FutureExt;
     use serde_json::{json, Value};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::convert::Infallible;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
@@ -2356,7 +2524,7 @@ mod tests {
         let body =
             br#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}]}"#;
         assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
+            parse_skill_chain_request(&headers, body, None).unwrap_err(),
             SkillChainRequestError::ClientProvidedTools
         );
     }
@@ -2365,13 +2533,13 @@ mod tests {
     fn parse_skill_chain_request_injects_tool_for_empty_tools() {
         let headers = HeaderMap::new();
         let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
-        let parsed = parse_skill_chain_request(&headers, body).unwrap();
+        let parsed = parse_skill_chain_request(&headers, body, None).unwrap();
         assert_eq!(parsed.current_depth, 1);
         assert_eq!(parsed.history.len(), 1);
         assert_eq!(parsed.template.get("stream"), Some(&Value::Bool(false)));
         assert_eq!(
             parsed.template.get("tools"),
-            Some(&skill_chain_tool_definition())
+            Some(&skill_chain_tool_definition(None))
         );
         let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
         let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
@@ -2386,13 +2554,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_skill_chain_request_omits_tools_for_empty_allowlist() {
+        let headers = HeaderMap::new();
+        let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
+        let allowed = HashSet::new();
+        let parsed = parse_skill_chain_request(&headers, body, Some(&allowed)).unwrap();
+        assert_eq!(parsed.current_depth, 1);
+        assert!(parsed.template.get("tools").is_none());
+
+        let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
+        let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
+        assert!(rebuilt_json.get("tools").is_none());
+        assert_eq!(rebuilt_json.get("stream"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
     fn parse_skill_chain_request_rejects_invalid_child_depth() {
         let mut headers = HeaderMap::new();
         headers.insert(SKILL_CHAIN_CHILD_HEADER, HeaderValue::from_static("1"));
         headers.insert(SKILL_CHAIN_DEPTH_HEADER, HeaderValue::from_static("0"));
         let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
         assert_eq!(
-            parse_skill_chain_request(&headers, body).unwrap_err(),
+            parse_skill_chain_request(&headers, body, None).unwrap_err(),
             SkillChainRequestError::BadRequest
         );
     }
@@ -2418,7 +2601,7 @@ mod tests {
         );
         assert_eq!(
             split_skillep_id("acme/default").unwrap_err(),
-            "Error: invalid skillep_id"
+            "Error: invalid skillep_id 'acme/default'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value."
         );
     }
 
@@ -2571,6 +2754,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2603,12 +2787,13 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
 
         assert_eq!(result.tool_call_id, "call_bad_id");
-        assert_eq!(result.tool_result, "Error: invalid skillep_id");
+        assert_eq!(result.tool_result, "Error: invalid skillep_id 'acme/default'. Expected format: owner_tenant/namespace/skillname. Do not retry with the same value.");
         assert_eq!(result.fail_reason, None);
     }
 
@@ -2640,6 +2825,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2686,6 +2872,7 @@ mod tests {
                 logical_tenant: "acme".to_string(),
                 logical_namespace: "skills".to_string(),
                 logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
             },
         )
         .await;
@@ -2744,6 +2931,274 @@ mod tests {
         assert_eq!(
             results[1].fail_reason,
             Some(SkillTraceFailReason::TransportError)
+        );
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase1_none_gives_unconstrained_tool() {
+        let tools = skill_chain_tool_definition(None);
+        let arr = tools.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let props = &arr[0]["function"]["parameters"]["properties"]["skillep_id"];
+        assert!(props.get("enum").is_none());
+        assert_eq!(props["type"].as_str().unwrap(), "string");
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase2_empty_gives_no_tools() {
+        let tools = skill_chain_tool_definition(Some(&HashSet::new()));
+        assert_eq!(tools.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn skill_chain_tool_definition_phase2_non_empty_gives_enum() {
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/pricing".to_string());
+        let tools = skill_chain_tool_definition(Some(&allowed));
+        let arr = tools.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let enum_vals = arr[0]["function"]["parameters"]["properties"]["skillep_id"]["enum"]
+            .as_array()
+            .unwrap();
+        assert_eq!(enum_vals.len(), 1);
+        assert_eq!(enum_vals[0].as_str().unwrap(), "acme/default/pricing");
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_blocks_empty_allowlist() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_blocked".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(HashSet::new())),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_blocked");
+        assert_eq!(
+            result.tool_result,
+            "Error: skill endpoint not in allowed list"
+        );
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_permits_listed_skillep_id() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/pricing".to_string());
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_ok".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(allowed)),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_ok");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_blocks_unlisted_skillep_id() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let mut allowed = HashSet::new();
+        allowed.insert("acme/default/search".to_string());
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_notallowed".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: Some(Arc::new(allowed)),
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_notallowed");
+        assert_eq!(
+            result.tool_result,
+            "Error: skill endpoint not in allowed list"
+        );
+        assert_eq!(result.fail_reason, None);
+    }
+
+    #[tokio::test]
+    async fn execute_parallel_child_call_phase1_none_allowlist_passthrough() {
+        let mut debug_mocks = HashMap::new();
+        debug_mocks.insert(
+            "acme/default/pricing".to_string(),
+            "mock child result".to_string(),
+        );
+        let result = execute_parallel_child_call(
+            ParallelChildTaskInput {
+                original_index: 0,
+                call: ParsedSkillToolCall {
+                    id: "call_pass".to_string(),
+                    name: "call_skillep".to_string(),
+                    arguments:
+                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
+                    raw: json!({}),
+                },
+            },
+            ParallelChildTaskContext {
+                current_depth: 1,
+                headers: HeaderMap::new(),
+                debug_mocks: Arc::new(debug_mocks),
+                child_http_client: reqwest::Client::new(),
+                trace: None,
+                direct_child_depth: 2,
+                logical_tenant: "acme".to_string(),
+                logical_namespace: "skills".to_string(),
+                logical_funcname: "parent".to_string(),
+                allowed_skillep_ids: None,
+            },
+        )
+        .await;
+
+        assert_eq!(result.tool_call_id, "call_pass");
+        assert_eq!(result.tool_result, "mock child result");
+        assert_eq!(result.fail_reason, None);
+    }
+
+    // Regression: read_child_trace_sse must return promptly after [DONE] even when
+    // the server keeps the HTTP connection open (never sends the final chunked EOF).
+    // Before the fix, the watcher's tx clone kept the mpsc channel alive indefinitely,
+    // causing read_child_trace_sse to block in stream.next() after [DONE] was seen.
+    #[tokio::test]
+    async fn read_child_trace_sse_completes_at_done_without_transport_eof() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A complete child skill trace that ends with [DONE].
+        // The server will NOT close the connection afterwards, simulating the
+        // watcher-sender deadlock that existed before the break 'outer fix.
+        let sse_payload = concat!(
+            "event: skill_trace\n",
+            "data: {\"type\":\"call_start\",\"call_id\":\"c1\",\"parent_call_id\":null,\"depth\":1,\"skill\":\"acme/default/child\",\"ts_ms\":0}\n\n",
+            "event: skill_trace\n",
+            "data: {\"type\":\"call_finish\",\"call_id\":\"c1\",\"parent_call_id\":null,\"depth\":1,\"skill\":\"acme/default/child\",\"ts_ms\":1,\"result_code\":\"pass\"}\n\n",
+            "event: skill_result\n",
+            "data: {\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"42\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            // Send all SSE data as one HTTP/1.1 chunked response, then hang.
+            let chunk = format!("{:x}\r\n{}\r\n", sse_payload.len(), sse_payload);
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n{}",
+                chunk
+            );
+            socket.write_all(http_resp.as_bytes()).await.unwrap();
+            // Intentionally omit the terminal "0\r\n\r\n" chunk so EOF never arrives.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let resp = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{}", port))
+            .send()
+            .await
+            .unwrap();
+
+        let (tx, _rx) = mpsc::channel::<Result<String, Infallible>>(32);
+        let trace = SkillChainTraceState {
+            tx,
+            root_call_id: "root_id".to_string(),
+            root_skill: "acme/default/parent".to_string(),
+            started_at: Instant::now(),
+            include_content: false,
+        };
+        let child_trace = SkillChainChildTraceState {
+            call_id: "child_call_id".to_string(),
+            skill: "acme/default/child".to_string(),
+            started_at: Instant::now(),
+            local_root_call_id: Arc::new(Mutex::new(None)),
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_child_trace_sse(&trace, &child_trace, 2, resp),
+        )
+        .await
+        .expect("read_child_trace_sse must complete after [DONE] without waiting for transport EOF");
+
+        let result = result.unwrap();
+        assert!(result.skill_result.is_some(), "skill_result must be captured");
+        assert_eq!(
+            result.terminal_result_code.as_deref(),
+            Some("pass"),
+            "call_finish result_code must be forwarded"
         );
     }
 }

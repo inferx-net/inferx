@@ -62,6 +62,8 @@ spec:
           - name: INFERX_TENANT_POLICY
             value: >-
               {"quota_exempt":true,"allow_mem_standby":true,"max_funccount":1000,"max_replica":8,"max_standby":8,"max_queue_len":1000}
+          - name: SKILL_EP_CONSTRAINT
+            value: "false"
           volumeMounts:
             - mountPath: /opt/inferx/log
               name: opt-inferx-log

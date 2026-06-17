@@ -310,6 +310,10 @@
         min-width: 280px;
     }
 
+    .skills-marketplace-description {
+        text-align: left !important;
+    }
+
     .skill-visibility-badge {
         display: inline-flex;
         align-items: center;
@@ -430,19 +434,19 @@
 
 <div class="skills-page">
     <nav class="skills-page-nav" aria-label="Skills pages">
-        <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Functions</a>
+        <a href="{{ url_for('prefix.ListSkills') }}" class="{% if current_view == 'my_skills' %}active{% endif %}">My Skills</a>
         <a href="{{ url_for('prefix.SkillMarketplace') }}" class="{% if current_view == 'marketplace' %}active{% endif %}">Public</a>
     </nav>
 
     <section class="skills-guide">
         <div class="skills-guide-header">
-            <h2>How to Use Functions Through MCP</h2>
+            <h2>How to Use Skills Through MCP</h2>
             <button id="skills-guide-toggle" class="ix-btn secondary" type="button" aria-expanded="false" aria-controls="skills-guide-body">Show</button>
         </div>
         <div id="skills-guide-body" hidden>
-            <p>To use functions in agents such as OpenCode or OpenClaw, first subscribe the functions you want exposed to tenant <strong>{{ active_tenant }}</strong>, then configure your agent with the InferX MCP server URL and API key.</p>
+            <p>To use skills in agents such as OpenCode or OpenClaw, first subscribe the skills you want exposed to tenant <strong>{{ active_tenant }}</strong>, then configure your agent with the InferX MCP server URL and API key.</p>
             <ol class="skills-guide-steps">
-                <li>Subscribe a function from the `Public` tab or your own functions.</li>
+                <li>Subscribe a skill from the `Public` tab or your own skills.</li>
                 <li>Configure your MCP client or agent with the MCP server URL below.</li>
                 <li>Use the API key below when you config agent for authentication.</li>
             </ol>
@@ -493,10 +497,10 @@
     <section class="skills-section">
         <div class="skills-header">
             <div>
-                <h2>My Own Functions</h2>
-                <p class="skills-subtitle">Functions you own under tenant <strong>{{ active_tenant }}</strong>.</p>
+                <h2>My Own Skills</h2>
+                <p class="skills-subtitle">Skills you own under tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
-            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Function</a>
+            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
         </div>
 
         {% if my_skills %}
@@ -530,7 +534,7 @@
                             {% endif %}
                         </div>
                     </td>
-                    <td>{{ 'Published' if skill.get('is_published') else 'Draft' }}</td>
+                    <td>{{ 'Published' if skill.get('is_published') else 'Unpublished' }}</td>
                     <td>
                         <div class="ix-row-actions">
                             {% if can_manage_subscriptions %}
@@ -558,6 +562,7 @@
                             </button>
                             {% endif %}
                             {% endif %}
+                            {% if is_inferx_admin %}
                             {% if skill.get('is_published') %}
                             <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">
                                 <button class="ix-btn secondary" type="submit">Unpublish</button>
@@ -567,7 +572,8 @@
                                 <button class="ix-btn secondary" type="submit">Publish</button>
                             </form>
                             {% endif %}
-                            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this function?');">
+                            {% endif %}
+                            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}" onsubmit="return confirm('Delete this skill?');">
                                 <button class="ix-btn danger" type="submit">Delete</button>
                             </form>
                         </div>
@@ -583,8 +589,8 @@
     <section class="skills-section" id="skills-subscriptions">
         <div class="skills-header">
             <div>
-                <h2>My Subscribed Functions</h2>
-                <p class="skills-subtitle">Functions currently exposed to tenant <strong>{{ active_tenant }}</strong> through MCP subscriptions.</p>
+                <h2>My Subscribed Skills</h2>
+                <p class="skills-subtitle">Skills currently exposed to tenant <strong>{{ active_tenant }}</strong> through MCP subscriptions.</p>
             </div>
         </div>
 
@@ -592,7 +598,7 @@
         <table class="ix-table">
             <thead>
                 <tr>
-                    <th>Function</th>
+                    <th>Skill</th>
                     <th>Owner</th>
                     <th>Description</th>
                     <th>Actions</th>
@@ -611,7 +617,7 @@
                         <a href="{{ url_for('prefix.SkillDetail', owner=row.get('owner_tenant'), ns=row.get('owner_namespace'), name=row.get('skillname')) }}">{{ row.get('skillname') }}</a>
                     </td>
                     <td>{{ row.get('owner_tenant') }}/{{ row.get('owner_namespace') }}</td>
-                    <td>{{ row.get('description') or '—' }}</td>
+                    <td class="skills-marketplace-description">{{ row.get('description') or '—' }}</td>
                     <td>
                         {% if can_manage_subscriptions %}
                         <div class="ix-row-actions">
@@ -661,7 +667,7 @@
                 {% if is_inferx_admin %}
                 <label class="skills-marketplace-toggle">
                     <input type="checkbox" name="include_unpublished" value="1" {% if marketplace_include_unpublished %}checked{% endif %}>
-                    Show drafts
+                    Show unpublished
                 </label>
                 {% endif %}
                 <button class="ix-btn" type="submit">Apply</button>
@@ -684,10 +690,9 @@
         <table class="ix-table skills-marketplace-table">
             <thead>
                 <tr>
-                    <th>Function</th>
+                    <th>Skill</th>
                     <th>Owner</th>
                     <th>Description</th>
-                    <th>Price</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
@@ -703,8 +708,7 @@
                         <a href="{{ url_for('prefix.SkillDetail', owner=skill.get('owner_tenant'), ns=skill.get('owner_namespace'), name=skill.get('skillname')) }}">{{ skill.get('skillname') }}</a>
                     </td>
                     <td>{{ skill.get('owner_tenant') }}/{{ skill.get('owner_namespace') }}</td>
-                    <td class="skills-marketplace-description">{{ skill.get('description') or 'No description provided.' }}</td>
-                    <td>{% if skill.get('earning_type') == 'free' %}Free{% elif skill.get('user_price_microcents') is not none %}${{ '%.4f'|format((skill.get('user_price_microcents')|int) / 1000000) }}/run{% else %}Paid{% endif %}</td>
+                    <td class="skills-marketplace-description">{{ skill.get('description') or '—' }}</td>
                     <td>
                         <div>
                             <span class="skill-visibility-badge {{ 'published' if skill.get('is_published') else 'unpublished' }}">
@@ -755,7 +759,7 @@
             </tbody>
         </table>
         {% else %}
-        <div class="skills-empty">{% if is_inferx_admin and marketplace_include_unpublished %}No functions are currently available.{% else %}No published functions are currently available.{% endif %}</div>
+        <div class="skills-empty">{% if is_inferx_admin and marketplace_include_unpublished %}No skills are currently available.{% else %}No published skills are currently available.{% endif %}</div>
         {% endif %}
     </section>
     {% endif %}
@@ -820,14 +824,14 @@
 <div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>
     <div class="skill-subscribe-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-subscribe-modal-title">
         <div>
-            <h3 id="skill-subscribe-modal-title">Subscribe to Function</h3>
+            <h3 id="skill-subscribe-modal-title">Subscribe to Skill</h3>
             <p id="skill-subscribe-modal-skill" class="skill-subscribe-meta"></p>
         </div>
         <div class="skill-subscribe-form">
             <div>
                 <label for="skill-subscribe-alias-input">Tool alias</label>
                 <input id="skill-subscribe-alias-input" type="text" value="">
-                <p class="skill-validation-hint">Agents will call this function as "<span id="skill-subscribe-alias-preview"></span>"</p>
+                <p class="skill-validation-hint">Agents will call this skill as "<span id="skill-subscribe-alias-preview"></span>"</p>
                 <div id="skill-subscribe-alias-error" class="skill-validation-error"></div>
             </div>
             <div class="skill-subscribe-actions">

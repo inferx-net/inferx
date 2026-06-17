@@ -54,7 +54,7 @@
         font-weight: 700;
     }
     .skill-status-badge.published { background: #dcfce7; color: #166534; }
-    .skill-status-badge.draft { background: #fef3c7; color: #92400e; }
+    .skill-status-badge.unpublished { background: #fef3c7; color: #92400e; }
     .playground-grid { display: grid; gap: 12px; }
     .playground-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #334155; }
     .playground-label-row {
@@ -79,9 +79,19 @@
     }
     .playground-toggle-btn:hover { color: #1f2937; border-color: #b7c6dc; }
     .playground-toggle-btn:focus-visible { outline: 2px solid #cbd5e1; outline-offset: 2px; }
+    #skill-configuration-body[hidden],
+    #skill-integration-body[hidden],
     #skill-debugger-body[hidden],
     #skill-debug-mocks-editor[hidden] {
         display: none !important;
+    }
+    .skill-inline-toggle-row {
+        display: flex;
+        justify-content: flex-start;
+        margin-bottom: 10px;
+    }
+    .skill-inline-panel > :last-child {
+        margin-bottom: 0;
     }
     .playground-field textarea {
         width: 100%;
@@ -97,8 +107,11 @@
     }
     .playground-field textarea[readonly] { background: #f8fafc; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .playground-field textarea.autogrow {
-        max-height: 70vh;
+        max-height: 80vh;
         overflow-y: auto;
+    }
+    #skill-prompt-input.autogrow {
+        max-height: 50vh;
     }
     .playground-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .playground-metrics { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -433,7 +446,10 @@
         margin-top: 10px;
         padding-left: 12px;
     }
-    .copyable-area { position: relative; }
+    .copyable-area {
+        position: relative;
+        display: block;
+    }
     .copyable-area textarea {
         width: 100%;
         box-sizing: border-box;
@@ -450,6 +466,7 @@
         position: absolute;
         top: 8px;
         right: 10px;
+        z-index: 1;
         background: #e2e8f0;
         border: none;
         border-radius: 4px;
@@ -457,6 +474,14 @@
         font-size: 12px;
         cursor: pointer;
         color: #475569;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+    }
+    .copyable-area:hover .copyable-area-copy,
+    .copyable-area:focus-within .copyable-area-copy {
+        opacity: 1;
+        pointer-events: auto;
     }
     .copyable-area-copy:hover { background: #cbd5e1; }
     .skill-data-viewer {
@@ -475,6 +500,28 @@
     @media (max-width: 720px) {
         .skill-meta-grid { grid-template-columns: 1fr; }
     }
+    .skill-subscribe-modal[hidden] { display: none; }
+    .skill-subscribe-modal {
+        position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
+        display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000;
+    }
+    .skill-subscribe-dialog {
+        width: min(100%, 480px); background: #fff; border-radius: 6px;
+        border: 1px solid #d7dee8; padding: 18px; display: grid; gap: 14px;
+        box-shadow: 0 22px 48px rgba(15, 23, 42, 0.18);
+    }
+    .skill-subscribe-dialog h3 { margin: 0; font-size: 20px; color: #111827; }
+    .skill-subscribe-form { display: grid; gap: 12px; }
+    .skill-subscribe-form label { display: block; margin-bottom: 6px; color: #0f172a; font-weight: 600; }
+    .skill-subscribe-form p { margin: 0; }
+    .skill-subscribe-form input {
+        width: 100%; box-sizing: border-box; padding: 8px 10px;
+        border: 1px solid #b7c6dc; border-radius: 4px; background: #fff; color: #1f2937; font: inherit;
+    }
+    .skill-subscribe-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .skill-subscribe-meta { color: #475569; font-size: 14px; }
+    .skill-validation-error { color: #b91c1c; font-size: 13px; }
+    .skill-validation-hint { color: #475569; font-size: 13px; }
 </style>
 
 <div class="skill-detail-page">
@@ -485,7 +532,15 @@
         </div>
         <div class="skill-detail-actions">
             <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Back</a>
+            {% if can_manage_subscriptions %}
+            {% if is_subscribed %}
+            <button class="ix-btn danger" type="button" id="skill-detail-unsubscribe-btn">Unsubscribe</button>
+            {% else %}
+            <button class="ix-btn" type="button" id="skill-detail-subscribe-btn">Subscribe</button>
+            {% endif %}
+            {% endif %}
             {% if can_manage %}
+            {% if is_inferx_admin %}
             {% if skill.get('is_published') %}
             <form method="post" action="{{ url_for('prefix.SkillUnpublish', owner=owner, ns=ns, name=name) }}" style="display:inline;">
                 <button class="ix-btn secondary" type="submit">Unpublish</button>
@@ -495,7 +550,8 @@
                 <button class="ix-btn" type="submit">Publish</button>
             </form>
             {% endif %}
-            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this function? This cannot be undone.');" style="display:inline;">
+            {% endif %}
+            <form method="post" action="{{ url_for('prefix.SkillDelete', owner=owner, ns=ns, name=name) }}" onsubmit="return confirm('Delete this skill? This cannot be undone.');" style="display:inline;">
                 <button class="ix-btn danger" type="submit">Delete</button>
             </form>
             {% endif %}
@@ -503,14 +559,26 @@
     </div>
 
     <section class="skill-panel">
-        <h2>Configuration</h2>
+        <div class="skill-panel-header">
+            <h2>Configuration</h2>
+            <button
+                id="skill-configuration-toggle"
+                class="playground-toggle-btn"
+                type="button"
+                aria-expanded="true"
+                aria-controls="skill-configuration-body"
+            >
+                Hide
+            </button>
+        </div>
+        <div id="skill-configuration-body">
         <div class="skill-meta-grid">
             <strong>Status</strong>
             <div>
                 {% if skill.get('is_published') %}
                 <span class="skill-status-badge published">Published</span>
                 {% else %}
-                <span class="skill-status-badge draft">Draft</span>
+                <span class="skill-status-badge unpublished">Unpublished</span>
                 {% endif %}
             </div>
             <strong>Owner</strong><div>{{ owner }} / {{ ns }}</div>
@@ -530,7 +598,39 @@
             {% endif %}
             <strong>Created By</strong>
             <div>{{ skill.get('revision_created_by') or '—' }}</div>
-            <strong>Function Data</strong>
+            {% set subskills = skill.get('allowed_child_skilleps') or [] %}
+            {% if subskills %}
+            <strong>Sub-skills</strong>
+            <div>
+                {% for ep in subskills %}
+                {% set parts = ep.split('/') %}
+                {% if parts | length == 3 %}
+                <a href="{{ url_for('prefix.SkillDetail', owner=parts[0], ns=parts[1], name=parts[2]) }}">{{ ep }}</a>{% if not loop.last %}<br>{% endif %}
+                {% else %}
+                <span>{{ ep }}</span>{% if not loop.last %}<br>{% endif %}
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+            <strong>Integration</strong>
+            <div>
+                <div class="skill-inline-toggle-row">
+                    <button
+                        id="skill-integration-toggle"
+                        class="ix-btn secondary"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="skill-integration-body"
+                    >
+                        Show
+                    </button>
+                </div>
+                <div id="skill-integration-body" class="skill-inline-panel" hidden>
+                    {% set client_setup_inline = true %}
+                    {% include '_client_setup.html' %}
+                </div>
+            </div>
+            <strong>Skill Data</strong>
             <div>
                 {% if can_manage %}
                 <button class="ix-btn secondary" type="button" id="skill-data-view-btn">View</button>
@@ -540,24 +640,28 @@
                 {% endif %}
             </div>
         </div>
+        </div>
     </section>
 
     {% if can_manage %}
     <section class="skill-panel" id="skill-data-viewer" hidden>
-        <h2>Function Data</h2>
-        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No function data found.">{{ skill_prefix_text }}</textarea>
+        <h2>Skill Data</h2>
+        <textarea class="skill-data-viewer" rows="14" readonly spellcheck="false" placeholder="No skill data found.">{{ skill_prefix_text }}</textarea>
     </section>
     {% endif %}
-
-    {% set section_class = 'skill-panel' %}
-    {% include '_client_setup.html' %}
 
     <section class="skill-panel">
         <h2>Playground</h2>
         <div class="playground-grid">
             <div class="playground-field">
-                <label for="skill-prompt-input">User Message</label>
-                <textarea id="skill-prompt-input" rows="4" placeholder="Type your message here…">What's in the context?</textarea>
+                <div class="playground-label-row">
+                    <label for="skill-prompt-input">User Message</label>
+                    <div class="playground-actions">
+                        <button id="skill-prompt-load-btn" class="ix-btn secondary" type="button">Load from File</button>
+                    </div>
+                </div>
+                <textarea id="skill-prompt-input" class="autogrow" rows="4" placeholder="Type your message here…">What's in the context?</textarea>
+                <input id="skill-prompt-file-input" type="file" accept=".txt,.md,.markdown,.json,.csv,.log,text/plain,text/markdown,application/json" hidden>
             </div>
             <div class="playground-actions">
                 <button id="skill-run-btn" class="ix-btn" type="button">Run</button>
@@ -573,8 +677,14 @@
                 <textarea id="skill-trace-output" class="trace-output" rows="8" readonly placeholder="Trace events will appear here…"></textarea>
             </div>
             <div class="playground-field">
-                <label for="skill-output">Output</label>
-                <textarea id="skill-output" class="autogrow" rows="6" readonly placeholder="Response will appear here…"></textarea>
+                <div class="playground-label-row">
+                    <label for="skill-output">Output</label>
+                    <button id="skill-output-download-btn" class="ix-btn secondary" type="button">Download</button>
+                </div>
+                <div class="copyable-area">
+                    <button class="copyable-area-copy ix-btn secondary" type="button" onclick="copyTextFromElement('skill-output')">Copy</button>
+                    <textarea id="skill-output" class="autogrow" rows="6" readonly placeholder="Response will appear here…"></textarea>
+                </div>
             </div>
         </div>
     </section>
@@ -672,6 +782,8 @@
     const canManage = {{ can_manage | tojson }};
 
     const promptInput = document.getElementById('skill-prompt-input');
+    const promptLoadBtn = document.getElementById('skill-prompt-load-btn');
+    const promptFileInput = document.getElementById('skill-prompt-file-input');
     const outputEl = document.getElementById('skill-output');
     const runBtn = document.getElementById('skill-run-btn');
     const cancelBtn = document.getElementById('skill-cancel-btn');
@@ -681,6 +793,11 @@
     const tpsEl = document.getElementById('skill-metric-tps');
     const tracePanelEl = document.getElementById('skill-trace-panel');
     const traceOutputEl = document.getElementById('skill-trace-output');
+    const outputDownloadBtn = document.getElementById('skill-output-download-btn');
+    const configurationToggleBtn = document.getElementById('skill-configuration-toggle');
+    const configurationBodyEl = document.getElementById('skill-configuration-body');
+    const integrationToggleBtn = document.getElementById('skill-integration-toggle');
+    const integrationBodyEl = document.getElementById('skill-integration-body');
     const skillDataViewBtn = document.getElementById('skill-data-view-btn');
     const skillDataViewer = document.getElementById('skill-data-viewer');
     const debugPanelToggleBtn = document.getElementById('skill-debugger-toggle');
@@ -755,6 +872,58 @@
         if (!el) return;
         el.style.height = 'auto';
         el.style.height = `${Math.max(el.scrollHeight, 120)}px`;
+    }
+
+    function readTextFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+            reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+            reader.readAsText(file);
+        });
+    }
+
+    function sanitizeDownloadName(value) {
+        return String(value || '')
+            .trim()
+            .replace(/[^a-zA-Z0-9._-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '') || 'skill';
+    }
+
+    function downloadTextFile(filename, content, mimeType) {
+        const blob = new Blob([content], { type: mimeType || 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    async function saveTextFileWithPicker(filename, content) {
+        if (!window.isSecureContext || typeof window.showSaveFilePicker !== 'function') return false;
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{
+                    description: 'Markdown file',
+                    accept: {
+                        'text/markdown': ['.md'],
+                        'text/plain': ['.md', '.txt'],
+                    },
+                }],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return true;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return true;
+            return false;
+        }
     }
 
     function resetTrace() {
@@ -1456,6 +1625,7 @@
             model: normalFuncname,
             messages: [{ role: 'user', content: prompt }],
             stream: true,
+            chat_template_kwargs: { enable_thinking: false },
         });
 
         try {
@@ -1581,6 +1751,74 @@
 
     cancelBtn.addEventListener('click', () => {
         if (abortController) { abortController.abort(); abortController = null; }
+    });
+
+    autoResizeTextarea(promptInput);
+    promptInput?.addEventListener('input', () => {
+        autoResizeTextarea(promptInput);
+    });
+
+    promptLoadBtn?.addEventListener('click', () => {
+        promptFileInput?.click();
+    });
+
+    promptFileInput?.addEventListener('change', async (event) => {
+        const file = event.target && event.target.files ? event.target.files[0] : null;
+        if (!file) return;
+        try {
+            const text = await readTextFile(file);
+            if (promptInput) {
+                promptInput.value = text;
+                autoResizeTextarea(promptInput);
+                promptInput.focus();
+            }
+            setStatus(`Loaded ${file.name}.`, false);
+        } catch (err) {
+            setStatus(err && err.message ? err.message : 'Failed to load file.', true);
+        } finally {
+            if (promptFileInput) promptFileInput.value = '';
+        }
+    });
+
+    outputDownloadBtn?.addEventListener('click', async () => {
+        const content = outputEl?.value || '';
+        if (!content.trim()) {
+            setStatus('Nothing to download yet.', true);
+            return;
+        }
+        const filename = `${sanitizeDownloadName(name)}-output.md`;
+        const mimeType = 'text/markdown;charset=utf-8';
+        const savedWithPicker = await saveTextFileWithPicker(filename, content);
+        if (!savedWithPicker) {
+            downloadTextFile(filename, content, mimeType);
+            if (!window.isSecureContext || typeof window.showSaveFilePicker !== 'function') {
+                setStatus('Save dialog unavailable in this browser/context. Downloaded with browser fallback.', false);
+            }
+        }
+    });
+
+    const setConfigurationVisible = (visible) => {
+        if (!configurationBodyEl || !configurationToggleBtn) return;
+        configurationBodyEl.hidden = !visible;
+        configurationToggleBtn.textContent = visible ? 'Hide' : 'Show';
+        configurationToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    };
+    setConfigurationVisible(true);
+    configurationToggleBtn?.addEventListener('click', () => {
+        const nextVisible = !!configurationBodyEl?.hidden;
+        setConfigurationVisible(nextVisible);
+    });
+
+    const setIntegrationVisible = (visible) => {
+        if (!integrationBodyEl || !integrationToggleBtn) return;
+        integrationBodyEl.hidden = !visible;
+        integrationToggleBtn.textContent = visible ? 'Hide' : 'Show';
+        integrationToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    };
+    setIntegrationVisible(false);
+    integrationToggleBtn?.addEventListener('click', () => {
+        const nextVisible = !!integrationBodyEl?.hidden;
+        setIntegrationVisible(nextVisible);
     });
 
     if (canManage && debugRunBtn) {
@@ -1750,4 +1988,118 @@
     window.copyTextFromElement = copyTextFromElement;
 })();
 </script>
+
+{% if can_manage_subscriptions %}
+<div id="skill-subscribe-modal" class="skill-subscribe-modal" hidden>
+    <div class="skill-subscribe-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-subscribe-modal-title">
+        <div>
+            <h3 id="skill-subscribe-modal-title">Subscribe to Skill</h3>
+            <p class="skill-subscribe-meta">{{ owner }}/{{ ns }}/{{ name }}</p>
+        </div>
+        <div class="skill-subscribe-form">
+            <div>
+                <label for="skill-subscribe-alias-input">Tool alias</label>
+                <input id="skill-subscribe-alias-input" type="text" value="">
+                <p class="skill-validation-hint">Agents will call this skill as "<span id="skill-subscribe-alias-preview"></span>"</p>
+                <div id="skill-subscribe-alias-error" class="skill-validation-error"></div>
+            </div>
+            <div class="skill-subscribe-actions">
+                <button id="skill-subscribe-confirm-btn" class="ix-btn" type="button" disabled>Subscribe</button>
+                <button id="skill-subscribe-cancel-btn" class="ix-btn secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const ownerTenant = {{ owner | tojson }};
+    const ownerNamespace = {{ ns | tojson }};
+    const skillname = {{ name | tojson }};
+    const subscribeUrl = {{ url_for('prefix.SkillSubscriptionSubscribe') | tojson }};
+    const unsubscribeUrl = {{ url_for('prefix.SkillSubscriptionUnsubscribe') | tojson }};
+
+    const modal = document.getElementById('skill-subscribe-modal');
+    const aliasInput = document.getElementById('skill-subscribe-alias-input');
+    const aliasPreview = document.getElementById('skill-subscribe-alias-preview');
+    const aliasError = document.getElementById('skill-subscribe-alias-error');
+    const confirmBtn = document.getElementById('skill-subscribe-confirm-btn');
+    const cancelBtn = document.getElementById('skill-subscribe-cancel-btn');
+    const subscribeBtn = document.getElementById('skill-detail-subscribe-btn');
+    const unsubscribeBtn = document.getElementById('skill-detail-unsubscribe-btn');
+
+    function isAliasValid(alias) {
+        return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(alias);
+    }
+
+    function parseJsonResponse(response) {
+        return response.text().then((text) => {
+            let payload = null;
+            try { payload = text ? JSON.parse(text) : null; } catch (_) {}
+            if (!response.ok) {
+                throw new Error((payload && (payload.error || payload.message)) || text || `HTTP ${response.status}`);
+            }
+            return payload;
+        });
+    }
+
+    function validateAlias() {
+        const alias = String(aliasInput.value || '').trim();
+        if (aliasPreview) aliasPreview.textContent = alias.toLowerCase();
+        const valid = isAliasValid(alias);
+        if (aliasError) aliasError.textContent = valid ? '' : 'Alias may contain only letters, numbers, hyphens, underscores, and periods.';
+        if (confirmBtn) confirmBtn.disabled = !valid;
+    }
+
+    function openModal() {
+        aliasInput.value = `${skillname}.${ownerNamespace}.${ownerTenant}`;
+        if (aliasError) aliasError.textContent = '';
+        modal.hidden = false;
+        validateAlias();
+        window.setTimeout(() => aliasInput.focus(), 0);
+    }
+
+    function closeModal() {
+        modal.hidden = true;
+        aliasInput.value = '';
+        if (aliasError) aliasError.textContent = '';
+        if (confirmBtn) confirmBtn.disabled = true;
+    }
+
+    subscribeBtn?.addEventListener('click', openModal);
+    cancelBtn?.addEventListener('click', closeModal);
+    modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    aliasInput?.addEventListener('input', validateAlias);
+
+    confirmBtn?.addEventListener('click', () => {
+        const alias = String(aliasInput.value || '').trim().toLowerCase();
+        if (!isAliasValid(alias)) return;
+        fetch(subscribeUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner_tenant: ownerTenant, owner_namespace: ownerNamespace, skillname, tool_alias: alias }),
+        }).then(parseJsonResponse).then(() => {
+            closeModal();
+            window.location.reload();
+        }).catch((err) => {
+            if (aliasError) aliasError.textContent = err.message || 'Failed to subscribe';
+        });
+    });
+
+    unsubscribeBtn?.addEventListener('click', () => {
+        if (!window.confirm('Unsubscribe from this skill?')) return;
+        fetch(unsubscribeUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ owner_tenant: ownerTenant, owner_namespace: ownerNamespace, skillname }),
+        }).then(parseJsonResponse).then(() => {
+            window.location.reload();
+        }).catch((err) => {
+            window.alert(err.message || 'Failed to unsubscribe');
+        });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

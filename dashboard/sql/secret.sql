@@ -177,11 +177,12 @@ CREATE TABLE SkillRevision (
     skill_id       BIGINT NOT NULL REFERENCES Skill(skill_id),
     version        INTEGER NOT NULL,
     template_id    BIGINT NOT NULL REFERENCES SkillTemplate(template_id),
-    has_cache      BOOLEAN NOT NULL DEFAULT FALSE,
-    cache_status   VARCHAR NOT NULL DEFAULT 'none',
-    cache_ready_at TIMESTAMP,
-    created_at     TIMESTAMP DEFAULT NOW(),
-    created_by     VARCHAR NOT NULL,
+    has_cache               BOOLEAN NOT NULL DEFAULT FALSE,
+    cache_status            VARCHAR NOT NULL DEFAULT 'none',
+    cache_ready_at          TIMESTAMP,
+    allowed_child_skilleps  TEXT[] DEFAULT NULL,
+    created_at              TIMESTAMP DEFAULT NOW(),
+    created_by              VARCHAR NOT NULL,
     UNIQUE(skill_id, version),
     CHECK (cache_status IN ('none', 'pending', 'ready', 'failed'))
 );

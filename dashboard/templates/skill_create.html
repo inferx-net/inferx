@@ -72,19 +72,6 @@
         resize: vertical;
     }
 
-    .skill-inline-options {
-        display: flex;
-        gap: 18px;
-        flex-wrap: wrap;
-    }
-
-    .skill-inline-options label {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-weight: 500;
-    }
-
     .skill-error {
         padding: 10px 12px;
         border: 1px solid #fecaca;
@@ -148,11 +135,279 @@
         background: #f1f5f9;
         color: #475569;
     }
+
+    /* 4-option create mode panel */
+    .skill-mode-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+    }
+
+    @media (max-width: 700px) {
+        .skill-mode-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .skill-mode-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border: 1px solid #d7dee8;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+        font-weight: 500;
+        color: #334155;
+        transition: border-color 0.15s, background 0.15s;
+        user-select: none;
+    }
+
+    .skill-mode-option:has(input:checked) {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        color: #1d4ed8;
+    }
+
+    .skill-mode-option input[type="radio"] {
+        accent-color: #3b82f6;
+        flex-shrink: 0;
+    }
+
+    .skill-mode-help {
+        margin: 10px 0 0;
+        color: #475569;
+        font-size: 0.9em;
+    }
+
+    /* mode action section */
+    .skill-mode-action {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .skill-waiting-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .skill-waiting-status::before {
+        content: "";
+        width: 14px;
+        height: 14px;
+        border: 2px solid #cbd5e1;
+        border-top-color: #2563eb;
+        border-radius: 999px;
+        animation: skill-spinner 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+
+    .skill-busy {
+        opacity: 0.75;
+        cursor: wait;
+    }
+
+    .subskills-dialog-card {
+        background: #fff;
+        border-radius: 6px;
+        padding: 20px;
+        width: min(860px, 94vw);
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .subskills-results {
+        overflow-y: auto;
+        flex: 1;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        min-height: 180px;
+        max-height: 56vh;
+    }
+
+    .subskills-section + .subskills-section {
+        border-top: 1px solid #dbe4f0;
+    }
+
+    .subskills-section-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        background: #eef4fb;
+        border-bottom: 1px solid #dbe4f0;
+        color: #334155;
+        font-size: 0.9em;
+        font-weight: 600;
+    }
+
+    .subskills-section-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .subskills-section-toggle {
+        border: 0;
+        background: transparent;
+        padding: 0;
+        cursor: pointer;
+        color: #1d4ed8;
+        font: inherit;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .subskills-section-toggle:hover {
+        text-decoration: underline;
+    }
+
+    .subskills-section-count {
+        color: #64748b;
+        font-weight: 500;
+    }
+
+    .subskills-result-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f5f9;
+        background: #fff;
+    }
+
+    .subskills-result-row:last-child {
+        border-bottom: 0;
+    }
+
+    .subskills-result-checkbox {
+        margin-top: 2px;
+    }
+
+    .subskills-result-main {
+        min-width: 0;
+    }
+
+    .subskills-result-id {
+        font-size: 0.9em;
+        word-break: break-word;
+    }
+
+    .subskills-result-name-btn {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        color: inherit;
+    }
+
+    .subskills-result-desc {
+        color: #64748b;
+        font-size: 0.82em;
+        margin-top: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .subskills-result-desc[hidden] {
+        display: none !important;
+    }
+
+    .subskills-detail-btn {
+        min-height: 28px;
+        padding: 4px 10px;
+        font-size: 12px;
+        line-height: 1.2;
+        align-self: start;
+    }
+
+    .skill-status-link {
+        color: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+    }
+
+    @keyframes skill-spinner {
+        to { transform: rotate(360deg); }
+    }
 </style>
 
 <div class="skill-create-page">
-    <div>
-        <h1>Create Function</h1>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h1 style="margin:0;">Create Skill</h1>
+    </div>
+
+    <!-- 4 create mode options -->
+    <div class="skill-panel">
+        <div class="skill-mode-grid">
+            <label class="skill-mode-option" id="pdf-mode-label">
+                <input type="radio" name="create_mode" value="import-pdf" checked>
+                Create document skill
+            </label>
+            <label class="skill-mode-option">
+                <input type="radio" name="create_mode" value="import-folder">
+                Import from existing skill
+            </label>
+            <label class="skill-mode-option">
+                <input type="radio" name="create_mode" value="orchestrator">
+                Create orchestrator skill
+            </label>
+            <label class="skill-mode-option">
+                <input type="radio" name="create_mode" value="scratch">
+                Create from scratch
+            </label>
+        </div>
+        <p id="mode-help-scratch" class="skill-mode-help" style="display:none;">Fill in all sections manually to define your skill.</p>
+        <p id="mode-help-import-folder" class="skill-mode-help" style="display:none;">Create a skill from a local skill folder — its contents will prefill the form for you to review and edit. Skill files must be self-contained; external references are not supported.</p>
+        <p id="mode-help-import-pdf" class="skill-mode-help">Create a skill from a document — the document will be converted to skill data and used as the System Prompt, with skill name and description suggested automatically. Currently only PDF files are supported. For large documents, you can convert the file locally using the <a href="https://github.com/inferx-net/inferx/wiki/InferX-Knowledge-Base-Toolkit-How-to" target="_blank" rel="noopener noreferrer">InferX Knowledge Base Toolkit guide</a>.</p>
+        <p id="mode-help-orchestrator" class="skill-mode-help" style="display:none;">Create an orchestrator skill which calls other skills. Metadata will be created automatically for you to review and edit.</p>
+    </div>
+
+    <!-- Option 2: folder import action -->
+    <div id="mode-action-import-folder" style="display:none;">
+        <div class="skill-mode-action">
+            <button type="button" id="skill-import-folder-btn" class="ix-btn secondary" style="margin:0;">Import from Skill Folder</button>
+            <span id="skill-import-status" style="color:#475569;font-size:0.9em;"></span>
+        </div>
+        <p style="margin:6px 0 0;color:#64748b;font-size:0.9em;">Folder must contain <code>SKILL.md</code> at the root; files in <code>references/</code> are merged into the Skill Data.</p>
+    </div>
+    <input id="skill-folder-input" type="file" webkitdirectory style="display:none">
+
+    <!-- Option 3: PDF import -->
+    <div id="mode-action-import-pdf" style="display:none;">
+        <div class="skill-mode-action">
+            <button type="button" id="skill-import-pdf-btn" class="ix-btn secondary" style="margin:0;">Import from Document</button>
+            <button type="button" id="skill-regenerate-pdf-metadata-btn" class="ix-btn secondary" style="margin:0;display:none;">Regenerate Metadata</button>
+            <span id="skill-pdf-status" style="color:#475569;font-size:0.9em;"></span>
+        </div>
+    </div>
+    <input id="skill-pdf-input" type="file" accept=".pdf,application/pdf" style="display:none">
+
+    <!-- Option 4: orchestrator sub-skills action -->
+    <div id="mode-action-orchestrator" style="display:none;">
+        <div class="skill-panel" style="background:#fff;">
+            <h2 style="margin:0 0 10px;">Sub-skills</h2>
+            <p style="margin:0 0 10px;color:#475569;font-size:0.9em;">Select sub-skills first, then click Generate Metadata button to prefill skill data for you to review and edit.</p>
+            <div id="subskill-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <button type="button" id="select-subskills-btn" class="ix-btn secondary" style="margin:0;">Select Sub-skills</button>
+                <button type="button" id="generate-metadata-btn" class="ix-btn secondary" style="margin:0;" disabled>Generate Metadata</button>
+                <span id="generate-metadata-status" style="color:#475569;font-size:0.9em;"></span>
+            </div>
+        </div>
     </div>
 
     {% if error_message %}
@@ -162,17 +417,21 @@
     <form id="skill-create-form" method="post" action="{{ url_for('prefix.SkillSave') }}">
         <input id="skill-target-tenant-input" type="hidden" name="tenant" value="{{ sc_selected_tenant }}">
         <input id="skill-target-namespace-input" type="hidden" name="namespace" value="{{ sc_selected_namespace or (sc_current_namespace_options[0].value if sc_single_fixed else '') }}">
+        <input type="hidden" name="allowed_child_skilleps" id="allowed-child-skilleps-input" value="{{ form_data.get('allowed_child_skilleps', []) | join(',') }}">
+        <input type="hidden" name="allowed_child_skilleps_json" id="allowed-child-skilleps-json-input" value="{{ form_data.get('allowed_child_skilleps_json', '[]') }}">
+        <input type="hidden" name="gpu_billing_target" value="{{ form_data.get('gpu_billing_target', 'caller') }}">
 
-        <div class="skill-panel">
+        <!-- Identity panel -->
+        <div class="skill-panel" id="form-identity-panel" style="display:none;margin-bottom:16px;">
             <h2>Identity</h2>
             <div class="skill-field" style="margin-bottom:14px;">
-                <label for="skillname">Function Name</label>
+                <label for="skillname">Skill Name</label>
                 <input id="skillname" name="skillname" type="text" required pattern="^[a-zA-Z0-9][a-zA-Z0-9-]*$" value="{{ form_data.get('skillname', '') }}">
             </div>
 
             {% if sc_single_fixed %}
             <div class="catalog-deploy-target-summary" style="margin-bottom:0;">
-                <strong>Function path:</strong>
+                <strong>Skill path:</strong>
                 <span>{% if (sc_tenant_options | length) != 1 %}{{ sc_selected_tenant }} / {% endif %}{{ sc_selected_namespace or sc_current_namespace_options[0].value }}</span>
             </div>
             {% else %}
@@ -181,11 +440,12 @@
 
             <div class="skill-field" style="margin-top:14px;">
                 <label for="description">Description</label>
-                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this function does" required>{{ form_data.get('description', '') }}</textarea>
+                <textarea id="description" name="description" rows="2" placeholder="Briefly describe what this skill does" required>{{ form_data.get('description', '') }}</textarea>
             </div>
         </div>
 
-        <div class="skill-panel">
+        <!-- Backing Model panel -->
+        <div class="skill-panel" id="form-model-panel" style="display:none;margin-bottom:16px;">
             <h2>Backing Model</h2>
             <div class="skill-field">
                 <label for="template_id">Backing Model</label>
@@ -216,108 +476,712 @@
             </div>
         </div>
 
-        <div class="skill-panel">
-            <h2>Function Data</h2>
+        <!-- Skill Data panel -->
+        <div class="skill-panel" id="form-prompt-panel" style="display:none;margin-bottom:16px;">
+            <h2>Skill Data</h2>
+            <p style="margin:0 0 10px;color:#475569;font-size:0.9em;">This is the system prompt sent to the backing model on every request. It can contain instructions, background context, or document content depending on the skill type.</p>
             <div class="skill-field">
-                <label for="prefix">Function Data — Provide system context for every user request</label>
-                <textarea id="prefix" name="prefix" placeholder="Enter function data here...">{{ form_data.get('prefix', '') }}</textarea>
-                <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <label for="skill-prefix-file-input" class="ix-btn secondary" style="cursor:pointer;margin:0;">Load from file</label>
-                    <input id="skill-prefix-file-input" type="file" style="display:none">
-                    <span id="skill-prefix-file-status" style="color:#475569;font-size:0.9em;"></span>
-                </div>
+                <textarea id="prefix" name="prefix" placeholder="Enter skill data here...">{{ form_data.get('prefix', '') }}</textarea>
             </div>
         </div>
 
-        <input type="hidden" name="gpu_billing_target" value="{{ form_data.get('gpu_billing_target', 'caller') }}">
-
-        <div class="skill-actions">
+        <div class="skill-actions" id="form-actions" style="display:none;">
             <a class="ix-btn secondary" href="{{ url_for('prefix.ListSkills') }}">Cancel</a>
-            <button id="skill-create-submit-btn" class="ix-btn" type="submit"{% if not sc_deploy_target.resolved %} disabled{% endif %}>Create Skill</button>
+            <button id="skill-create-submit-btn" class="ix-btn" type="submit">Create Skill</button>
         </div>
     </form>
 </div>
 
+<!-- Sub-skills selection dialog -->
+<div id="subskills-dialog" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;align-items:center;justify-content:center;">
+    <div class="subskills-dialog-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:1.05em;">Select Sub-skills</strong>
+            <button type="button" id="subskills-dialog-close" style="background:none;border:none;cursor:pointer;font-size:1.2em;color:#64748b;">✕</button>
+        </div>
+        <input id="subskills-search" type="text" placeholder="Search by name or description…" style="padding:8px 10px;border:1px solid #b7c6dc;border-radius:4px;font:inherit;">
+        <div id="subskills-results" class="subskills-results">
+            <div id="subskills-loading" style="padding:12px;color:#64748b;">Loading…</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button type="button" id="subskills-cancel-btn" class="ix-btn secondary" style="margin:0;">Cancel</button>
+            <button type="button" id="subskills-confirm-btn" class="ix-btn" style="margin:0;">Confirm</button>
+        </div>
+    </div>
+</div>
+
 {% include '_catalog_deploy_target_script.html' %}
 <script>
-    (function () {
-        const hiddenTenantInput = document.getElementById('skill-target-tenant-input');
-        const hiddenNamespaceInput = document.getElementById('skill-target-namespace-input');
-        const submitBtn = document.getElementById('skill-create-submit-btn');
-        const deployTargetState = {{ sc_deploy_target | tojson }};
+(function () {
+    const METADATA_GEN_MODEL_CONFIGURED = {{ (metadata_gen_model_configured | tojson) if metadata_gen_model_configured is defined else 'false' }};
+    const DOCLING_CONFIGURED = {{ (docling_configured | tojson) if docling_configured is defined else 'true' }};
+    const deployTargetState = {{ sc_deploy_target | tojson }};
 
-        const skillnameInput = document.getElementById('skillname');
-        const descriptionTextarea = document.getElementById('description');
-        const prefixTextarea = document.getElementById('prefix');
-        const prefixFileInput = document.getElementById('skill-prefix-file-input');
-        const prefixFileStatus = document.getElementById('skill-prefix-file-status');
+    // --- State ---
+    let currentMode = 'import-pdf';
+    let folderImported = false;
+    let pdfImported = false;
+    let selectedSubskills = [];
 
-        function currentTenant() { return String(hiddenTenantInput.value || '').trim(); }
-        function currentNamespace() { return String(hiddenNamespaceInput.value || '').trim(); }
-        function targetReady() { return currentTenant() !== '' && currentNamespace() !== ''; }
+    // --- DOM refs ---
+    const modeHelps = {
+        'scratch': document.getElementById('mode-help-scratch'),
+        'import-folder': document.getElementById('mode-help-import-folder'),
+        'import-pdf': document.getElementById('mode-help-import-pdf'),
+        'orchestrator': document.getElementById('mode-help-orchestrator'),
+    };
+    const modeActions = {
+        'import-folder': document.getElementById('mode-action-import-folder'),
+        'import-pdf': document.getElementById('mode-action-import-pdf'),
+        'orchestrator': document.getElementById('mode-action-orchestrator'),
+    };
 
-        function syncButtons() {
-            const templateInput = document.getElementById('template_id');
-            const templateReady = !!(templateInput && String(templateInput.value || '').trim());
-            if (submitBtn) submitBtn.disabled = !targetReady() || !templateReady || !descriptionTextarea.value.trim() || !prefixTextarea.value.trim();
+    const identityPanel = document.getElementById('form-identity-panel');
+    const modelPanel = document.getElementById('form-model-panel');
+    const promptPanel = document.getElementById('form-prompt-panel');
+    const formActions = document.getElementById('form-actions');
+
+    const skillnameInput = document.getElementById('skillname');
+    const descriptionTextarea = document.getElementById('description');
+    const prefixTextarea = document.getElementById('prefix');
+    const hiddenTenantInput = document.getElementById('skill-target-tenant-input');
+    const hiddenNamespaceInput = document.getElementById('skill-target-namespace-input');
+    const submitBtn = document.getElementById('skill-create-submit-btn');
+    const folderInput = document.getElementById('skill-folder-input');
+    const importStatus = document.getElementById('skill-import-status');
+    const pdfInput = document.getElementById('skill-pdf-input');
+    const pdfImportBtn = document.getElementById('skill-import-pdf-btn');
+    const pdfRegenerateBtn = document.getElementById('skill-regenerate-pdf-metadata-btn');
+    const pdfStatus = document.getElementById('skill-pdf-status');
+    const allowedInput = document.getElementById('allowed-child-skilleps-input');
+    const allowedJsonInput = document.getElementById('allowed-child-skilleps-json-input');
+    const chipsContainer = document.getElementById('subskill-chips');
+    const generateBtn = document.getElementById('generate-metadata-btn');
+    const generateStatus = document.getElementById('generate-metadata-status');
+
+    function renderPdfStatus(message, link) {
+        if (!pdfStatus) return;
+        pdfStatus.textContent = '';
+        if (message) {
+            pdfStatus.append(document.createTextNode(message));
         }
+        if (link && link.href && link.label) {
+            if (message) pdfStatus.append(document.createTextNode(' '));
+            const anchor = document.createElement('a');
+            anchor.href = link.href;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.className = 'skill-status-link';
+            anchor.textContent = link.label;
+            pdfStatus.append(anchor);
+        }
+    }
 
-        descriptionTextarea.addEventListener('input', syncButtons);
-        prefixTextarea.addEventListener('input', syncButtons);
+    function setPdfMetadataRetryVisible(visible) {
+        if (!pdfRegenerateBtn) return;
+        pdfRegenerateBtn.style.display = visible ? '' : 'none';
+    }
 
-        prefixFileInput.addEventListener('change', () => {
-            const file = prefixFileInput.files && prefixFileInput.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                prefixTextarea.value = e.target.result;
-                prefixFileStatus.textContent = `Loaded: ${file.name}`;
-                prefixFileInput.value = '';
-                syncButtons();
-            };
-            reader.onerror = () => {
-                prefixFileStatus.textContent = 'Failed to read file.';
-                prefixFileStatus.style.color = '#b91c1c';
-            };
-            reader.readAsText(file);
+    function setPdfLoadingState(isLoading, message) {
+        if (pdfImportBtn) {
+            pdfImportBtn.disabled = isLoading;
+            pdfImportBtn.classList.toggle('skill-busy', isLoading);
+            pdfImportBtn.textContent = isLoading ? 'Importing Document…' : 'Import from Document';
+        }
+        if (pdfRegenerateBtn) {
+            pdfRegenerateBtn.disabled = isLoading;
+            pdfRegenerateBtn.classList.toggle('skill-busy', isLoading);
+        }
+        if (pdfStatus) {
+            renderPdfStatus(message || '');
+            pdfStatus.style.color = isLoading ? '#475569' : pdfStatus.style.color;
+            pdfStatus.classList.toggle('skill-waiting-status', isLoading);
+        }
+    }
+
+    // --- Submit button ---
+    function currentTenant() { return String(hiddenTenantInput?.value || '').trim(); }
+    function currentNamespace() { return String(hiddenNamespaceInput?.value || '').trim(); }
+
+    function syncSubmitBtn() {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+
+    skillnameInput?.addEventListener('input', syncSubmitBtn);
+    descriptionTextarea?.addEventListener('input', syncSubmitBtn);
+    prefixTextarea?.addEventListener('input', syncSubmitBtn);
+
+    // --- Form panels visibility ---
+    function showFormPanels() {
+        let show = false;
+        if (currentMode === 'scratch') show = true;
+        else if (currentMode === 'import-folder') show = folderImported;
+        else if (currentMode === 'import-pdf') show = pdfImported;
+        else if (currentMode === 'orchestrator') show = selectedSubskills.length > 0;
+
+        [identityPanel, modelPanel, promptPanel, formActions].forEach(el => {
+            if (el) el.style.display = show ? '' : 'none';
         });
 
-        // deploy target controller
-        const root = document.getElementById('skill-create-deploy-target');
-        if (root && window.createCatalogDeployTargetController) {
-            const controller = window.createCatalogDeployTargetController({
-                root,
-                initialState: deployTargetState,
-            });
-            if (controller && typeof controller.refresh === 'function') {
-                const originalRefresh = controller.refresh;
-                controller.refresh = function () {
-                    const summary = originalRefresh();
-                    const sel = controller.getSelection ? controller.getSelection() : { tenant: '', namespace: '' };
-                    hiddenTenantInput.value = sel.tenant || '';
-                    hiddenNamespaceInput.value = sel.namespace || '';
-                    syncButtons();
-                    return summary;
-                };
-                controller.refresh();
+        if (show) syncSubmitBtn();
+    }
+
+    // --- Mode switching ---
+    function resetState() {
+        folderImported = false;
+        pdfImported = false;
+        selectedSubskills = [];
+        if (skillnameInput) skillnameInput.value = '';
+        if (descriptionTextarea) descriptionTextarea.value = '';
+        if (prefixTextarea) prefixTextarea.value = '';
+        if (importStatus) { importStatus.textContent = ''; importStatus.style.color = ''; }
+        if (pdfStatus) { renderPdfStatus(''); pdfStatus.style.color = ''; pdfStatus.classList.remove('skill-waiting-status'); }
+        setPdfMetadataRetryVisible(false);
+        setPdfLoadingState(false, '');
+        renderChips();
+        updateAllowedInput();
+        syncGenerateBtn();
+    }
+
+    function applyMode(mode) {
+        Object.entries(modeHelps).forEach(([k, el]) => {
+            if (el) el.style.display = k === mode ? '' : 'none';
+        });
+        Object.entries(modeActions).forEach(([k, el]) => {
+            if (el) el.style.display = k === mode ? '' : 'none';
+        });
+        currentMode = mode;
+        showFormPanels();
+    }
+
+    document.querySelectorAll('input[name="create_mode"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.value === currentMode) return;
+            resetState();
+            applyMode(radio.value);
+        });
+    });
+
+    // --- Frontmatter parser ---
+    function parseFrontmatter(text) {
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        text = text.replace(/\r\n/g, '\n');
+        const lines = text.split('\n');
+        if (lines[0] !== '---') return [{}, text];
+        let closeIdx = -1;
+        for (let i = 1; i < lines.length; i++) {
+            if (lines[i] === '---') { closeIdx = i; break; }
+        }
+        if (closeIdx === -1) return [{}, text];
+        const fmLines = lines.slice(1, closeIdx);
+        const bodyLines = lines.slice(closeIdx + 1);
+        while (bodyLines.length && bodyLines[0] === '') bodyLines.shift();
+        const body = bodyLines.join('\n');
+        const fields = {};
+        const lineRe = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/;
+        for (const line of fmLines) {
+            const m = line.match(lineRe);
+            if (m) {
+                let val = m[2].trim();
+                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
+                fields[m[1]] = val;
             }
         }
+        return [fields, body];
+    }
 
-        // template detail preview
-        const templateSelect = document.getElementById('template_id');
-        const descriptionEl = document.getElementById('skill-template-description');
-        const modelEl = document.getElementById('skill-template-model');
-
-        function updateTemplateDetail() {
-            const option = templateSelect.options[templateSelect.selectedIndex];
-            if (!option || !option.value) { descriptionEl.textContent = ''; modelEl.textContent = ''; return; }
-            descriptionEl.textContent = option.dataset.description || '';
-            modelEl.textContent = option.dataset.model || '';
+    // --- Link normalizer ---
+    function normalizeLinks(body) {
+        function isLocal(target) {
+            if (target.startsWith('http://') || target.startsWith('https://')) return false;
+            return target.split('#')[0].endsWith('.md');
         }
+        function labelFrom(target) {
+            const base = target.split('#')[0].split('/').pop().slice(0, -3);
+            return base.replace(/[-_]/g, ' ');
+        }
+        function isPathLike(display) { return display.includes('/') || display.endsWith('.md'); }
+        function subst(display, target) {
+            return isPathLike(display) ? `the "${labelFrom(target)}" reference below` : display;
+        }
+        function stripWrappers(line) {
+            let s = line.replace(/^[ \t]+/, '');
+            s = s.replace(/^(> )+/, '');
+            s = s.replace(/^[-*] /, '');
+            s = s.replace(/^\d+\. /, '');
+            s = s.replace(/^\[[ xX]\] /, '');
+            s = s.replace(/[.,;:!?]$/, '').trim();
+            return s;
+        }
+        return body.split('\n').map(line => {
+            const locals = [];
+            let m;
+            const re = /\[([^\]]*)\]\(([^)]*)\)/g;
+            while ((m = re.exec(line)) !== null) {
+                if (isLocal(m[2])) locals.push({ full: m[0], display: m[1], target: m[2], index: m.index });
+            }
+            if (!locals.length) return line;
+            if (locals.length === 1 && stripWrappers(line) === locals[0].full) return null;
+            let out = line;
+            for (let i = locals.length - 1; i >= 0; i--) {
+                const lk = locals[i];
+                out = out.slice(0, lk.index) + subst(lk.display, lk.target) + out.slice(lk.index + lk.full.length);
+            }
+            return out;
+        }).filter(l => l !== null).join('\n');
+    }
 
-        templateSelect?.addEventListener('change', updateTemplateDetail);
-        if (templateSelect) updateTemplateDetail();
-        syncButtons();
-    })();
+    function readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+            reader.readAsText(file);
+        });
+    }
+
+    // --- Folder import ---
+    document.getElementById('skill-import-folder-btn')?.addEventListener('click', () => {
+        folderInput.click();
+    });
+
+    folderInput.addEventListener('change', () => {
+        const files = Array.from(folderInput.files || []);
+        if (!files.length) return;
+        const mainNames = ['SKILL.md', 'skill.md', 'Skill.md'];
+        const mainFile = files.find(f => {
+            const parts = f.webkitRelativePath.split('/');
+            return parts.length === 2 && mainNames.includes(parts[1]);
+        });
+        if (!mainFile) {
+            importStatus.textContent = 'Error: No SKILL.md found in folder root';
+            importStatus.style.color = '#b91c1c';
+            return;
+        }
+        const refFiles = files.filter(f => {
+            const parts = f.webkitRelativePath.split('/');
+            return parts.length === 3 && parts[1] === 'references' && parts[2].endsWith('.md');
+        }).sort((a, b) => a.webkitRelativePath.split('/')[2].localeCompare(b.webkitRelativePath.split('/')[2]));
+
+        readFileAsText(mainFile).then(mainText => {
+            const [fields, rawBody] = parseFrontmatter(mainText);
+            const body = normalizeLinks(rawBody);
+            if (fields.name && !skillnameInput.value.trim()) skillnameInput.value = fields.name;
+            if (fields.description && !descriptionTextarea.value.trim()) descriptionTextarea.value = fields.description;
+            return Promise.all(refFiles.map(f => readFileAsText(f).then(t => {
+                const [, refBody] = parseFrontmatter(t);
+                return { filename: f.webkitRelativePath.split('/')[2], body: normalizeLinks(refBody) };
+            }))).then(refs => {
+                const parts = [body.trimEnd()];
+                for (const ref of refs) {
+                    parts.push(`\n\n---\n\n## Reference: references/${ref.filename}\n\n${ref.body.trimEnd()}`);
+                }
+                prefixTextarea.value = parts.join('') + '\n';
+                importStatus.textContent = 'Imported.';
+                importStatus.style.color = '#16a34a';
+                folderInput.value = '';
+                folderImported = true;
+                showFormPanels();
+                syncSubmitBtn();
+            });
+        }).catch(err => {
+            importStatus.textContent = `Error: ${err.message}`;
+            importStatus.style.color = '#b91c1c';
+        });
+    });
+
+    // --- PDF import ---
+    document.getElementById('skill-import-pdf-btn')?.addEventListener('click', () => {
+        if (pdfInput) pdfInput.click();
+    });
+
+    pdfInput?.addEventListener('change', () => {
+        const file = pdfInput.files && pdfInput.files[0];
+        if (!file) return;
+        setPdfLoadingState(true, 'Converting document and generating metadata...');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        fetch('{{ url_for("prefix.ConvertPdfMetadata") }}', { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw data;
+                if (data.skillname && skillnameInput && !skillnameInput.value.trim()) skillnameInput.value = data.skillname;
+                if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
+                if (data.prefix && prefixTextarea) prefixTextarea.value = data.prefix;
+                const metadataError = String(data.metadata_error || '').trim();
+                setPdfLoadingState(false, metadataError ? `Imported document, but metadata generation failed: ${metadataError}` : 'Imported.');
+                if (pdfStatus) pdfStatus.style.color = metadataError ? '#b45309' : '#16a34a';
+                setPdfMetadataRetryVisible(true);
+                pdfInput.value = '';
+                pdfImported = true;
+                showFormPanels();
+                syncSubmitBtn();
+            })
+            .catch(err => {
+                const message = err && typeof err === 'object' && 'error' in err ? err.error : `Error: ${err.message}`;
+                const link = err && typeof err === 'object' && err.help_url ? {
+                    href: err.help_url,
+                    label: err.help_label || err.help_url,
+                } : null;
+                setPdfLoadingState(false, '');
+                renderPdfStatus(message, link);
+                if (pdfStatus) pdfStatus.style.color = '#b91c1c';
+            })
+            .finally(() => {
+                if (pdfImportBtn) {
+                    pdfImportBtn.disabled = false;
+                    pdfImportBtn.classList.remove('skill-busy');
+                    pdfImportBtn.textContent = 'Import from Document';
+                }
+                if (pdfStatus) pdfStatus.classList.remove('skill-waiting-status');
+            });
+    });
+
+    pdfRegenerateBtn?.addEventListener('click', () => {
+        const prefix = String(prefixTextarea?.value || '').trim();
+        if (!prefix) {
+            renderPdfStatus('Import a document first so there is skill data to analyze.');
+            if (pdfStatus) pdfStatus.style.color = '#b91c1c';
+            return;
+        }
+        setPdfLoadingState(true, 'Regenerating metadata...');
+        fetch('{{ url_for("prefix.GenerateDocumentSkillMetadata") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prefix }),
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw data;
+                if (data.skillname && skillnameInput) skillnameInput.value = data.skillname;
+                if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
+                const metadataError = String(data.metadata_error || '').trim();
+                setPdfLoadingState(false, metadataError ? `Metadata regeneration failed: ${metadataError}` : 'Metadata regenerated.');
+                if (pdfStatus) pdfStatus.style.color = metadataError ? '#b45309' : '#16a34a';
+                setPdfMetadataRetryVisible(true);
+                syncSubmitBtn();
+            })
+            .catch(err => {
+                const message = err && typeof err === 'object' && 'error' in err ? err.error : `Error: ${err.message}`;
+                setPdfLoadingState(false, message);
+                if (pdfStatus) pdfStatus.style.color = '#b91c1c';
+                setPdfMetadataRetryVisible(true);
+            })
+            .finally(() => {
+                if (pdfStatus) pdfStatus.classList.remove('skill-waiting-status');
+            });
+    });
+
+    // --- Deploy target controller ---
+    const root = document.getElementById('skill-create-deploy-target');
+    if (root && window.createCatalogDeployTargetController) {
+        const controller = window.createCatalogDeployTargetController({
+            root,
+            initialState: deployTargetState,
+        });
+        if (controller && typeof controller.refresh === 'function') {
+            const originalRefresh = controller.refresh;
+            controller.refresh = function () {
+                const summary = originalRefresh();
+                const sel = controller.getSelection ? controller.getSelection() : { tenant: '', namespace: '' };
+                hiddenTenantInput.value = sel.tenant || '';
+                hiddenNamespaceInput.value = sel.namespace || '';
+                syncSubmitBtn();
+                return summary;
+            };
+            controller.refresh();
+        }
+    }
+
+    // --- Template detail preview ---
+    const templateSelect = document.querySelector('select#template_id');
+    const descriptionEl = document.getElementById('skill-template-description');
+    const modelEl = document.getElementById('skill-template-model');
+
+    function updateTemplateDetail() {
+        if (!templateSelect) return;
+        const option = templateSelect.options[templateSelect.selectedIndex];
+        if (!option || !option.value) { if (descriptionEl) descriptionEl.textContent = ''; if (modelEl) modelEl.textContent = ''; return; }
+        if (descriptionEl) descriptionEl.textContent = option.dataset.description || '';
+        if (modelEl) modelEl.textContent = option.dataset.model || '';
+    }
+
+    templateSelect?.addEventListener('change', () => { updateTemplateDetail(); syncSubmitBtn(); });
+    if (templateSelect) updateTemplateDetail();
+
+    // --- Orchestrator: sub-skills ---
+    function updateAllowedInput() {
+        if (allowedInput) allowedInput.value = selectedSubskills.map(s => s.skillep_id).join(',');
+        if (allowedJsonInput) allowedJsonInput.value = JSON.stringify(selectedSubskills);
+    }
+
+    function syncGenerateBtn() {
+        if (generateBtn) generateBtn.disabled = selectedSubskills.length === 0 || !METADATA_GEN_MODEL_CONFIGURED;
+    }
+
+    function renderChips() {
+        if (!chipsContainer) return;
+        chipsContainer.innerHTML = '';
+        selectedSubskills.forEach(skill => {
+            const chip = document.createElement('span');
+            chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:#e0f2fe;border:1px solid #7dd3fc;border-radius:20px;font-size:0.85em;color:#0369a1;';
+            chip.textContent = skill.skillep_id;
+            const rm = document.createElement('button');
+            rm.type = 'button';
+            rm.textContent = '×';
+            rm.style.cssText = 'background:none;border:none;cursor:pointer;padding:0;font-size:1.1em;color:#0369a1;line-height:1;';
+            rm.addEventListener('click', () => {
+                selectedSubskills = selectedSubskills.filter(s => s.skillep_id !== skill.skillep_id);
+                renderChips();
+                updateAllowedInput();
+                syncGenerateBtn();
+                showFormPanels();
+            });
+            chip.appendChild(rm);
+            chipsContainer.appendChild(chip);
+        });
+    }
+
+    const dialog = document.getElementById('subskills-dialog');
+    const dialogClose = document.getElementById('subskills-dialog-close');
+    const dialogCancel = document.getElementById('subskills-cancel-btn');
+    const dialogConfirm = document.getElementById('subskills-confirm-btn');
+    const searchInput = document.getElementById('subskills-search');
+    const resultsContainer = document.getElementById('subskills-results');
+
+    let dialogChecked = {};
+    let searchTimeout = null;
+    let subskillsSectionCollapsed = {
+        own: false,
+        public: false,
+    };
+
+    function createSection(sectionKey, title, items) {
+        const section = document.createElement('div');
+        section.className = 'subskills-section';
+
+        const header = document.createElement('div');
+        header.className = 'subskills-section-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'subskills-section-title';
+
+        const label = document.createElement('span');
+        label.textContent = title;
+        titleWrap.appendChild(label);
+
+        const count = document.createElement('span');
+        count.className = 'subskills-section-count';
+        count.textContent = `${items.length} skill${items.length === 1 ? '' : 's'}`;
+        titleWrap.appendChild(count);
+        header.appendChild(titleWrap);
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'subskills-section-toggle';
+
+        const body = document.createElement('div');
+        const isCollapsed = !!subskillsSectionCollapsed[sectionKey];
+        body.hidden = isCollapsed;
+        toggleBtn.textContent = isCollapsed ? 'Show' : 'Hide';
+        toggleBtn.addEventListener('click', () => {
+            const nextCollapsed = !body.hidden;
+            body.hidden = nextCollapsed;
+            subskillsSectionCollapsed[sectionKey] = nextCollapsed;
+            toggleBtn.textContent = nextCollapsed ? 'Show' : 'Hide';
+        });
+        header.appendChild(toggleBtn);
+        section.appendChild(header);
+
+        items.forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'subskills-result-row';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = item.skillep_id;
+            cb.checked = !!dialogChecked[item.skillep_id];
+            cb.className = 'subskills-result-checkbox';
+            cb.addEventListener('change', () => {
+                if (cb.checked) dialogChecked[item.skillep_id] = item;
+                else delete dialogChecked[item.skillep_id];
+            });
+            const info = document.createElement('div');
+            info.className = 'subskills-result-main';
+            const nameBtn = document.createElement('button');
+            nameBtn.type = 'button';
+            nameBtn.className = 'subskills-result-name-btn';
+            const strong = document.createElement('strong');
+            strong.className = 'subskills-result-id';
+            strong.textContent = item.skillep_id;
+            nameBtn.appendChild(strong);
+            nameBtn.addEventListener('click', () => {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            info.appendChild(nameBtn);
+            if (item.description) {
+                const detailBtn = document.createElement('button');
+                detailBtn.type = 'button';
+                detailBtn.className = 'ix-btn secondary subskills-detail-btn';
+                detailBtn.textContent = 'Show Detail';
+                const desc = document.createElement('div');
+                desc.className = 'subskills-result-desc';
+                desc.textContent = item.description;
+                desc.hidden = true;
+                detailBtn.addEventListener('click', () => {
+                    const nextVisible = desc.hidden;
+                    desc.hidden = !nextVisible;
+                    detailBtn.textContent = nextVisible ? 'Hide Detail' : 'Show Detail';
+                });
+                info.appendChild(desc);
+                row.appendChild(cb);
+                row.appendChild(info);
+                row.appendChild(detailBtn);
+            } else {
+                const spacer = document.createElement('div');
+                row.appendChild(cb);
+                row.appendChild(info);
+                row.appendChild(spacer);
+            }
+            body.appendChild(row);
+        });
+
+        section.appendChild(body);
+        return section;
+    }
+
+    function renderResults(items) {
+        if (!resultsContainer) return;
+        resultsContainer.innerHTML = '';
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:12px;color:#64748b;';
+            empty.textContent = 'No skills found.';
+            resultsContainer.appendChild(empty);
+            return;
+        }
+        const ownItems = items.filter(item => item.source === 'own');
+        const publicItems = items.filter(item => item.source !== 'own');
+
+        if (ownItems.length) {
+            resultsContainer.appendChild(createSection('own', 'My Skills', ownItems));
+        }
+        if (publicItems.length) {
+            resultsContainer.appendChild(createSection('public', 'Public Skills', publicItems));
+        }
+    }
+
+    function fetchSkills(keyword) {
+        const tenant = currentTenant();
+        if (!tenant) {
+            if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Select a tenant first.</div>';
+            return;
+        }
+        if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#64748b;">Loading…</div>';
+        const params = new URLSearchParams({ tenant });
+        if (keyword) params.set('keyword', keyword);
+        fetch(`{{ url_for('prefix.GenerateSkills') }}?${params}`)
+            .then(r => r.json())
+            .then(data => renderResults(Array.isArray(data) ? data : []))
+            .catch(() => {
+                if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:12px;color:#b91c1c;">Failed to load skills.</div>';
+            });
+    }
+
+    document.getElementById('select-subskills-btn')?.addEventListener('click', () => {
+        dialogChecked = {};
+        selectedSubskills.forEach(s => { dialogChecked[s.skillep_id] = s; });
+        if (dialog) dialog.style.display = 'flex';
+        if (searchInput) searchInput.value = '';
+        fetchSkills('');
+        searchInput?.focus();
+    });
+
+    [dialogClose, dialogCancel].forEach(el => {
+        el?.addEventListener('click', () => { if (dialog) dialog.style.display = 'none'; });
+    });
+
+    dialog?.addEventListener('click', e => {
+        if (e.target === dialog) dialog.style.display = 'none';
+    });
+
+    dialogConfirm?.addEventListener('click', () => {
+        selectedSubskills = Object.values(dialogChecked);
+        if (dialog) dialog.style.display = 'none';
+        renderChips();
+        updateAllowedInput();
+        syncGenerateBtn();
+        showFormPanels();
+        if (selectedSubskills.length > 0 && METADATA_GEN_MODEL_CONFIGURED) triggerGenerateMetadata();
+    });
+
+    searchInput?.addEventListener('input', () => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => fetchSkills(searchInput.value.trim()), 300);
+    });
+
+    function triggerGenerateMetadata() {
+        if (!selectedSubskills.length || !METADATA_GEN_MODEL_CONFIGURED) return;
+        if (generateBtn) { generateBtn.disabled = true; generateBtn.classList.add('skill-busy'); }
+        if (generateStatus) { generateStatus.textContent = 'Generating…'; generateStatus.style.color = '#475569'; generateStatus.classList.add('skill-waiting-status'); }
+        fetch('{{ url_for("prefix.GenerateSkillMetadata") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subskills: selectedSubskills }),
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                if (data.description && descriptionTextarea) descriptionTextarea.value = data.description;
+                if (data.prefix && prefixTextarea) prefixTextarea.value = data.prefix;
+                if (generateStatus) { generateStatus.textContent = 'Metadata generated.'; generateStatus.style.color = '#16a34a'; }
+                syncSubmitBtn();
+            })
+            .catch(err => {
+                if (generateStatus) { generateStatus.textContent = `Error: ${err.message}`; generateStatus.style.color = '#b91c1c'; }
+            })
+            .finally(() => {
+                if (generateBtn) generateBtn.classList.remove('skill-busy');
+                if (generateStatus) generateStatus.classList.remove('skill-waiting-status');
+                syncGenerateBtn();
+            });
+    }
+
+    generateBtn?.addEventListener('click', triggerGenerateMetadata);
+
+    document.getElementById('skill-create-form')?.addEventListener('submit', () => {
+        updateAllowedInput();
+    });
+
+    // --- Init ---
+    let restoredSubskills = [];
+    try { restoredSubskills = JSON.parse(allowedJsonInput?.value || '[]'); } catch (e) {}
+    if (!Array.isArray(restoredSubskills)) restoredSubskills = [];
+    if (restoredSubskills.length) {
+        selectedSubskills = restoredSubskills;
+        renderChips();
+        syncGenerateBtn();
+        updateAllowedInput();
+        const orchestratorRadio = document.querySelector('input[name="create_mode"][value="orchestrator"]');
+        if (orchestratorRadio) orchestratorRadio.checked = true;
+        applyMode('orchestrator');
+    } else {
+        applyMode('import-pdf');
+    }
+    syncGenerateBtn();
+    if (!DOCLING_CONFIGURED) {
+        const pdfLabel = document.getElementById('pdf-mode-label');
+        const pdfRadio = pdfLabel && pdfLabel.querySelector('input[type="radio"]');
+        if (pdfLabel) { pdfLabel.style.cursor = 'not-allowed'; pdfLabel.style.opacity = '0.5'; }
+        if (pdfRadio) pdfRadio.disabled = true;
+        const helpPdf = document.getElementById('mode-help-import-pdf');
+        if (helpPdf) helpPdf.innerHTML += ' <em>(Set DOCLING_URL to enable.)</em>';
+        const scratchRadio = document.querySelector('input[name="create_mode"][value="scratch"]');
+        if (scratchRadio) scratchRadio.checked = true;
+        applyMode('scratch');
+    }
+})();
 </script>
 {% endblock %}

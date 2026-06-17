@@ -312,12 +312,15 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            appearance: none;
             border: 1px solid #2563eb;
             background: #2563eb;
             color: #fff;
             border-radius: 4px;
             padding: 8px 12px;
+            min-height: 36px;
             font-size: var(--ix-font-size-body);
+            line-height: 1.2;
             text-decoration: none;
             cursor: pointer;
             box-sizing: border-box;
@@ -629,7 +632,7 @@
     {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active or '/catalog' in request_path or '/help' in request_path or '/endpoints' in request_path %}
     {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
     {% set nav_models_active = request_path_no_slash in ('/listfunc', '/func_create', '/func', '/funclog') %}
-    {% set nav_skills_active = request_path.startswith('/listfunctions') or request_path.startswith('/listskills') or request_path.startswith('/skill_create') or request_path.startswith('/skill') or request_path.startswith('/function') %}
+    {% set nav_skills_active = request_path.startswith('/listskills') or request_path.startswith('/skill_create') or request_path.startswith('/skill') %}
     {% set nav_catalog_active = '/catalog' in request_path %}
     {% set nav_endpoints_active = request_path_no_slash in ('',) or '/endpoints' in request_path %}
     {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}
@@ -665,7 +668,7 @@
     <nav>
         <a href="{{ hosturl }}endpoints" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
         {% if not is_public_visitor %}
-        <a href="{{ hosturl }}listfunctions/myfunctions" class="{% if nav_skills_active %}active{% endif %}"> Functions </a>
+        <a href="{{ hosturl }}listskills/myskills" class="{% if nav_skills_active %}active{% endif %}"> Skills </a>
         {% endif %}
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         {% if not is_public_visitor %}
