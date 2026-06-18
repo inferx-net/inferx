@@ -2122,14 +2122,6 @@ impl SchedulerHandler {
         return self.GetFuncPodsByKey(&fpkey);
     }
 
-    pub fn GetFunc(&self, tenant: &str, namespace: &str, name: &str) -> Result<Function> {
-        let fpkey = format!("{}/{}/{}", tenant, namespace, name);
-        match self.funcs.get(&fpkey) {
-            None => return Err(Error::NotExist(format!("GetFunc {}", fpkey))),
-            Some(fpStatus) => return Ok(fpStatus.func.clone()),
-        }
-    }
-
     pub fn AddPendingSnapshot(&mut self, funcid: &str, nodename: &str) {
         match self.pendingsnapshots.get_mut(funcid) {
             None => {
@@ -2156,10 +2148,6 @@ impl SchedulerHandler {
         if needRemoveFunc {
             self.pendingsnapshots.remove(funcid);
         }
-    }
-
-    pub fn HasPendingSnapshot(&self, funcid: &str) -> bool {
-        return self.pendingsnapshots.contains_key(funcid);
     }
 
     pub fn ProcessCleanupDuplicateSnapshot(
@@ -3297,12 +3285,6 @@ impl SchedulerHandler {
         return Ok(());
     }
 
-    pub fn NextWorkerId(&self) -> u64 {
-        return self
-            .nextWorkId
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-
     pub fn StandyResource(&self, funcId: &str, nodename: &str) -> Resources {
         let snapshot = self
             .snapshots
@@ -3370,19 +3352,6 @@ impl SchedulerHandler {
         }
         // the standby resource only incldue memory and cache
         return extraResource;
-    }
-
-    // the cache memory usage when in ready state for the snapshot
-    pub fn SnapshotReadyCacheMemory(&self, funcId: &str, nodename: &str) -> u64 {
-        let snapshot = self
-            .snapshots
-            .get(funcId)
-            .unwrap()
-            .get(nodename)
-            .unwrap()
-            .clone();
-
-        return snapshot.ReadyCacheMemory();
     }
 
     pub fn ReadyPodCount(&self, funcname: &str) -> usize {
@@ -3641,19 +3610,6 @@ impl SchedulerHandler {
         }
     }
 
-    pub fn GetSnapshotNodes(&self, funcid: &str) -> BTreeSet<String> {
-        let mut nodes = BTreeSet::new();
-        match self.snapshots.get(funcid) {
-            None => return nodes,
-            Some(ns) => {
-                for (nodename, _) in ns {
-                    nodes.insert(nodename.to_owned());
-                }
-                return nodes;
-            }
-        };
-    }
-
     pub fn HasPendingPod(&self, funcid: &str) -> bool {
         match self.funcs.get(funcid) {
             None => return false,
@@ -3661,120 +3617,6 @@ impl SchedulerHandler {
                 return fs.HasPendingPod();
             }
         };
-    }
-
-    pub fn GetSnapshotCandidateNodes(&self, func: &Function) -> BTreeSet<String> {
-        let funcid = &func.Id();
-        let snapshotNodes = self.GetSnapshotNodes(funcid);
-        let mut nodes = BTreeSet::new();
-
-        for (_, ns) in &self.nodes {
-            if Self::PRINT_SCHEDER_INFO {
-                error!(
-                    "GetSnapshotCandidateNodes 1 {:?}/{:?}",
-                    ns.state, &ns.available
-                );
-            }
-
-            if !self.IsNodeReady(&ns.node.name) {
-                continue;
-            }
-
-            // wait 5 sec to sync the snapshot information
-            if std::time::Instant::now().duration_since(ns.createTime)
-                < std::time::Duration::from_secs(5)
-            {
-                continue;
-            }
-
-            let spec = &func.object.spec;
-            if !ns.node.object.blobStoreEnable {
-                if spec.standby.gpuMem == StandbyType::Blob
-                    || spec.standby.PageableMem() == StandbyType::Blob
-                    || spec.standby.pinndMem == StandbyType::Blob
-                {
-                    continue;
-                }
-            }
-
-            if !snapshotNodes.contains(&ns.node.name) {
-                match self.nodes.get(&ns.node.name) {
-                    None => (),
-                    Some(ns) => {
-                        if ns.total.CanAlloc(&func.object.spec.resources, true).Ok() {
-                            nodes.insert(ns.node.name.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        return nodes;
-    }
-
-    // pub async fn GetBestNodeToSnapshot(
-    //     &mut self,
-    //     func: &Function,
-    // ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
-    //     let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
-    //     if snapshotCandidateNodes.len() == 0 {
-    //         return Err(Error::SchedulerErr(format!(
-    //             "GetBestNodeToSnapshot can't schedule {}, no enough resource",
-    //             func.Id(),
-    //         )));
-    //     }
-
-    //     let (nodename, workers, nodeResource) = self
-    //         .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
-    //         .await?;
-
-    //     return Ok((nodename, workers, nodeResource));
-    // }
-
-    pub async fn GetBestNodeToRestore(&mut self, fp: &Function) -> Result<String> {
-        let funcid = fp.Id();
-        let pods = self.GetFuncPodsByKey(&funcid)?;
-        let mut existnodes = BTreeSet::new();
-        for pod in &pods {
-            let podstate = pod.pod.object.status.state;
-            // error!("GetBestNodeToRestore id {} state {}", &funcid, podstate);
-            // the pod reach ready state, create another standby pod
-            if podstate != PodState::Ready {
-                let nodename = pod.pod.object.spec.nodename.clone();
-                if self.IsNodeReady(&nodename) {
-                    existnodes.insert(pod.pod.object.spec.nodename.clone());
-                }
-            }
-        }
-
-        let mut res = Vec::new();
-        match self.snapshots.get(&funcid) {
-            None => (),
-            Some(set) => {
-                for (nodename, _) in set {
-                    if !self.IsNodeReady(nodename) {
-                        continue;
-                    }
-                    if !existnodes.contains(nodename) {
-                        res.push(nodename.to_owned());
-                    }
-                }
-            }
-        }
-
-        if res.len() == 0 {
-            return Err(Error::CommonError(format!(
-                "can't find snapshot to restore {}",
-                funcid
-            )));
-        }
-
-        let mut rng = thread_rng();
-        res.shuffle(&mut rng);
-
-        let nodename = res[0].clone();
-
-        return Ok(nodename);
     }
 
     pub async fn RefreshScheduling(
@@ -3790,22 +3632,6 @@ impl SchedulerHandler {
         }
 
         return Ok(());
-    }
-
-    pub fn GetReadySnapshotNodes(&self, funcid: &str) -> Result<Vec<String>> {
-        match self.snapshots.get(funcid) {
-            None => return Ok(Vec::new()),
-            Some(snapshots) => {
-                let mut nodes = Vec::new();
-                for (nodename, s) in snapshots {
-                    if s.state == SnapshotState::Ready {
-                        nodes.push(nodename.to_owned());
-                    }
-                }
-
-                return Ok(nodes);
-            }
-        }
     }
 
     pub fn InitSnapshotTask(&mut self) -> Result<()> {
@@ -4914,82 +4740,6 @@ impl SchedulerHandler {
         );
 
         return Ok(id);
-    }
-
-    // TODO: dead code, remove
-    pub async fn CreateSnapshotWorker(
-        &self,
-        naUrl: &str,
-        func: &Function,
-        id: u64,
-        allocResources: &NodeResources,
-        resourceQuota: &NodeResources,
-        terminatePods: &Vec<WorkerPod>,
-    ) -> Result<()> {
-        let tenant = &func.tenant;
-        let namespace = &func.namespace;
-        let funcname = &func.name;
-        let fpRevision = func.Version();
-
-        let mut client =
-            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-                .await?;
-
-        let mut annotations = Vec::new();
-        annotations.push(Kv {
-            key: FUNCPOD_TYPE.to_owned(),
-            val: FUNCPOD_PROMPT.to_owned(),
-        });
-
-        annotations.push(Kv {
-            key: FUNCPOD_FUNCNAME.to_owned(),
-            val: funcname.to_owned(),
-        });
-
-        let mut tps = Vec::new();
-        for p in terminatePods {
-            let pod = p.pod.clone();
-            let termniatePod = TerminatePodReq {
-                tenant: pod.tenant.clone(),
-                namespace: pod.namespace.clone(),
-                funcname: pod.object.spec.funcname.clone(),
-                fprevision: pod.object.spec.fprevision.clone(),
-                id: pod.object.spec.id.clone(),
-            };
-            tps.push(termniatePod);
-        }
-
-        let mut spec = func.object.spec.clone();
-        let policy = self.FuncPolicy(&tenant, &func.namespace, &func.name, &spec.policy);
-        spec.policy = ObjRef::Obj(policy);
-
-        let request = tonic::Request::new(na::CreateFuncPodReq {
-            tenant: tenant.to_owned(),
-            namespace: namespace.to_owned(),
-            funcname: funcname.to_owned(),
-            fprevision: fpRevision,
-            id: format!("{id}"),
-            labels: Vec::new(),
-            annotations: annotations,
-            create_type: na::CreatePodType::Snapshot.into(),
-            funcspec: serde_json::to_string(&spec)?,
-            alloc_resources: serde_json::to_string(allocResources).unwrap(),
-            resource_quota: serde_json::to_string(resourceQuota).unwrap(),
-            terminate_pods: tps,
-        });
-
-        // Wait for response (blocks scheduler but prevents race conditions)
-        let response = client.create_func_pod(request).await?;
-        let resp = response.into_inner();
-        if !resp.error.is_empty() {
-            error!(
-                "Scheduler: Fail to CreateSnapshotWorker {} {} {} {}",
-                namespace, funcname, id, resp.error
-            );
-            return Err(Error::CommonError(resp.error));
-        }
-
-        Ok(())
     }
 
     /// Resume a standby worker pod to Ready state (non-blocking, async) with spawn_rpc
