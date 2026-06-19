@@ -13,7 +13,6 @@
 // limitations under
 
 use core::str;
-use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -30,7 +29,6 @@ use opentelemetry::trace::Tracer;
 use opentelemetry::KeyValue;
 
 use axum::extract::{Query, Request, State};
-use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
@@ -356,74 +354,35 @@ fn normalize_skill_request(
 
 fn resolve_skill_calling_tenant(
     token: &AccessToken,
-    skill: &SkillDetail,
-    tenant_hint: Option<&str>,
+    tenant_exists: &dyn Fn(&str) -> bool,
 ) -> Result<String> {
-    if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        let has_inference_or_above = token.CheckScope("inference");
-        let can_access_hint_tenant = token
-            .restrictTenant
-            .as_ref()
-            .is_some_and(|restricted| restricted == hint)
-            || token.IsTenantUser(hint);
-
-        if has_inference_or_above && can_access_hint_tenant {
-            return Ok(hint.to_string());
-        }
-        return Err(Error::NoPermission);
-    }
-
     if let Some(tenant) = token.restrictTenant.as_ref() {
         return Ok(tenant.clone());
     }
-
-    if !skill.is_published
-        && token.IsNamespaceInferenceUser(&skill.owner_tenant, &skill.owner_namespace)
-    {
-        return Ok(skill.owner_tenant.clone());
+    if let Some(dt) = token.defaultTenant.as_ref() {
+        if tenant_exists(dt) && token.IsTenantUser(dt) {
+            return Ok(dt.clone());
+        }
     }
-
-    let mut tenants: BTreeSet<String> = token
-        .UserTenants()
-        .into_iter()
-        .filter(|tenant| tenant != "public")
-        .collect();
-
-    if tenants.len() == 1 {
-        return Ok(tenants.pop_first().unwrap());
-    }
-
     Err(Error::CommonError(
-        "skill call requires a tenant-restricted API key, a single-tenant token, or an X-Tenant header"
-            .to_string(),
+        "no tenant context: set a default tenant or use a tenant-restricted API key".to_string(),
     ))
 }
 
-fn resolve_subscription_tenant(token: &AccessToken, tenant_hint: Option<&str>) -> Result<String> {
-    if let Some(hint) = tenant_hint.map(str::trim).filter(|s| !s.is_empty()) {
-        if !token.IsTenantUser(hint) {
-            return Err(Error::NoPermission);
-        }
-        return Ok(hint.to_string());
-    }
-
+fn resolve_subscription_tenant(
+    token: &AccessToken,
+    tenant_exists: &dyn Fn(&str) -> bool,
+) -> Result<String> {
     if let Some(tenant) = token.restrictTenant.as_ref() {
         return Ok(tenant.clone());
     }
-
-    let mut tenants: BTreeSet<String> = token
-        .UserTenants()
-        .into_iter()
-        .filter(|tenant| tenant != "public")
-        .collect();
-
-    if tenants.len() == 1 {
-        return Ok(tenants.pop_first().unwrap());
+    if let Some(dt) = token.defaultTenant.as_ref() {
+        if tenant_exists(dt) && token.IsTenantUser(dt) {
+            return Ok(dt.clone());
+        }
     }
-
     Err(Error::CommonError(
-        "subscription APIs require a tenant-restricted API key, a single-tenant token, or an X-Tenant header"
-            .to_string(),
+        "no tenant context: set a default tenant or use a tenant-restricted API key".to_string(),
     ))
 }
 
@@ -549,7 +508,8 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
-        resolve_skill_calling_tenant, summarize_funccall_body_for_log,
+        resolve_skill_calling_tenant, resolve_subscription_tenant,
+        summarize_funccall_body_for_log,
     };
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
@@ -574,48 +534,8 @@ mod tests {
             sourceIsApikey: true,
             restrictTenant: Some(tenant.to_owned()),
             restrictNamespace: None,
+            defaultTenant: None,
             updatetime: SystemTime::now(),
-        }
-    }
-
-    fn test_skill_detail() -> SkillDetail {
-        SkillDetail {
-            skill_id: 1,
-            owner_tenant: "owner-tenant".to_owned(),
-            owner_namespace: "default".to_owned(),
-            skillname: "skill".to_owned(),
-            description: None,
-            serving_mode: "sync".to_owned(),
-            earning_type: "free".to_owned(),
-            user_price_microcents: None,
-            gpu_billing_target: "caller".to_owned(),
-            inferx_revenue_share_pct: 0.0,
-            active_revision_id: Some(1),
-            is_published: true,
-            published_at: None,
-            published_by: None,
-            revision_id: 1,
-            version: 1,
-            template_id: 1,
-            has_cache: false,
-            cache_status: "ready".to_owned(),
-            cache_ready_at: None,
-            revision_created_at: None,
-            revision_created_by: "user".to_owned(),
-            template_tenant: "owner-tenant".to_owned(),
-            template_namespace: "default".to_owned(),
-            template_display_name: "Skill".to_owned(),
-            template_description: None,
-            func_tenant: "func-tenant".to_owned(),
-            func_namespace: "default".to_owned(),
-            normal_funcname: "func".to_owned(),
-            producer_funcname: None,
-            producer_revision: None,
-            consumer_funcname: None,
-            consumer_revision: None,
-            template_is_active: true,
-            template_created_at: None,
-            allowed_child_skilleps: None,
         }
     }
 
@@ -667,19 +587,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_skill_calling_tenant_allows_restricted_inference_key_for_matching_hint() {
+    fn resolve_skill_calling_tenant_uses_restrict_tenant() {
         let token = restricted_apikey("inference", "tenant-a");
-        let skill = test_skill_detail();
-        let tenant = resolve_skill_calling_tenant(&token, &skill, Some("tenant-a")).unwrap();
+        let tenant = resolve_skill_calling_tenant(&token, &|_| true).unwrap();
         assert_eq!(tenant, "tenant-a");
-    }
-
-    #[test]
-    fn resolve_skill_calling_tenant_rejects_restricted_inference_key_for_other_hint() {
-        let token = restricted_apikey("inference", "tenant-a");
-        let skill = test_skill_detail();
-        let err = resolve_skill_calling_tenant(&token, &skill, Some("tenant-b")).unwrap_err();
-        assert!(matches!(err, Error::NoPermission));
     }
 
     #[test]
@@ -699,6 +610,119 @@ mod tests {
         let categories = vec!["mcp".to_owned(), "   ".to_owned()];
         let err = verbose_categories_mask_from_request(&categories).unwrap_err();
         assert_eq!(err, vec![String::new()]);
+    }
+
+    fn token_with_tenant_role(tenant: &str, default_tenant: Option<&str>) -> AccessToken {
+        let role = AccessToken::TenantUserRole(tenant);
+        let mut roles = BTreeSet::new();
+        roles.insert(role);
+        AccessToken {
+            subject: String::new(),
+            username: "user".to_owned(),
+            display_name: None,
+            email: String::new(),
+            email_verified: false,
+            roles,
+            apiKeys: Vec::new(),
+            scope: "full".to_owned(),
+            sourceIsApikey: false,
+            restrictTenant: None,
+            restrictNamespace: None,
+            defaultTenant: default_tenant.map(str::to_owned),
+            updatetime: SystemTime::now(),
+        }
+    }
+
+    fn token_with_default_tenant_only(default_tenant: &str) -> AccessToken {
+        AccessToken {
+            subject: String::new(),
+            username: "user".to_owned(),
+            display_name: None,
+            email: String::new(),
+            email_verified: false,
+            roles: BTreeSet::new(),
+            apiKeys: Vec::new(),
+            scope: "full".to_owned(),
+            sourceIsApikey: false,
+            restrictTenant: None,
+            restrictNamespace: None,
+            defaultTenant: Some(default_tenant.to_owned()),
+            updatetime: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_uses_default_tenant_when_authorized() {
+        let token = token_with_tenant_role("tenant-a", Some("tenant-a"));
+        let tenant = resolve_skill_calling_tenant(&token, &|_| true).unwrap();
+        assert_eq!(tenant, "tenant-a");
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_restrict_tenant_takes_priority_over_default_tenant() {
+        let mut token = token_with_tenant_role("tenant-a", Some("tenant-b"));
+        token.restrictTenant = Some("tenant-a".to_owned());
+        let tenant = resolve_skill_calling_tenant(&token, &|_| true).unwrap();
+        assert_eq!(tenant, "tenant-a");
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_no_default_tenant_errors() {
+        let token = token_with_tenant_role("tenant-a", None);
+        let result = resolve_skill_calling_tenant(&token, &|_| true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_unauthorized_default_tenant_errors() {
+        let token = token_with_default_tenant_only("tenant-x");
+        let result = resolve_skill_calling_tenant(&token, &|_| true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_skill_calling_tenant_deleted_default_tenant_errors() {
+        let mut token = token_with_tenant_role("tenant-a", Some("deleted-tenant"));
+        token.roles.insert(AccessToken::TenantUserRole("deleted-tenant"));
+        let result = resolve_skill_calling_tenant(&token, &|t| t != "deleted-tenant");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_subscription_tenant_uses_default_tenant_when_authorized() {
+        let token = token_with_tenant_role("tenant-a", Some("tenant-a"));
+        let tenant = resolve_subscription_tenant(&token, &|_| true).unwrap();
+        assert_eq!(tenant, "tenant-a");
+    }
+
+    #[test]
+    fn resolve_subscription_tenant_restrict_tenant_takes_priority() {
+        let mut token = token_with_tenant_role("tenant-a", Some("tenant-b"));
+        token.restrictTenant = Some("tenant-a".to_owned());
+        let tenant = resolve_subscription_tenant(&token, &|_| true).unwrap();
+        assert_eq!(tenant, "tenant-a");
+    }
+
+    #[test]
+    fn resolve_subscription_tenant_no_default_tenant_errors() {
+        let token = token_with_tenant_role("tenant-a", None);
+        let result = resolve_subscription_tenant(&token, &|_| true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_subscription_tenant_unauthorized_default_tenant_errors() {
+        let token = token_with_default_tenant_only("tenant-x");
+        let result = resolve_subscription_tenant(&token, &|_| true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_subscription_tenant_deleted_default_tenant_errors() {
+        let mut token = token_with_tenant_role("tenant-a", Some("deleted-tenant"));
+        token.roles.insert(AccessToken::TenantUserRole("deleted-tenant"));
+        let result = resolve_subscription_tenant(&token, &|t| t != "deleted-tenant");
+        assert!(result.is_err());
     }
 }
 
@@ -2501,7 +2525,6 @@ async fn ListSkillsByNamespace(
 async fn ListSkillMarketplace(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    headers: HeaderMap,
     Query(params): Query<SkillMarketplaceQuery>,
 ) -> SResult<Response, StatusCode> {
     if !token.CheckScope("read") {
@@ -2535,8 +2558,8 @@ async fn ListSkillMarketplace(
         ))));
     }
 
-    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
-    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let subscriber_tenant = match resolve_subscription_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -2564,11 +2587,10 @@ async fn ListSkillMarketplace(
 async fn CreateSkillSubscription(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    headers: HeaderMap,
     Json(req): Json<SkillSubscriptionCreateRequest>,
 ) -> SResult<Response, StatusCode> {
-    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
-    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let subscriber_tenant = match resolve_subscription_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -2620,7 +2642,6 @@ async fn CreateSkillSubscription(
 async fn ListSkillSubscriptions(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    headers: HeaderMap,
 ) -> SResult<Response, StatusCode> {
     if !token.CheckScope("read") {
         return Ok(Response::builder()
@@ -2629,8 +2650,8 @@ async fn ListSkillSubscriptions(
             .unwrap());
     }
 
-    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
-    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let subscriber_tenant = match resolve_subscription_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -2652,11 +2673,10 @@ async fn ListSkillSubscriptions(
 async fn DeleteSkillSubscription(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    headers: HeaderMap,
     Path((owner_tenant, owner_namespace, skillname)): Path<(String, String, String)>,
 ) -> SResult<Response, StatusCode> {
-    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
-    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let subscriber_tenant = match resolve_subscription_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -2685,12 +2705,11 @@ async fn DeleteSkillSubscription(
 async fn UpdateSkillSubscription(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
-    headers: HeaderMap,
     Path((owner_tenant, owner_namespace, skillname)): Path<(String, String, String)>,
     Json(req): Json<SkillSubscriptionUpdateRequest>,
 ) -> SResult<Response, StatusCode> {
-    let tenant_hint = headers.get("x-tenant").and_then(|v| v.to_str().ok());
-    let subscriber_tenant = match resolve_subscription_tenant(&token, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let subscriber_tenant = match resolve_subscription_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };
@@ -3239,8 +3258,8 @@ async fn SkillCall(
             .unwrap());
     }
 
-    let tenant_hint = req.headers().get("X-Tenant").and_then(|v| v.to_str().ok());
-    let calling_tenant = match resolve_skill_calling_tenant(&token, &skill, tenant_hint) {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    let calling_tenant = match resolve_skill_calling_tenant(&token, &tenant_exists) {
         Ok(tenant) => tenant,
         Err(e) => return Ok(skill_admin_response(e)),
     };

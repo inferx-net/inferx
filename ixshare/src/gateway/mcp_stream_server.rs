@@ -546,7 +546,6 @@ impl ServerHandler for McpStreamServer {
                 .client
                 .post(&endpoint)
                 .header("Authorization", authorization)
-                .header("X-Tenant", tenant.clone())
                 .header("X-Skill-Trace", "1")
                 .header("X-Mcp-Cancel-Id", &cancel_id)
                 .json(&body)
