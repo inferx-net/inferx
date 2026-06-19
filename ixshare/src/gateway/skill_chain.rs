@@ -1050,7 +1050,7 @@ fn copy_forwarded_child_headers(
     child_req: reqwest::RequestBuilder,
 ) -> reqwest::RequestBuilder {
     let mut child_req = child_req;
-    for header_name in ["Authorization", "X-Request-Id", "traceparent", "X-Tenant"] {
+    for header_name in ["Authorization", "X-Request-Id", "traceparent"] {
         if let Some(v) = parent_headers
             .get(header_name)
             .and_then(|value| value.to_str().ok())

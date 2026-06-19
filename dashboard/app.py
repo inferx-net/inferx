@@ -4755,15 +4755,13 @@ def query_endpoint_row_by_slug(slug: str):
     return normalize_endpoint_row(dict(row))
 
 
-def gateway_request_headers(*, json_body=False, active_tenant: str | None = None):
+def gateway_request_headers(*, json_body=False):
     access_token = session.get('access_token', '')
     headers = {}
     if access_token != "":
         headers['Authorization'] = f'Bearer {access_token}'
     if json_body:
         headers["Content-Type"] = "application/json"
-    if active_tenant:
-        headers["X-Tenant"] = str(active_tenant).strip()
     return headers
 
 
@@ -4942,7 +4940,7 @@ def list_published_skills():
     return payload
 
 
-def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str | None = None, active_tenant: str | None = None, include_unpublished: bool = False):
+def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str | None = None, include_unpublished: bool = False):
     url = f"{apihostaddr}/api/v1/skills/marketplace"
     params: dict = {
         "page": max(1, int(page)),
@@ -4953,7 +4951,7 @@ def list_marketplace_skills(*, page: int = 1, page_size: int = 24, keyword: str 
     if include_unpublished:
         params["include_unpublished"] = "true"
 
-    resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), params=params, timeout=60)
+    resp = requests.get(url, headers=gateway_request_headers(), params=params, timeout=60)
     payload = response_json_or_none(resp)
     if not resp.ok:
         detail = extract_upstream_error_message(resp, payload)
@@ -5014,9 +5012,9 @@ class SkillSubscriptionGatewayError(RuntimeError):
         self.status_code = int(status_code)
 
 
-def list_skill_subscriptions(*, active_tenant: str | None = None):
+def list_skill_subscriptions():
     url = f"{apihostaddr}/api/v1/skills/subscriptions"
-    resp = requests.get(url, headers=gateway_request_headers(active_tenant=active_tenant), timeout=60)
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=60)
     payload = response_json_or_none(resp)
     if not resp.ok:
         detail = extract_upstream_error_message(resp, payload)
@@ -5034,7 +5032,7 @@ def list_skill_subscriptions(*, active_tenant: str | None = None):
     return rows
 
 
-def create_skill_subscription(owner_tenant: str, namespace: str, skillname: str, tool_alias: str | None = None, *, active_tenant: str | None = None):
+def create_skill_subscription(owner_tenant: str, namespace: str, skillname: str, tool_alias: str | None = None):
     payload = {
         "owner_tenant": owner_tenant,
         "owner_namespace": namespace,
@@ -5046,7 +5044,7 @@ def create_skill_subscription(owner_tenant: str, namespace: str, skillname: str,
     url = f"{apihostaddr}/api/v1/skills/subscriptions"
     resp = requests.post(
         url,
-        headers=gateway_request_headers(json_body=True, active_tenant=active_tenant),
+        headers=gateway_request_headers(json_body=True),
         json=payload,
         timeout=60,
     )
@@ -5059,14 +5057,14 @@ def create_skill_subscription(owner_tenant: str, namespace: str, skillname: str,
     return response_payload
 
 
-def update_skill_subscription_alias(owner_tenant: str, namespace: str, skillname: str, tool_alias: str, *, active_tenant: str | None = None):
+def update_skill_subscription_alias(owner_tenant: str, namespace: str, skillname: str, tool_alias: str):
     encoded_owner = quote(owner_tenant, safe="")
     encoded_namespace = quote(namespace, safe="")
     encoded_skill = quote(skillname, safe="")
     url = f"{apihostaddr}/api/v1/skills/subscriptions/{encoded_owner}/{encoded_namespace}/{encoded_skill}"
     resp = requests.patch(
         url,
-        headers=gateway_request_headers(json_body=True, active_tenant=active_tenant),
+        headers=gateway_request_headers(json_body=True),
         json={"tool_alias": str(tool_alias or "").strip()},
         timeout=60,
     )
@@ -5079,12 +5077,12 @@ def update_skill_subscription_alias(owner_tenant: str, namespace: str, skillname
     return payload
 
 
-def delete_skill_subscription(owner_tenant: str, namespace: str, skillname: str, *, active_tenant: str | None = None):
+def delete_skill_subscription(owner_tenant: str, namespace: str, skillname: str):
     encoded_owner = quote(owner_tenant, safe="")
     encoded_namespace = quote(namespace, safe="")
     encoded_skill = quote(skillname, safe="")
     url = f"{apihostaddr}/api/v1/skills/subscriptions/{encoded_owner}/{encoded_namespace}/{encoded_skill}"
-    resp = requests.delete(url, headers=gateway_request_headers(active_tenant=active_tenant), timeout=60)
+    resp = requests.delete(url, headers=gateway_request_headers(), timeout=60)
     payload = response_json_or_none(resp)
     if not resp.ok:
         detail = extract_upstream_error_message(resp, payload)
@@ -5162,7 +5160,7 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
                 seen_keys.add(key)
                 my_skills.append(row)
 
-    subscriptions = list_skill_subscriptions(active_tenant=active_tenant)
+    subscriptions = list_skill_subscriptions()
     subscriptions_by_skill = {}
     for row in subscriptions:
         key = (
@@ -5211,7 +5209,6 @@ def load_skill_dashboard_context(*, skills_view: str = "my_skills"):
             page=marketplace_page,
             page_size=marketplace_page_size,
             keyword=marketplace_keyword or None,
-            active_tenant=active_tenant,
             include_unpublished=marketplace_include_unpublished,
         )
         marketplace_page = int(marketplace_payload.get("page") or marketplace_page)
@@ -8342,7 +8339,7 @@ def SkillSubscriptionSubscribe():
             return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
         if alias != "" and not all(ch.isascii() and (ch.isalnum() or ch in "-_.") for ch in alias):
             return json_error("tool_alias may contain only letters, numbers, hyphens, underscores, and periods", 400)
-        created = create_skill_subscription(owner, namespace, skillname, alias or None, active_tenant=active_tenant)
+        created = create_skill_subscription(owner, namespace, skillname, alias or None)
     except SkillSubscriptionGatewayError as e:
         return json_error(str(e), e.status_code)
     except Exception as e:
@@ -8369,7 +8366,7 @@ def SkillSubscriptionUnsubscribe():
         skillname = str(req.get("skillname", "") or "").strip()
         if owner == "" or namespace == "" or skillname == "":
             return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
-        delete_skill_subscription(owner, namespace, skillname, active_tenant=active_tenant)
+        delete_skill_subscription(owner, namespace, skillname)
     except SkillSubscriptionGatewayError as e:
         return json_error(str(e), e.status_code)
     except Exception as e:
@@ -8399,7 +8396,7 @@ def SkillSubscriptionUpdateAlias():
             return json_error("owner_tenant, owner_namespace, and skillname are required", 400)
         if not alias or not all(ch.isascii() and (ch.isalnum() or ch in "-_.") for ch in alias):
             return json_error("tool_alias may contain only letters, numbers, hyphens, underscores, and periods", 400)
-        updated = update_skill_subscription_alias(owner, namespace, skillname, alias, active_tenant=active_tenant)
+        updated = update_skill_subscription_alias(owner, namespace, skillname, alias)
     except SkillSubscriptionGatewayError as e:
         return json_error(str(e), e.status_code)
     except Exception as e:
@@ -8420,7 +8417,7 @@ def GenerateSkills():
     except Exception:
         own_skills = []
     try:
-        marketplace_payload = list_marketplace_skills(keyword=keyword or None, page_size=50, active_tenant=tenant)
+        marketplace_payload = list_marketplace_skills(keyword=keyword or None, page_size=50)
         marketplace_items = marketplace_payload.get("items", []) if isinstance(marketplace_payload, dict) else []
     except Exception:
         marketplace_items = []
@@ -8785,7 +8782,7 @@ def SkillDetail():
     tool_alias = None
     if active_tenant:
         try:
-            for sub in list_skill_subscriptions(active_tenant=active_tenant):
+            for sub in list_skill_subscriptions():
                 if (
                     str(sub.get("owner_tenant", "") or "").strip().lower() == owner.strip().lower()
                     and str(sub.get("owner_namespace", "") or "").strip().lower() == ns.strip().lower()
@@ -9488,15 +9485,8 @@ def proxy(path):
     # access for public tenant models.
     is_public_funccall = normalized_path.startswith("funccall/public/")
     has_client_auth = any(key.lower() == 'authorization' for key in headers)
-    has_client_tenant = any(key.lower() == 'x-tenant' for key in headers)
     if access_token != "" and not has_client_auth and not is_public_funccall:
         headers["Authorization"] = f'Bearer {access_token}'
-    if (
-        active_tenant != ""
-        and not has_client_tenant
-        and normalized_path.startswith("skills/")
-    ):
-        headers["X-Tenant"] = active_tenant
     
     # Construct the full URL for the backend request
     url = f"{apihostaddr}/{path}"

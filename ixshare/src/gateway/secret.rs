@@ -64,6 +64,14 @@ pub struct TenantProfile {
     pub created_at: Option<chrono::NaiveDateTime>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct UserProfile {
+    pub sub: String,
+    pub default_tenant: Option<String>,
+    pub created_at: Option<chrono::NaiveDateTime>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct EndpointMetadata {
     pub brief_intro: Option<String>,
@@ -763,6 +771,17 @@ impl SqlSecret {
             .execute(&mut *tx)
             .await?;
 
+        let upsert_user_profile_query = "insert into UserProfile (sub, default_tenant)
+            values ($1, $2)
+            on conflict (sub) do update
+            set default_tenant = EXCLUDED.default_tenant, updated_at = NOW()";
+
+        let _res = sqlx::query(upsert_user_profile_query)
+            .bind(sub)
+            .bind(tenant_name)
+            .execute(&mut *tx)
+            .await?;
+
         let complete_query = "update UserOnboard
             set status = 'complete',
                 saga_step = GREATEST(saga_step, 3),
@@ -776,6 +795,71 @@ impl SqlSecret {
 
         tx.commit().await?;
         return Ok(());
+    }
+
+    pub async fn GetUserProfile(&self, sub: &str) -> Result<Option<UserProfile>> {
+        let query = "select sub, default_tenant, created_at, updated_at
+            from UserProfile where sub = $1";
+
+        let profile = sqlx::query_as::<_, UserProfile>(query)
+            .bind(sub)
+            .fetch_optional(&self.pool)
+            .await?;
+        return Ok(profile);
+    }
+
+    pub async fn UpsertUserProfileDefaultTenant(
+        &self,
+        sub: &str,
+        default_tenant: &str,
+    ) -> Result<()> {
+        let query = "insert into UserProfile (sub, default_tenant)
+            values ($1, $2)
+            on conflict (sub) do update
+            set default_tenant = EXCLUDED.default_tenant, updated_at = NOW()";
+
+        let _res = sqlx::query(query)
+            .bind(sub)
+            .bind(default_tenant)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
+    }
+
+    pub async fn ClearUserProfileDefaultTenant(&self, sub: &str) -> Result<()> {
+        let query =
+            "update UserProfile set default_tenant = NULL, updated_at = NOW() where sub = $1";
+
+        let _res = sqlx::query(query).bind(sub).execute(&self.pool).await?;
+        return Ok(());
+    }
+
+    pub async fn ClearUserProfileDefaultTenantByTenant(&self, tenant_name: &str) -> Result<()> {
+        let query = "update UserProfile set default_tenant = NULL, updated_at = NOW()
+            where default_tenant = $1";
+
+        let _res = sqlx::query(query)
+            .bind(tenant_name)
+            .execute(&self.pool)
+            .await?;
+        return Ok(());
+    }
+
+    pub async fn BackfillUserProfiles(&self) -> Result<u64> {
+        let mut tx = self.pool.begin().await?;
+
+        let insert_query = "insert into UserProfile (sub, default_tenant)
+            select o.sub, o.tenant_name
+            from UserOnboard o
+            where o.status = 'complete'
+              and not exists (select 1 from UserProfile p where p.sub = o.sub)
+            on conflict (sub) do nothing";
+
+        let res = sqlx::query(insert_query).execute(&mut *tx).await?;
+        let rows_inserted = res.rows_affected();
+
+        tx.commit().await?;
+        return Ok(rows_inserted);
     }
 
     pub async fn MarkOnboardFailed(&self, sub: &str) -> Result<()> {
