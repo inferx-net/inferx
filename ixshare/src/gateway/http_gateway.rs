@@ -3399,6 +3399,9 @@ async fn SkillCall(
         .and_then(|id| McpCancelRegistry::global().lookup(id))
         .unwrap_or_else(CancellationToken::new);
 
+    let is_debug_authorized =
+        token.IsNamespaceAdmin(&owner_tenant, &namespace) || token.IsInferxAdmin();
+
     handle_skill_call_chain(
         &gw,
         req,
@@ -3412,6 +3415,8 @@ async fn SkillCall(
         skill.allowed_child_skilleps.as_deref(),
         FUNCCALL_MAX_BODY_BYTES,
         cancel_token,
+        false, // is_debug_route
+        is_debug_authorized,
     )
     .await
 }

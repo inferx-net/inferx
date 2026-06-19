@@ -25,8 +25,6 @@ use crate::print::verbose_category;
 
 const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
 const SKILL_CHAIN_DEPTH_HEADER: &str = "X-Chain-Depth";
-const SKILL_TRACE_HEADER: &str = "X-Skill-Trace";
-const SKILL_TRACE_CONTENT_HEADER: &str = "X-Skill-Trace-Content";
 const SKILL_CHAIN_MAX_DEPTH: u32 = 5;
 const SKILL_CHAIN_TOOL_NAME: &str = "call_skillep";
 const SKILL_EP_CONSTRAINT: &str = "IMPORTANT: When using the call_skillep tool, you MUST only call skill endpoint IDs that are explicitly listed below. Do not invent or assume other skill endpoint IDs exist. If a skill endpoint is not listed below, do not call it.";
@@ -313,20 +311,50 @@ impl SseParser {
     }
 }
 
-fn skill_trace_enabled(headers: &HeaderMap) -> bool {
+/// Computes the effective trace level from request body and route context.
+///
+/// Decision table:
+/// - `is_debug_route = true`  → always 2 (body `skill_trace` is ignored)
+/// - body field absent        → 0
+/// - body `skill_trace = 0/1/2` → use directly
+/// - body `skill_trace = null` or any other value → Err (→ 400 Bad Request)
+fn compute_effective_trace_level(body_bytes: &[u8], is_debug_route: bool) -> Result<u8, ()> {
+    if is_debug_route {
+        return Ok(2);
+    }
+    let body: Value = serde_json::from_slice(body_bytes).map_err(|_| ())?;
+    match body.get("skill_trace") {
+        None => Ok(0),
+        Some(Value::Number(n)) => match n.as_u64() {
+            Some(0) => Ok(0),
+            Some(1) => Ok(1),
+            Some(2) => Ok(2),
+            _ => Err(()),
+        },
+        Some(_) => Err(()),
+    }
+}
+
+fn is_internal_child_request(headers: &HeaderMap) -> bool {
     headers
-        .get(SKILL_TRACE_HEADER)
+        .get(SKILL_CHAIN_CHILD_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(|v| v == "1")
         .unwrap_or(false)
 }
 
-fn skill_trace_content_enabled(headers: &HeaderMap) -> bool {
-    headers
-        .get(SKILL_TRACE_CONTENT_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "1")
-        .unwrap_or(false)
+/// Phase-1 authorization rule for verbose tracing.
+///
+/// `skill_trace = 2` requires debug privilege on the root request only.
+/// Child skill requests inherit the root trace level without a second
+/// debug-authorization check. This currently trusts the internal child-call
+/// headers as gateway-only signals.
+fn requires_root_debug_authorization(
+    effective_trace_level: u8,
+    headers: &HeaderMap,
+    is_debug_route: bool,
+) -> bool {
+    effective_trace_level == 2 && !is_debug_route && !is_internal_child_request(headers)
 }
 
 fn now_ts_ms() -> i64 {
@@ -715,11 +743,7 @@ fn parse_skill_chain_request(
         })
         .unwrap_or_default();
 
-    let is_child = headers
-        .get(SKILL_CHAIN_CHILD_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let is_child = is_internal_child_request(headers);
 
     if !is_child {
         match obj.get("tools") {
@@ -1212,9 +1236,15 @@ async fn execute_parallel_child_call(
                     next_depth,
                     query.len()
                 );
+                let child_skill_trace: u8 = match context.trace.as_ref() {
+                    None => 0,
+                    Some(t) if t.include_content => 2,
+                    Some(_) => 1,
+                };
                 let child_body = serde_json::json!({
                     "messages": [{"role": "user", "content": query}],
-                    "stream": false
+                    "stream": false,
+                    "skill_trace": child_skill_trace
                 });
                 let child_url = format!(
                     "http://127.0.0.1:{}/skills/{}/{}/{}/v1/chat/completions",
@@ -1230,13 +1260,7 @@ async fn execute_parallel_child_call(
                     .header(SKILL_CHAIN_CHILD_HEADER, "1")
                     .header(SKILL_CHAIN_DEPTH_HEADER, next_depth.to_string())
                     .json(&child_body);
-                let mut child_req = copy_forwarded_child_headers(&context.headers, child_req);
-                if let Some(trace_state) = context.trace.as_ref() {
-                    child_req = child_req.header(SKILL_TRACE_HEADER, "1");
-                    if trace_state.include_content {
-                        child_req = child_req.header(SKILL_TRACE_CONTENT_HEADER, "1");
-                    }
-                }
+                let child_req = copy_forwarded_child_headers(&context.headers, child_req);
 
                 let trace_for_child_call = context.trace.clone();
                 let child_trace_for_stream = child_trace.clone();
@@ -1894,8 +1918,6 @@ async fn execute_skill_chain(
         let mut model_headers = chain.headers.clone();
         model_headers.remove(SKILL_CHAIN_CHILD_HEADER);
         model_headers.remove(SKILL_CHAIN_DEPTH_HEADER);
-        model_headers.remove(SKILL_TRACE_HEADER);
-        model_headers.remove("X-Skill-Trace-Content");
         model_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let model_req = Request::builder()
@@ -2140,6 +2162,8 @@ pub(super) async fn handle_skill_call_chain(
     allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
     cancel_token: CancellationToken,
+    is_debug_route: bool,
+    is_debug_authorized: bool,
 ) -> Result<Response, StatusCode> {
     let allowed: Option<HashSet<String>> = allowed_child_skilleps
         .map(|ids| ids.iter().cloned().collect());
@@ -2156,6 +2180,25 @@ pub(super) async fn handle_skill_call_chain(
                 .unwrap())
         }
     };
+
+    let effective_trace_level = match compute_effective_trace_level(&req_bytes, is_debug_route) {
+        Ok(level) => level,
+        Err(()) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid skill_trace value"))
+                .unwrap())
+        }
+    };
+
+    if requires_root_debug_authorization(effective_trace_level, &req_headers, is_debug_route)
+        && !is_debug_authorized
+    {
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Body::from("service failure: verbose trace requires debug privilege"))
+            .unwrap());
+    }
 
     let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
         Ok(chain) => chain,
@@ -2212,7 +2255,7 @@ pub(super) async fn handle_skill_call_chain(
 
     let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
 
-    if !skill_trace_enabled(&req_headers) {
+    if effective_trace_level == 0 {
         return match execute_skill_chain(
             gw,
             chain,
@@ -2243,13 +2286,14 @@ pub(super) async fn handle_skill_call_chain(
         };
     }
 
+    // effective_trace_level is 1 (basic trace) or 2 (verbose trace)
     let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
     let trace = SkillChainTraceState {
         tx: tx.clone(),
         root_call_id: Uuid::new_v4().to_string(),
         root_skill: display_skill_id,
         started_at: Instant::now(),
-        include_content: skill_trace_content_enabled(&req_headers),
+        include_content: effective_trace_level == 2,
     };
 
     let gw = gw.clone();
@@ -2346,6 +2390,8 @@ pub(super) async fn handle_skill_call_chain(
         .unwrap())
 }
 
+/// Compatibility alias for the debug route (`/skills/debug/...`).
+/// Always forces effective `skill_trace = 2`; caller must have already verified debug privilege.
 pub(super) async fn handle_skill_debug_call(
     gw: &HttpGateway,
     req: Request,
@@ -2360,152 +2406,36 @@ pub(super) async fn handle_skill_debug_call(
     max_body_bytes: usize,
     cancel_token: CancellationToken,
 ) -> Result<Response, StatusCode> {
-    let allowed: Option<HashSet<String>> = allowed_child_skilleps
-        .map(|ids| ids.iter().cloned().collect());
-    let allowed_ref = allowed.as_ref();
-
-    let (req_parts, req_body) = req.into_parts();
-    let req_headers = req_parts.headers.clone();
-    let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap())
-        }
-    };
-
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
-        Ok(chain) => chain,
-        Err(SkillChainRequestError::ClientProvidedTools) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(CLIENT_PROVIDED_TOOLS_ERROR))
-                .unwrap())
-        }
-        Err(SkillChainRequestError::BadRequest) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap())
-        }
-    };
-
-    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
-
-    let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
-    let trace = SkillChainTraceState {
-        tx: tx.clone(),
-        root_call_id: Uuid::new_v4().to_string(),
-        root_skill: display_skill_id,
-        started_at: Instant::now(),
-        include_content: true,
-    };
-
-    let gw = gw.clone();
-    let route_for_task = route.clone();
-    let calling_tenant_for_task = calling_tenant.clone();
-    let logical_funcname_for_task = logical_funcname.clone();
-    let remain_path_for_task = remain_path.clone();
-    let prefix_for_task = prefix.to_string();
-    let skills_namespace_for_task = skills_namespace.to_string();
-    let cancel_token_for_task = cancel_token;
-    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
-    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
-    // checks in execute_skill_chain fire when the SSE client drops the connection,
-    // exactly as they do for MCP callers whose token is sourced from context.ct.
-    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
-    // execution completes normally, so the SSE channel closes without waiting for
-    // the HTTP client to disconnect.
-    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
-    let cancel_for_watcher = cancel_token_for_task.clone();
-    let tx_for_watcher = tx.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
-            _ = exec_done_rx => {}
-        }
-    });
-
-    tokio::spawn(async move {
-        let root_query = latest_user_query(&chain.history);
-        if !emit_root_call_start(&trace, root_query.as_deref()).await {
-            return;
-        }
-
-        let trace_for_closed = trace.clone();
-        let exec = execute_skill_chain(
-            &gw,
-            chain,
-            route_for_task,
-            calling_tenant_for_task,
-            logical_funcname_for_task,
-            remain_path_for_task,
-            prefix_for_task,
-            skills_namespace_for_task,
-            allowed_arc,
-            Some(trace.clone()),
-            cancel_token_for_task.clone(),
-        );
-        tokio::pin!(exec);
-
-        let result = tokio::select! {
-            _ = trace_for_closed.tx.closed() => return,
-            _ = cancel_token_for_task.cancelled() => return,
-            result = &mut exec => result,
-        };
-
-        match result {
-            Ok(final_resp) if final_resp.is_openai_chat_completion => {
-                let _ =
-                    emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
-                let _ = emit_trace_skill_result(&trace, &final_resp.body).await;
-            }
-            Ok(_) => {
-                let _ = emit_root_call_finish(
-                    &trace,
-                    "fail",
-                    Some(SkillTraceFailReason::InvalidResponse),
-                    None,
-                )
-                .await;
-            }
-            Err(SkillChainExecutionError::DownstreamStatus(_))
-            | Err(SkillChainExecutionError::Response(_, _)) => {
-                let _ = emit_root_call_finish(
-                    &trace,
-                    "fail",
-                    Some(SkillTraceFailReason::TransportError),
-                    None,
-                )
-                .await;
-            }
-        }
-        let _ = emit_trace_done(&trace).await;
-        let _ = exec_done_tx.send(());
-    });
-
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    let body = Body::from_stream(http_body_util::StreamBody::new(stream));
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/event-stream")
-        .header("Cache-Control", "no-cache")
-        .header("X-Accel-Buffering", "no")
-        .body(body)
-        .unwrap())
+    handle_skill_call_chain(
+        gw,
+        req,
+        route,
+        display_skill_id,
+        calling_tenant,
+        logical_funcname,
+        remain_path,
+        prefix,
+        skills_namespace,
+        allowed_child_skilleps,
+        max_body_bytes,
+        cancel_token,
+        true,  // is_debug_route: always forces effective skill_trace = 2
+        true,  // is_debug_authorized: RunSkillDebug already verified privilege
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
-        parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
-        read_child_trace_sse, skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
-        ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainChildTraceState, SkillChainRequestError, SkillChainTraceState,
-        SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
+        build_skill_chain_request_body, compute_effective_trace_level,
+        drive_parallel_child_tasks, execute_parallel_child_call, parse_skill_chain_request,
+        parse_skill_response, parse_skillep_tool_args, read_child_trace_sse,
+        requires_root_debug_authorization, skill_chain_tool_definition, split_skillep_id,
+        ParallelChildResult, ParallelChildTaskContext, ParallelChildTaskInput,
+        ParsedSkillToolCall, SkillChainChildTraceState, SkillChainRequestError,
+        SkillChainTraceState, SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER,
+        SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use futures::future::BoxFuture;
@@ -2578,6 +2508,106 @@ mod tests {
             parse_skill_chain_request(&headers, body, None).unwrap_err(),
             SkillChainRequestError::BadRequest
         );
+    }
+
+    // compute_effective_trace_level tests
+
+    #[test]
+    fn effective_trace_level_absent_field_defaults_to_zero() {
+        let body = br#"{"messages":[]}"#;
+        assert_eq!(compute_effective_trace_level(body, false), Ok(0));
+    }
+
+    #[test]
+    fn effective_trace_level_zero_one_two_accepted() {
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":0}"#, false),
+            Ok(0)
+        );
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":1}"#, false),
+            Ok(1)
+        );
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":2}"#, false),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn effective_trace_level_null_returns_error() {
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":null}"#, false),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn effective_trace_level_invalid_value_returns_error() {
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":3}"#, false),
+            Err(())
+        );
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":"1"}"#, false),
+            Err(())
+        );
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":-1}"#, false),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn effective_trace_level_debug_route_always_two() {
+        // debug route ignores body skill_trace entirely
+        assert_eq!(compute_effective_trace_level(br#"{}"#, true), Ok(2));
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":0}"#, true),
+            Ok(2)
+        );
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":1}"#, true),
+            Ok(2)
+        );
+        // even invalid values are overridden by is_debug_route
+        assert_eq!(
+            compute_effective_trace_level(br#"{"skill_trace":null}"#, true),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn effective_trace_level_legacy_headers_without_body_field_default_to_zero() {
+        // X-Skill-Trace / X-Skill-Trace-Content headers are ignored; body absent → 0
+        let body = br#"{"messages":[]}"#;
+        assert_eq!(compute_effective_trace_level(body, false), Ok(0));
+    }
+
+    #[test]
+    fn effective_trace_level_legacy_headers_with_body_field_uses_body() {
+        // X-Skill-Trace header is irrelevant; body skill_trace=1 → 1
+        let body = br#"{"skill_trace":1}"#;
+        assert_eq!(compute_effective_trace_level(body, false), Ok(1));
+    }
+
+    #[test]
+    fn verbose_trace_requires_debug_authorization_for_root_non_debug_route() {
+        let headers = HeaderMap::new();
+        assert!(requires_root_debug_authorization(2, &headers, false));
+    }
+
+    #[test]
+    fn verbose_trace_does_not_require_child_debug_authorization() {
+        let mut headers = HeaderMap::new();
+        headers.insert(SKILL_CHAIN_CHILD_HEADER, HeaderValue::from_static("1"));
+        assert!(!requires_root_debug_authorization(2, &headers, false));
+    }
+
+    #[test]
+    fn verbose_trace_debug_route_uses_route_level_authorization() {
+        let headers = HeaderMap::new();
+        assert!(!requires_root_debug_authorization(2, &headers, true));
     }
 
     #[test]

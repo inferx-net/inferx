@@ -16,6 +16,7 @@ struct CompletionsRequest {
     max_tokens: usize,
     temperature: f64,
     stream: bool,
+    skill_trace: u8,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -508,6 +509,7 @@ impl ServerHandler for McpStreamServer {
             max_tokens: 5000,
             temperature: 0.0,
             stream: false,
+            skill_trace: 1,
         };
 
         ctrace!(
@@ -546,7 +548,6 @@ impl ServerHandler for McpStreamServer {
                 .client
                 .post(&endpoint)
                 .header("Authorization", authorization)
-                .header("X-Skill-Trace", "1")
                 .header("X-Mcp-Cancel-Id", &cancel_id)
                 .json(&body)
                 .send() => {
