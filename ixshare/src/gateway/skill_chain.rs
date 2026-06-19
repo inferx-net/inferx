@@ -311,17 +311,12 @@ impl SseParser {
     }
 }
 
-/// Computes the effective trace level from request body and route context.
+/// Computes the effective trace level from the request body.
 ///
-/// Decision table:
-/// - `is_debug_route = true`  → always 2 (body `skill_trace` is ignored)
-/// - body field absent        → 0
-/// - body `skill_trace = 0/1/2` → use directly
-/// - body `skill_trace = null` or any other value → Err (→ 400 Bad Request)
-fn compute_effective_trace_level(body_bytes: &[u8], is_debug_route: bool) -> Result<u8, ()> {
-    if is_debug_route {
-        return Ok(2);
-    }
+/// - body field absent                              → 0
+/// - body `skill_trace = 0/1/2`                    → use directly
+/// - body `skill_trace = null` or any other value  → Err (→ 400 Bad Request)
+fn compute_effective_trace_level(body_bytes: &[u8]) -> Result<u8, ()> {
     let body: Value = serde_json::from_slice(body_bytes).map_err(|_| ())?;
     match body.get("skill_trace") {
         None => Ok(0),
@@ -343,18 +338,12 @@ fn is_internal_child_request(headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-/// Phase-1 authorization rule for verbose tracing.
-///
 /// `skill_trace = 2` requires debug privilege on the root request only.
 /// Child skill requests inherit the root trace level without a second
 /// debug-authorization check. This currently trusts the internal child-call
 /// headers as gateway-only signals.
-fn requires_root_debug_authorization(
-    effective_trace_level: u8,
-    headers: &HeaderMap,
-    is_debug_route: bool,
-) -> bool {
-    effective_trace_level == 2 && !is_debug_route && !is_internal_child_request(headers)
+fn requires_root_debug_authorization(effective_trace_level: u8, headers: &HeaderMap) -> bool {
+    effective_trace_level == 2 && !is_internal_child_request(headers)
 }
 
 fn now_ts_ms() -> i64 {
@@ -2162,7 +2151,6 @@ pub(super) async fn handle_skill_call_chain(
     allowed_child_skilleps: Option<&[String]>,
     max_body_bytes: usize,
     cancel_token: CancellationToken,
-    is_debug_route: bool,
     is_debug_authorized: bool,
 ) -> Result<Response, StatusCode> {
     let allowed: Option<HashSet<String>> = allowed_child_skilleps
@@ -2181,7 +2169,7 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
-    let effective_trace_level = match compute_effective_trace_level(&req_bytes, is_debug_route) {
+    let effective_trace_level = match compute_effective_trace_level(&req_bytes) {
         Ok(level) => level,
         Err(()) => {
             return Ok(Response::builder()
@@ -2191,7 +2179,7 @@ pub(super) async fn handle_skill_call_chain(
         }
     };
 
-    if requires_root_debug_authorization(effective_trace_level, &req_headers, is_debug_route)
+    if requires_root_debug_authorization(effective_trace_level, &req_headers)
         && !is_debug_authorized
     {
         return Ok(Response::builder()
@@ -2392,39 +2380,6 @@ pub(super) async fn handle_skill_call_chain(
 
 /// Compatibility alias for the debug route (`/skills/debug/...`).
 /// Always forces effective `skill_trace = 2`; caller must have already verified debug privilege.
-pub(super) async fn handle_skill_debug_call(
-    gw: &HttpGateway,
-    req: Request,
-    route: FuncRouteTarget,
-    display_skill_id: String,
-    calling_tenant: String,
-    logical_funcname: String,
-    remain_path: String,
-    prefix: &str,
-    skills_namespace: &str,
-    allowed_child_skilleps: Option<&[String]>,
-    max_body_bytes: usize,
-    cancel_token: CancellationToken,
-) -> Result<Response, StatusCode> {
-    handle_skill_call_chain(
-        gw,
-        req,
-        route,
-        display_skill_id,
-        calling_tenant,
-        logical_funcname,
-        remain_path,
-        prefix,
-        skills_namespace,
-        allowed_child_skilleps,
-        max_body_bytes,
-        cancel_token,
-        true,  // is_debug_route: always forces effective skill_trace = 2
-        true,  // is_debug_authorized: RunSkillDebug already verified privilege
-    )
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2515,99 +2470,42 @@ mod tests {
     #[test]
     fn effective_trace_level_absent_field_defaults_to_zero() {
         let body = br#"{"messages":[]}"#;
-        assert_eq!(compute_effective_trace_level(body, false), Ok(0));
+        assert_eq!(compute_effective_trace_level(body), Ok(0));
     }
 
     #[test]
     fn effective_trace_level_zero_one_two_accepted() {
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":0}"#, false),
-            Ok(0)
-        );
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":1}"#, false),
-            Ok(1)
-        );
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":2}"#, false),
-            Ok(2)
-        );
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":0}"#), Ok(0));
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":1}"#), Ok(1));
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":2}"#), Ok(2));
     }
 
     #[test]
     fn effective_trace_level_null_returns_error() {
         assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":null}"#, false),
+            compute_effective_trace_level(br#"{"skill_trace":null}"#),
             Err(())
         );
     }
 
     #[test]
     fn effective_trace_level_invalid_value_returns_error() {
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":3}"#, false),
-            Err(())
-        );
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":"1"}"#, false),
-            Err(())
-        );
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":-1}"#, false),
-            Err(())
-        );
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":3}"#), Err(()));
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":"1"}"#), Err(()));
+        assert_eq!(compute_effective_trace_level(br#"{"skill_trace":-1}"#), Err(()));
     }
 
     #[test]
-    fn effective_trace_level_debug_route_always_two() {
-        // debug route ignores body skill_trace entirely
-        assert_eq!(compute_effective_trace_level(br#"{}"#, true), Ok(2));
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":0}"#, true),
-            Ok(2)
-        );
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":1}"#, true),
-            Ok(2)
-        );
-        // even invalid values are overridden by is_debug_route
-        assert_eq!(
-            compute_effective_trace_level(br#"{"skill_trace":null}"#, true),
-            Ok(2)
-        );
-    }
-
-    #[test]
-    fn effective_trace_level_legacy_headers_without_body_field_default_to_zero() {
-        // X-Skill-Trace / X-Skill-Trace-Content headers are ignored; body absent → 0
-        let body = br#"{"messages":[]}"#;
-        assert_eq!(compute_effective_trace_level(body, false), Ok(0));
-    }
-
-    #[test]
-    fn effective_trace_level_legacy_headers_with_body_field_uses_body() {
-        // X-Skill-Trace header is irrelevant; body skill_trace=1 → 1
-        let body = br#"{"skill_trace":1}"#;
-        assert_eq!(compute_effective_trace_level(body, false), Ok(1));
-    }
-
-    #[test]
-    fn verbose_trace_requires_debug_authorization_for_root_non_debug_route() {
+    fn verbose_trace_requires_debug_authorization_for_root() {
         let headers = HeaderMap::new();
-        assert!(requires_root_debug_authorization(2, &headers, false));
+        assert!(requires_root_debug_authorization(2, &headers));
     }
 
     #[test]
     fn verbose_trace_does_not_require_child_debug_authorization() {
         let mut headers = HeaderMap::new();
         headers.insert(SKILL_CHAIN_CHILD_HEADER, HeaderValue::from_static("1"));
-        assert!(!requires_root_debug_authorization(2, &headers, false));
-    }
-
-    #[test]
-    fn verbose_trace_debug_route_uses_route_level_authorization() {
-        let headers = HeaderMap::new();
-        assert!(!requires_root_debug_authorization(2, &headers, true));
+        assert!(!requires_root_debug_authorization(2, &headers));
     }
 
     #[test]
