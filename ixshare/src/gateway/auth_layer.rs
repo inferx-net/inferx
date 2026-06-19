@@ -27,9 +27,12 @@ use keycloak::KeycloakAdminToken;
 use std::ops::Bound::Included;
 use std::ops::Bound::Unbounded;
 
-use super::secret::{Apikey, SqlSecret};
-use crate::gateway::http_gateway::GATEWAY_CONFIG;
+use inferxlib::obj_mgr::tenant_mgr::{SYSTEM_NAMESPACE, SYSTEM_TENANT};
+
+use super::func_agent_mgr::GW_OBJREPO;
+use super::secret::{Apikey, SqlSecret, UserProfile};
 use crate::common::*;
+use crate::gateway::http_gateway::GATEWAY_CONFIG;
 
 pub const SECRET_ADDR: &str = "postgresql://audit_user:123456@localhost:5431/secretdb";
 
@@ -143,6 +146,68 @@ pub fn EmailVerified(token: &KeycloakToken<String>) -> bool {
     return token.extra.email.email_verified;
 }
 
+fn unauthorized_response(message: String) -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::from(message))
+        .unwrap()
+}
+
+fn service_unavailable_response(message: String) -> Response {
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body(Body::from(message))
+        .unwrap()
+}
+
+#[derive(Debug)]
+enum DefaultTenantValidationError {
+    Unauthorized(String),
+    Unavailable(String),
+}
+
+fn resolve_valid_default_tenant(
+    token: &AccessToken,
+    profile: Option<UserProfile>,
+    allow_missing_profile: bool,
+    tenant_exists: &dyn Fn(&str) -> std::result::Result<bool, String>,
+) -> std::result::Result<Option<String>, DefaultTenantValidationError> {
+    let default_tenant = match profile {
+        Some(profile) => profile.default_tenant,
+        None if allow_missing_profile => return Ok(None),
+        None => {
+            return Err(DefaultTenantValidationError::Unauthorized(
+                "missing default tenant for authenticated user".to_string(),
+            ))
+        }
+    }
+        .map(|tenant| tenant.trim().to_owned())
+        .filter(|tenant| !tenant.is_empty())
+        .ok_or_else(|| {
+            DefaultTenantValidationError::Unauthorized(
+                "missing default tenant for authenticated user".to_string(),
+            )
+        })?;
+
+    let exists = tenant_exists(&default_tenant)
+        .map_err(DefaultTenantValidationError::Unavailable)?;
+    if !exists {
+        return Err(DefaultTenantValidationError::Unauthorized(format!(
+            "default tenant '{}' does not exist",
+            default_tenant
+        )));
+    }
+
+    if !token.IsTenantUser(&default_tenant) {
+        return Err(DefaultTenantValidationError::Unauthorized(format!(
+            "default tenant '{}' is not authorized for authenticated user",
+            default_tenant
+        )));
+    }
+
+    Ok(Some(default_tenant))
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")] // This matches "grant" in URL to PermissionType::Grant
 pub enum PermissionType {
@@ -228,6 +293,7 @@ pub struct AccessToken {
     pub sourceIsApikey: bool,
     pub restrictTenant: Option<String>,
     pub restrictNamespace: Option<String>,
+    pub defaultTenant: Option<String>,
     pub updatetime: SystemTime,
 }
 
@@ -258,6 +324,7 @@ impl AccessToken {
             sourceIsApikey: false,
             restrictTenant: None,
             restrictNamespace: None,
+            defaultTenant: None,
             updatetime: SystemTime::now(),
         };
     }
@@ -275,6 +342,7 @@ impl AccessToken {
             sourceIsApikey: false,
             restrictTenant: None,
             restrictNamespace: None,
+            defaultTenant: None,
             updatetime: SystemTime::now(),
         };
     }
@@ -709,6 +777,7 @@ impl TokenCache {
                 sourceIsApikey: false,
                 restrictTenant: None,
                 restrictNamespace: None,
+                defaultTenant: None,
                 updatetime: SystemTime::now(),
             }),
         });
@@ -857,6 +926,7 @@ impl TokenCache {
             sourceIsApikey: true,
             restrictTenant: Some(restrict_tenant),
             restrictNamespace: restrict_namespace,
+            defaultTenant: None,
             updatetime: SystemTime::now(),
         })
     }
@@ -1229,6 +1299,7 @@ pub async fn auth_transform_keycloaktoken(
         // );
         match token {
             KeycloakAuthStatus::Success(t) => {
+                let allow_missing_user_profile = req.uri().path() == "/onboard";
                 let username = Username(t);
                 let subject = Subject(t);
                 let email = Email(t);
@@ -1237,23 +1308,57 @@ pub async fn auth_transform_keycloaktoken(
                 let token_cache = GetTokenCache().await;
                 let token = match token_cache.GetTokenByUsername(&username).await {
                     Err(e) => {
-                        let body = Body::from(format!(
+                        return Ok(unauthorized_response(format!(
                             "auth_transform_keycloaktoken fail with error {:?} for username {}",
                             e, &username
-                        ));
-                        let resp = Response::builder()
-                            .status(StatusCode::UNAUTHORIZED)
-                            .body(body)
-                            .unwrap();
-                        return Ok(resp);
-                        // return Err(StatusCode::UNAUTHORIZED);
+                        )));
                     }
                     Ok(t) => t,
                 };
+                let profile = match token_cache.sqlstore.GetUserProfile(&subject).await {
+                    Ok(profile) => profile,
+                    Err(e) => {
+                        return Ok(service_unavailable_response(format!(
+                            "failed to load user profile for subject {}: {:?}",
+                            &subject, e
+                        )));
+                    }
+                };
+                let tenant_exists = |tenant: &str| {
+                    let repo = GW_OBJREPO
+                        .get()
+                        .ok_or_else(|| "tenant object repository is unavailable".to_string())?;
+                    Ok(repo
+                        .tenantMgr
+                        .Get(SYSTEM_TENANT, SYSTEM_NAMESPACE, tenant)
+                        .is_ok())
+                };
+                let default_tenant =
+                    match resolve_valid_default_tenant(
+                        &token,
+                        profile,
+                        allow_missing_user_profile,
+                        &tenant_exists,
+                    ) {
+                        Ok(default_tenant) => default_tenant,
+                        Err(DefaultTenantValidationError::Unauthorized(message)) => {
+                            return Ok(unauthorized_response(format!(
+                                "invalid default tenant for subject {}: {}",
+                                &subject, message
+                            )));
+                        }
+                        Err(DefaultTenantValidationError::Unavailable(message)) => {
+                            return Ok(service_unavailable_response(format!(
+                                "failed to validate default tenant for subject {}: {}",
+                                &subject, message
+                            )));
+                        }
+                    };
                 if token.subject == subject
                     && token.email == email
                     && token.email_verified == email_verified
                     && token.display_name == display_name
+                    && token.defaultTenant.as_deref() == default_tenant.as_deref()
                 {
                     token
                 } else {
@@ -1262,6 +1367,7 @@ pub async fn auth_transform_keycloaktoken(
                     with_subject.email = email;
                     with_subject.email_verified = email_verified;
                     with_subject.display_name = display_name;
+                    with_subject.defaultTenant = default_tenant;
                     Arc::new(with_subject)
                 }
             }
@@ -1405,7 +1511,11 @@ impl KeycloakProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_public_funccall_path, AccessToken};
+    use super::{
+        is_public_funccall_path, resolve_valid_default_tenant, AccessToken,
+        DefaultTenantValidationError,
+    };
+    use crate::gateway::secret::UserProfile;
     use std::collections::BTreeSet;
     use std::time::SystemTime;
 
@@ -1422,6 +1532,27 @@ mod tests {
             sourceIsApikey: true,
             restrictTenant: Some(tenant.to_owned()),
             restrictNamespace: namespace.map(str::to_owned),
+            defaultTenant: None,
+            updatetime: SystemTime::now(),
+        }
+    }
+
+    fn full_user_token(tenant: &str) -> AccessToken {
+        let mut roles = BTreeSet::new();
+        roles.insert(AccessToken::TenantUserRole(tenant));
+        AccessToken {
+            subject: String::new(),
+            username: "user".to_owned(),
+            display_name: None,
+            email: String::new(),
+            email_verified: false,
+            roles,
+            apiKeys: Vec::new(),
+            scope: "full".to_owned(),
+            sourceIsApikey: false,
+            restrictTenant: None,
+            restrictNamespace: None,
+            defaultTenant: None,
             updatetime: SystemTime::now(),
         }
     }
@@ -1440,10 +1571,138 @@ mod tests {
 
     #[test]
     fn detects_public_funccall_paths() {
-        assert!(is_public_funccall_path("/funccall/public/Qwen/model/v1/chat/completions"));
-        assert!(is_public_funccall_path("/directfunccall/public/Qwen/model/v1/chat/completions"));
+        assert!(is_public_funccall_path(
+            "/funccall/public/Qwen/model/v1/chat/completions"
+        ));
+        assert!(is_public_funccall_path(
+            "/directfunccall/public/Qwen/model/v1/chat/completions"
+        ));
         assert!(is_public_funccall_path("/sampleccall/public/Qwen/model/"));
-        assert!(!is_public_funccall_path("/funccall/tenant-a/Qwen/model/v1/chat/completions"));
-        assert!(!is_public_funccall_path("/object/tenant/public/default/name/"));
+        assert!(!is_public_funccall_path(
+            "/funccall/tenant-a/Qwen/model/v1/chat/completions"
+        ));
+        assert!(!is_public_funccall_path(
+            "/object/tenant/public/default/name/"
+        ));
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_accepts_authorized_tenant() {
+        let token = full_user_token("tenant-a");
+        let profile = Some(UserProfile {
+            sub: "sub-1".to_owned(),
+            default_tenant: Some(" tenant-a ".to_owned()),
+            created_at: None,
+            updated_at: None,
+        });
+
+        let default_tenant =
+            resolve_valid_default_tenant(&token, profile, false, &|_| Ok(true)).unwrap();
+        assert_eq!(default_tenant.as_deref(), Some("tenant-a"));
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_rejects_missing_profile() {
+        let token = full_user_token("tenant-a");
+        let err = resolve_valid_default_tenant(&token, None, false, &|_| Ok(true)).unwrap_err();
+        match err {
+            DefaultTenantValidationError::Unauthorized(message) => {
+                assert!(message.contains("missing default tenant"));
+            }
+            _ => panic!("expected unauthorized error"),
+        }
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_allows_missing_profile_for_onboard() {
+        let token = full_user_token("tenant-a");
+        let default_tenant =
+            resolve_valid_default_tenant(&token, None, true, &|_| Ok(true)).unwrap();
+        assert_eq!(default_tenant, None);
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_rejects_missing_default_tenant() {
+        let token = full_user_token("tenant-a");
+        let profile = Some(UserProfile {
+            sub: "sub-1".to_owned(),
+            default_tenant: None,
+            created_at: None,
+            updated_at: None,
+        });
+
+        let err =
+            resolve_valid_default_tenant(&token, profile, false, &|_| Ok(true)).unwrap_err();
+        match err {
+            DefaultTenantValidationError::Unauthorized(message) => {
+                assert!(message.contains("missing default tenant"));
+            }
+            _ => panic!("expected unauthorized error"),
+        }
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_rejects_unauthorized_tenant() {
+        let token = full_user_token("tenant-a");
+        let profile = Some(UserProfile {
+            sub: "sub-1".to_owned(),
+            default_tenant: Some("tenant-b".to_owned()),
+            created_at: None,
+            updated_at: None,
+        });
+
+        let err =
+            resolve_valid_default_tenant(&token, profile, false, &|_| Ok(true)).unwrap_err();
+        match err {
+            DefaultTenantValidationError::Unauthorized(message) => {
+                assert!(message.contains("not authorized"));
+            }
+            _ => panic!("expected unauthorized error"),
+        }
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_rejects_deleted_tenant() {
+        let token = full_user_token("tenant-a");
+        let profile = Some(UserProfile {
+            sub: "sub-1".to_owned(),
+            default_tenant: Some("tenant-a".to_owned()),
+            created_at: None,
+            updated_at: None,
+        });
+
+        let err =
+            resolve_valid_default_tenant(&token, profile, false, &|_| Ok(false)).unwrap_err();
+        match err {
+            DefaultTenantValidationError::Unauthorized(message) => {
+                assert!(message.contains("does not exist"));
+            }
+            _ => panic!("expected unauthorized error"),
+        }
+    }
+
+    #[test]
+    fn resolve_valid_default_tenant_surfaces_unavailable_repo() {
+        let token = full_user_token("tenant-a");
+        let profile = Some(UserProfile {
+            sub: "sub-1".to_owned(),
+            default_tenant: Some("tenant-a".to_owned()),
+            created_at: None,
+            updated_at: None,
+        });
+
+        let err = resolve_valid_default_tenant(
+            &token,
+            profile,
+            false,
+            &|_| Err("tenant object repository is unavailable".to_string()),
+        )
+        .unwrap_err();
+        match err {
+            DefaultTenantValidationError::Unavailable(message) => {
+                assert!(message.contains("unavailable"));
+            }
+            _ => panic!("expected unavailable error"),
+        }
     }
 }

@@ -55,6 +55,13 @@ CREATE TABLE TenantProfile (
     updated_at      TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE UserProfile (
+    sub             VARCHAR PRIMARY KEY,     -- Keycloak subject ID (immutable)
+    default_tenant  VARCHAR,                 -- user's default tenant context; NULL if unset
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE CatalogModel (
     id                    BIGSERIAL PRIMARY KEY,
     slug                  VARCHAR NOT NULL UNIQUE,
