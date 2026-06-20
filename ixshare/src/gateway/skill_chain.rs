@@ -8,8 +8,8 @@ use futures::StreamExt;
 use http_body_util::BodyExt;
 use hyper::header::CONTENT_TYPE;
 use hyper::StatusCode;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::future::Future;
@@ -21,24 +21,44 @@ use uuid::Uuid;
 
 use super::func_agent_mgr::FuncRouteTarget;
 use super::http_gateway::{dispatch_func_call, HttpGateway, GATEWAY_CONFIG};
+use super::skill_trace_sse::{SkillTraceEventPayload, SseMessage, SseParser};
 use crate::print::verbose_category;
 
-const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
-const SKILL_CHAIN_DEPTH_HEADER: &str = "X-Chain-Depth";
-const SKILL_TRACE_HEADER: &str = "X-Skill-Trace";
-const SKILL_TRACE_CONTENT_HEADER: &str = "X-Skill-Trace-Content";
+pub(super) const SKILL_CHAIN_CHILD_HEADER: &str = "X-Inferx-Skill-Chain-Child";
+pub(super) const SKILL_CHAIN_DEPTH_HEADER: &str = "X-Chain-Depth";
 const SKILL_CHAIN_MAX_DEPTH: u32 = 5;
 const SKILL_CHAIN_TOOL_NAME: &str = "call_skillep";
 const SKILL_EP_CONSTRAINT: &str = "IMPORTANT: When using the call_skillep tool, you MUST only call skill endpoint IDs that are explicitly listed below. Do not invent or assume other skill endpoint IDs exist. If a skill endpoint is not listed below, do not call it.";
 const CLIENT_PROVIDED_TOOLS_ERROR: &str = "skill endpoint does not accept client-provided tools";
 const SKILL_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Returns true only when `X-Inferx-Skill-Chain-Child` is present with the exact value `"1"`.
+/// Missing, malformed, or any other value is treated as a non-child (root) request.
+pub(super) fn extract_is_child_request(headers: &HeaderMap) -> bool {
+    headers
+        .get(SKILL_CHAIN_CHILD_HEADER)
+        .and_then(|v| v.to_str().ok())
+        == Some("1")
+}
 #[derive(Clone, Debug)]
 struct SkillChainRequestState {
-    template: Value,
-    history: Vec<Value>,
+    template: SkillModelRequestTemplate,
     headers: HeaderMap,
     current_depth: u32,
     debug_mocks: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "role", rename_all = "lowercase")]
+enum ChatMessage {
+    Assistant {
+        content: Value,
+        tool_calls: Vec<Value>,
+    },
+    Tool {
+        tool_call_id: String,
+        content: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +66,6 @@ struct ParsedSkillToolCall {
     id: String,
     name: String,
     arguments: String,
-    raw: Value,
 }
 
 #[derive(Clone, Debug)]
@@ -83,12 +102,6 @@ struct ParallelChildResult {
     tool_result: String,
     fail_reason: Option<SkillTraceFailReason>,
     usage: Option<SkillTraceTokenUsage>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SkillChainRequestError {
-    BadRequest,
-    ClientProvidedTools,
 }
 
 #[derive(Clone, Debug)]
@@ -206,35 +219,7 @@ enum SkillChainExecutionError {
     Response(StatusCode, &'static str),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct SkillTraceEventPayload {
-    #[serde(rename = "type")]
-    event_type: String,
-    call_id: String,
-    #[serde(default)]
-    parent_call_id: Option<String>,
-    depth: u32,
-    skill: String,
-    ts_ms: i64,
-    #[serde(default)]
-    elapsed_ms: Option<u64>,
-    #[serde(default)]
-    phase: Option<String>,
-    #[serde(default)]
-    query: Option<String>,
-    #[serde(default)]
-    output: Option<String>,
-    #[serde(default)]
-    result_code: Option<String>,
-    #[serde(default)]
-    fail_reason: Option<String>,
-    #[serde(default)]
-    prompt_tokens: Option<u64>,
-    #[serde(default)]
-    completion_tokens: Option<u64>,
-    #[serde(default)]
-    total_tokens: Option<u64>,
-}
+// SkillTraceEventPayload is now shared via super::skill_trace_sse.
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct SkillTraceTokenUsage {
@@ -244,30 +229,6 @@ struct SkillTraceTokenUsage {
 }
 
 impl SkillTraceTokenUsage {
-    fn from_response_body(body: &Value) -> Option<Self> {
-        let usage = body.get("usage")?;
-        let prompt_tokens = usage
-            .get("prompt_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let completion_tokens = usage
-            .get("completion_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let total_tokens = usage
-            .get("total_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
-        if prompt_tokens == 0 && completion_tokens == 0 && total_tokens == 0 {
-            return None;
-        }
-        Some(Self {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-        })
-    }
-
     fn add_assign(&mut self, other: &Self) {
         self.prompt_tokens = self.prompt_tokens.saturating_add(other.prompt_tokens);
         self.completion_tokens = self
@@ -277,56 +238,415 @@ impl SkillTraceTokenUsage {
     }
 }
 
-#[derive(Default)]
-struct SseParser {
-    pending_event: Option<String>,
-    data_lines: Vec<String>,
+// SseParser/SseMessage are now shared via super::skill_trace_sse.
+
+/// Represents the `skill_trace` field in the wire request body.
+///
+/// Distinguishes absent (→ SkillTraceLevel::None) from present-but-null (→ 400).
+/// Uses a custom deserializer so `#[serde(default)]` yields Absent for missing fields
+/// while an explicit JSON value (including null) yields Present(v).
+#[derive(Debug, Clone)]
+pub(super) enum SkillTraceField {
+    Absent,
+    Present(Value),
 }
 
-enum SseMessage {
-    Event { event: Option<String>, data: String },
-    Comment(String),
-}
-
-impl SseParser {
-    fn push_line(&mut self, line: &str) -> Option<SseMessage> {
-        if let Some(rest) = line.strip_prefix(':') {
-            return Some(SseMessage::Comment(rest.trim().to_string()));
-        }
-        if line.is_empty() {
-            let data = self.data_lines.join("\n");
-            let event = self.pending_event.take();
-            self.data_lines.clear();
-            if data.is_empty() && event.is_none() {
-                return None;
-            }
-            return Some(SseMessage::Event { event, data });
-        }
-        if let Some(rest) = line.strip_prefix("event:") {
-            self.pending_event = Some(rest.trim().to_string());
-            return None;
-        }
-        if let Some(rest) = line.strip_prefix("data:") {
-            self.data_lines.push(rest.trim().to_string());
-        }
-        None
+impl Default for SkillTraceField {
+    fn default() -> Self {
+        SkillTraceField::Absent
     }
 }
 
-fn skill_trace_enabled(headers: &HeaderMap) -> bool {
-    headers
-        .get(SKILL_TRACE_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "1")
-        .unwrap_or(false)
+impl SkillTraceField {
+    pub(super) fn is_absent(&self) -> bool {
+        matches!(self, SkillTraceField::Absent)
+    }
 }
 
-fn skill_trace_content_enabled(headers: &HeaderMap) -> bool {
-    headers
-        .get(SKILL_TRACE_CONTENT_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "1")
-        .unwrap_or(false)
+impl<'de> Deserialize<'de> for SkillTraceField {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(SkillTraceField::Present(Value::deserialize(d)?))
+    }
+}
+
+impl Serialize for SkillTraceField {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            SkillTraceField::Absent => s.serialize_none(),
+            SkillTraceField::Present(v) => v.serialize(s),
+        }
+    }
+}
+
+/// Effective trace verbosity level after normalization.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum SkillTraceLevel {
+    None,
+    Basic,
+    Verbose,
+}
+
+impl SkillTraceLevel {
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::Basic => 1,
+            Self::Verbose => 2,
+        }
+    }
+
+    fn into_field(self) -> SkillTraceField {
+        SkillTraceField::Present(Value::Number(self.as_u8().into()))
+    }
+}
+
+/// Response mode chosen from the effective trace level.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SkillResponseMode {
+    Normal,
+    SseTrace,
+}
+
+/// Typed wire representation of the client JSON body for `/skills/.../v1/chat/completions`.
+///
+/// Trusted fields (tenant, route, debug authorization, chain depth) are never present here.
+/// Unknown fields pass through via `extra` to preserve OpenAI-compatible parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SkillChatCompletionsWireRequest {
+    pub messages: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(default, skip_serializing_if = "SkillTraceField::is_absent")]
+    pub skill_trace: SkillTraceField,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mocks: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Gateway-derived trusted context for a skill invocation.
+/// Built by `http_gateway.rs`; never sourced from the client body.
+pub(super) struct SkillInvocationContext {
+    pub route: FuncRouteTarget,
+    pub calling_tenant: String,
+    pub display_skill_id: String,
+    pub logical_funcname: String,
+    pub remain_path: String,
+    pub prefix: String,
+    pub skills_namespace: String,
+    /// True when `X-Inferx-Skill-Chain-Child: 1` is present (exact match).
+    pub is_child_request: bool,
+    /// Parsed `X-Chain-Depth` value, only set when `is_child_request` is true.
+    pub child_chain_depth: Option<u32>,
+    pub is_debug_authorized: bool,
+    pub allowed_child_skilleps: Option<Arc<HashSet<String>>>,
+    pub cancel_token: CancellationToken,
+    /// Original request headers forwarded to child calls (Authorization, X-Request-Id, traceparent).
+    pub request_headers: HeaderMap,
+}
+
+/// Normalized, validated form used by the chain executor.
+#[derive(Debug)]
+struct NormalizedSkillCall {
+    prepared_body: PreparedSkillChainBody,
+    effective_trace: SkillTraceLevel,
+    response_mode: SkillResponseMode,
+    current_depth: u32,
+    debug_mocks: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+struct PreparedSkillChainBody {
+    template: SkillModelRequestTemplate,
+    history: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SkillModelRequestTemplate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill_trace: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
+    #[serde(flatten)]
+    extra: HashMap<String, Value>,
+}
+
+#[derive(Serialize)]
+struct SkillModelTurnRequest<'a> {
+    #[serde(flatten)]
+    template: &'a SkillModelRequestTemplate,
+    messages: &'a [Value],
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionResponse {
+    choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<RawUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChoice {
+    #[serde(default)]
+    finish_reason: Option<String>,
+    #[serde(default)]
+    message: Option<ChatMessagePayload>,
+    #[serde(default)]
+    delta: Option<ChatMessagePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessagePayload {
+    #[serde(default)]
+    content: Option<Value>,
+    #[serde(default)]
+    tool_calls: Option<Vec<RawToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawToolCall {
+    id: Option<String>,
+    function: Option<RawToolFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawToolFunction {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    total_tokens: Option<u64>,
+}
+
+impl RawUsage {
+    fn into_usage(self) -> Option<SkillTraceTokenUsage> {
+        let total_tokens = self
+            .total_tokens
+            .unwrap_or(self.prompt_tokens.saturating_add(self.completion_tokens));
+        if self.prompt_tokens == 0 && self.completion_tokens == 0 && total_tokens == 0 {
+            return None;
+        }
+        Some(SkillTraceTokenUsage {
+            prompt_tokens: self.prompt_tokens,
+            completion_tokens: self.completion_tokens,
+            total_tokens,
+        })
+    }
+}
+
+/// Error returned from normalization.
+#[derive(Debug)]
+enum NormalizationError {
+    /// Return HTTP status + message directly.
+    Http(StatusCode, &'static str),
+    /// Return 200 OK with a completion-shaped body (invalid child depth compatibility path).
+    CompletionError,
+}
+
+/// Validates and normalizes a wire request + trusted context into the execution form.
+///
+/// This is the single place that:
+/// - validates `skill_trace` (absent → None; 0/1/2 → typed level; null/invalid → 400)
+/// - enforces root-only verbose-trace authorization
+/// - rejects non-empty client-provided tools
+/// - derives `current_depth` from trusted context
+/// - prepares the execution template
+fn normalize_skill_call(
+    wire: SkillChatCompletionsWireRequest,
+    ctx: &SkillInvocationContext,
+) -> Result<NormalizedSkillCall, NormalizationError> {
+    // Validate skill_trace and resolve to typed level.
+    let effective_trace = match &wire.skill_trace {
+        SkillTraceField::Absent => SkillTraceLevel::None,
+        SkillTraceField::Present(Value::Number(n)) => match n.as_u64() {
+            Some(0) => SkillTraceLevel::None,
+            Some(1) => SkillTraceLevel::Basic,
+            Some(2) => SkillTraceLevel::Verbose,
+            _ => {
+                return Err(NormalizationError::Http(
+                    StatusCode::BAD_REQUEST,
+                    "service failure: invalid skill_trace value",
+                ))
+            }
+        },
+        SkillTraceField::Present(_) => {
+            return Err(NormalizationError::Http(
+                StatusCode::BAD_REQUEST,
+                "service failure: invalid skill_trace value",
+            ));
+        }
+    };
+
+    // Verbose trace requires debug privilege on the root request only.
+    if effective_trace == SkillTraceLevel::Verbose
+        && !ctx.is_child_request
+        && !ctx.is_debug_authorized
+    {
+        return Err(NormalizationError::Http(
+            StatusCode::FORBIDDEN,
+            "service failure: verbose trace requires debug privilege",
+        ));
+    }
+
+    // Derive current depth from trusted context.
+    let current_depth = if ctx.is_child_request {
+        let depth = ctx
+            .child_chain_depth
+            .ok_or(NormalizationError::CompletionError)?;
+        if depth == 0 {
+            return Err(NormalizationError::CompletionError);
+        }
+        depth
+    } else {
+        1
+    };
+
+    // Reject non-empty client-provided tools on root requests.
+    if !ctx.is_child_request {
+        match wire.tools.as_ref() {
+            Some(Value::Array(arr)) if !arr.is_empty() => {
+                return Err(NormalizationError::Http(
+                    StatusCode::BAD_REQUEST,
+                    CLIENT_PROVIDED_TOOLS_ERROR,
+                ));
+            }
+            Some(Value::Array(_)) | None => {}
+            Some(_) => {
+                return Err(NormalizationError::Http(
+                    StatusCode::BAD_REQUEST,
+                    "service failure: invalid request body",
+                ));
+            }
+        }
+    }
+
+    // Extract debug mocks (client-supplied, string values only).
+    let debug_mocks: HashMap<String, String> = wire
+        .mocks
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .map(|map| {
+            map.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let history = wire.messages.clone();
+
+    // Build execution template from wire fields, then apply tool injection and force
+    // stream=false. Messages stay outside the template and are attached per turn.
+    let mut template = SkillModelRequestTemplate {
+        max_tokens: wire.max_tokens,
+        temperature: wire.temperature,
+        stream: false,
+        skill_trace: if wire.skill_trace.is_absent() {
+            None
+        } else {
+            Some(effective_trace.as_u8())
+        },
+        // Canonical skill-chain tools are always injected below, so client-provided
+        // tools/tool_choice never survive into the model-turn template.
+        tools: None,
+        tool_choice: None,
+        extra: wire.extra,
+    };
+    // Apply call_skillep tool injection; strip client tool_choice.
+    let allowed_ref = ctx.allowed_child_skilleps.as_ref().map(|arc| arc.as_ref());
+    apply_skill_chain_tools(&mut template, allowed_ref);
+
+    let response_mode = match effective_trace {
+        SkillTraceLevel::None => SkillResponseMode::Normal,
+        SkillTraceLevel::Basic | SkillTraceLevel::Verbose => SkillResponseMode::SseTrace,
+    };
+
+    Ok(NormalizedSkillCall {
+        prepared_body: PreparedSkillChainBody { template, history },
+        effective_trace,
+        response_mode,
+        current_depth,
+        debug_mocks,
+    })
+}
+
+/// Profile enum for `build_skill_chat_request` to distinguish the two internal loopback callers.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum InternalSkillRequestProfile {
+    /// MCP tool loopback: includes max_tokens=5000 and temperature=0.0.
+    McpToolLoopback,
+    /// Child skill loopback: omits max_tokens and temperature.
+    ChildSkillLoopback,
+}
+
+/// Builds the wire request body for internal skill loopback calls.
+///
+/// For `McpToolLoopback`: sets max_tokens=5000 and temperature=0.0 (current MCP defaults).
+/// For `ChildSkillLoopback`: omits max_tokens and temperature.
+/// Both profiles set stream=false and include the given skill_trace level.
+pub(super) fn build_skill_chat_request(
+    query: &str,
+    skill_trace: SkillTraceLevel,
+    profile: InternalSkillRequestProfile,
+) -> SkillChatCompletionsWireRequest {
+    let messages = vec![serde_json::json!({"role": "user", "content": query})];
+    match profile {
+        InternalSkillRequestProfile::McpToolLoopback => SkillChatCompletionsWireRequest {
+            messages,
+            max_tokens: Some(5000),
+            temperature: Some(0.0),
+            stream: Some(false),
+            skill_trace: skill_trace.into_field(),
+            mocks: None,
+            tools: None,
+            tool_choice: None,
+            extra: HashMap::new(),
+        },
+        InternalSkillRequestProfile::ChildSkillLoopback => SkillChatCompletionsWireRequest {
+            messages,
+            max_tokens: None,
+            temperature: None,
+            stream: Some(false),
+            skill_trace: skill_trace.into_field(),
+            mocks: None,
+            tools: None,
+            tool_choice: None,
+            extra: HashMap::new(),
+        },
+    }
+}
+
+/// Attaches the canonical Option 1 child-call transport headers to a loopback request.
+///
+/// This is the single canonical place that encodes `X-Inferx-Skill-Chain-Child: 1`
+/// and `X-Chain-Depth: <next_depth>`. Keep forwarded caller headers (Authorization,
+/// X-Request-Id, traceparent) as a separate concern via `copy_forwarded_child_headers`.
+pub(super) fn apply_internal_child_headers(
+    req: reqwest::RequestBuilder,
+    next_depth: u32,
+) -> reqwest::RequestBuilder {
+    req.header(SKILL_CHAIN_CHILD_HEADER, "1")
+        .header(SKILL_CHAIN_DEPTH_HEADER, next_depth.to_string())
 }
 
 fn now_ts_ms() -> i64 {
@@ -335,19 +655,15 @@ fn now_ts_ms() -> i64 {
 
 fn maybe_set_trace_content(
     trace: &SkillChainTraceState,
-    obj: &mut Map<String, Value>,
+    payload: &mut SkillTraceEventPayload,
     query: Option<&str>,
     output: Option<&str>,
 ) {
     if !trace.include_content {
         return;
     }
-    if let Some(query) = query {
-        obj.insert("query".to_string(), serde_json::json!(query));
-    }
-    if let Some(output) = output {
-        obj.insert("output".to_string(), serde_json::json!(output));
-    }
+    payload.query = query.map(str::to_string);
+    payload.output = output.map(str::to_string);
 }
 
 async fn send_trace_chunk(tx: &mpsc::Sender<Result<String, Infallible>>, chunk: String) -> bool {
@@ -425,50 +741,25 @@ async fn emit_trace_event(
     fail_reason: Option<SkillTraceFailReason>,
     usage: Option<&SkillTraceTokenUsage>,
 ) -> bool {
-    let mut payload = serde_json::json!({
-        "type": event_type,
-        "call_id": call_id,
-        "parent_call_id": parent_call_id,
-        "depth": depth,
-        "skill": skill,
-        "ts_ms": now_ts_ms(),
-    });
+    let mut payload = SkillTraceEventPayload {
+        event_type: event_type.to_string(),
+        call_id: call_id.to_string(),
+        parent_call_id: parent_call_id.map(str::to_string),
+        depth,
+        skill: skill.to_string(),
+        ts_ms: now_ts_ms(),
+        elapsed_ms,
+        phase: phase.map(str::to_string),
+        query: None,
+        output: None,
+        result_code: result_code.map(str::to_string),
+        fail_reason: fail_reason.map(|r| r.as_str().to_string()),
+        prompt_tokens: usage.map(|u| u.prompt_tokens),
+        completion_tokens: usage.map(|u| u.completion_tokens),
+        total_tokens: usage.map(|u| u.total_tokens),
+    };
+    maybe_set_trace_content(trace, &mut payload, query, output);
 
-    if let Some(obj) = payload.as_object_mut() {
-        if let Some(elapsed_ms) = elapsed_ms {
-            obj.insert("elapsed_ms".to_string(), serde_json::json!(elapsed_ms));
-        }
-        if let Some(phase) = phase {
-            obj.insert("phase".to_string(), serde_json::json!(phase));
-        }
-        maybe_set_trace_content(trace, obj, query, output);
-        if let Some(result_code) = result_code {
-            obj.insert("result_code".to_string(), serde_json::json!(result_code));
-        }
-        if result_code.is_some() || fail_reason.is_some() {
-            obj.insert(
-                "fail_reason".to_string(),
-                match fail_reason {
-                    Some(reason) => serde_json::json!(reason.as_str()),
-                    None => Value::Null,
-                },
-            );
-        }
-        if let Some(usage) = usage {
-            obj.insert(
-                "prompt_tokens".to_string(),
-                serde_json::json!(usage.prompt_tokens),
-            );
-            obj.insert(
-                "completion_tokens".to_string(),
-                serde_json::json!(usage.completion_tokens),
-            );
-            obj.insert(
-                "total_tokens".to_string(),
-                serde_json::json!(usage.total_tokens),
-            );
-        }
-    }
     let sent = send_trace_chunk(
         &trace.tx,
         format!(
@@ -518,7 +809,8 @@ async fn emit_trace_done(trace: &SkillChainTraceState) -> bool {
     ctrace!(
         verbose_category::SKILL,
         "skill_chain trace_emit root_call_id={} root_skill={} event_type=done",
-        trace.root_call_id, trace.root_skill
+        trace.root_call_id,
+        trace.root_skill
     );
     send_trace_chunk(&trace.tx, "data: [DONE]\n\n".to_string()).await
 }
@@ -671,146 +963,83 @@ fn skill_chain_tool_definition(allowed: Option<&HashSet<String>>) -> Value {
                     "required": ["skillep_id", "query"]
                 }
             }
-        }])
+        }]),
     }
 }
 
-fn apply_skill_chain_tools(obj: &mut Map<String, Value>, allowed: Option<&HashSet<String>>) {
+fn apply_skill_chain_tools(
+    template: &mut SkillModelRequestTemplate,
+    allowed: Option<&HashSet<String>>,
+) {
     let tools = skill_chain_tool_definition(allowed);
     match &tools {
         Value::Array(arr) if arr.is_empty() => {
-            obj.remove("tools");
+            template.tools = None;
         }
         _ => {
-            obj.insert("tools".to_string(), tools);
+            template.tools = Some(tools);
         }
     }
-    obj.remove("tool_choice");
-}
-
-fn parse_skill_chain_request(
-    headers: &HeaderMap,
-    body_bytes: &[u8],
-    allowed: Option<&HashSet<String>>,
-) -> Result<SkillChainRequestState, SkillChainRequestError> {
-    let mut body: Value =
-        serde_json::from_slice(body_bytes).map_err(|_| SkillChainRequestError::BadRequest)?;
-    let obj = body
-        .as_object_mut()
-        .ok_or(SkillChainRequestError::BadRequest)?;
-    let messages = obj
-        .get("messages")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or(SkillChainRequestError::BadRequest)?;
-    let debug_mocks = obj
-        .remove("mocks")
-        .and_then(|value| match value {
-            Value::Object(map) => Some(
-                map.into_iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                    .collect::<std::collections::HashMap<_, _>>(),
-            ),
-            _ => None,
-        })
-        .unwrap_or_default();
-
-    let is_child = headers
-        .get(SKILL_CHAIN_CHILD_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "1")
-        .unwrap_or(false);
-
-    if !is_child {
-        match obj.get("tools") {
-            Some(Value::Array(arr)) if !arr.is_empty() => {
-                return Err(SkillChainRequestError::ClientProvidedTools);
-            }
-            Some(Value::Array(_)) | None => {}
-            Some(_) => return Err(SkillChainRequestError::BadRequest),
-        }
-    }
-
-    let current_depth = if is_child {
-        let raw = headers
-            .get(SKILL_CHAIN_DEPTH_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(SkillChainRequestError::BadRequest)?;
-        let parsed = raw
-            .parse::<u32>()
-            .map_err(|_| SkillChainRequestError::BadRequest)?;
-        if parsed == 0 {
-            return Err(SkillChainRequestError::BadRequest);
-        }
-        parsed
-    } else {
-        1
-    };
-
-    apply_skill_chain_tools(obj, allowed);
-    obj.insert("stream".to_string(), Value::Bool(false));
-
-    Ok(SkillChainRequestState {
-        template: body,
-        history: messages,
-        headers: headers.clone(),
-        current_depth,
-        debug_mocks,
-    })
+    template.tool_choice = None;
 }
 
 fn build_skill_chain_request_body(
-    template: &Value,
+    template: &SkillModelRequestTemplate,
     history: &[Value],
 ) -> Result<Vec<u8>, StatusCode> {
-    let mut body = template.clone();
-    let obj = body.as_object_mut().ok_or(StatusCode::BAD_REQUEST)?;
-    obj.insert("messages".to_string(), Value::Array(history.to_vec()));
+    let body = SkillModelTurnRequest {
+        template,
+        messages: history,
+    };
     serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn parse_skill_response(body_bytes: &[u8]) -> Option<ParsedSkillResponse> {
-    let body: Value = serde_json::from_slice(body_bytes).ok()?;
-    let choice = body.get("choices")?.as_array()?.first()?;
-    let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
-    let message = choice.get("message");
-    let delta = choice.get("delta");
-    let tool_calls_value = message
-        .and_then(|v| v.get("tool_calls"))
-        .or_else(|| delta.and_then(|v| v.get("tool_calls")));
-    let tool_calls = tool_calls_value
-        .and_then(Value::as_array)
+    let body: ChatCompletionResponse = serde_json::from_slice(body_bytes).ok()?;
+    let choice = body.choices.first()?;
+    let tool_calls = choice
+        .message
+        .as_ref()
+        .and_then(|message| message.tool_calls.as_ref())
+        .or_else(|| {
+            choice
+                .delta
+                .as_ref()
+                .and_then(|delta| delta.tool_calls.as_ref())
+        })
         .map(|calls| {
             calls
                 .iter()
                 .map(|call| ParsedSkillToolCall {
-                    id: call
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
+                    id: call.id.clone().unwrap_or_default(),
                     name: call
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
+                        .function
+                        .as_ref()
+                        .and_then(|function| function.name.clone())
+                        .unwrap_or_default(),
                     arguments: call
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                    raw: call.clone(),
+                        .function
+                        .as_ref()
+                        .and_then(|function| function.arguments.clone())
+                        .unwrap_or_default(),
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let has_tool_calls = !tool_calls.is_empty() || finish_reason == Some("tool_calls");
-    let final_text = message
-        .and_then(|m| m.get("content"))
+    let has_tool_calls =
+        !tool_calls.is_empty() || choice.finish_reason.as_deref() == Some("tool_calls");
+    let final_text = choice
+        .message
+        .as_ref()
+        .and_then(|message| message.content.as_ref())
         .and_then(json_text)
-        .or_else(|| delta.and_then(|m| m.get("content")).and_then(json_text));
+        .or_else(|| {
+            choice
+                .delta
+                .as_ref()
+                .and_then(|delta| delta.content.as_ref())
+                .and_then(json_text)
+        });
 
     Some(ParsedSkillResponse {
         tool_calls: if has_tool_calls {
@@ -819,8 +1048,22 @@ fn parse_skill_response(body_bytes: &[u8]) -> Option<ParsedSkillResponse> {
             Vec::new()
         },
         final_text,
-        usage: SkillTraceTokenUsage::from_response_body(&body),
+        usage: body.usage.and_then(RawUsage::into_usage),
     })
+}
+
+fn extract_raw_tool_calls(body_bytes: &[u8]) -> Option<Vec<Value>> {
+    let body: Value = serde_json::from_slice(body_bytes).ok()?;
+    let choice = body.get("choices")?.as_array()?.first()?;
+    let tool_calls = choice
+        .get("message")
+        .and_then(|message| message.get("tool_calls"))
+        .or_else(|| {
+            choice
+                .get("delta")
+                .and_then(|delta| delta.get("tool_calls"))
+        })?;
+    Some(tool_calls.as_array()?.to_vec())
 }
 
 fn parse_skillep_tool_args(arguments: &str) -> core::result::Result<(String, String), String> {
@@ -831,7 +1074,10 @@ fn parse_skillep_tool_args(arguments: &str) -> core::result::Result<(String, Str
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Error: missing or empty skillep_id. Expected format: owner_tenant/namespace/skillname.".to_string())?;
+        .ok_or_else(|| {
+            "Error: missing or empty skillep_id. Expected format: owner_tenant/namespace/skillname."
+                .to_string()
+        })?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -924,7 +1170,11 @@ fn summarize_bytes_for_log(bytes: &[u8]) -> String {
     };
     let text = String::from_utf8_lossy(preview).replace('\n', "\\n");
     if bytes.len() > MAX_LOG_BYTES {
-        format!("{}...[truncated {} bytes]", text, bytes.len() - MAX_LOG_BYTES)
+        format!(
+            "{}...[truncated {} bytes]",
+            text,
+            bytes.len() - MAX_LOG_BYTES
+        )
     } else {
         text
     }
@@ -1212,10 +1462,16 @@ async fn execute_parallel_child_call(
                     next_depth,
                     query.len()
                 );
-                let child_body = serde_json::json!({
-                    "messages": [{"role": "user", "content": query}],
-                    "stream": false
-                });
+                let child_skill_trace = match context.trace.as_ref() {
+                    None => SkillTraceLevel::None,
+                    Some(t) if t.include_content => SkillTraceLevel::Verbose,
+                    Some(_) => SkillTraceLevel::Basic,
+                };
+                let child_body = build_skill_chat_request(
+                    &query,
+                    child_skill_trace,
+                    InternalSkillRequestProfile::ChildSkillLoopback,
+                );
                 let child_url = format!(
                     "http://127.0.0.1:{}/skills/{}/{}/{}/v1/chat/completions",
                     GATEWAY_CONFIG.gatewayPort,
@@ -1226,17 +1482,10 @@ async fn execute_parallel_child_call(
                 let child_req = context
                     .child_http_client
                     .post(&child_url)
-                    .header(CONTENT_TYPE.as_str(), "application/json")
-                    .header(SKILL_CHAIN_CHILD_HEADER, "1")
-                    .header(SKILL_CHAIN_DEPTH_HEADER, next_depth.to_string())
-                    .json(&child_body);
-                let mut child_req = copy_forwarded_child_headers(&context.headers, child_req);
-                if let Some(trace_state) = context.trace.as_ref() {
-                    child_req = child_req.header(SKILL_TRACE_HEADER, "1");
-                    if trace_state.include_content {
-                        child_req = child_req.header(SKILL_TRACE_CONTENT_HEADER, "1");
-                    }
-                }
+                    .header(CONTENT_TYPE.as_str(), "application/json");
+                let child_req = apply_internal_child_headers(child_req, next_depth);
+                let child_req = child_req.json(&child_body);
+                let child_req = copy_forwarded_child_headers(&context.headers, child_req);
 
                 let trace_for_child_call = context.trace.clone();
                 let child_trace_for_stream = child_trace.clone();
@@ -1808,7 +2057,8 @@ async fn read_child_trace_sse(
 
 async fn execute_skill_chain(
     gw: &HttpGateway,
-    mut chain: SkillChainRequestState,
+    chain: SkillChainRequestState,
+    mut history: Vec<Value>,
     route: FuncRouteTarget,
     calling_tenant: String,
     logical_funcname: String,
@@ -1858,11 +2108,11 @@ async fn execute_skill_chain(
             route.logical.tenant,
             route.logical.namespace,
             route.logical.funcname,
-            chain.history.len(),
+            history.len(),
             chain.current_depth
         );
         let body_bytes =
-            build_skill_chain_request_body(&chain.template, &chain.history).map_err(|status| {
+            build_skill_chain_request_body(&chain.template, &history).map_err(|status| {
                 SkillChainExecutionError::Response(
                     status,
                     "service failure: failed to build request body",
@@ -1875,9 +2125,11 @@ async fn execute_skill_chain(
             route.logical.namespace,
             route.logical.funcname,
             chain.current_depth,
-            latest_user_query(&chain.history).unwrap_or_else(|| "-".to_string()),
-            chain.template
-                .get("tools")
+            latest_user_query(&history).unwrap_or_else(|| "-".to_string()),
+            chain
+                .template
+                .tools
+                .as_ref()
                 .map(summarize_value_for_log)
                 .unwrap_or_else(|| "-".to_string())
         );
@@ -1894,8 +2146,6 @@ async fn execute_skill_chain(
         let mut model_headers = chain.headers.clone();
         model_headers.remove(SKILL_CHAIN_CHILD_HEADER);
         model_headers.remove(SKILL_CHAIN_DEPTH_HEADER);
-        model_headers.remove(SKILL_TRACE_HEADER);
-        model_headers.remove("X-Skill-Trace-Content");
         model_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let model_req = Request::builder()
@@ -2035,6 +2285,12 @@ async fn execute_skill_chain(
             });
         }
 
+        let raw_tool_calls =
+            extract_raw_tool_calls(&resp_bytes).ok_or(SkillChainExecutionError::Response(
+                StatusCode::BAD_GATEWAY,
+                "service failure: failed to preserve tool call history",
+            ))?;
+
         if parsed
             .tool_calls
             .iter()
@@ -2051,22 +2307,26 @@ async fn execute_skill_chain(
                     .map(|call| call.name.clone())
                     .collect::<Vec<_>>()
             );
-            chain.history.push(serde_json::json!({
-                "role": "assistant",
-                "content": Value::Null,
-                "tool_calls": parsed.tool_calls.iter().map(|call| call.raw.clone()).collect::<Vec<_>>(),
-            }));
+            history.push(
+                serde_json::to_value(ChatMessage::Assistant {
+                    content: Value::Null,
+                    tool_calls: raw_tool_calls.clone(),
+                })
+                .unwrap(),
+            );
             for call in &parsed.tool_calls {
                 let content = if call.name == SKILL_CHAIN_TOOL_NAME {
                     "Error: turn aborted (other tool in same response was unsupported)".to_string()
                 } else {
                     format_child_tool_error(format!("unsupported tool '{}'", call.name))
                 };
-                chain.history.push(serde_json::json!({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": content,
-                }));
+                history.push(
+                    serde_json::to_value(ChatMessage::Tool {
+                        tool_call_id: call.id.clone(),
+                        content,
+                    })
+                    .unwrap(),
+                );
             }
             continue;
         }
@@ -2079,11 +2339,13 @@ async fn execute_skill_chain(
             route.logical.funcname,
             parsed.tool_calls.len()
         );
-        chain.history.push(serde_json::json!({
-            "role": "assistant",
-            "content": Value::Null,
-            "tool_calls": parsed.tool_calls.iter().map(|call| call.raw.clone()).collect::<Vec<_>>(),
-        }));
+        history.push(
+            serde_json::to_value(ChatMessage::Assistant {
+                content: Value::Null,
+                tool_calls: raw_tool_calls,
+            })
+            .unwrap(),
+        );
         let child_context = ParallelChildTaskContext {
             current_depth: chain.current_depth,
             headers: chain.headers.clone(),
@@ -2109,11 +2371,13 @@ async fn execute_skill_chain(
 
         let child_results = drive_parallel_child_tasks(child_tasks).await;
         for result in &child_results {
-            chain.history.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": result.tool_call_id,
-                "content": result.tool_result,
-            }));
+            history.push(
+                serde_json::to_value(ChatMessage::Tool {
+                    tool_call_id: result.tool_call_id.clone(),
+                    content: result.tool_result.clone(),
+                })
+                .unwrap(),
+            );
         }
         for result in &child_results {
             if let Some(usage) = child_result_usage(result) {
@@ -2127,104 +2391,86 @@ async fn execute_skill_chain(
     }
 }
 
+fn invalid_child_depth_response() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "id": "skill-chain-error",
+                "object": "chat.completion",
+                "created": Utc::now().timestamp(),
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Error: invalid chain depth"},
+                    "finish_reason": "stop"
+                }]
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+}
+
 pub(super) async fn handle_skill_call_chain(
     gw: &HttpGateway,
-    req: Request,
-    route: FuncRouteTarget,
-    display_skill_id: String,
-    calling_tenant: String,
-    logical_funcname: String,
-    remain_path: String,
-    prefix: &str,
-    skills_namespace: &str,
-    allowed_child_skilleps: Option<&[String]>,
-    max_body_bytes: usize,
-    cancel_token: CancellationToken,
+    wire: SkillChatCompletionsWireRequest,
+    ctx: SkillInvocationContext,
 ) -> Result<Response, StatusCode> {
-    let allowed: Option<HashSet<String>> = allowed_child_skilleps
-        .map(|ids| ids.iter().cloned().collect());
-    let allowed_ref = allowed.as_ref();
-
-    let (req_parts, req_body) = req.into_parts();
-    let req_headers = req_parts.headers.clone();
-    let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
+    let normalized = match normalize_skill_call(wire, &ctx) {
+        Ok(n) => n,
+        Err(NormalizationError::Http(status, message)) => {
+            if ctx.is_child_request {
+                warn!(
+                    "skill_chain normalize_error logical={}/{}/{} path={} status={}",
+                    ctx.route.logical.tenant,
+                    ctx.route.logical.namespace,
+                    ctx.route.logical.funcname,
+                    ctx.remain_path,
+                    status
+                );
+            }
             return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap())
+                .status(status)
+                .body(Body::from(message))
+                .unwrap());
         }
-    };
-
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
-        Ok(chain) => chain,
-        Err(SkillChainRequestError::BadRequest)
-            if req_headers.get(SKILL_CHAIN_CHILD_HEADER).is_some() =>
-        {
+        Err(NormalizationError::CompletionError) => {
             warn!(
                 "skill_chain invalid child depth logical={}/{}/{} path={}",
-                route.logical.tenant, route.logical.namespace, route.logical.funcname, remain_path
+                ctx.route.logical.tenant,
+                ctx.route.logical.namespace,
+                ctx.route.logical.funcname,
+                ctx.remain_path
             );
-            return Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        serde_json::to_vec(&serde_json::json!({
-                            "id": "skill-chain-error",
-                            "object": "chat.completion",
-                            "created": Utc::now().timestamp(),
-                            "choices": [{
-                                "index": 0,
-                                "message": {"role": "assistant", "content": "Error: invalid chain depth"},
-                                "finish_reason": "stop"
-                            }]
-                        }))
-                        .unwrap(),
-                    ))
-                    .unwrap());
-        }
-        Err(SkillChainRequestError::ClientProvidedTools) => {
-            warn!(
-                "skill_chain rejected client_provided_tools logical={}/{}/{} path={}",
-                route.logical.tenant, route.logical.namespace, route.logical.funcname, remain_path
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(CLIENT_PROVIDED_TOOLS_ERROR))
-                .unwrap());
-        }
-        Err(SkillChainRequestError::BadRequest) => {
-            warn!(
-                "skill_chain invalid request logical={}/{}/{} path={} status={}",
-                route.logical.tenant,
-                route.logical.namespace,
-                route.logical.funcname,
-                remain_path,
-                StatusCode::BAD_REQUEST
-            );
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap());
+            return Ok(invalid_child_depth_response());
         }
     };
 
-    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
+    // Convert normalized form to the internal chain state that execute_skill_chain uses.
+    let history = normalized.prepared_body.history;
+    let chain = SkillChainRequestState {
+        template: normalized.prepared_body.template,
+        headers: ctx.request_headers.clone(),
+        current_depth: normalized.current_depth,
+        debug_mocks: normalized.debug_mocks,
+    };
 
-    if !skill_trace_enabled(&req_headers) {
+    let allowed_arc = ctx.allowed_child_skilleps.clone();
+
+    if normalized.response_mode == SkillResponseMode::Normal {
         return match execute_skill_chain(
             gw,
             chain,
-            route,
-            calling_tenant,
-            logical_funcname,
-            remain_path,
-            prefix.to_string(),
-            skills_namespace.to_string(),
+            history,
+            ctx.route,
+            ctx.calling_tenant,
+            ctx.logical_funcname,
+            ctx.remain_path,
+            ctx.prefix,
+            ctx.skills_namespace,
             allowed_arc,
             None,
-            cancel_token,
+            ctx.cancel_token,
         )
         .await
         {
@@ -2243,23 +2489,18 @@ pub(super) async fn handle_skill_call_chain(
         };
     }
 
+    // SSE trace response (Basic or Verbose).
     let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
     let trace = SkillChainTraceState {
         tx: tx.clone(),
         root_call_id: Uuid::new_v4().to_string(),
-        root_skill: display_skill_id,
+        root_skill: ctx.display_skill_id,
         started_at: Instant::now(),
-        include_content: skill_trace_content_enabled(&req_headers),
+        include_content: normalized.effective_trace == SkillTraceLevel::Verbose,
     };
 
     let gw = gw.clone();
-    let route_for_task = route.clone();
-    let calling_tenant_for_task = calling_tenant.clone();
-    let logical_funcname_for_task = logical_funcname.clone();
-    let remain_path_for_task = remain_path.clone();
-    let prefix_for_task = prefix.to_string();
-    let skills_namespace_for_task = skills_namespace.to_string();
-    let cancel_token_for_task = cancel_token;
+    let cancel_token = ctx.cancel_token;
     // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
     // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
     // checks in execute_skill_chain fire when the SSE client drops the connection,
@@ -2268,7 +2509,7 @@ pub(super) async fn handle_skill_call_chain(
     // execution completes normally, so the SSE channel closes without waiting for
     // the HTTP client to disconnect.
     let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
-    let cancel_for_watcher = cancel_token_for_task.clone();
+    let cancel_for_watcher = cancel_token.clone();
     let tx_for_watcher = tx.clone();
     tokio::spawn(async move {
         tokio::select! {
@@ -2278,7 +2519,7 @@ pub(super) async fn handle_skill_call_chain(
     });
 
     tokio::spawn(async move {
-        let root_query = latest_user_query(&chain.history);
+        let root_query = latest_user_query(&history);
         if !emit_root_call_start(&trace, root_query.as_deref()).await {
             return;
         }
@@ -2287,172 +2528,22 @@ pub(super) async fn handle_skill_call_chain(
         let exec = execute_skill_chain(
             &gw,
             chain,
-            route_for_task,
-            calling_tenant_for_task,
-            logical_funcname_for_task,
-            remain_path_for_task,
-            prefix_for_task,
-            skills_namespace_for_task,
+            history,
+            ctx.route,
+            ctx.calling_tenant,
+            ctx.logical_funcname,
+            ctx.remain_path,
+            ctx.prefix,
+            ctx.skills_namespace,
             allowed_arc,
             Some(trace.clone()),
-            cancel_token_for_task.clone(),
+            cancel_token.clone(),
         );
         tokio::pin!(exec);
 
         let result = tokio::select! {
             _ = trace_for_closed.tx.closed() => return,
-            _ = cancel_token_for_task.cancelled() => return,
-            result = &mut exec => result,
-        };
-
-        match result {
-            Ok(final_resp) if final_resp.is_openai_chat_completion => {
-                let _ =
-                    emit_root_call_finish(&trace, "pass", None, final_resp.usage.as_ref()).await;
-                let _ = emit_trace_skill_result(&trace, &final_resp.body).await;
-            }
-            Ok(_) => {
-                let _ = emit_root_call_finish(
-                    &trace,
-                    "fail",
-                    Some(SkillTraceFailReason::InvalidResponse),
-                    None,
-                )
-                .await;
-            }
-            Err(SkillChainExecutionError::DownstreamStatus(_))
-            | Err(SkillChainExecutionError::Response(_, _)) => {
-                let _ = emit_root_call_finish(
-                    &trace,
-                    "fail",
-                    Some(SkillTraceFailReason::TransportError),
-                    None,
-                )
-                .await;
-            }
-        }
-        let _ = emit_trace_done(&trace).await;
-        let _ = exec_done_tx.send(());
-    });
-
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    let body = Body::from_stream(http_body_util::StreamBody::new(stream));
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/event-stream")
-        .header("Cache-Control", "no-cache")
-        .header("X-Accel-Buffering", "no")
-        .body(body)
-        .unwrap())
-}
-
-pub(super) async fn handle_skill_debug_call(
-    gw: &HttpGateway,
-    req: Request,
-    route: FuncRouteTarget,
-    display_skill_id: String,
-    calling_tenant: String,
-    logical_funcname: String,
-    remain_path: String,
-    prefix: &str,
-    skills_namespace: &str,
-    allowed_child_skilleps: Option<&[String]>,
-    max_body_bytes: usize,
-    cancel_token: CancellationToken,
-) -> Result<Response, StatusCode> {
-    let allowed: Option<HashSet<String>> = allowed_child_skilleps
-        .map(|ids| ids.iter().cloned().collect());
-    let allowed_ref = allowed.as_ref();
-
-    let (req_parts, req_body) = req.into_parts();
-    let req_headers = req_parts.headers.clone();
-    let req_bytes = match axum::body::to_bytes(req_body, max_body_bytes).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap())
-        }
-    };
-
-    let chain = match parse_skill_chain_request(&req_headers, &req_bytes, allowed_ref) {
-        Ok(chain) => chain,
-        Err(SkillChainRequestError::ClientProvidedTools) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(CLIENT_PROVIDED_TOOLS_ERROR))
-                .unwrap())
-        }
-        Err(SkillChainRequestError::BadRequest) => {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from("service failure: invalid request body"))
-                .unwrap())
-        }
-    };
-
-    let allowed_arc: Option<Arc<HashSet<String>>> = allowed.map(Arc::new);
-
-    let (tx, rx) = mpsc::channel::<Result<String, Infallible>>(32);
-    let trace = SkillChainTraceState {
-        tx: tx.clone(),
-        root_call_id: Uuid::new_v4().to_string(),
-        root_skill: display_skill_id,
-        started_at: Instant::now(),
-        include_content: true,
-    };
-
-    let gw = gw.clone();
-    let route_for_task = route.clone();
-    let calling_tenant_for_task = calling_tenant.clone();
-    let logical_funcname_for_task = logical_funcname.clone();
-    let remain_path_for_task = remain_path.clone();
-    let prefix_for_task = prefix.to_string();
-    let skills_namespace_for_task = skills_namespace.to_string();
-    let cancel_token_for_task = cancel_token;
-    // For HTTP callers cancel_token starts as CancellationToken::new() (no lifecycle
-    // source).  Wire tx.closed() to cancel it so that between-turn is_cancelled()
-    // checks in execute_skill_chain fire when the SSE client drops the connection,
-    // exactly as they do for MCP callers whose token is sourced from context.ct.
-    // The oneshot lets the watcher exit (and drop its sender clone) as soon as
-    // execution completes normally, so the SSE channel closes without waiting for
-    // the HTTP client to disconnect.
-    let (exec_done_tx, exec_done_rx) = tokio::sync::oneshot::channel::<()>();
-    let cancel_for_watcher = cancel_token_for_task.clone();
-    let tx_for_watcher = tx.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = tx_for_watcher.closed() => { cancel_for_watcher.cancel(); }
-            _ = exec_done_rx => {}
-        }
-    });
-
-    tokio::spawn(async move {
-        let root_query = latest_user_query(&chain.history);
-        if !emit_root_call_start(&trace, root_query.as_deref()).await {
-            return;
-        }
-
-        let trace_for_closed = trace.clone();
-        let exec = execute_skill_chain(
-            &gw,
-            chain,
-            route_for_task,
-            calling_tenant_for_task,
-            logical_funcname_for_task,
-            remain_path_for_task,
-            prefix_for_task,
-            skills_namespace_for_task,
-            allowed_arc,
-            Some(trace.clone()),
-            cancel_token_for_task.clone(),
-        );
-        tokio::pin!(exec);
-
-        let result = tokio::select! {
-            _ = trace_for_closed.tx.closed() => return,
-            _ = cancel_token_for_task.cancelled() => return,
+            _ = cancel_token.cancelled() => return,
             result = &mut exec => result,
         };
 
@@ -2500,12 +2591,15 @@ pub(super) async fn handle_skill_debug_call(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_skill_chain_request_body, drive_parallel_child_tasks, execute_parallel_child_call,
-        parse_skill_chain_request, parse_skill_response, parse_skillep_tool_args,
-        read_child_trace_sse, skill_chain_tool_definition, split_skillep_id, ParallelChildResult,
-        ParallelChildTaskContext, ParallelChildTaskInput, ParsedSkillToolCall,
-        SkillChainChildTraceState, SkillChainRequestError, SkillChainTraceState,
-        SkillTraceFailReason, SKILL_CHAIN_CHILD_HEADER, SKILL_CHAIN_DEPTH_HEADER,
+        build_skill_chain_request_body, build_skill_chat_request, drive_parallel_child_tasks,
+        execute_parallel_child_call, extract_is_child_request, normalize_skill_call,
+        parse_skill_response, parse_skillep_tool_args, read_child_trace_sse,
+        skill_chain_tool_definition, split_skillep_id, InternalSkillRequestProfile,
+        NormalizationError, ParallelChildResult, ParallelChildTaskContext, ParallelChildTaskInput,
+        ParsedSkillToolCall, SkillChainChildTraceState, SkillChainTraceState,
+        SkillChatCompletionsWireRequest, SkillInvocationContext, SkillResponseMode,
+        SkillTraceFailReason, SkillTraceField, SkillTraceLevel, SKILL_CHAIN_CHILD_HEADER,
+        SKILL_CHAIN_DEPTH_HEADER,
     };
     use axum::http::{HeaderMap, HeaderValue};
     use futures::future::BoxFuture;
@@ -2518,66 +2612,35 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
-    #[test]
-    fn parse_skill_chain_request_rejects_non_empty_top_level_tools() {
-        let headers = HeaderMap::new();
-        let body =
-            br#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function"}]}"#;
-        assert_eq!(
-            parse_skill_chain_request(&headers, body, None).unwrap_err(),
-            SkillChainRequestError::ClientProvidedTools
-        );
-    }
+    // extract_is_child_request tests
 
     #[test]
-    fn parse_skill_chain_request_injects_tool_for_empty_tools() {
-        let headers = HeaderMap::new();
-        let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
-        let parsed = parse_skill_chain_request(&headers, body, None).unwrap();
-        assert_eq!(parsed.current_depth, 1);
-        assert_eq!(parsed.history.len(), 1);
-        assert_eq!(parsed.template.get("stream"), Some(&Value::Bool(false)));
-        assert_eq!(
-            parsed.template.get("tools"),
-            Some(&skill_chain_tool_definition(None))
-        );
-        let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
-        let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
-        assert_eq!(
-            rebuilt_json
-                .get("messages")
-                .and_then(Value::as_array)
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn parse_skill_chain_request_omits_tools_for_empty_allowlist() {
-        let headers = HeaderMap::new();
-        let body = br#"{"messages":[{"role":"user","content":"hi"}],"tools":[],"stream":true}"#;
-        let allowed = HashSet::new();
-        let parsed = parse_skill_chain_request(&headers, body, Some(&allowed)).unwrap();
-        assert_eq!(parsed.current_depth, 1);
-        assert!(parsed.template.get("tools").is_none());
-
-        let rebuilt = build_skill_chain_request_body(&parsed.template, &parsed.history).unwrap();
-        let rebuilt_json: Value = serde_json::from_slice(&rebuilt).unwrap();
-        assert!(rebuilt_json.get("tools").is_none());
-        assert_eq!(rebuilt_json.get("stream"), Some(&Value::Bool(false)));
-    }
-
-    #[test]
-    fn parse_skill_chain_request_rejects_invalid_child_depth() {
+    fn child_request_exact_one_is_detected() {
         let mut headers = HeaderMap::new();
         headers.insert(SKILL_CHAIN_CHILD_HEADER, HeaderValue::from_static("1"));
-        headers.insert(SKILL_CHAIN_DEPTH_HEADER, HeaderValue::from_static("0"));
-        let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
-        assert_eq!(
-            parse_skill_chain_request(&headers, body, None).unwrap_err(),
-            SkillChainRequestError::BadRequest
-        );
+        assert!(extract_is_child_request(&headers));
+    }
+
+    #[test]
+    fn child_request_missing_header_is_not_child() {
+        let headers = HeaderMap::new();
+        assert!(!extract_is_child_request(&headers));
+    }
+
+    #[test]
+    fn child_request_non_one_values_are_not_child() {
+        for val in ["0", "2", "true", "yes", ""] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                SKILL_CHAIN_CHILD_HEADER,
+                HeaderValue::from_str(val).unwrap(),
+            );
+            assert!(
+                !extract_is_child_request(&headers),
+                "expected not-child for value={:?}",
+                val
+            );
+        }
     }
 
     #[test]
@@ -2636,6 +2699,40 @@ mod tests {
         let parsed_final = parse_skill_response(&serde_json::to_vec(&final_resp).unwrap()).unwrap();
         assert!(parsed_final.tool_calls.is_empty());
         assert_eq!(parsed_final.final_text.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn build_skill_chain_request_body_serializes_messages_outside_template() {
+        let wire: SkillChatCompletionsWireRequest = serde_json::from_str(
+            r#"{
+                "messages":[{"role":"user","content":"hi"}],
+                "tool_choice":"auto",
+                "top_p":0.9,
+                "skill_trace":1
+            }"#,
+        )
+        .unwrap();
+        let ctx = make_test_ctx(false, None, false, None);
+        let normalized = normalize_skill_call(wire, &ctx).unwrap();
+
+        let template_json = serde_json::to_value(&normalized.prepared_body.template).unwrap();
+        assert!(template_json.get("messages").is_none());
+        assert_eq!(template_json.get("stream"), Some(&json!(false)));
+        assert_eq!(template_json.get("skill_trace"), Some(&json!(1)));
+        assert!(template_json.get("tool_choice").is_none());
+        assert_eq!(template_json.get("top_p"), Some(&json!(0.9)));
+
+        let body = build_skill_chain_request_body(
+            &normalized.prepared_body.template,
+            &normalized.prepared_body.history,
+        )
+        .unwrap();
+        let body_json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body_json.get("messages"),
+            Some(&json!([{"role":"user","content":"hi"}]))
+        );
+        assert_eq!(body_json.get("stream"), Some(&json!(false)));
     }
 
     #[tokio::test]
@@ -2741,7 +2838,6 @@ mod tests {
                     id: "call_bad".to_string(),
                     name: "call_skillep".to_string(),
                     arguments: "{bad json}".to_string(),
-                    raw: json!({}),
                 },
             },
             ParallelChildTaskContext {
@@ -2774,7 +2870,6 @@ mod tests {
                     name: "call_skillep".to_string(),
                     arguments: "{\"skillep_id\":\"acme/default\",\"query\":\"what now\"}"
                         .to_string(),
-                    raw: json!({}),
                 },
             },
             ParallelChildTaskContext {
@@ -2812,7 +2907,6 @@ mod tests {
                     name: "call_skillep".to_string(),
                     arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
                         .to_string(),
-                    raw: json!({}),
                 },
             },
             ParallelChildTaskContext {
@@ -2859,7 +2953,6 @@ mod tests {
                     name: "call_skillep".to_string(),
                     arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"what now\"}"
                         .to_string(),
-                    raw: json!({}),
                 },
             },
             ParallelChildTaskContext {
@@ -2977,9 +3070,8 @@ mod tests {
                 call: ParsedSkillToolCall {
                     id: "call_blocked".to_string(),
                     name: "call_skillep".to_string(),
-                    arguments:
-                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
-                    raw: json!({}),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}"
+                        .to_string(),
                 },
             },
             ParallelChildTaskContext {
@@ -3020,9 +3112,8 @@ mod tests {
                 call: ParsedSkillToolCall {
                     id: "call_ok".to_string(),
                     name: "call_skillep".to_string(),
-                    arguments:
-                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
-                    raw: json!({}),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}"
+                        .to_string(),
                 },
             },
             ParallelChildTaskContext {
@@ -3060,9 +3151,8 @@ mod tests {
                 call: ParsedSkillToolCall {
                     id: "call_notallowed".to_string(),
                     name: "call_skillep".to_string(),
-                    arguments:
-                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
-                    raw: json!({}),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}"
+                        .to_string(),
                 },
             },
             ParallelChildTaskContext {
@@ -3101,9 +3191,8 @@ mod tests {
                 call: ParsedSkillToolCall {
                     id: "call_pass".to_string(),
                     name: "call_skillep".to_string(),
-                    arguments:
-                        "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}".to_string(),
-                    raw: json!({}),
+                    arguments: "{\"skillep_id\":\"acme/default/pricing\",\"query\":\"q\"}"
+                        .to_string(),
                 },
             },
             ParallelChildTaskContext {
@@ -3191,14 +3280,428 @@ mod tests {
             read_child_trace_sse(&trace, &child_trace, 2, resp),
         )
         .await
-        .expect("read_child_trace_sse must complete after [DONE] without waiting for transport EOF");
+        .expect(
+            "read_child_trace_sse must complete after [DONE] without waiting for transport EOF",
+        );
 
         let result = result.unwrap();
-        assert!(result.skill_result.is_some(), "skill_result must be captured");
+        assert!(
+            result.skill_result.is_some(),
+            "skill_result must be captured"
+        );
         assert_eq!(
             result.terminal_result_code.as_deref(),
             Some("pass"),
             "call_finish result_code must be forwarded"
         );
+    }
+
+    // ============================================================
+    // Phase 3 tests
+    // ============================================================
+
+    fn make_test_ctx(
+        is_child_request: bool,
+        child_chain_depth: Option<u32>,
+        is_debug_authorized: bool,
+        allowed_child_skilleps: Option<Arc<HashSet<String>>>,
+    ) -> SkillInvocationContext {
+        use super::super::func_agent_mgr::{FuncIdentity, FuncRouteTarget};
+        use inferxlib::data_obj::DataObject;
+        use inferxlib::obj_mgr::func_mgr::FuncObject;
+        use inferxlib::obj_mgr::funcpolicy_mgr::{
+            FuncPolicySpec, RuntimeConfig, ScaleOutPolicy, WaitQueueRatio,
+        };
+
+        let dummy_id = FuncIdentity {
+            tenant: "t".to_string(),
+            namespace: "ns".to_string(),
+            funcname: "f".to_string(),
+            version: 0,
+        };
+        let dummy_func = DataObject {
+            objType: "function".to_string(),
+            tenant: "t".to_string(),
+            namespace: "ns".to_string(),
+            name: "f".to_string(),
+            labels: Default::default(),
+            annotations: Default::default(),
+            channelRev: 0,
+            srcEpoch: 0,
+            revision: 0,
+            object: FuncObject::default(),
+        };
+        let dummy_policy = FuncPolicySpec {
+            minReplica: 0,
+            maxReplica: 1,
+            standbyPerNode: 0,
+            parallel: 50,
+            queueLen: 100,
+            queueTimeout: 30.0,
+            scaleoutPolicy: ScaleOutPolicy::WaitQueueRatio(WaitQueueRatio { waitRatio: 0.1 }),
+            scaleinTimeout: 1.0,
+            runtimeConfig: RuntimeConfig { GraphSync: false },
+        };
+        SkillInvocationContext {
+            route: FuncRouteTarget {
+                logical: dummy_id.clone(),
+                physical: dummy_id,
+                func: dummy_func,
+                policy: dummy_policy,
+                caller_tenant: None,
+            },
+            calling_tenant: "t".to_string(),
+            display_skill_id: "t/ns/skill".to_string(),
+            logical_funcname: "f".to_string(),
+            remain_path: "/v1/chat/completions".to_string(),
+            prefix: String::new(),
+            skills_namespace: "skills".to_string(),
+            is_child_request,
+            child_chain_depth,
+            is_debug_authorized,
+            allowed_child_skilleps,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            request_headers: HeaderMap::new(),
+        }
+    }
+
+    fn make_wire(skill_trace_json: Option<&str>) -> SkillChatCompletionsWireRequest {
+        let json = match skill_trace_json {
+            None => r#"{"messages":[{"role":"user","content":"hi"}]}"#.to_string(),
+            Some(v) => format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"skill_trace":{}}}"#,
+                v
+            ),
+        };
+        serde_json::from_str(&json).unwrap()
+    }
+
+    // SkillChatCompletionsWireRequest deserialization
+
+    #[test]
+    fn wire_request_absent_skill_trace_is_absent() {
+        let wire = make_wire(None);
+        assert!(matches!(wire.skill_trace, SkillTraceField::Absent));
+    }
+
+    #[test]
+    fn wire_request_skill_trace_numeric_values() {
+        for (v, json) in [(0u64, "0"), (1, "1"), (2, "2")] {
+            let wire = make_wire(Some(json));
+            match &wire.skill_trace {
+                SkillTraceField::Present(Value::Number(n)) => {
+                    assert_eq!(n.as_u64(), Some(v));
+                }
+                other => panic!("expected Present(Number({})), got {:?}", v, other),
+            }
+        }
+    }
+
+    #[test]
+    fn wire_request_null_skill_trace_is_present_null() {
+        let wire = make_wire(Some("null"));
+        assert!(matches!(
+            wire.skill_trace,
+            SkillTraceField::Present(Value::Null)
+        ));
+    }
+
+    #[test]
+    fn wire_request_extra_fields_are_captured() {
+        let wire: SkillChatCompletionsWireRequest =
+            serde_json::from_str(r#"{"messages":[],"top_p":0.9,"stop":["END"]}"#).unwrap();
+        assert_eq!(wire.extra.get("top_p"), Some(&json!(0.9)));
+        assert_eq!(wire.extra.get("stop"), Some(&json!(["END"])));
+    }
+
+    #[test]
+    fn wire_request_mcp_serializes_with_max_tokens_and_temperature() {
+        let w = build_skill_chat_request(
+            "q",
+            SkillTraceLevel::Basic,
+            InternalSkillRequestProfile::McpToolLoopback,
+        );
+        let v = serde_json::to_value(&w).unwrap();
+        assert_eq!(v["max_tokens"], json!(5000));
+        assert_eq!(v["temperature"], json!(0.0));
+        assert_eq!(v["stream"], json!(false));
+        assert_eq!(v["skill_trace"], json!(1));
+    }
+
+    #[test]
+    fn wire_request_child_serializes_without_max_tokens() {
+        let w = build_skill_chat_request(
+            "q",
+            SkillTraceLevel::None,
+            InternalSkillRequestProfile::ChildSkillLoopback,
+        );
+        let v = serde_json::to_value(&w).unwrap();
+        assert!(!v.as_object().unwrap().contains_key("max_tokens"));
+        assert!(!v.as_object().unwrap().contains_key("temperature"));
+        assert_eq!(v["stream"], json!(false));
+        assert_eq!(v["skill_trace"], json!(0));
+    }
+
+    // normalize_skill_call tests
+
+    #[test]
+    fn normalize_absent_trace_gives_none_level_and_normal_mode() {
+        let wire = make_wire(None);
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.effective_trace, SkillTraceLevel::None);
+        assert_eq!(n.response_mode, SkillResponseMode::Normal);
+        assert_eq!(n.current_depth, 1);
+    }
+
+    #[test]
+    fn normalize_trace_0_gives_none_level() {
+        let wire = make_wire(Some("0"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.effective_trace, SkillTraceLevel::None);
+        assert_eq!(n.response_mode, SkillResponseMode::Normal);
+    }
+
+    #[test]
+    fn normalize_trace_1_gives_basic_and_sse_mode() {
+        let wire = make_wire(Some("1"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.effective_trace, SkillTraceLevel::Basic);
+        assert_eq!(n.response_mode, SkillResponseMode::SseTrace);
+    }
+
+    #[test]
+    fn normalize_trace_2_gives_verbose_when_debug_authorized() {
+        let wire = make_wire(Some("2"));
+        let ctx = make_test_ctx(false, None, true, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.effective_trace, SkillTraceLevel::Verbose);
+        assert_eq!(n.response_mode, SkillResponseMode::SseTrace);
+    }
+
+    #[test]
+    fn normalize_trace_null_returns_400() {
+        let wire = make_wire(Some("null"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let err = normalize_skill_call(wire, &ctx).unwrap_err();
+        assert!(
+            matches!(err, NormalizationError::Http(s, _) if s == hyper::StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[test]
+    fn normalize_trace_out_of_range_returns_400() {
+        for bad in ["3", "\"1\"", "-1"] {
+            let wire = make_wire(Some(bad));
+            let ctx = make_test_ctx(false, None, false, None);
+            let err = normalize_skill_call(wire, &ctx).unwrap_err();
+            assert!(
+                matches!(err, NormalizationError::Http(s, _) if s == hyper::StatusCode::BAD_REQUEST),
+                "expected 400 for skill_trace={}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_verbose_without_auth_returns_403() {
+        let wire = make_wire(Some("2"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let err = normalize_skill_call(wire, &ctx).unwrap_err();
+        assert!(matches!(err, NormalizationError::Http(s, _) if s == hyper::StatusCode::FORBIDDEN));
+    }
+
+    #[test]
+    fn normalize_verbose_on_child_does_not_need_auth() {
+        let wire = make_wire(Some("2"));
+        let ctx = make_test_ctx(true, Some(2), false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.effective_trace, SkillTraceLevel::Verbose);
+    }
+
+    #[test]
+    fn normalize_child_depth_zero_returns_completion_error() {
+        let wire = make_wire(None);
+        let ctx = make_test_ctx(true, Some(0), false, None);
+        assert!(matches!(
+            normalize_skill_call(wire, &ctx).unwrap_err(),
+            NormalizationError::CompletionError
+        ));
+    }
+
+    #[test]
+    fn normalize_child_missing_depth_returns_completion_error() {
+        let wire = make_wire(None);
+        let ctx = make_test_ctx(true, None, false, None);
+        assert!(matches!(
+            normalize_skill_call(wire, &ctx).unwrap_err(),
+            NormalizationError::CompletionError
+        ));
+    }
+
+    #[test]
+    fn normalize_child_valid_depth_propagates() {
+        let wire = make_wire(None);
+        let ctx = make_test_ctx(true, Some(3), false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(n.current_depth, 3);
+    }
+
+    #[test]
+    fn normalize_root_nonempty_tools_returns_400() {
+        let wire: SkillChatCompletionsWireRequest =
+            serde_json::from_str(r#"{"messages":[],"tools":[{"type":"function"}]}"#).unwrap();
+        let ctx = make_test_ctx(false, None, false, None);
+        let err = normalize_skill_call(wire, &ctx).unwrap_err();
+        assert!(
+            matches!(err, NormalizationError::Http(s, _) if s == hyper::StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[test]
+    fn normalize_mocks_extracted_into_debug_mocks() {
+        let wire: SkillChatCompletionsWireRequest =
+            serde_json::from_str(r#"{"messages":[],"mocks":{"acme/default/p":"result"}}"#).unwrap();
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        assert_eq!(
+            n.debug_mocks.get("acme/default/p").map(|s| s.as_str()),
+            Some("result")
+        );
+    }
+
+    // build_skill_chat_request tests
+
+    #[test]
+    fn build_mcp_request_includes_max_tokens_and_temperature() {
+        let w = build_skill_chat_request(
+            "hello",
+            SkillTraceLevel::Basic,
+            InternalSkillRequestProfile::McpToolLoopback,
+        );
+        assert_eq!(w.max_tokens, Some(5000));
+        assert_eq!(w.temperature, Some(0.0));
+        assert_eq!(w.stream, Some(false));
+        assert_eq!(
+            w.messages,
+            vec![json!({"role": "user", "content": "hello"})]
+        );
+    }
+
+    #[test]
+    fn build_child_request_omits_max_tokens_and_temperature() {
+        let w = build_skill_chat_request(
+            "hello",
+            SkillTraceLevel::None,
+            InternalSkillRequestProfile::ChildSkillLoopback,
+        );
+        assert_eq!(w.max_tokens, None);
+        assert_eq!(w.temperature, None);
+        assert_eq!(w.stream, Some(false));
+    }
+
+    #[test]
+    fn build_child_request_verbose_trace_encodes_2() {
+        let w = build_skill_chat_request(
+            "q",
+            SkillTraceLevel::Verbose,
+            InternalSkillRequestProfile::ChildSkillLoopback,
+        );
+        match &w.skill_trace {
+            SkillTraceField::Present(Value::Number(n)) => assert_eq!(n.as_u64(), Some(2)),
+            other => panic!("unexpected skill_trace: {:?}", other),
+        }
+    }
+
+    // apply_internal_child_headers tests
+
+    #[test]
+    fn apply_child_headers_attaches_child_and_depth() {
+        let client = reqwest::Client::new();
+        let req = client.post("http://127.0.0.1:1/test");
+        let req = super::apply_internal_child_headers(req, 3);
+        let built = req.build().unwrap();
+        assert_eq!(
+            built
+                .headers()
+                .get(SKILL_CHAIN_CHILD_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some("1")
+        );
+        assert_eq!(
+            built
+                .headers()
+                .get(SKILL_CHAIN_DEPTH_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some("3")
+        );
+    }
+
+    // skill_trace template forwarding tests
+
+    #[test]
+    fn normalize_explicit_skill_trace_is_forwarded_to_template() {
+        let wire = make_wire(Some("1"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        let template = serde_json::to_value(&n.prepared_body.template).unwrap();
+        assert_eq!(
+            template.get("skill_trace"),
+            Some(&json!(1)),
+            "explicit skill_trace must be forwarded to the template body"
+        );
+    }
+
+    #[test]
+    fn normalize_absent_skill_trace_is_not_inserted_into_template() {
+        let wire = make_wire(None);
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        let template = serde_json::to_value(&n.prepared_body.template).unwrap();
+        assert!(
+            template.get("skill_trace").is_none(),
+            "absent skill_trace must not appear in the template body"
+        );
+    }
+
+    #[test]
+    fn normalize_explicit_zero_skill_trace_is_forwarded_to_template() {
+        let wire = make_wire(Some("0"));
+        let ctx = make_test_ctx(false, None, false, None);
+        let n = normalize_skill_call(wire, &ctx).unwrap();
+        let template = serde_json::to_value(&n.prepared_body.template).unwrap();
+        assert_eq!(
+            template.get("skill_trace"),
+            Some(&json!(0)),
+            "explicit skill_trace=0 must be forwarded, not silently dropped"
+        );
+    }
+
+    // invalid child depth completion-error response tests
+
+    #[tokio::test]
+    async fn invalid_child_depth_response_is_200_ok_with_completion_json() {
+        use axum::http::header::CONTENT_TYPE;
+        let resp = super::invalid_child_depth_response();
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json")
+        );
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["object"], "chat.completion");
+        assert_eq!(
+            body["choices"][0]["message"]["content"],
+            "Error: invalid chain depth"
+        );
+        assert_eq!(body["choices"][0]["finish_reason"], "stop");
+        assert_eq!(body["id"], "skill-chain-error");
     }
 }

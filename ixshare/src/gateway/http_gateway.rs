@@ -98,7 +98,10 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
-use super::skill_chain::{handle_skill_call_chain, handle_skill_debug_call};
+use super::skill_chain::{
+    extract_is_child_request, handle_skill_call_chain, SkillChatCompletionsWireRequest,
+    SkillInvocationContext, SKILL_CHAIN_DEPTH_HEADER,
+};
 // use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::NormalizeFuncRequest;
 use super::tokenizer::TokenizerRoute;
@@ -514,7 +517,6 @@ mod tests {
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
     use crate::gateway::log_admin::verbose_categories_mask_from_request;
-    use crate::gateway::secret::SkillDetail;
     use axum::http::StatusCode;
     use hyper::body::Bytes;
     use serde_json::Value;
@@ -1105,10 +1107,6 @@ impl HttpGateway {
             .route("/funccall/*rest", head(FuncCall))
             .route("/skilltemplates", get(ListSkillTemplates))
             .route("/skills", get(ListPublishedSkills))
-            .route(
-                "/skills/debug/:owner_tenant/:namespace/:skillname",
-                post(RunSkillDebug),
-            )
             .route("/skills/:owner_tenant", get(ListSkillsByTenant))
             .route(
                 "/skills/:owner_tenant/:namespace",
@@ -3399,134 +3397,62 @@ async fn SkillCall(
         .and_then(|id| McpCancelRegistry::global().lookup(id))
         .unwrap_or_else(CancellationToken::new);
 
-    handle_skill_call_chain(
-        &gw,
-        req,
-        route,
-        format!("{}/{}/{}", owner_tenant, namespace, skillname),
-        calling_tenant,
-        logical_funcname,
-        remainPath,
-        prefix.as_str(),
-        SKILLS_NAMESPACE,
-        skill.allowed_child_skilleps.as_deref(),
-        FUNCCALL_MAX_BODY_BYTES,
-        cancel_token,
-    )
-    .await
-}
+    let is_debug_authorized =
+        token.IsNamespaceAdmin(&owner_tenant, &namespace) || token.IsInferxAdmin();
 
-async fn RunSkillDebug(
-    Extension(token): Extension<Arc<AccessToken>>,
-    State(gw): State<HttpGateway>,
-    Path((owner_tenant, namespace, skillname)): Path<(String, String, String)>,
-    req: Request,
-) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceAdmin(&owner_tenant, &namespace) && !token.IsInferxAdmin() {
-        return Ok(skill_admin_response(Error::NoPermission));
-    }
-    if !token.CheckScope("inference") {
-        return Ok(Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::from("service failure: insufficient scope"))
-            .unwrap());
-    }
+    let (req_parts, req_body) = req.into_parts();
+    let req_headers = req_parts.headers;
 
-    let skill = match gw
-        .sqlSecret
-        .GetSkill(&owner_tenant, &namespace, &skillname)
-        .await
-    {
-        Ok(skill) => skill,
-        Err(Error::SqlxError(sqlx::Error::RowNotFound)) => {
+    let is_child_request = extract_is_child_request(&req_headers);
+    let child_chain_depth = if is_child_request {
+        req_headers
+            .get(SKILL_CHAIN_DEPTH_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+    } else {
+        None
+    };
+
+    let body_bytes = match axum::body::to_bytes(req_body, FUNCCALL_MAX_BODY_BYTES).await {
+        Ok(b) => b,
+        Err(_) => {
             return Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("service failure: skill not found"))
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
                 .unwrap())
         }
-        Err(e) => return Ok(skill_admin_response(e)),
+    };
+    let wire: SkillChatCompletionsWireRequest = match serde_json::from_slice(&body_bytes) {
+        Ok(w) => w,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
+                .unwrap())
+        }
     };
 
-    let prefix = match load_skill_prefix(&skill) {
-        Ok(prefix) => prefix,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
+    let allowed_child_skilleps = skill.allowed_child_skilleps.map(|ids| {
+        std::sync::Arc::new(ids.into_iter().collect::<std::collections::HashSet<String>>())
+    });
 
-    let physical_funcname = if skill.has_cache {
-        skill.consumer_funcname.clone().ok_or_else(|| {
-            Error::CommonError("consumer_funcname missing for cached skill".to_string())
-        })
-    } else {
-        Ok(skill.normal_funcname.clone())
-    };
-    let physical_funcname = match physical_funcname {
-        Ok(name) => name,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-    let func = match gw.objRepo.GetFunc(
-        &skill.func_tenant,
-        &skill.func_namespace,
-        &physical_funcname,
-    ) {
-        Ok(func) => func,
-        Err(e) => return Ok(skill_admin_response(e)),
-    };
-
-    let calling_tenant = owner_tenant.clone();
-    let base_funcname = format!(
-        "{}.{}.{}",
-        skill.func_tenant, skill.func_namespace, physical_funcname
-    );
-    let (logical_tenant, logical_funcname, caller_tenant) = if skill.gpu_billing_target == "owner" {
-        (
-            skill.owner_tenant.clone(),
-            format!("{}.{}", base_funcname, calling_tenant),
-            Some(calling_tenant.clone()),
-        )
-    } else {
-        (calling_tenant.clone(), base_funcname, None)
-    };
-
-    let route = FuncRouteTarget {
-        logical: FuncIdentity {
-            tenant: logical_tenant,
-            namespace: SKILLS_NAMESPACE.to_string(),
-            funcname: logical_funcname.clone(),
-            version: func.Version(),
-        },
-        physical: FuncIdentity {
-            tenant: skill.func_tenant.clone(),
-            namespace: skill.func_namespace.clone(),
-            funcname: physical_funcname,
-            version: func.Version(),
-        },
-        policy: GW_OBJREPO.get().unwrap().FuncPolicy(&func),
-        func,
-        caller_tenant,
-    };
-
-    let cancel_token = req
-        .headers()
-        .get("X-Mcp-Cancel-Id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|id| McpCancelRegistry::global().lookup(id))
-        .unwrap_or_else(CancellationToken::new);
-
-    handle_skill_debug_call(
-        &gw,
-        req,
+    let ctx = SkillInvocationContext {
         route,
-        format!("{}/{}/{}", owner_tenant, namespace, skillname),
         calling_tenant,
+        display_skill_id: format!("{}/{}/{}", owner_tenant, namespace, skillname),
         logical_funcname,
-        "/v1/chat/completions".to_string(),
-        prefix.as_str(),
-        SKILLS_NAMESPACE,
-        skill.allowed_child_skilleps.as_deref(),
-        FUNCCALL_MAX_BODY_BYTES,
+        remain_path: remainPath,
+        prefix,
+        skills_namespace: SKILLS_NAMESPACE.to_string(),
+        is_child_request,
+        child_chain_depth,
+        is_debug_authorized,
+        allowed_child_skilleps,
         cancel_token,
-    )
-    .await
+        request_headers: req_headers,
+    };
+
+    handle_skill_call_chain(&gw, wire, ctx).await
 }
 
 async fn ReadPodFaillogs(

@@ -3,28 +3,17 @@ use futures::StreamExt;
 use rmcp::{
     model::*, service::RequestContext, service::ServiceError, ErrorData, RoleServer, ServerHandler,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-#[derive(Debug, serde::Serialize)]
-struct CompletionsRequest {
-    messages: Vec<Message>,
-    max_tokens: usize,
-    temperature: f64,
-    stream: bool,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
 use super::secret::SqlSecret;
+use super::skill_chain::{
+    build_skill_chat_request, InternalSkillRequestProfile, SkillTraceLevel,
+};
+use super::skill_trace_sse::{SkillTraceEventPayload, SseMessage, SseParser};
 use crate::print::verbose_category;
 
 /// Maps per-request UUIDs to `CancellationToken`s so that `call_tool` can
@@ -294,7 +283,10 @@ Guidelines:
         terminal_failure: &mut Option<String>,
         saw_done: &mut bool,
     ) -> Result<(), ErrorData> {
-        let SseMessage::Event { event, data } = message;
+        let (event, data) = match message {
+            SseMessage::Comment(_) => return Ok(()),
+            SseMessage::Event { event, data } => (event, data),
+        };
         if data == "[DONE]" {
             *saw_done = true;
             return Ok(());
@@ -401,59 +393,6 @@ fn format_skill_fail_reason(reason: Option<&str>) -> &'static str {
     }
 }
 
-#[derive(Default)]
-struct SseParser {
-    pending_event: Option<String>,
-    data_lines: Vec<String>,
-}
-
-enum SseMessage {
-    Event { event: Option<String>, data: String },
-}
-
-impl SseParser {
-    fn push_line(&mut self, line: &str) -> Option<SseMessage> {
-        if line.starts_with(':') {
-            return None;
-        }
-        if line.is_empty() {
-            let data = self.data_lines.join("\n");
-            let event = self.pending_event.take();
-            self.data_lines.clear();
-            if data.is_empty() && event.is_none() {
-                return None;
-            }
-            return Some(SseMessage::Event { event, data });
-        }
-        if let Some(rest) = line.strip_prefix("event:") {
-            self.pending_event = Some(rest.trim().to_string());
-            return None;
-        }
-        if let Some(rest) = line.strip_prefix("data:") {
-            self.data_lines.push(rest.trim().to_string());
-        }
-        None
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct SkillTraceEventPayload {
-    #[serde(rename = "type")]
-    event_type: String,
-    skill: String,
-    #[serde(default)]
-    depth: u32,
-    #[serde(default)]
-    phase: Option<String>,
-    #[serde(default)]
-    elapsed_ms: Option<u64>,
-    #[serde(default)]
-    result_code: Option<String>,
-    #[serde(default)]
-    fail_reason: Option<String>,
-    #[serde(default)]
-    parent_call_id: Option<String>,
-}
 
 impl ServerHandler for McpStreamServer {
     fn get_info(&self) -> ServerInfo {
@@ -500,15 +439,11 @@ impl ServerHandler for McpStreamServer {
         );
         Self::try_notify_progress_message(&context, format!("Forwarding to {}", endpoint)).await;
 
-        let body = CompletionsRequest {
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: query.to_string(),
-            }],
-            max_tokens: 5000,
-            temperature: 0.0,
-            stream: false,
-        };
+        let body = build_skill_chat_request(
+            query,
+            SkillTraceLevel::Basic,
+            InternalSkillRequestProfile::McpToolLoopback,
+        );
 
         ctrace!(
             verbose_category::MCP,
@@ -546,7 +481,6 @@ impl ServerHandler for McpStreamServer {
                 .client
                 .post(&endpoint)
                 .header("Authorization", authorization)
-                .header("X-Skill-Trace", "1")
                 .header("X-Mcp-Cancel-Id", &cancel_id)
                 .json(&body)
                 .send() => {
@@ -740,9 +674,8 @@ impl ServerHandler for McpStreamServer {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        format_skill_fail_reason, update_terminal_failure, McpStreamServer, SkillTraceEventPayload,
-    };
+    use super::{format_skill_fail_reason, update_terminal_failure, McpStreamServer};
+    use super::super::skill_trace_sse::SkillTraceEventPayload;
     use serde_json::json;
 
     #[test]
@@ -788,11 +721,9 @@ mod tests {
             event_type: "call_finish".to_string(),
             skill: "acme/default/pricing".to_string(),
             depth,
-            phase: None,
-            elapsed_ms: None,
             result_code: Some(result_code.to_string()),
             fail_reason: fail_reason.map(str::to_string),
-            parent_call_id: None,
+            ..Default::default()
         }
     }
 
@@ -852,5 +783,25 @@ mod tests {
         );
         assert_eq!(format_skill_fail_reason(None), "skill failed");
         assert_eq!(format_skill_fail_reason(Some("unknown_code")), "skill failed");
+    }
+
+    #[test]
+    fn mcp_loopback_request_deserializes_as_wire_type() {
+        use super::super::skill_chain::{
+            build_skill_chat_request, InternalSkillRequestProfile, SkillChatCompletionsWireRequest,
+            SkillTraceLevel,
+        };
+        let body = build_skill_chat_request(
+            "hello",
+            SkillTraceLevel::Basic,
+            InternalSkillRequestProfile::McpToolLoopback,
+        );
+        let json = serde_json::to_vec(&body).unwrap();
+        let wire: SkillChatCompletionsWireRequest = serde_json::from_slice(&json).unwrap();
+        assert_eq!(wire.max_tokens, Some(5000));
+        assert_eq!(wire.temperature, Some(0.0));
+        assert_eq!(wire.stream, Some(false));
+        assert_eq!(wire.messages.len(), 1);
+        assert_eq!(wire.messages[0]["content"], "hello");
     }
 }

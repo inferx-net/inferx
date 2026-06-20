@@ -1626,15 +1626,13 @@
             messages: [{ role: 'user', content: prompt }],
             stream: true,
             chat_template_kwargs: { enable_thinking: false },
+            skill_trace: 1,
         });
 
         try {
             const resp = await fetch(proxyUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Skill-Trace': '1',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body,
                 signal: abortController.signal,
             });
@@ -1888,12 +1886,13 @@
                 model: normalFuncname,
                 messages: [{ role: 'user', content: prompt }],
                 stream: true,
+                skill_trace: 2,
             };
             debugMockSkillIds = new Set(Object.keys(mocks || {}));
             if (mocks) body.mocks = mocks;
 
             try {
-                const resp = await fetch(`/proxy/skills/debug/${encodeURIComponent(owner)}/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`, {
+                const resp = await fetch(`/proxy/skills/${encodeURIComponent(owner)}/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/v1/chat/completions`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
