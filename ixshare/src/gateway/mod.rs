@@ -24,4 +24,5 @@ pub mod metrics;
 pub mod scheduler_client;
 pub mod secret;
 mod skill_chain;
+mod skill_trace_sse;
 pub mod tokenizer;

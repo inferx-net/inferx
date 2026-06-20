@@ -98,7 +98,10 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
-use super::skill_chain::handle_skill_call_chain;
+use super::skill_chain::{
+    extract_is_child_request, handle_skill_call_chain, SkillChatCompletionsWireRequest,
+    SkillInvocationContext, SKILL_CHAIN_DEPTH_HEADER,
+};
 // use super::tokenizer::KnowledgeBaseRoute;
 use super::tokenizer::NormalizeFuncRequest;
 use super::tokenizer::TokenizerRoute;
@@ -514,7 +517,6 @@ mod tests {
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
     use crate::gateway::log_admin::verbose_categories_mask_from_request;
-    use crate::gateway::secret::SkillDetail;
     use axum::http::StatusCode;
     use hyper::body::Bytes;
     use serde_json::Value;
@@ -3398,22 +3400,59 @@ async fn SkillCall(
     let is_debug_authorized =
         token.IsNamespaceAdmin(&owner_tenant, &namespace) || token.IsInferxAdmin();
 
-    handle_skill_call_chain(
-        &gw,
-        req,
+    let (req_parts, req_body) = req.into_parts();
+    let req_headers = req_parts.headers;
+
+    let is_child_request = extract_is_child_request(&req_headers);
+    let child_chain_depth = if is_child_request {
+        req_headers
+            .get(SKILL_CHAIN_DEPTH_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+    } else {
+        None
+    };
+
+    let body_bytes = match axum::body::to_bytes(req_body, FUNCCALL_MAX_BODY_BYTES).await {
+        Ok(b) => b,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
+                .unwrap())
+        }
+    };
+    let wire: SkillChatCompletionsWireRequest = match serde_json::from_slice(&body_bytes) {
+        Ok(w) => w,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: invalid request body"))
+                .unwrap())
+        }
+    };
+
+    let allowed_child_skilleps = skill.allowed_child_skilleps.map(|ids| {
+        std::sync::Arc::new(ids.into_iter().collect::<std::collections::HashSet<String>>())
+    });
+
+    let ctx = SkillInvocationContext {
         route,
-        format!("{}/{}/{}", owner_tenant, namespace, skillname),
         calling_tenant,
+        display_skill_id: format!("{}/{}/{}", owner_tenant, namespace, skillname),
         logical_funcname,
-        remainPath,
-        prefix.as_str(),
-        SKILLS_NAMESPACE,
-        skill.allowed_child_skilleps.as_deref(),
-        FUNCCALL_MAX_BODY_BYTES,
-        cancel_token,
+        remain_path: remainPath,
+        prefix,
+        skills_namespace: SKILLS_NAMESPACE.to_string(),
+        is_child_request,
+        child_chain_depth,
         is_debug_authorized,
-    )
-    .await
+        allowed_child_skilleps,
+        cancel_token,
+        request_headers: req_headers,
+    };
+
+    handle_skill_call_chain(&gw, wire, ctx).await
 }
 
 async fn ReadPodFaillogs(
