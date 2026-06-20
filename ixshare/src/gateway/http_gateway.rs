@@ -51,8 +51,8 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 
 use axum_server::tls_rustls::RustlsConfig;
@@ -93,7 +93,9 @@ use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
 use super::gw_obj_repo::FuncDetail;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
-use super::log_admin::{DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories};
+use super::log_admin::{
+    DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories,
+};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
@@ -1643,6 +1645,7 @@ async fn DirectFuncCallProc(gw: &HttpGateway, mut req: Request) -> Result<Respon
     let tcpclient = IxTcpClient {
         hostIp: hostip.0,
         hostPort: hostport,
+        hostNetwork: pod.NvidiaRuntime(),
         tenant: pod.tenant.clone(),
         namespace: pod.namespace.clone(),
         dstIp: dstIp,

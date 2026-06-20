@@ -335,6 +335,10 @@ impl WorkerPod {
         return *self.workerState.lock().unwrap();
     }
 
+    pub fn NvidiaRuntime(&self) -> bool {
+        return self.pod.NvidiaRuntime();
+    }
+
     pub fn SetState(&self, state: WorkerPodState) {
         *self.workerState.lock().unwrap() = state;
     }
@@ -460,6 +464,10 @@ impl TaskQueue {
         }));
     }
 
+    pub fn AddNvidiaPodTask(&self, funcId: &str) {
+        self.AddTask(SchedTask::NvidiaPodTask(funcId.to_owned()));
+    }
+
     pub fn AddNode(&self, nodename: &str) {
         self.AddTask(SchedTask::AddNode(nodename.to_owned()));
     }
@@ -474,6 +482,7 @@ pub enum SchedTask {
     RefreshSnapshot,
     RemoveSnapshotFromNode(RemoveSnapshotFromNode),
     SnapshotTask(FuncNodePair),
+    NvidiaPodTask(String),
     StandbyTask(String),
     AddNode(String),
     AddFunc(String),

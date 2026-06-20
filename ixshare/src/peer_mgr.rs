@@ -165,6 +165,7 @@ impl PeerMgr {
 pub struct IxTcpClient {
     pub hostIp: u32,
     pub hostPort: u16,
+    pub hostNetwork: bool,
 
     pub tenant: String,
     pub namespace: String,
@@ -192,6 +193,10 @@ impl IxTcpClient {
             }
             Ok(s) => s,
         };
+
+        if self.hostNetwork {
+            return Ok(stream);
+        }
 
         let podNamespace = format!("{}/{}", self.tenant, self.namespace);
 

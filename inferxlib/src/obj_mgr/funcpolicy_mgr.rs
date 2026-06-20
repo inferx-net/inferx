@@ -34,6 +34,9 @@ pub struct RuntimeConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FuncPolicySpec {
+    #[serde(default = "default_nvidia_replica", rename = "nvidia_replica")]
+    pub nvidiaReplica: u64,
+
     #[serde(rename = "min_replica")]
     pub minReplica: u64,
     #[serde(rename = "max_replica")]
@@ -125,6 +128,10 @@ fn default_parallel() -> usize {
     DEFAULT_PARALLEL_LEVEL
 }
 
+fn default_nvidia_replica() -> u64 {
+    0
+}
+
 fn default_queue_len() -> usize {
     DEFAULT_QUEUE_LEN
 }
@@ -144,6 +151,7 @@ fn default_max_replica() -> u64 {
 impl Default for FuncPolicySpec {
     fn default() -> Self {
         return Self {
+            nvidiaReplica: 0,
             minReplica: 0,
             maxReplica: 1,
             standbyPerNode: 1,
@@ -214,6 +222,7 @@ impl FuncPolicySchedulerDefaults {
 impl EndpointGatewayPolicySpec {
     pub fn AsFuncPolicySpec(&self) -> FuncPolicySpec {
         FuncPolicySpec {
+            nvidiaReplica: 0,
             minReplica: 0,
             maxReplica: self.maxReplica,
             standbyPerNode: 0,
