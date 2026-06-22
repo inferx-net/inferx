@@ -1081,6 +1081,9 @@ impl HttpGateway {
             .route("/funccall/*rest", post(FuncCall))
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
+            .route("/modelcall/*rest", post(FuncCallWithTokenTracking))
+            .route("/modelcall/*rest", get(FuncCallWithTokenTracking))
+            .route("/modelcall/*rest", head(FuncCallWithTokenTracking))
             .route("/skilltemplates", get(ListSkillTemplates))
             .route("/skills", get(ListPublishedSkills))
             .route(
@@ -1917,7 +1920,17 @@ async fn FuncCall(
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
+    error!("FuncCall 111");
     return FuncCall1(&token, &gw, req).await;
+}
+
+async fn FuncCallWithTokenTracking(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    error!("FuncCallWithTokenTracking xxx 1");
+    crate::gateway::req_token::FuncCallWithTokenTracking(&token, &gw, req).await
 }
 
 pub async fn FuncCall1(

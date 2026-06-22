@@ -21,6 +21,7 @@ pub mod http_gw;
 pub mod log_admin;
 pub mod mcp_stream_server;
 pub mod metrics;
+pub mod req_token;
 pub mod scheduler_client;
 pub mod secret;
 mod skill_chain;

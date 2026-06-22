@@ -64,7 +64,7 @@ fn is_public_funccall_path(path: &str) -> bool {
         return false;
     }
 
-    matches!(parts[1], "funccall" | "directfunccall" | "sampleccall") && parts[2] == "public"
+    matches!(parts[1], "funccall" | "directfunccall" | "sampleccall" | "modelcall") && parts[2] == "public"
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
