@@ -3876,6 +3876,23 @@ impl SchedulerHandler {
     }
 
     pub fn AddSnapshotTask(&mut self, nodename: &str, funcId: &str) {
+        match self.funcs.get(funcId) {
+            None => unreachable!(),
+            Some(f) => {
+                let policy = self.FuncPolicy(
+                    &f.func.tenant,
+                    &f.func.namespace,
+                    &f.func.name,
+                    &f.func.object.spec.policy,
+                );
+
+                // skip if no need snapshot
+                if policy.standbyPerNode == 0 {
+                    return;
+                }
+            }
+        }
+
         self.schedule_delayed_task(
             Duration::from_secs(1),
             SchedTask::SnapshotTask(FuncNodePair {
@@ -4716,8 +4733,7 @@ impl SchedulerHandler {
         );
 
         if policy.nvidiaReplica > self.NvidiaRuntimePodCount(funcid) as u64 {
-            error!("SchedulerHandler::ProcessAddFunc xx 2");
-            self.AddNvidiaPodTask(funcid);
+            self.CreateOneNividaPod(funcid).await.ok();
         }
 
         if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
