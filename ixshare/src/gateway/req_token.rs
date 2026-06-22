@@ -1,5 +1,7 @@
 // Token usage tracking and filtering for function calls
 
+use std::convert::Infallible;
+use std::result::Result as SResult;
 use std::sync::Arc;
 
 use axum::extract::Request;
@@ -10,6 +12,7 @@ use hyper::body::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::gateway::auth_layer::AccessToken;
 use crate::gateway::http_gateway::HttpGateway;
@@ -356,23 +359,55 @@ pub async fn FuncCallWithTokenTracking(
     let shouldFilterUsage = !usageEnabled;
 
     error!("FuncCallWithTokenTracking 1");
-    // Extract body from response and process
-    let responseBody = response
-        .into_body()
-        .collect()
-        .await
-        .map(|b| b.to_bytes())
-        .unwrap_or_default();
 
-    let (filteredBody, usageInfo) = if isStreaming {
-        // For streaming, we need special handling
-        // Since the response is already sent, we can't easily filter here
-        // The filtering happens in the stream processing below
-        error!("FuncCallWithTokenTracking 2");
-        (responseBody, None)
+    let (bodyStream, usageInfo) = if isStreaming {
+        let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
+
+        // Stream the response body through the processor
+        let responseBodyBody = response.into_body();
+        tokio::spawn(async move {
+            let mut body = responseBodyBody;
+
+            loop {
+                let frame = body.frame().await;
+                let bytes = match frame {
+                    None => {
+                        return;
+                    }
+                    Some(b) => match b {
+                        Ok(b) => b,
+                        Err(e) => {
+                            error!("Stream frame error: {:?}", e);
+                            return;
+                        }
+                    },
+                };
+                let bytes: Bytes = bytes.into_data().unwrap_or_default();
+
+                // Send bytes unchanged - just stream back as-is
+                match tx.send(Ok(bytes)).await {
+                    Err(_) => {
+                        return;
+                    }
+                    Ok(()) => (),
+                }
+            }
+        });
+
+        let usage = None;
+        let stream = ReceiverStream::new(rx);
+        let body = http_body_util::StreamBody::new(stream);
+        (axum::body::Body::from_stream(body), usage)
     } else {
         error!("FuncCallWithTokenTracking 3 {}", shouldFilterUsage);
-        ProcessNonStreamingResponse(responseBody, true)
+        let responseBody = response
+            .into_body()
+            .collect()
+            .await
+            .map(|b| b.to_bytes())
+            .unwrap_or_default();
+        let (filteredBody, usage) = ProcessNonStreamingResponse(responseBody, true);
+        (axum::body::Body::from(filteredBody), usage)
     };
     error!("FuncCallWithTokenTracking 4");
 
@@ -396,7 +431,7 @@ pub async fn FuncCallWithTokenTracking(
     }
 
     // Rebuild response
-    let mut newResponse = Response::new(axum::body::Body::from(filteredBody));
+    let mut newResponse = Response::new(bodyStream);
     *newResponse.status_mut() = status;
 
     // Copy headers (excluding content-length since body changed)
