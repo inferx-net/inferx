@@ -1,4 +1,4 @@
-// Token usage tracking and filtering for function calls
+// Token usage tracking for function calls
 
 use std::convert::Infallible;
 use std::result::Result as SResult;
@@ -42,12 +42,7 @@ pub fn RequestHasUsageEnabled(body: &[u8]) -> bool {
                 return *include_usage;
             }
         }
-        // If streaming but no stream_options, usage is not enabled
-        if let Some(Value::Bool(is_stream)) = obj.get("stream") {
-            return *is_stream && false;
-        }
     }
-    // Non-streaming requests always include usage by default
     false
 }
 
@@ -61,95 +56,19 @@ pub fn IsStreamingRequest(body: &[u8]) -> bool {
     false
 }
 
-/// Filter usage from a JSON response chunk
-fn FilterUsageFromJson(value: Value) -> Value {
-    if let Value::Object(obj) = value {
-        let mut filtered = serde_json::Map::new();
-        for (key, val) in obj {
-            if key == "usage" {
-                // Skip the usage field
-                continue;
-            }
-            filtered.insert(key, FilterUsageFromJson(val));
-        }
-        Value::Object(filtered)
-    } else if let Value::Array(arr) = value {
-        Value::Array(arr.into_iter().map(FilterUsageFromJson).collect())
-    } else {
-        value
-    }
-}
-
-// Process non-streaming response to extract usage
-fn ProcessNonStreamingResponse(body: Bytes, shouldFilterUsage: bool) -> (Bytes, Option<UsageInfo>) {
-    if !shouldFilterUsage {
-        return (body, None);
-    }
-
-    let text = match std::str::from_utf8(&body) {
-        Ok(t) => t,
-        Err(_) => return (body, None),
-    };
-
-    if let Ok(value) = serde_json::from_str::<Value>(text) {
-        let usage = if let Value::Object(ref obj) = value {
-            obj.get("usage").and_then(|u| {
-                if let Value::Object(usageObj) = u {
-                    let promptTokens = usageObj
-                        .get("prompt_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    let completionTokens = usageObj
-                        .get("completion_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    let totalTokens = usageObj
-                        .get("total_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-
-                    Some(UsageInfo {
-                        promptTokens,
-                        completionTokens,
-                        totalTokens,
-                    })
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
-
-        let filtered = FilterUsageFromJson(value);
-        match serde_json::to_vec(&filtered) {
-            Ok(filteredBytes) => (Bytes::from(filteredBytes), usage),
-            Err(_) => (body, None),
-        }
-    } else {
-        (body, None)
-    }
-}
-
-/// Wrapper endpoint for FuncCall that handles token usage filtering
+/// Wrapper endpoint for FuncCall that handles token usage tracking
 pub async fn FuncCallWithTokenTracking(
     token: &Arc<AccessToken>,
     gw: &HttpGateway,
     req: Request,
 ) -> Result<Response, StatusCode> {
-    // Note: The token extension is already consumed by the wrapper in http_gateway.rs
-    // We need to extract tenant/namespace/funcname from path and proceed
     let path = req.uri().path().to_string();
-    let _method = req.method().clone();
 
-    // Extract tenant, namespace, funcname and remaining path from path
-    // Path format: /modelcall/tenant/namespace/funcname/*remainPath
     let pathParts: Vec<&str> = path.split('/').collect();
     if pathParts.len() < 5 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Extract body to check for stream_options
     let (mut reqParts, body) = req.into_parts();
     let bodyBytes = match axum::body::to_bytes(body, 20 * 1024 * 1024).await {
         Ok(b) => b,
@@ -160,7 +79,6 @@ pub async fn FuncCallWithTokenTracking(
     let usageEnabled = if isStreaming {
         RequestHasUsageEnabled(&bodyBytes)
     } else {
-        // Non-streaming: usage is always included by vLLM, we'll filter if needed
         true
     };
 
@@ -168,7 +86,6 @@ pub async fn FuncCallWithTokenTracking(
     let requestBodyBytes = if isStreaming && !usageEnabled {
         if let Ok(mut value) = serde_json::from_slice::<Value>(&bodyBytes) {
             if let Value::Object(ref mut obj) = value {
-                // Add or update stream_options with include_usage: true
                 let stream_options = obj
                     .entry("stream_options")
                     .or_insert(Value::Object(serde_json::Map::new()));
@@ -178,7 +95,6 @@ pub async fn FuncCallWithTokenTracking(
             }
             let newBytes = serde_json::to_vec(&value).unwrap_or_else(|_| bodyBytes.to_vec());
 
-            // Update content-length header if it exists
             reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
             reqParts.headers.insert(
                 hyper::header::CONTENT_LENGTH,
@@ -186,19 +102,15 @@ pub async fn FuncCallWithTokenTracking(
             );
             newBytes.into()
         } else {
-            error!("Failed to parse request body as JSON");
             bodyBytes
         }
     } else {
         bodyBytes
     };
 
-    // Reconstruct request - extensions are preserved in reqParts
     let req = Request::from_parts(reqParts, axum::body::Body::from(requestBodyBytes));
-
     let response = FuncCall1(token, gw, req).await?;
 
-    // Save status and headers before consuming the response
     let status = response.status();
     let headers: Vec<_> = response
         .headers()
@@ -207,25 +119,17 @@ pub async fn FuncCallWithTokenTracking(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    // Determine if we need to filter usage
-    let shouldFilterUsage = !usageEnabled;
-
-    error!("FuncCallWithTokenTracking 1");
-
-    let (bodyStream, usageInfo) = if isStreaming {
+    let bodyStream = if isStreaming {
         let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
-
-        // Stream the response body through the processor
         let responseBodyBody = response.into_body();
+
         tokio::spawn(async move {
             let mut body = responseBodyBody;
 
             loop {
                 let frame = body.frame().await;
                 let bytes = match frame {
-                    None => {
-                        return;
-                    }
+                    None => return,
                     Some(b) => match b {
                         Ok(b) => b,
                         Err(e) => {
@@ -236,14 +140,13 @@ pub async fn FuncCallWithTokenTracking(
                 };
                 let bytes: Bytes = bytes.into_data().unwrap_or_default();
 
-                // Parse and log token usage if present
+                // Log token usage if present in the chunk
                 if let Ok(text) = std::str::from_utf8(&bytes) {
                     for line in text.lines() {
-                        if line.starts_with("data: ") || line.starts_with("data:") {
-                            let json_str = line
-                                .strip_prefix("data: ")
-                                .or(line.strip_prefix("data:"))
-                                .unwrap_or(line);
+                        if let Some(json_str) = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))
+                        {
                             if json_str.trim() == "[DONE]" {
                                 break;
                             }
@@ -253,76 +156,78 @@ pub async fn FuncCallWithTokenTracking(
                                     let prompt_tokens = usage_obj
                                         .get("prompt_tokens")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
+                                        .unwrap_or(0) as u32;
                                     let completion_tokens = usage_obj
                                         .get("completion_tokens")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
+                                        .unwrap_or(0) as u32;
                                     let total_tokens = usage_obj
                                         .get("total_tokens")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    error!(
-                                        "Token usage - prompt: {}, completion: {}, total: {}",
-                                        prompt_tokens, completion_tokens, total_tokens
-                                    );
+                                        .unwrap_or(0) as u32;
+
+                                    let usage_info = UsageInfo {
+                                        promptTokens: prompt_tokens,
+                                        completionTokens: completion_tokens,
+                                        totalTokens: total_tokens,
+                                    };
+                                    error!("Token usage (stream): {:?}", usage_info);
+                                    break;
                                 }
                             }
                         }
                     }
                 }
 
-                // Send bytes unchanged - just stream back as-is
-                match tx.send(Ok(bytes)).await {
-                    Err(_) => {
-                        return;
-                    }
-                    Ok(()) => (),
+                if tx.send(Ok(bytes)).await.is_err() {
+                    return;
                 }
             }
         });
 
-        let usage = None;
         let stream = ReceiverStream::new(rx);
-        let body = http_body_util::StreamBody::new(stream);
-        (axum::body::Body::from_stream(body), usage)
+        axum::body::Body::from_stream(http_body_util::StreamBody::new(stream))
     } else {
-        error!("FuncCallWithTokenTracking 3 {}", shouldFilterUsage);
         let responseBody = response
             .into_body()
             .collect()
             .await
             .map(|b| b.to_bytes())
             .unwrap_or_default();
-        let (filteredBody, usage) = ProcessNonStreamingResponse(responseBody, true);
-        (axum::body::Body::from(filteredBody), usage)
+        
+        // Log usage for non-streaming if present
+        if let Ok(text) = std::str::from_utf8(&responseBody) {
+            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) {
+                if let Some(Value::Object(usage_obj)) = obj.get("usage") {
+                    let prompt_tokens = usage_obj
+                        .get("prompt_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    let completion_tokens = usage_obj
+                        .get("completion_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    let total_tokens = usage_obj
+                        .get("total_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+
+                    let usage_info = UsageInfo {
+                        promptTokens: prompt_tokens,
+                        completionTokens: completion_tokens,
+                        totalTokens: total_tokens,
+                    };
+                    error!("Token usage (non-streaming): {:?}", usage_info);
+                }
+            }
+        }
+        
+        axum::body::Body::from(responseBody)
     };
-    error!("FuncCallWithTokenTracking 4");
 
-    // Record usage if we captured it (this would integrate with your billing system)
-    if let Some(usage) = &usageInfo {
-        // TODO: Record usage to audit/billing system
-        // REQ_AUDIT_AGENT.Audit(ReqAudit {
-        //     tenant,
-        //     namespace,
-        //     fpname: funcname,
-        //     keepalive: false,
-        //     ttft: 0,
-        //     latency: 0,
-        //     prompt_tokens: usage.prompt_tokens,
-        //     completion_tokens: usage.completion_tokens,
-        // });
-        error!(
-            "Token usage - prompt: {}, completion: {}, total: {}",
-            usage.promptTokens, usage.completionTokens, usage.totalTokens
-        );
-    }
-
-    // Rebuild response
     let mut newResponse = Response::new(bodyStream);
     *newResponse.status_mut() = status;
 
-    // Copy headers (excluding content-length since body changed)
     for (key, value) in headers {
         if key != hyper::header::CONTENT_LENGTH {
             newResponse.headers_mut().insert(key.clone(), value.clone());
