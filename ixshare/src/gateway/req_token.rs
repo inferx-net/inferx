@@ -327,7 +327,7 @@ pub async fn FuncCallWithTokenTracking(
     }
 
     // Extract body to check for stream_options
-    let (reqParts, body) = req.into_parts();
+    let (mut reqParts, body) = req.into_parts();
     let bodyBytes = match axum::body::to_bytes(body, 20 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
@@ -341,8 +341,37 @@ pub async fn FuncCallWithTokenTracking(
         true
     };
 
+    // If streaming and usage is not enabled, add stream_options.include_usage to the request
+    let requestBodyBytes = if isStreaming && !usageEnabled {
+        if let Ok(mut value) = serde_json::from_slice::<Value>(&bodyBytes) {
+            if let Value::Object(ref mut obj) = value {
+                // Add or update stream_options with include_usage: true
+                let stream_options = obj
+                    .entry("stream_options")
+                    .or_insert(Value::Object(serde_json::Map::new()));
+                if let Value::Object(ref mut opts) = *stream_options {
+                    opts.insert("include_usage".to_string(), Value::Bool(true));
+                }
+            }
+            let newBytes = serde_json::to_vec(&value).unwrap_or_else(|_| bodyBytes.to_vec());
+
+            // Update content-length header if it exists
+            reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
+            reqParts.headers.insert(
+                hyper::header::CONTENT_LENGTH,
+                hyper::header::HeaderValue::from(newBytes.len()),
+            );
+            newBytes.into()
+        } else {
+            error!("Failed to parse request body as JSON");
+            bodyBytes
+        }
+    } else {
+        bodyBytes
+    };
+
     // Reconstruct request - extensions are preserved in reqParts
-    let req = Request::from_parts(reqParts, axum::body::Body::from(bodyBytes.clone()));
+    let req = Request::from_parts(reqParts, axum::body::Body::from(requestBodyBytes));
 
     let response = FuncCall1(token, gw, req).await?;
 
