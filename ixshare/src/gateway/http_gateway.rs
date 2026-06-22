@@ -1920,7 +1920,6 @@ async fn FuncCall(
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
-    error!("FuncCall 111");
     return FuncCall1(&token, &gw, req).await;
 }
 
@@ -1929,7 +1928,6 @@ async fn FuncCallWithTokenTracking(
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
-    error!("FuncCallWithTokenTracking xxx 1");
     crate::gateway::req_token::FuncCallWithTokenTracking(&token, &gw, req).await
 }
 

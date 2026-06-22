@@ -34,28 +34,6 @@ pub struct UsageInfo {
     pub totalTokens: u32,
 }
 
-/// Check if the request body has stream_options.include_usage enabled
-pub fn RequestHasUsageEnabled(body: &[u8]) -> bool {
-    if let Ok(Value::Object(obj)) = serde_json::from_slice::<Value>(body) {
-        if let Some(Value::Object(stream_opts)) = obj.get("stream_options") {
-            if let Some(Value::Bool(include_usage)) = stream_opts.get("include_usage") {
-                return *include_usage;
-            }
-        }
-    }
-    false
-}
-
-/// Check if the request is a streaming request
-pub fn IsStreamingRequest(body: &[u8]) -> bool {
-    if let Ok(Value::Object(obj)) = serde_json::from_slice::<Value>(body) {
-        if let Some(Value::Bool(is_stream)) = obj.get("stream") {
-            return *is_stream;
-        }
-    }
-    false
-}
-
 /// Wrapper endpoint for FuncCall that handles token usage tracking
 pub async fn FuncCallWithTokenTracking(
     token: &Arc<AccessToken>,
@@ -75,38 +53,54 @@ pub async fn FuncCallWithTokenTracking(
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
 
-    let isStreaming = IsStreamingRequest(&bodyBytes);
-    let usageEnabled = if isStreaming {
-        RequestHasUsageEnabled(&bodyBytes)
-    } else {
-        true
-    };
-
-    // If streaming and usage is not enabled, add stream_options.include_usage to the request
-    let requestBodyBytes = if isStreaming && !usageEnabled {
+    // Parse JSON once to check streaming and usage settings
+    let (isStreaming, usageEnabled, requestBodyBytes) =
         if let Ok(mut value) = serde_json::from_slice::<Value>(&bodyBytes) {
-            if let Value::Object(ref mut obj) = value {
-                let stream_options = obj
-                    .entry("stream_options")
-                    .or_insert(Value::Object(serde_json::Map::new()));
-                if let Value::Object(ref mut opts) = *stream_options {
-                    opts.insert("include_usage".to_string(), Value::Bool(true));
-                }
-            }
-            let newBytes = serde_json::to_vec(&value).unwrap_or_else(|_| bodyBytes.to_vec());
+            let isStreaming = if let Value::Object(ref obj) = value {
+                obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
+            } else {
+                false
+            };
 
-            reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
-            reqParts.headers.insert(
-                hyper::header::CONTENT_LENGTH,
-                hyper::header::HeaderValue::from(newBytes.len()),
-            );
-            newBytes.into()
+            let usageEnabled = if isStreaming {
+                if let Value::Object(ref obj) = value {
+                    obj.get("stream_options")
+                        .and_then(|v| v.as_object())
+                        .and_then(|opts| opts.get("include_usage"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
+
+            // If streaming and usage is not enabled, add stream_options.include_usage
+            let requestBodyBytes = if isStreaming && !usageEnabled {
+                if let Value::Object(ref mut obj) = value {
+                    let stream_options = obj
+                        .entry("stream_options")
+                        .or_insert(Value::Object(serde_json::Map::new()));
+                    if let Value::Object(ref mut opts) = *stream_options {
+                        opts.insert("include_usage".to_string(), Value::Bool(true));
+                    }
+                }
+                let newBytes = serde_json::to_vec(&value).unwrap_or_else(|_| bodyBytes.to_vec());
+                reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
+                reqParts.headers.insert(
+                    hyper::header::CONTENT_LENGTH,
+                    hyper::header::HeaderValue::from(newBytes.len()),
+                );
+                newBytes.into()
+            } else {
+                bodyBytes
+            };
+
+            (isStreaming, usageEnabled, requestBodyBytes)
         } else {
-            bodyBytes
-        }
-    } else {
-        bodyBytes
-    };
+            (false, true, bodyBytes)
+        };
 
     let req = Request::from_parts(reqParts, axum::body::Body::from(requestBodyBytes));
     let response = FuncCall1(token, gw, req).await?;
@@ -122,6 +116,7 @@ pub async fn FuncCallWithTokenTracking(
     let bodyStream = if isStreaming {
         let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
         let responseBodyBody = response.into_body();
+        let shouldFilterUsage = !usageEnabled;
 
         tokio::spawn(async move {
             let mut body = responseBodyBody;
@@ -140,46 +135,71 @@ pub async fn FuncCallWithTokenTracking(
                 };
                 let bytes: Bytes = bytes.into_data().unwrap_or_default();
 
-                // Log token usage if present in the chunk
-                if let Ok(text) = std::str::from_utf8(&bytes) {
+                // Process lines - filter usage if needed and log if present
+                let outputBytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+                    let mut filteredLines = String::new();
+                    let mut usageLogged = false;
+
                     for line in text.lines() {
                         if let Some(json_str) = line
                             .strip_prefix("data: ")
                             .or_else(|| line.strip_prefix("data:"))
                         {
                             if json_str.trim() == "[DONE]" {
-                                break;
+                                filteredLines.push_str(line);
+                                filteredLines.push('\n');
+                                continue;
                             }
+
+                            // Check if this line contains usage
                             if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(json_str)
                             {
-                                if let Some(Value::Object(usage_obj)) = obj.get("usage") {
-                                    let prompt_tokens = usage_obj
-                                        .get("prompt_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as u32;
-                                    let completion_tokens = usage_obj
-                                        .get("completion_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as u32;
-                                    let total_tokens = usage_obj
-                                        .get("total_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as u32;
+                                if obj.get("usage").is_some() {
+                                    // Log usage if we haven't yet
+                                    if !usageLogged {
+                                        if let Some(Value::Object(usage_obj)) = obj.get("usage") {
+                                            let prompt_tokens = usage_obj
+                                                .get("prompt_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32;
+                                            let completion_tokens = usage_obj
+                                                .get("completion_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32;
+                                            let total_tokens = usage_obj
+                                                .get("total_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32;
 
-                                    let usage_info = UsageInfo {
-                                        promptTokens: prompt_tokens,
-                                        completionTokens: completion_tokens,
-                                        totalTokens: total_tokens,
-                                    };
-                                    error!("Token usage (stream): {:?}", usage_info);
-                                    break;
+                                            let usage_info = UsageInfo {
+                                                promptTokens: prompt_tokens,
+                                                completionTokens: completion_tokens,
+                                                totalTokens: total_tokens,
+                                            };
+                                            error!("Token usage (stream): {:?}", usage_info);
+                                            usageLogged = true;
+                                        }
+                                    }
+                                    // Skip this line if filtering usage
+                                    if shouldFilterUsage {
+                                        continue;
+                                    }
                                 }
                             }
                         }
+                        filteredLines.push_str(line);
+                        filteredLines.push('\n');
                     }
-                }
 
-                if tx.send(Ok(bytes)).await.is_err() {
+                    Bytes::from(filteredLines)
+                } else {
+                    bytes
+                };
+
+                if tx.send(Ok(outputBytes)).await.is_err() {
                     return;
                 }
             }
@@ -194,7 +214,7 @@ pub async fn FuncCallWithTokenTracking(
             .await
             .map(|b| b.to_bytes())
             .unwrap_or_default();
-        
+
         // Log usage for non-streaming if present
         if let Ok(text) = std::str::from_utf8(&responseBody) {
             if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) {
@@ -221,7 +241,7 @@ pub async fn FuncCallWithTokenTracking(
                 }
             }
         }
-        
+
         axum::body::Body::from(responseBody)
     };
 
