@@ -46,6 +46,7 @@ use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 use opentelemetry::Context;
 use prometheus_client::encoding::text::encode;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use super::session::SessionStore;
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
@@ -1025,6 +1026,7 @@ pub struct HttpGateway {
     pub sqlBilling: SqlAudit,
     pub sqlSecret: SqlSecret,
     pub client: CacherClient,
+    pub sessions: SessionStore,
 }
 
 impl HttpGateway {
@@ -1070,6 +1072,12 @@ impl HttpGateway {
 
         let app = Router::new()
             .nest_service("/mcp", mpcservice)
+            .route("/sessions", post(super::session::CreateSession))
+            .route("/sessions/current", get(super::session::GetCurrentSession))
+            .route("/sessions/:id", get(super::session::GetSession))
+            .route("/sessions/:id/messages", get(super::session::GetSessionMessages))
+            .route("/sessions/:id/prompt", post(super::session::Prompt))
+            .route("/sessions/:id/prompt_stream", post(super::session::PromptStream))
             .route("/rbac/", post(RbacGrant))
             .route("/rbac/", delete(RbacRevoke))
             .route("/rbac/roles/", get(RbacRoleBindingGet))
@@ -1269,6 +1277,20 @@ impl HttpGateway {
             .layer(from_fn_with_state(self.clone(), TenantQuotaGuard))
             .layer(axum::middleware::from_fn(auth_transform_keycloaktoken))
             .layer(auth_layer);
+
+        let gw_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                super::session::SessionCleanupIntervalSecs,
+            ));
+            loop {
+                interval.tick().await;
+                let cleaned = gw_clone.sessions.CleanupTimedOutSessions().await;
+                if cleaned > 0 {
+                    log::info!("Cleaned up {} timed-out sessions", cleaned);
+                }
+            }
+        });
 
         let tlsconfig = NODE_CONFIG.tlsconfig.clone();
 

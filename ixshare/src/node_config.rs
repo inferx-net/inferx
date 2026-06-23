@@ -1078,6 +1078,15 @@ pub struct NodeConfig {
 
     #[serde(default)]
     pub inferx_tenant_policy: InferxTenantPolicy,
+
+    #[serde(default)]
+    pub agent_model_endpoint: String,
+
+    /// Max context length of the agent model in tokens.
+    /// When set, compaction triggers at 80% of this value.
+    /// 0 means compaction is disabled.
+    #[serde(default)]
+    pub agent_model_context_length: u64,
 }
 
 impl NodeConfig {
@@ -1132,6 +1141,8 @@ mod tests {
             endpoints_default_policy: default_endpoints_policy(),
             inferx_endpoint_func_default_policy: default_inferx_endpoint_func_default_policy(),
             inferx_tenant_policy: InferxTenantPolicy::default(),
+            agent_model_endpoint: String::new(),
+            agent_model_context_length: 0,
         }
     }
 

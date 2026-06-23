@@ -1,0 +1,838 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .agent-page {
+        max-width: var(--ix-page-max-width);
+        margin: 0 auto 32px auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .agent-panel {
+        border: 1px solid #cbd5e1;
+        border-radius: var(--ix-panel-radius);
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 180px);
+        min-height: 400px;
+    }
+
+    .agent-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--ix-panel-padding);
+        border-bottom: 1px solid #e2e8f0;
+        flex-shrink: 0;
+    }
+
+    .agent-panel-header-left h1 {
+        font-size: var(--ix-font-size-heading);
+        font-weight: 600;
+        color: #0f172a;
+        margin: 0 0 2px 0;
+    }
+
+    .agent-subtitle {
+        font-size: var(--ix-font-size-caption);
+        color: #64748b;
+        margin: 0;
+    }
+
+    .agent-chat-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px var(--ix-panel-padding);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .chat-bubble {
+        max-width: 75%;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: var(--ix-font-size-body);
+        line-height: 1.6;
+        word-break: break-word;
+    }
+
+    .chat-bubble.assistant {
+        align-self: flex-start;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        color: #0f172a;
+    }
+
+    .chat-bubble.user {
+        align-self: flex-end;
+        background: #dbeafe;
+        border: 1px solid #bfdbfe;
+        color: #1e3a5f;
+    }
+
+    .chat-bubble.error {
+        align-self: flex-start;
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #7f1d1d;
+    }
+
+    .thinking-bubble {
+        align-self: flex-start;
+        max-width: 75%;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: var(--ix-font-size-body);
+    }
+
+    .thinking-bubble-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: #f1f5f9;
+        cursor: pointer;
+        user-select: none;
+        color: #64748b;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .thinking-bubble-header:hover { background: #e2e8f0; }
+
+    .thinking-bubble-chevron {
+        display: inline-block;
+        transition: transform 0.15s;
+        font-style: normal;
+    }
+
+    .thinking-bubble.expanded .thinking-bubble-chevron { transform: rotate(90deg); }
+
+    .thinking-bubble-body {
+        display: none;
+        padding: 10px 14px;
+        background: #fafafa;
+        color: #475569;
+        font-size: var(--ix-font-size-subtle);
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .thinking-bubble.expanded .thinking-bubble-body { display: block; }
+
+    /* After finalization, shrink cap so old thinking blocks are more compact */
+    .thinking-bubble.finalized .thinking-bubble-body {
+        max-height: 120px;
+    }
+
+    .compacting-indicator {
+        align-self: flex-start;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        color: #64748b;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .tool-block {
+        align-self: flex-start;
+        max-width: 75%;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: var(--ix-font-size-subtle);
+    }
+
+    .tool-block-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: #f1f5f9;
+        cursor: pointer;
+        user-select: none;
+        color: #64748b;
+        border-radius: 8px;
+    }
+
+    .tool-block.open .tool-block-header {
+        border-radius: 8px 8px 0 0;
+    }
+
+    .tool-block-header:hover { background: #e2e8f0; }
+
+    .tool-block-chevron {
+        display: inline-block;
+        transition: transform 0.15s;
+        font-style: normal;
+        font-size: 10px;
+    }
+
+    .tool-block.open .tool-block-chevron { transform: rotate(90deg); }
+
+    .tool-block-body {
+        display: none;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .tool-block.open .tool-block-body { display: block; }
+
+    .tool-block-section {
+        padding: 8px 12px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+
+    .tool-block-section:last-child { border-bottom: none; }
+
+    .tool-block-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #94a3b8;
+        margin-bottom: 4px;
+    }
+
+    .tool-block-content {
+        font-family: monospace;
+        font-size: 12px;
+        color: #334155;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 150px;
+        overflow-y: auto;
+    }
+
+    .tool-block-content.error { color: #b91c1c; }
+
+    .tool-spinner, .compacting-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid #cbd5e1;
+        border-top-color: #64748b;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .chat-bubble p { margin: 0 0 8px 0; }
+    .chat-bubble p:last-child { margin-bottom: 0; }
+    .chat-bubble ul, .chat-bubble ol { margin: 0 0 8px 0; padding-left: 20px; }
+    .chat-bubble li { margin-bottom: 2px; }
+    .chat-bubble h1, .chat-bubble h2, .chat-bubble h3 {
+        font-size: var(--ix-font-size-body);
+        font-weight: 600;
+        margin: 8px 0 4px 0;
+    }
+    .chat-bubble code {
+        background: #f1f5f9;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-family: 'Fira Code', 'Cascadia Code', monospace;
+        font-size: 0.9em;
+    }
+    .chat-bubble pre {
+        background: #f1f5f9;
+        padding: 10px;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin: 6px 0;
+    }
+    .chat-bubble pre code {
+        background: none;
+        padding: 0;
+    }
+    .chat-bubble table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 6px 0;
+        font-size: var(--ix-font-size-caption);
+    }
+    .chat-bubble th, .chat-bubble td {
+        border: 1px solid #cbd5e1;
+        padding: 4px 8px;
+        text-align: left;
+    }
+    .chat-bubble th { background: #f1f5f9; font-weight: 600; }
+
+    .thinking-indicator {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #64748b;
+        font-size: var(--ix-font-size-subtle);
+        padding: 8px 0;
+    }
+
+    .thinking-dots span {
+        display: inline-block;
+        width: 5px;
+        height: 5px;
+        background: #94a3b8;
+        border-radius: 50%;
+        animation: thinking-bounce 1.2s infinite ease-in-out;
+    }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes thinking-bounce {
+        0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+        40% { transform: scale(1); opacity: 1; }
+    }
+
+    .agent-input-area {
+        padding: var(--ix-panel-padding);
+        border-top: 1px solid #e2e8f0;
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-shrink: 0;
+    }
+
+    #agent-textarea {
+        flex: 1;
+        resize: none;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: var(--ix-font-size-body);
+        color: #0f172a;
+        background: #fff;
+        min-height: 38px;
+        max-height: 160px;
+        overflow-y: auto;
+        line-height: 1.5;
+        outline: none;
+    }
+    #agent-textarea:focus { border-color: #94a3b8; }
+
+    #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+
+<div class="agent-page">
+    <div class="agent-panel">
+        <div class="agent-panel-header">
+            <div class="agent-panel-header-left">
+                <h1>InferX Agent</h1>
+                <p class="agent-subtitle" id="agent-subtitle">Connecting&hellip;</p>
+            </div>
+            <a class="ix-btn secondary" href="{{ back_href }}">Back to My Skills</a>
+        </div>
+
+        <div class="agent-chat-area" id="chat-area"></div>
+
+        <div class="agent-input-area">
+            <textarea
+                id="agent-textarea"
+                placeholder="Ask anything&hellip;"
+                rows="1"
+                disabled
+            ></textarea>
+            <button class="ix-btn" id="send-btn" disabled>Send</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    const chatArea = document.getElementById('chat-area');
+    const textarea = document.getElementById('agent-textarea');
+    const sendBtn = document.getElementById('send-btn');
+    const subtitle = document.getElementById('agent-subtitle');
+
+    let sessionId = null;
+    let toolCount = 0;
+    let streaming = false;
+
+    marked.setOptions({ breaks: true });
+
+    // -------------------------------------------------------------------------
+    // UI helpers
+    // -------------------------------------------------------------------------
+
+    function appendBubble(role, html) {
+        const div = document.createElement('div');
+        div.className = `chat-bubble ${role}`;
+        if (role === 'assistant' || role === 'error') {
+            div.innerHTML = DOMPurify.sanitize(html);
+        } else {
+            div.textContent = html;
+        }
+        chatArea.appendChild(div);
+        scrollToBottom();
+        return div;
+    }
+
+    function createThinkingBubble() {
+        const wrap = document.createElement('div');
+        wrap.className = 'thinking-bubble expanded';
+        wrap.innerHTML =
+            '<div class="thinking-bubble-header">' +
+            '<i class="thinking-bubble-chevron">&#9654;</i>' +
+            '<span class="thinking-label">Thinking…</span>' +
+            '</div>' +
+            '<div class="thinking-bubble-body"></div>';
+        wrap.querySelector('.thinking-bubble-header').addEventListener('click', function () {
+            wrap.classList.toggle('expanded');
+        });
+        chatArea.appendChild(wrap);
+        scrollToBottom();
+        return wrap;
+    }
+
+    function finalizeThinkingBubble(bubble) {
+        bubble.querySelector('.thinking-label').textContent = 'Thinking';
+        bubble.classList.remove('expanded');
+        bubble.classList.add('finalized');
+    }
+
+    function scrollToBottom() {
+        requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+    }
+
+    function showThinking() {
+        const div = document.createElement('div');
+        div.className = 'thinking-indicator';
+        div.id = 'thinking';
+        div.innerHTML = '<span>Thinking</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
+        chatArea.appendChild(div);
+        scrollToBottom();
+    }
+
+    function removeThinking() {
+        const el = document.getElementById('thinking');
+        if (el) el.remove();
+    }
+
+    function setStreaming(active) {
+        streaming = active;
+        textarea.disabled = active;
+        sendBtn.disabled = active;
+    }
+
+    // -------------------------------------------------------------------------
+    // Session management
+    // -------------------------------------------------------------------------
+
+    async function createSession() {
+        const resp = await fetch('{{ hosturl }}agent/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            throw new Error(body.error || `HTTP ${resp.status}`);
+        }
+        return resp.json();
+    }
+
+    function renderMessages(messages) {
+        for (const msg of messages) {
+            if (msg.role === 'system') continue;
+            if (msg.role === 'user') {
+                appendBubble('user', msg.content);
+            } else if (msg.role === 'assistant') {
+                const visible = msg.content.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();
+                if (visible) appendBubble('assistant', DOMPurify.sanitize(marked.parse(visible)));
+            }
+        }
+    }
+
+    async function initSession() {
+        // Try to resume the existing session for this tenant
+        try {
+            const resp = await fetch('{{ hosturl }}agent/sessions/current');
+            if (resp.ok) {
+                const data = await resp.json();
+                sessionId = data.session.id;
+                toolCount = (data.tool_count || 0);
+                subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+                renderMessages(data.session.messages || []);
+                if (!data.session.messages || data.session.messages.length === 0) {
+                    appendBubble('assistant', marked.parse(
+                        `Hello! ${toolCount} skill${toolCount !== 1 ? 's are' : ' is'} ready. How can I help you?`
+                    ));
+                }
+                textarea.disabled = false;
+                sendBtn.disabled = false;
+                textarea.focus();
+                return;
+            }
+        } catch (_) {}
+
+        // No existing session — create one
+        try {
+            const data = await createSession();
+            sessionId = data.session.id;
+            toolCount = (data.tool_count || 0);
+            subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+            appendBubble('assistant', marked.parse(
+                `Hello! ${toolCount} skill${toolCount !== 1 ? 's are' : ' is'} ready. How can I help you?`
+            ));
+            textarea.disabled = false;
+            sendBtn.disabled = false;
+            textarea.focus();
+        } catch (err) {
+            subtitle.textContent = 'Connection failed';
+            appendBubble('error', `Failed to connect: ${err.message}`);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Send prompt
+    // -------------------------------------------------------------------------
+
+    async function sendMessage(message, isRetry) {
+        setStreaming(true);
+        if (!isRetry) appendBubble('user', message);
+        showThinking();
+
+        let accum = '';       // visible response text
+        let thinkAccum = '';  // <think>…</think> content
+        let inThink = false;  // parser state: inside a think block
+        let thinkBubble = null;
+        let assistantBubble = null;
+        let sessionExpired = false;
+
+        try {
+            const resp = await fetch(
+                `{{ hosturl }}agent/sessions/${sessionId}/stream`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, stream: true }),
+                }
+            );
+
+            if (resp.status === 404) {
+                const body = await resp.json().catch(() => ({}));
+                if (body.error === 'session_not_found') {
+                    sessionExpired = true;
+                } else {
+                    throw new Error(`HTTP 404: ${body.message || 'not found'}`);
+                }
+            } else if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+
+            if (sessionExpired) {
+                removeThinking();
+                if (isRetry) {
+                    appendBubble('error', 'Session expired. Please send again.');
+                    setStreaming(false);
+                    return;
+                }
+                try {
+                    const data = await createSession();
+                    sessionId = data.session.id;
+                    toolCount = (data.tool_count || 0);
+                    subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+                } catch (reconnectErr) {
+                    appendBubble('error', 'Session expired. Please send again.');
+                    setStreaming(false);
+                    return;
+                }
+                appendBubble('assistant', 'Session expired. Reconnected and retried.');
+                await sendMessage(message, true);
+                return;
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let streamError = null;
+            let streamDone = false;
+            let skipNextData = false;
+
+            // SSE parser state — persists across chunks
+            let sseEvent = '';
+            let sseDataLines = [];
+
+            let compactingEl = null;
+            const toolCallEls = {}; // index → DOM element
+
+            const dispatchSseEvent = () => {
+                const isError = sseEvent === 'error';
+                const isComplete = sseEvent === 'complete';
+                const isCompacting = sseEvent === 'compacting';
+                const isCompacted = sseEvent === 'compacted';
+                const isToolCall = sseEvent === 'tool_call';
+                const isToolDone = sseEvent === 'tool_done';
+                sseEvent = '';
+                const data = sseDataLines.join('\n');
+                sseDataLines = [];
+
+                if (isComplete) return; // metadata payload, discard
+
+                if (isToolCall) {
+                    try {
+                        const { index, name, args } = JSON.parse(data);
+                        const block = document.createElement('div');
+                        block.className = 'tool-block open';
+                        // Static chrome via innerHTML; dynamic values set via textContent below.
+                        block.innerHTML =
+                            `<div class="tool-block-header">` +
+                            `<i class="tool-block-chevron">&#9654;</i>` +
+                            `<div class="tool-spinner"></div>` +
+                            `<span>Calling <strong class="tool-name"></strong>…</span>` +
+                            `</div>` +
+                            `<div class="tool-block-body">` +
+                            `<div class="tool-block-section">` +
+                            `<div class="tool-block-label">Query</div>` +
+                            `<div class="tool-block-content tool-args"></div>` +
+                            `</div>` +
+                            `</div>`;
+                        block.querySelector('.tool-name').textContent = name;
+                        // Pretty-print args if valid JSON, then set as plain text.
+                        let argsText = args || '';
+                        try { argsText = JSON.stringify(JSON.parse(args), null, 2); } catch (_) {}
+                        block.querySelector('.tool-args').textContent = argsText;
+                        block.querySelector('.tool-block-header').addEventListener('click', () => {
+                            block.classList.toggle('open');
+                        });
+                        chatArea.appendChild(block);
+                        toolCallEls[index] = block;
+                        scrollToBottom();
+                    } catch (_) {}
+                    return;
+                }
+
+                if (isToolDone) {
+                    try {
+                        const { index, name, response } = JSON.parse(data);
+                        const block = toolCallEls[index];
+                        if (block) {
+                            // Remove spinner, update header via textContent.
+                            const spinner = block.querySelector('.tool-spinner');
+                            if (spinner) spinner.remove();
+                            const label = block.querySelector('.tool-block-header span');
+                            if (label) {
+                                label.textContent = '';
+                                const strong = document.createElement('strong');
+                                strong.textContent = name;
+                                label.append('Skill ', strong);
+                            }
+
+                            // Detect error
+                            const isErr = response && (response.startsWith('Error:') || response.startsWith('Unknown tool'));
+                            // Add response section with textContent for the value.
+                            const body = block.querySelector('.tool-block-body');
+                            const section = document.createElement('div');
+                            section.className = 'tool-block-section';
+                            const labelEl = document.createElement('div');
+                            labelEl.className = 'tool-block-label';
+                            labelEl.textContent = isErr ? 'Error' : 'Response';
+                            const contentEl = document.createElement('div');
+                            contentEl.className = 'tool-block-content' + (isErr ? ' error' : '');
+                            contentEl.textContent = response || '';
+                            section.appendChild(labelEl);
+                            section.appendChild(contentEl);
+                            body.appendChild(section);
+
+                            // Auto-collapse after showing response
+                            block.classList.remove('open');
+                            delete toolCallEls[index];
+                            scrollToBottom();
+                        }
+
+                        // When all tool calls are done, reset bubble state so synthesis
+                        // output appears as new bubbles after the tool blocks, not before.
+                        // Show a thinking indicator for the synthesis model TTFT gap.
+                        if (Object.keys(toolCallEls).length === 0) {
+                            if (thinkBubble) { finalizeThinkingBubble(thinkBubble); thinkBubble = null; }
+                            assistantBubble = null;
+                            accum = '';
+                            thinkAccum = '';
+                            inThink = false;
+                            showThinking();
+                        }
+                    } catch (_) {}
+                    return;
+                }
+
+                if (isCompacting) {
+                    compactingEl = document.createElement('div');
+                    compactingEl.className = 'compacting-indicator';
+                    compactingEl.innerHTML = '<div class="compacting-spinner"></div>Compacting conversation…';
+                    chatArea.appendChild(compactingEl);
+                    scrollToBottom();
+                    return;
+                }
+
+                if (isCompacted) {
+                    if (compactingEl) { compactingEl.remove(); compactingEl = null; }
+                    return;
+                }
+
+                if (data === '[DONE]') {
+                    streamDone = true;
+                    return;
+                }
+                if (data === '') return;
+
+                if (isError) {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.message) {
+                            removeThinking();
+                            appendBubble('error', parsed.message);
+                        } else {
+                            removeThinking();
+                            appendBubble('error', 'An error occurred while streaming the response.');
+                        }
+                    } catch (_) {
+                        removeThinking();
+                        appendBubble('error', 'An error occurred while streaming the response.');
+                    }
+                    return;
+                }
+
+                // Route delta tokens into think vs visible buffers.
+                // Handles <think>…</think> spanning multiple chunks.
+                let remaining = data;
+                while (remaining.length > 0) {
+                    if (inThink) {
+                        const end = remaining.indexOf('</think>');
+                        if (end === -1) {
+                            thinkAccum += remaining;
+                            remaining = '';
+                        } else {
+                            thinkAccum += remaining.slice(0, end);
+                            inThink = false;
+                            remaining = remaining.slice(end + '</think>'.length);
+                        }
+                    } else {
+                        const start = remaining.indexOf('<think>');
+                        if (start === -1) {
+                            accum += remaining;
+                            remaining = '';
+                        } else {
+                            accum += remaining.slice(0, start);
+                            inThink = true;
+                            remaining = remaining.slice(start + '<think>'.length);
+                            if (!thinkBubble) {
+                                removeThinking();
+                                thinkBubble = createThinkingBubble();
+                            }
+                        }
+                    }
+                }
+
+                if (thinkBubble) {
+                    const body = thinkBubble.querySelector('.thinking-bubble-body');
+                    body.textContent = thinkAccum;
+                    body.scrollTop = body.scrollHeight;
+                    scrollToBottom();
+                }
+
+                const visibleText = accum.trimStart();
+                if (visibleText) {
+                    removeThinking();
+                    if (!assistantBubble) {
+                        assistantBubble = appendBubble('assistant', '');
+                    }
+                    assistantBubble.innerHTML = DOMPurify.sanitize(marked.parse(visibleText));
+                    scrollToBottom();
+                }
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+
+                    if (line.startsWith('event:')) {
+                        sseEvent = line.slice('event:'.length).trim();
+                        continue;
+                    }
+
+                    if (line.startsWith('data:')) {
+                        sseDataLines.push(line.slice(5).replace(/^ /, ''));
+                        continue;
+                    }
+
+                    if (line === '') {
+                        // Blank line = end of SSE event block
+                        if (sseDataLines.length > 0 || sseEvent !== '') {
+                            dispatchSseEvent();
+                        }
+                        continue;
+                    }
+                }
+
+                // Incomplete event at chunk boundary — wait for next chunk's blank line
+            }
+
+            if (thinkBubble) finalizeThinkingBubble(thinkBubble);
+            const finalText = accum.trimStart();
+            if (finalText) {
+                if (!assistantBubble) {
+                    assistantBubble = appendBubble('assistant', '');
+                }
+                assistantBubble.innerHTML = DOMPurify.sanitize(marked.parse(finalText));
+                scrollToBottom();
+            }
+
+        } catch (err) {
+            removeThinking();
+            appendBubble('error', `Error: ${err.message}`);
+        } finally {
+            removeThinking();
+            setStreaming(false);
+            textarea.focus();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Event listeners
+    // -------------------------------------------------------------------------
+
+    sendBtn.addEventListener('click', function () {
+        const msg = textarea.value.trim();
+        if (!msg || streaming) return;
+        textarea.value = '';
+        textarea.style.height = '';
+        sendMessage(msg, false);
+    });
+
+    textarea.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendBtn.click();
+        }
+    });
+
+    textarea.addEventListener('input', function () {
+        this.style.height = '';
+        this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+    });
+
+    // -------------------------------------------------------------------------
+    // Boot
+    // -------------------------------------------------------------------------
+
+    initSession();
+})();
+</script>
+{% endblock %}
