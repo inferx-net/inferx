@@ -144,6 +144,39 @@
         font-size: var(--ix-font-size-subtle);
     }
 
+    .compaction-marker {
+        align-self: flex-start;
+        max-width: 75%;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .compaction-marker-header .thinking-bubble-chevron {
+        transition: transform 0.15s ease;
+    }
+
+    .compaction-marker.expanded .compaction-marker-header .thinking-bubble-chevron {
+        transform: rotate(90deg);
+    }
+
+    .compaction-marker-body {
+        display: none;
+        padding: 8px 12px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        color: #475569;
+        font-size: var(--ix-font-size-subtle);
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 240px;
+        overflow-y: auto;
+    }
+
+    .compaction-marker.expanded .compaction-marker-body { display: block; }
+
     .tool-block {
         align-self: flex-start;
         max-width: 75%;
@@ -359,6 +392,10 @@
     let sessionId = null;
     let toolCount = 0;
     let streaming = false;
+    let activeStreamController = null;
+    let interruptFallbackTimer = null;
+    let stopRequested = false;
+    let interruptPending = false;
 
     marked.setOptions({ breaks: true });
 
@@ -420,10 +457,78 @@
         if (el) el.remove();
     }
 
+    function renderActionButton() {
+        sendBtn.textContent = streaming ? (interruptPending ? 'Stopping…' : 'Stop') : 'Send';
+        sendBtn.disabled = streaming ? interruptPending : false;
+        sendBtn.classList.toggle('secondary', streaming);
+    }
+
+    function finalizePendingToolBlocks(toolCallEls, message) {
+        Object.keys(toolCallEls).forEach(function (index) {
+            const block = toolCallEls[index];
+            if (!block) return;
+            const spinner = block.querySelector('.tool-spinner');
+            if (spinner) spinner.remove();
+            const name = (block.querySelector('.tool-name') || {}).textContent || 'skill';
+            const label = block.querySelector('.tool-block-header span');
+            if (label) {
+                label.textContent = `Skill ${name} — ${message}`;
+            }
+            const body = block.querySelector('.tool-block-body');
+            if (body && !body.querySelector('.tool-stop-note')) {
+                const section = document.createElement('div');
+                section.className = 'tool-block-section tool-stop-note';
+                const labelEl = document.createElement('div');
+                labelEl.className = 'tool-block-label';
+                labelEl.textContent = 'Status';
+                const contentEl = document.createElement('div');
+                contentEl.className = 'tool-block-content';
+                contentEl.textContent = message;
+                section.appendChild(labelEl);
+                section.appendChild(contentEl);
+                body.appendChild(section);
+            }
+            block.classList.remove('open');
+            delete toolCallEls[index];
+        });
+        scrollToBottom();
+    }
+
     function setStreaming(active) {
         streaming = active;
         textarea.disabled = active;
-        sendBtn.disabled = active;
+        if (!active) {
+            interruptPending = false;
+            if (interruptFallbackTimer) {
+                clearTimeout(interruptFallbackTimer);
+                interruptFallbackTimer = null;
+            }
+        }
+        renderActionButton();
+    }
+
+    async function interruptActiveTurn() {
+        if (!streaming || !sessionId || interruptPending) return;
+        stopRequested = true;
+        interruptPending = true;
+        renderActionButton();
+        if (interruptFallbackTimer) {
+            clearTimeout(interruptFallbackTimer);
+        }
+        interruptFallbackTimer = window.setTimeout(function () {
+            if (activeStreamController) {
+                activeStreamController.abort();
+            }
+        }, 5000);
+        try {
+            await fetch(
+                `{{ hosturl }}agent/sessions/${sessionId}/interrupt`,
+                { method: 'POST' }
+            );
+        } catch (_) {
+            interruptPending = false;
+            renderActionButton();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -442,8 +547,19 @@
         return resp.json();
     }
 
+    // NOTE: compaction affects `model_messages` (the model working context),
+    // which is `#[serde(skip)]` and never sent here. The `messages` array we
+    // render is the full, append-only visible transcript. A `role: "compaction"`
+    // message is a marker (carrying the generated summary in its parts) showing
+    // where older history was summarized for the model — the transcript itself is
+    // never truncated.
     function renderMessages(messages) {
         for (const msg of messages) {
+            if (msg.role === 'compaction') {
+                const part = (msg.parts || []).find(p => p.type === 'compaction');
+                renderCompactionMarker(part ? part.summary : '');
+                continue;
+            }
             if (msg.role === 'system') continue;
             if (msg.role === 'user') {
                 appendBubble('user', msg.content);
@@ -452,6 +568,34 @@
                 if (visible) appendBubble('assistant', DOMPurify.sanitize(marked.parse(visible)));
             }
         }
+    }
+
+    // Lightweight banner shown between bubbles where history was compacted into a
+    // summary for model context. Reuses the .compacting-indicator look; the
+    // generated summary is collapsed by default and expandable on click, like the
+    // thinking bubble / tool blocks.
+    function renderCompactionMarker(summary) {
+        const wrap = document.createElement('div');
+        wrap.className = 'compaction-marker';
+        const header = document.createElement('div');
+        header.className = 'compacting-indicator compaction-marker-header';
+        header.innerHTML =
+            '<i class="thinking-bubble-chevron">&#9654;</i>' +
+            '<span>Earlier history was compacted into a summary for model context</span>';
+        const body = document.createElement('div');
+        body.className = 'compaction-marker-body';
+        body.textContent = summary || '(no summary available)';
+        if (summary) {
+            header.style.cursor = 'pointer';
+            header.addEventListener('click', function () {
+                wrap.classList.toggle('expanded');
+            });
+        }
+        wrap.appendChild(header);
+        wrap.appendChild(body);
+        chatArea.appendChild(wrap);
+        scrollToBottom();
+        return wrap;
     }
 
     async function initSession() {
@@ -500,6 +644,8 @@
 
     async function sendMessage(message, isRetry) {
         setStreaming(true);
+        stopRequested = false;
+        activeStreamController = new AbortController();
         if (!isRetry) appendBubble('user', message);
         showThinking();
 
@@ -509,6 +655,7 @@
         let thinkBubble = null;
         let assistantBubble = null;
         let sessionExpired = false;
+        const toolCallEls = {}; // index → DOM element
 
         try {
             const resp = await fetch(
@@ -517,6 +664,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message, stream: true }),
+                    signal: activeStreamController.signal,
                 }
             );
 
@@ -565,11 +713,11 @@
             let sseDataLines = [];
 
             let compactingEl = null;
-            const toolCallEls = {}; // index → DOM element
 
             const dispatchSseEvent = () => {
                 const isError = sseEvent === 'error';
                 const isComplete = sseEvent === 'complete';
+                const isInterrupted = sseEvent === 'interrupted';
                 const isCompacting = sseEvent === 'compacting';
                 const isCompacted = sseEvent === 'compacted';
                 const isToolCall = sseEvent === 'tool_call';
@@ -623,10 +771,14 @@
                             if (spinner) spinner.remove();
                             const label = block.querySelector('.tool-block-header span');
                             if (label) {
-                                label.textContent = '';
-                                const strong = document.createElement('strong');
-                                strong.textContent = name;
-                                label.append('Skill ', strong);
+                                if (response === 'Request interrupted') {
+                                    label.textContent = `Skill ${name} — Request interrupted`;
+                                } else {
+                                    label.textContent = '';
+                                    const strong = document.createElement('strong');
+                                    strong.textContent = name;
+                                    label.append('Skill ', strong);
+                                }
                             }
 
                             // Detect error
@@ -663,6 +815,16 @@
                             showThinking();
                         }
                     } catch (_) {}
+                    return;
+                }
+
+                if (isInterrupted) {
+                    removeThinking();
+                    if (thinkBubble) {
+                        finalizeThinkingBubble(thinkBubble);
+                        thinkBubble = null;
+                    }
+                    finalizePendingToolBlocks(toolCallEls, 'Interrupted by user.');
                     return;
                 }
 
@@ -796,8 +958,17 @@
 
         } catch (err) {
             removeThinking();
-            appendBubble('error', `Error: ${err.message}`);
+            const abortedByUser =
+                stopRequested &&
+                (err && err.name === 'AbortError'
+                    || String(err && err.message || '').toLowerCase().includes('aborted'));
+            if (!abortedByUser) {
+                appendBubble('error', `Error: ${err.message}`);
+            } else {
+                finalizePendingToolBlocks(toolCallEls, 'Interrupted by user.');
+            }
         } finally {
+            activeStreamController = null;
             removeThinking();
             setStreaming(false);
             textarea.focus();
@@ -809,8 +980,12 @@
     // -------------------------------------------------------------------------
 
     sendBtn.addEventListener('click', function () {
+        if (streaming) {
+            interruptActiveTurn();
+            return;
+        }
         const msg = textarea.value.trim();
-        if (!msg || streaming) return;
+        if (!msg) return;
         textarea.value = '';
         textarea.style.height = '';
         sendMessage(msg, false);

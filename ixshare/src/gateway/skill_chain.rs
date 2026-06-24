@@ -3028,7 +3028,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_chain_tool_definition_phase1_none_gives_unconstrained_tool() {
+    fn skill_chain_tool_definition_none_gives_unconstrained_tool() {
         let tools = skill_chain_tool_definition(None);
         let arr = tools.as_array().unwrap();
         assert_eq!(arr.len(), 1);
@@ -3038,13 +3038,13 @@ mod tests {
     }
 
     #[test]
-    fn skill_chain_tool_definition_phase2_empty_gives_no_tools() {
+    fn skill_chain_tool_definition_empty_gives_no_tools() {
         let tools = skill_chain_tool_definition(Some(&HashSet::new()));
         assert_eq!(tools.as_array().unwrap().len(), 0);
     }
 
     #[test]
-    fn skill_chain_tool_definition_phase2_non_empty_gives_enum() {
+    fn skill_chain_tool_definition_non_empty_gives_enum() {
         let mut allowed = HashSet::new();
         allowed.insert("acme/default/pricing".to_string());
         let tools = skill_chain_tool_definition(Some(&allowed));
@@ -3179,7 +3179,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_parallel_child_call_phase1_none_allowlist_passthrough() {
+    async fn execute_parallel_child_call_none_allowlist_passthrough() {
         let mut debug_mocks = HashMap::new();
         debug_mocks.insert(
             "acme/default/pricing".to_string(),
@@ -3297,7 +3297,7 @@ mod tests {
     }
 
     // ============================================================
-    // Phase 3 tests
+    // Context-gating tests
     // ============================================================
 
     fn make_test_ctx(

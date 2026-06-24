@@ -38,6 +38,7 @@ use axum::{
     routing::put, Extension, Router,
 };
 
+use super::session::SessionStore;
 use chrono::{DateTime, Timelike, Utc};
 use hyper::header::CONTENT_TYPE;
 use inferxlib::obj_mgr::namespace_mgr::Namespace;
@@ -46,12 +47,11 @@ use inferxlib::obj_mgr::tenant_mgr::{Tenant, SYSTEM_NAMESPACE, SYSTEM_TENANT};
 use opentelemetry::Context;
 use prometheus_client::encoding::text::encode;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use super::session::SessionStore;
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 
 use axum_server::tls_rustls::RustlsConfig;
@@ -92,7 +92,9 @@ use super::func_worker::QHttpCallClient;
 use super::func_worker::RETRYABLE_HTTP_STATUS;
 use super::gw_obj_repo::FuncDetail;
 use super::gw_obj_repo::{GwObjRepo, NamespaceStore};
-use super::log_admin::{DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories};
+use super::log_admin::{
+    DisableVerboseCategory, EnableVerboseCategory, GetVerboseCategories, PutVerboseCategories,
+};
 use super::metrics::FunccallLabels;
 use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
@@ -512,8 +514,7 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
-        resolve_skill_calling_tenant, resolve_subscription_tenant,
-        summarize_funccall_body_for_log,
+        resolve_skill_calling_tenant, resolve_subscription_tenant, summarize_funccall_body_for_log,
     };
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
@@ -686,7 +687,9 @@ mod tests {
     #[test]
     fn resolve_skill_calling_tenant_deleted_default_tenant_errors() {
         let mut token = token_with_tenant_role("tenant-a", Some("deleted-tenant"));
-        token.roles.insert(AccessToken::TenantUserRole("deleted-tenant"));
+        token
+            .roles
+            .insert(AccessToken::TenantUserRole("deleted-tenant"));
         let result = resolve_skill_calling_tenant(&token, &|t| t != "deleted-tenant");
         assert!(result.is_err());
     }
@@ -723,7 +726,9 @@ mod tests {
     #[test]
     fn resolve_subscription_tenant_deleted_default_tenant_errors() {
         let mut token = token_with_tenant_role("tenant-a", Some("deleted-tenant"));
-        token.roles.insert(AccessToken::TenantUserRole("deleted-tenant"));
+        token
+            .roles
+            .insert(AccessToken::TenantUserRole("deleted-tenant"));
         let result = resolve_subscription_tenant(&token, &|t| t != "deleted-tenant");
         assert!(result.is_err());
     }
@@ -1075,9 +1080,19 @@ impl HttpGateway {
             .route("/sessions", post(super::session::CreateSession))
             .route("/sessions/current", get(super::session::GetCurrentSession))
             .route("/sessions/:id", get(super::session::GetSession))
-            .route("/sessions/:id/messages", get(super::session::GetSessionMessages))
+            .route(
+                "/sessions/:id/messages",
+                get(super::session::GetSessionMessages),
+            )
             .route("/sessions/:id/prompt", post(super::session::Prompt))
-            .route("/sessions/:id/prompt_stream", post(super::session::PromptStream))
+            .route(
+                "/sessions/:id/prompt_stream",
+                post(super::session::PromptStream),
+            )
+            .route(
+                "/sessions/:id/interrupt",
+                post(super::session::InterruptSession),
+            )
             .route("/rbac/", post(RbacGrant))
             .route("/rbac/", delete(RbacRevoke))
             .route("/rbac/roles/", get(RbacRoleBindingGet))
@@ -3455,7 +3470,10 @@ async fn SkillCall(
     };
 
     let allowed_child_skilleps = skill.allowed_child_skilleps.map(|ids| {
-        std::sync::Arc::new(ids.into_iter().collect::<std::collections::HashSet<String>>())
+        std::sync::Arc::new(
+            ids.into_iter()
+                .collect::<std::collections::HashSet<String>>(),
+        )
     });
 
     let ctx = SkillInvocationContext {

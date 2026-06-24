@@ -8307,6 +8307,20 @@ def AgentPromptStream(session_id):
     )
 
 
+@prefix_bp.route("/agent/sessions/<session_id>/interrupt", methods=["POST"])
+@require_login
+def AgentInterruptSession(session_id):
+    url = f"{apihostaddr}/sessions/{session_id}/interrupt"
+    app.logger.info("[agent] -> POST %s", url)
+    resp = requests.post(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code, content_type="application/json")
+
+
 @prefix_bp.route("/listskills/myskills", methods=["GET"])
 @require_login
 def ListSkills():
