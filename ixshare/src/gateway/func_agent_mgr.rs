@@ -189,6 +189,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         sqlBilling: sqlbilling,
         sqlSecret: sqlsecret,
         client: client,
+        sessions: super::session::SessionStore::New(),
     };
 
     gateway.EnsurePlatformShared().await?;

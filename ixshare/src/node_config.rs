@@ -35,6 +35,22 @@ fn default_endpoints_policy() -> EndpointGatewayPolicySpec {
     EndpointGatewayPolicySpec::default()
 }
 
+fn default_agent_preflight_compaction_ratio() -> u64 {
+    90
+}
+
+fn default_agent_first_call_compaction_ratio() -> u64 {
+    85
+}
+
+fn default_agent_compaction_recent_context_token_budget() -> u64 {
+    8000
+}
+
+fn default_agent_postturn_compaction_ratio() -> u64 {
+    80
+}
+
 fn default_inferx_endpoint_func_default_policy() -> FuncPolicySchedulerDefaults {
     FuncPolicySchedulerDefaults {
         minReplica: Some(0),
@@ -1078,6 +1094,38 @@ pub struct NodeConfig {
 
     #[serde(default)]
     pub inferx_tenant_policy: InferxTenantPolicy,
+
+    #[serde(default)]
+    pub agent_model_endpoint: String,
+
+    /// Max context length of the agent model in tokens.
+    /// When set, compaction triggers at `agent_postturn_compaction_ratio`% of
+    /// this value. 0 means compaction is disabled.
+    #[serde(default)]
+    pub agent_model_context_length: u64,
+
+    /// Post-turn (reactive) compaction threshold, as a percentage of the model
+    /// context window. Applied after a turn completes, against the provider's
+    /// reported prompt_tokens — distinct from the preflight ratios, which run
+    /// before a request against an estimate. Overridden by env
+    /// `AGENT_POSTTURN_COMPACTION_RATIO`. Values above 100 are clamped.
+    #[serde(default = "default_agent_postturn_compaction_ratio")]
+    pub agent_postturn_compaction_ratio: u64,
+
+    /// Anchored synthesis preflight threshold, as a percentage of the model
+    /// context window. Overridden by env `AGENT_PREFLIGHT_COMPACTION_RATIO`.
+    #[serde(default = "default_agent_preflight_compaction_ratio")]
+    pub agent_preflight_compaction_ratio: u64,
+
+    /// Whole-request first-call preflight threshold, as a percentage of the
+    /// model context window. Overridden by env `AGENT_FIRST_CALL_COMPACTION_RATIO`.
+    #[serde(default = "default_agent_first_call_compaction_ratio")]
+    pub agent_first_call_compaction_ratio: u64,
+
+    /// Token budget for the recent-context tail retained verbatim after
+    /// compaction. Overridden by env `AGENT_COMPACTION_RECENT_CONTEXT_TOKEN_BUDGET`.
+    #[serde(default = "default_agent_compaction_recent_context_token_budget")]
+    pub agent_compaction_recent_context_token_budget: u64,
 }
 
 impl NodeConfig {
@@ -1132,6 +1180,13 @@ mod tests {
             endpoints_default_policy: default_endpoints_policy(),
             inferx_endpoint_func_default_policy: default_inferx_endpoint_func_default_policy(),
             inferx_tenant_policy: InferxTenantPolicy::default(),
+            agent_model_endpoint: String::new(),
+            agent_model_context_length: 0,
+            agent_postturn_compaction_ratio: default_agent_postturn_compaction_ratio(),
+            agent_preflight_compaction_ratio: default_agent_preflight_compaction_ratio(),
+            agent_first_call_compaction_ratio: default_agent_first_call_compaction_ratio(),
+            agent_compaction_recent_context_token_budget:
+                default_agent_compaction_recent_context_token_budget(),
         }
     }
 

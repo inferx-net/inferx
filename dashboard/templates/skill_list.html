@@ -500,7 +500,10 @@
                 <h2>My Own Skills</h2>
                 <p class="skills-subtitle">Skills you own under tenant <strong>{{ active_tenant }}</strong>.</p>
             </div>
-            <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
+            <div style="display:flex;gap:8px;">
+                <a class="ix-btn secondary" href="{{ url_for('prefix.InferXAgent') }}">InferX Agent</a>
+                <a class="ix-btn" href="{{ url_for('prefix.SkillCreate') }}">Create Skill</a>
+            </div>
         </div>
 
         {% if my_skills %}

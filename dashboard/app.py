@@ -8191,6 +8191,136 @@ def ListSkillsLegacy():
     return redirect(url_for("prefix.ListSkills"))
 
 
+@prefix_bp.route("/listskills/marketplace", methods=["GET"])
+@require_login
+def ListSkillsMarketplaceLegacy():
+    return redirect(url_for("prefix.SkillMarketplace"))
+
+
+@prefix_bp.route("/agent", methods=["GET"])
+@require_login
+def InferXAgent():
+    return render_template(
+        "inferx_agent.html",
+        back_href=url_for("prefix.ListSkills"),
+    )
+
+
+@prefix_bp.route("/agent/sessions", methods=["POST"])
+@require_login
+def AgentCreateSession():
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
+    if not active_tenant:
+        return json_error("No active tenant selected", 400)
+
+    try:
+        api_key, _ = resolve_onboarding_inference_apikey_for_ui(active_tenant)
+    except Exception as e:
+        app.logger.error("[agent] failed to resolve API key for tenant=%s: %s", active_tenant, e)
+        return json_error(f"failed to resolve API key: {e}", 500)
+
+    url = f"{apihostaddr}/sessions"
+    app.logger.info("[agent] -> POST %s tenant=%s", url, active_tenant)
+    resp = requests.post(
+        url,
+        json={"api_key": api_key},
+        headers=gateway_request_headers(json_body=True),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code,
+                    content_type="application/json")
+
+
+@prefix_bp.route("/agent/sessions/current", methods=["GET"])
+@require_login
+def AgentGetCurrentSession():
+    url = f"{apihostaddr}/sessions/current"
+    app.logger.info("[agent] -> GET %s", url)
+    resp = requests.get(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code,
+                    content_type="application/json")
+
+
+@prefix_bp.route("/agent/sessions/<session_id>", methods=["GET"])
+@require_login
+def AgentGetSession(session_id):
+    url = f"{apihostaddr}/sessions/{session_id}"
+    app.logger.info("[agent] -> GET %s", url)
+    resp = requests.get(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code,
+                    content_type="application/json")
+
+
+@prefix_bp.route("/agent/sessions/<session_id>/messages", methods=["GET"])
+@require_login
+def AgentGetSessionMessages(session_id):
+    url = f"{apihostaddr}/sessions/{session_id}/messages"
+    app.logger.info("[agent] -> GET %s", url)
+    resp = requests.get(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code,
+                    content_type="application/json")
+
+
+@prefix_bp.route("/agent/sessions/<session_id>/stream", methods=["POST"])
+@require_login
+def AgentPromptStream(session_id):
+    body = request.get_json()
+    url = f"{apihostaddr}/sessions/{session_id}/prompt_stream"
+    app.logger.info("[agent] -> POST %s body=%s", url, str(body)[:200])
+    resp = requests.post(
+        url,
+        json=body,
+        headers=gateway_request_headers(json_body=True),
+        stream=True,
+        timeout=(10, 300),
+    )
+    upstream_ct = resp.headers.get("Content-Type", "")
+    if resp.status_code != 200 or "text/event-stream" not in upstream_ct:
+        app.logger.error("[agent] <- POST %s status=%d body=%s",
+                         url, resp.status_code, resp.text[:500])
+        return Response(resp.content, status=resp.status_code,
+                        content_type=upstream_ct or "application/json")
+    app.logger.info("[agent] <- POST %s status=%d streaming started", url, resp.status_code)
+    return Response(
+        stream_response(resp),
+        status=resp.status_code,
+        headers={"Content-Type": "text/event-stream",
+                 "Cache-Control": "no-cache",
+                 "X-Accel-Buffering": "no"},
+    )
+
+
+@prefix_bp.route("/agent/sessions/<session_id>/interrupt", methods=["POST"])
+@require_login
+def AgentInterruptSession(session_id):
+    url = f"{apihostaddr}/sessions/{session_id}/interrupt"
+    app.logger.info("[agent] -> POST %s", url)
+    resp = requests.post(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code, content_type="application/json")
+
+
 @prefix_bp.route("/listskills/myskills", methods=["GET"])
 @require_login
 def ListSkills():
