@@ -7,8 +7,56 @@
         margin: 0 auto 32px auto;
         display: flex;
         flex-direction: column;
-        gap: 0;
+        gap: 16px;
     }
+
+    .agent-intro {
+        border: 1px solid #e2e8f0;
+        border-radius: var(--ix-panel-radius);
+        background: #f8fafc;
+        padding: var(--ix-panel-padding);
+    }
+
+    .agent-intro-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .agent-intro-header-left {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .agent-intro-header h1 {
+        font-size: var(--ix-font-size-heading);
+        font-weight: 600;
+        color: #0f172a;
+        margin: 0;
+    }
+
+    .agent-intro-header-left .agent-subtitle {
+        margin: 0;
+    }
+
+    .agent-intro-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .agent-intro p {
+        font-size: var(--ix-font-size-body);
+        color: #475569;
+        line-height: 1.6;
+        margin: 8px 0 0 0;
+    }
+
+    .agent-intro.collapsed p { display: none; }
 
     .agent-panel {
         border: 1px solid #cbd5e1;
@@ -18,22 +66,6 @@
         flex-direction: column;
         height: calc(100vh - 180px);
         min-height: 400px;
-    }
-
-    .agent-panel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: var(--ix-panel-padding);
-        border-bottom: 1px solid #e2e8f0;
-        flex-shrink: 0;
-    }
-
-    .agent-panel-header-left h1 {
-        font-size: var(--ix-font-size-heading);
-        font-weight: 600;
-        color: #0f172a;
-        margin: 0 0 2px 0;
     }
 
     .agent-subtitle {
@@ -355,15 +387,26 @@
 </style>
 
 <div class="agent-page">
-    <div class="agent-panel">
-        <div class="agent-panel-header">
-            <div class="agent-panel-header-left">
+    <div class="agent-intro" id="agent-intro">
+        <div class="agent-intro-header">
+            <div class="agent-intro-header-left">
                 <h1>InferX Agent</h1>
                 <p class="agent-subtitle" id="agent-subtitle">Connecting&hellip;</p>
             </div>
-            <a class="ix-btn secondary" href="{{ back_href }}">Back to My Skills</a>
+            <div class="agent-intro-header-actions">
+                <button type="button" class="ix-btn secondary agent-intro-toggle" id="agent-intro-toggle"
+                        aria-expanded="true" aria-controls="agent-intro">Hide</button>
+                <a class="ix-btn secondary" href="{{ back_href }}">Back to My Skills</a>
+            </div>
         </div>
-
+        <p>
+            Chat with the InferX Agent to put your skills to work. It understands your
+            request, picks the right skills from your library, and calls them to get
+            things done &mdash; running inference, querying your models, and chaining
+            steps together on your behalf. Just describe what you need in plain language.
+        </p>
+    </div>
+    <div class="agent-panel">
         <div class="agent-chat-area" id="chat-area"></div>
 
         <div class="agent-input-area">
@@ -1002,6 +1045,33 @@
         this.style.height = '';
         this.style.height = Math.min(this.scrollHeight, 160) + 'px';
     });
+
+    // -------------------------------------------------------------------------
+    // Intro show/hide
+    // -------------------------------------------------------------------------
+
+    (function setupIntroToggle() {
+        const intro = document.getElementById('agent-intro');
+        const toggle = document.getElementById('agent-intro-toggle');
+        if (!intro || !toggle) return;
+        const STORAGE_KEY = 'agentIntroCollapsed';
+
+        function apply(collapsed) {
+            intro.classList.toggle('collapsed', collapsed);
+            toggle.textContent = collapsed ? 'Show' : 'Hide';
+            toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        }
+
+        let collapsed = false;
+        try { collapsed = localStorage.getItem(STORAGE_KEY) === '1'; } catch (_) {}
+        apply(collapsed);
+
+        toggle.addEventListener('click', function () {
+            collapsed = !intro.classList.contains('collapsed');
+            apply(collapsed);
+            try { localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); } catch (_) {}
+        });
+    })();
 
     // -------------------------------------------------------------------------
     // Boot
