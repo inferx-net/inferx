@@ -3375,20 +3375,43 @@ async fn SkillCall(
         "{}.{}.{}",
         skill.func_tenant, skill.func_namespace, physical_funcname
     );
-    let (logical_tenant, logical_funcname, caller_tenant) = if owner_billed {
-        (
-            skill.owner_tenant.clone(),
-            format!("{}.{}", base_funcname, calling_tenant),
-            Some(calling_tenant.clone()),
-        )
-    } else {
-        (calling_tenant.clone(), base_funcname, None)
-    };
+    // Collapse a caller-billed skill backed by the platform endpoint model onto
+    // the caller's own endpoint logical identity (`{calling_tenant}/endpoints/
+    // {physical_funcname}`), so it shares the same instance pool / policy as a
+    // direct `/funccall/{calling_tenant}/endpoints/{slug}` call. No same-tenant
+    // guard: cross-tenant callers collapse too, each keyed on its own
+    // `calling_tenant`, so subscribers never converge onto the owner's pod.
+    let collapse_onto_endpoint = !owner_billed
+        && skill.func_tenant == PLATFORM_TENANT
+        && skill.func_namespace == PLATFORM_SHARED_NAMESPACE;
+    let (logical_tenant, logical_namespace, logical_funcname, caller_tenant) =
+        if collapse_onto_endpoint {
+            (
+                calling_tenant.clone(),
+                VIRTUAL_ENDPOINTS_NAMESPACE.to_string(),
+                physical_funcname.clone(),
+                None,
+            )
+        } else if owner_billed {
+            (
+                skill.owner_tenant.clone(),
+                SKILLS_NAMESPACE.to_string(),
+                format!("{}.{}", base_funcname, calling_tenant),
+                Some(calling_tenant.clone()),
+            )
+        } else {
+            (
+                calling_tenant.clone(),
+                SKILLS_NAMESPACE.to_string(),
+                base_funcname,
+                None,
+            )
+        };
     ctrace!(
         verbose_category::SKILL,
         "SkillCall dispatch logical={}/{}/{} physical={}/{}/{} remain={}",
         logical_tenant,
-        SKILLS_NAMESPACE,
+        logical_namespace,
         logical_funcname,
         skill.func_tenant,
         skill.func_namespace,
@@ -3398,7 +3421,7 @@ async fn SkillCall(
     let route = FuncRouteTarget {
         logical: FuncIdentity {
             tenant: logical_tenant,
-            namespace: SKILLS_NAMESPACE.to_string(),
+            namespace: logical_namespace.clone(),
             funcname: logical_funcname.clone(),
             version: func.Version(),
         },
@@ -3419,7 +3442,7 @@ async fn SkillCall(
             req,
             route,
             calling_tenant,
-            SKILLS_NAMESPACE.to_string(),
+            logical_namespace.clone(),
             logical_funcname,
             remainPath,
             Some(prefix.as_str()),
@@ -3483,7 +3506,7 @@ async fn SkillCall(
         logical_funcname,
         remain_path: remainPath,
         prefix,
-        skills_namespace: SKILLS_NAMESPACE.to_string(),
+        skills_namespace: logical_namespace,
         is_child_request,
         child_chain_depth,
         is_debug_authorized,
