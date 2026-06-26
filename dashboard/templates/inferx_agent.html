@@ -56,7 +56,8 @@
         margin: 8px 0 0 0;
     }
 
-    .agent-intro.collapsed p { display: none; }
+    .agent-intro.collapsed p,
+    .agent-intro.collapsed .agent-settings { display: none; }
 
     .agent-panel {
         border: 1px solid #cbd5e1;
@@ -384,6 +385,48 @@
     #agent-textarea:focus { border-color: #94a3b8; }
 
     #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .agent-settings {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid #e2e8f0;
+    }
+    .agent-settings-row { display: flex; align-items: center; gap: 8px; }
+
+    .agent-model-label { font-size: 0.85rem; color: #475569; align-self: center; }
+    .agent-model-select {
+        padding: 4px 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #fff;
+        font-size: 0.85rem;
+        min-height: 36px;
+        width: auto;
+        min-width: 160px;
+        max-width: 360px;
+    }
+
+    .agent-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .agent-modal-overlay.open { display: flex; }
+    .agent-modal {
+        background: #fff;
+        border-radius: 10px;
+        max-width: 420px;
+        width: calc(100% - 32px);
+        padding: 20px 22px;
+        box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    }
+    .agent-modal h3 { margin: 0 0 8px 0; font-size: 1.05rem; color: #0f172a; }
+    .agent-modal p { margin: 0 0 18px 0; color: #475569; font-size: 0.9rem; }
+    .agent-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
 
 <div class="agent-page">
@@ -394,6 +437,7 @@
                 <p class="agent-subtitle" id="agent-subtitle">Connecting&hellip;</p>
             </div>
             <div class="agent-intro-header-actions">
+                <button type="button" class="ix-btn secondary" id="agent-new-session">New Session</button>
                 <button type="button" class="ix-btn secondary agent-intro-toggle" id="agent-intro-toggle"
                         aria-expanded="true" aria-controls="agent-intro">Hide</button>
                 <a class="ix-btn secondary" href="{{ back_href }}">Back to My Skills</a>
@@ -405,6 +449,14 @@
             things done &mdash; running inference, querying your models, and chaining
             steps together on your behalf. Just describe what you need in plain language.
         </p>
+        <div class="agent-settings">
+            <div class="agent-settings-row">
+                <label for="agent-model-select" class="agent-model-label">Model</label>
+                <select id="agent-model-select" class="agent-model-select" title="Agent model">
+                    <option value="">Default</option>
+                </select>
+            </div>
+        </div>
     </div>
     <div class="agent-panel">
         <div class="agent-chat-area" id="chat-area"></div>
@@ -421,6 +473,17 @@
     </div>
 </div>
 
+<div class="agent-modal-overlay" id="agent-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="agent-confirm-title">
+    <div class="agent-modal">
+        <h3 id="agent-confirm-title">Start a new session?</h3>
+        <p id="agent-confirm-message">This will start a new session and clear the current chat history. Continue?</p>
+        <div class="agent-modal-actions">
+            <button type="button" class="ix-btn secondary" id="agent-confirm-cancel">Cancel</button>
+            <button type="button" class="ix-btn" id="agent-confirm-ok">Continue</button>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
@@ -431,8 +494,116 @@
     const textarea = document.getElementById('agent-textarea');
     const sendBtn = document.getElementById('send-btn');
     const subtitle = document.getElementById('agent-subtitle');
+    const modelSelect = document.getElementById('agent-model-select');
+    const newSessionBtn = document.getElementById('agent-new-session');
+    const confirmOverlay = document.getElementById('agent-confirm-overlay');
+    const confirmMessage = document.getElementById('agent-confirm-message');
+    const confirmOkBtn = document.getElementById('agent-confirm-ok');
+    const confirmCancelBtn = document.getElementById('agent-confirm-cancel');
+
+    // Agent model selection. ACTIVE_TENANT scopes the localStorage key so a
+    // selection never leaks across tenants; ENDPOINTS is the active tenant's
+    // published endpoint list (slug + display name). DEFAULT_AGENT_MODEL is the
+    // dashboard-owned default slug used to preselect a model on first open.
+    const ACTIVE_TENANT = {{ active_tenant|tojson }};
+    const ENDPOINTS = {{ endpoints|tojson }};
+    const DEFAULT_AGENT_MODEL = {{ default_agent_model|tojson }};
+    const ENDPOINT_SLUGS = new Set((ENDPOINTS || []).map(function (e) { return e.slug; }));
+    const SLUG_STORAGE_KEY = 'agentEndpoint:' + (ACTIVE_TENANT || '');
+    // The slug is mandatory (the gateway has no default model and rejects a
+    // slug-less create). When the tenant has no published endpoints there is no
+    // model to use, so the agent cannot start a session at all.
+    const MODELS_AVAILABLE = (ENDPOINTS || []).length > 0;
+
+    // The stored slug for this tenant, or '' if none/invalid (a slug not in the
+    // current tenant's published options is treated as unset — stale/foreign).
+    function loadSelectedSlug() {
+        let stored = '';
+        try { stored = localStorage.getItem(SLUG_STORAGE_KEY) || ''; } catch (_) {}
+        return ENDPOINT_SLUGS.has(stored) ? stored : '';
+    }
+    function saveSelectedSlug(slug) {
+        try {
+            if (slug) localStorage.setItem(SLUG_STORAGE_KEY, slug);
+            else localStorage.removeItem(SLUG_STORAGE_KEY);
+        } catch (_) {}
+    }
+    function sameSlug(a, b) { return (a || '') === (b || ''); }
+
+    // First-open / boot selection: a validated stored slug wins; otherwise
+    // preselect DEFAULT_AGENT_MODEL (if published) -> else the first published
+    // endpoint. Returns '' only when the tenant has no published endpoints, in
+    // which case the agent is blocked (see MODELS_AVAILABLE).
+    function resolveInitialSlug() {
+        const stored = loadSelectedSlug();
+        if (stored) return stored;
+        if (DEFAULT_AGENT_MODEL && ENDPOINT_SLUGS.has(DEFAULT_AGENT_MODEL)) {
+            return DEFAULT_AGENT_MODEL;
+        }
+        if ((ENDPOINTS || []).length > 0) return ENDPOINTS[0].slug;
+        return '';
+    }
+
+    let selectedSlug = resolveInitialSlug();
+
+    // Ensure the dropdown can display `slug` even when it is not in the current
+    // published options (e.g. an active session pinned to a since-unpublished
+    // model). Adds a transient, clearly-labelled option so the UI shows the real
+    // model instead of masquerading as "Default".
+    function ensureTransientOption(slug) {
+        if (!modelSelect || !slug) return;
+        const exists = Array.prototype.some.call(modelSelect.options, function (o) {
+            return o.value === slug;
+        });
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = slug;
+            opt.textContent = slug + ' (unavailable)';
+            opt.dataset.transient = '1';
+            modelSelect.appendChild(opt);
+        }
+    }
+
+    // Remove any transient "(unavailable)" options previously added by
+    // ensureTransientOption. Called when the user makes an explicit dropdown
+    // choice so a stale pinned-model entry doesn't linger.
+    function removeTransientOptions() {
+        if (!modelSelect) return;
+        Array.prototype.slice.call(modelSelect.options).forEach(function (o) {
+            if (o.dataset && o.dataset.transient === '1') {
+                modelSelect.removeChild(o);
+            }
+        });
+    }
+
+    // The single owner of the active model selection: set `selectedSlug`, persist
+    // it, and reconcile the dropdown to it. Must reflect the model of the
+    // currently-active session, so it is only ever called for a session that
+    // actually exists — on load when adopting an existing session's bound model,
+    // on a successful new-session commit, and to REVERT the control after a failed
+    // change. The pinned slug is kept in `selectedSlug` even when not currently
+    // published (so reconnect recreates the SAME model rather than silently
+    // defaulting); an unavailable slug gets a transient display option. Only
+    // published/empty selections are persisted (loadSelectedSlug would drop an
+    // unpublished slug on the next load anyway).
+    function syncModelSelect(slug) {
+        selectedSlug = slug || '';
+        if (modelSelect) {
+            removeTransientOptions();
+            if (selectedSlug && !ENDPOINT_SLUGS.has(selectedSlug)) {
+                ensureTransientOption(selectedSlug);
+            }
+            modelSelect.value = selectedSlug;
+        }
+        if (!selectedSlug || ENDPOINT_SLUGS.has(selectedSlug)) {
+            saveSelectedSlug(selectedSlug);
+        }
+    }
 
     let sessionId = null;
+    // Monotonic token guarding concurrent session establishment (initial load +
+    // model change / New Session). Only the holder of the latest token commits.
+    let sessionSeq = 0;
     let toolCount = 0;
     let streaming = false;
     let activeStreamController = null;
@@ -578,16 +749,108 @@
     // Session management
     // -------------------------------------------------------------------------
 
-    async function createSession() {
+    async function createSession(slug) {
+        // Mandatory-slug invariant: the gateway has no default model and rejects a
+        // slug-less create with 400. Every caller must pass a validated non-empty
+        // slug; the empty-published-list state blocks creation up front so this is
+        // a defensive guard that never triggers in normal flow.
+        if (!slug) {
+            throw new Error('Select a model first');
+        }
         const resp = await fetch('{{ hosturl }}agent/sessions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent_endpoint: slug }),
         });
         if (!resp.ok) {
-            const body = await resp.json().catch(() => ({}));
-            throw new Error(body.error || `HTTP ${resp.status}`);
+            const errBody = await resp.json().catch(() => ({}));
+            throw new Error(errBody.message || errBody.error || `HTTP ${resp.status}`);
         }
         return resp.json();
+    }
+
+    // Drop a server-side session by id, retrying on transient failure. Returns
+    // true once the server confirms it is gone (204, or 404 = already gone),
+    // false if every attempt failed. Retries matter because a discarded session
+    // that is NOT actually deleted can later win `/sessions/current` (ordered by
+    // newest updatedAt) and reopen the wrong conversation/model on reload — a
+    // single failed best-effort DELETE would leave exactly that orphan behind.
+    // Safe to call fire-and-forget: the retries then run in the background.
+    async function deleteSessionById(id) {
+        if (!id) return true;
+        const maxAttempts = 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const resp = await fetch(`{{ hosturl }}agent/sessions/${id}`, { method: 'DELETE' });
+                if (resp.ok || resp.status === 404) return true;
+                console.warn(`Failed to delete session ${id}: HTTP ${resp.status} (attempt ${attempt}/${maxAttempts})`);
+            } catch (err) {
+                console.warn(`Failed to delete session ${id} (attempt ${attempt}/${maxAttempts}):`, err);
+            }
+            if (attempt < maxAttempts) {
+                await new Promise(function (r) { setTimeout(r, 300 * attempt); });
+            }
+        }
+        return false;
+    }
+
+    // Deliberate, full session reset, shared by the New Session button and the
+    // model-change handler (model choice is per-session). CREATE-FIRST: the
+    // replacement session is created BEFORE the current one is dropped or the
+    // transcript cleared, so a create failure (e.g. the gateway rejects a
+    // since-unpublished model, or a transient error) leaves the existing
+    // conversation intact instead of wiping it.
+    async function startNewSession(slug) {
+        // Claim the latest "session establishment" token. Rapid model changes /
+        // New Session clicks can overlap; only the most recent call may commit,
+        // so a slow earlier response cannot overwrite the session the user's
+        // later action created.
+        const myToken = ++sessionSeq;
+        let data;
+        try {
+            data = await createSession(slug);
+        } catch (err) {
+            // Create failed — keep the current session/transcript AND the active
+            // model selection untouched. Only the latest action reports/reverts:
+            // revert the dropdown back to the still-active model so the control
+            // never claims a model the chat is not actually running.
+            if (myToken === sessionSeq) {
+                appendBubble('error', `Failed to start new session: ${err.message}`);
+                syncModelSelect(selectedSlug);
+            }
+            return;
+        }
+
+        // A newer action superseded this one while we were creating: discard the
+        // session we just created and let the newer call own the UI.
+        if (myToken !== sessionSeq) {
+            deleteSessionById(data.session.id);
+            return;
+        }
+
+        // Replacement is ready and still current — commit the swap synchronously
+        // (no awaits) so the latest call wins and cannot be clobbered mid-commit.
+        if (streaming && activeStreamController) {
+            stopRequested = true;
+            try { activeStreamController.abort(); } catch (_) {}
+        }
+        setStreaming(false);
+        const oldId = sessionId;
+        sessionId = data.session.id;
+        if (oldId && oldId !== sessionId) {
+            deleteSessionById(oldId); // best-effort, fire-and-forget
+        }
+        // Commit the model selection only now that the new session exists.
+        syncModelSelect(slug);
+        chatArea.innerHTML = '';
+        toolCount = (data.tool_count || 0);
+        subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+        appendBubble('assistant', marked.parse(
+            `Hello! ${toolCount} skill${toolCount !== 1 ? 's are' : ' is'} ready. How can I help you?`
+        ));
+        textarea.disabled = false;
+        sendBtn.disabled = false;
+        textarea.focus();
     }
 
     // NOTE: compaction affects `model_messages` (the model working context),
@@ -641,16 +904,60 @@
         return wrap;
     }
 
+    // Block the agent when the tenant has no published endpoint to run on: there
+    // is no model to bind and the gateway rejects a slug-less create. Disable the
+    // composer / New Session / dropdown and explain how to proceed, rather than
+    // attempting a create that would 400.
+    function showNoModelState() {
+        textarea.disabled = true;
+        sendBtn.disabled = true;
+        if (newSessionBtn) newSessionBtn.disabled = true;
+        if (modelSelect) modelSelect.disabled = true;
+        subtitle.textContent = 'No model available';
+        appendBubble('assistant', marked.parse(
+            'No published model is available for this tenant. Publish or select a ' +
+            'model first, then reload this page to start chatting.'
+        ));
+    }
+
     async function initSession() {
-        // Try to resume the existing session for this tenant
+        // Claim a session-establishment token so a New Session / model change
+        // clicked during initial load cannot be clobbered by this slower boot.
+        const myToken = ++sessionSeq;
+        // Try to resume the existing session for this tenant — but only when its
+        // bound model matches the locally-selected slug. The model is per-session,
+        // so resuming a session bound to a different endpoint would silently keep
+        // the old model. On a mismatch, start a fresh session bound to the
+        // selected slug instead.
         try {
             const resp = await fetch('{{ hosturl }}agent/sessions/current');
             if (resp.ok) {
                 const data = await resp.json();
+                // A newer action (New Session / model change) superseded boot.
+                if (myToken !== sessionSeq) return;
+                // Always resume the existing conversation on load. Never delete it
+                // just because the locally-selected model differs — a stale
+                // localStorage value, an empty endpoint list, or another tab using
+                // a different model must not silently wipe a valid chat on refresh.
+                // If the bound model differs, adopt it and reflect it in the
+                // dropdown; the model only changes via an explicit dropdown change
+                // / New Session (which go through startNewSession).
                 sessionId = data.session.id;
                 toolCount = (data.tool_count || 0);
                 subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+                if (!sameSlug(data.session.agent_endpoint, selectedSlug)) {
+                    syncModelSelect(data.session.agent_endpoint || '');
+                }
                 renderMessages(data.session.messages || []);
+                // Even with an existing session, if the tenant now has no published
+                // endpoints the agent is blocked: the bound model is unavailable, a
+                // prompt would error, and New Session cannot recover (slug-less
+                // create is rejected). Keep the transcript visible (non-destructive
+                // load) but disable the composer and show the no-model notice.
+                if (!MODELS_AVAILABLE) {
+                    showNoModelState();
+                    return;
+                }
                 if (!data.session.messages || data.session.messages.length === 0) {
                     appendBubble('assistant', marked.parse(
                         `Hello! ${toolCount} skill${toolCount !== 1 ? 's are' : ' is'} ready. How can I help you?`
@@ -663,9 +970,25 @@
             }
         } catch (_) {}
 
-        // No existing session — create one
+        // No existing session. If the tenant has no published endpoints there is
+        // no model to bind, and the gateway rejects a slug-less create — so block
+        // instead of attempting (and failing) a create.
+        if (myToken !== sessionSeq) return;
+        if (!MODELS_AVAILABLE) {
+            showNoModelState();
+            return;
+        }
+
+        // Create one bound to the selected slug. There is nothing to delete here,
+        // so this does not use the delete-then-create lifecycle (which is reserved
+        // for explicit New Session / model change).
         try {
-            const data = await createSession();
+            const data = await createSession(selectedSlug);
+            // Superseded by a newer action during create — discard this session.
+            if (myToken !== sessionSeq) {
+                deleteSessionById(data.session.id);
+                return;
+            }
             sessionId = data.session.id;
             toolCount = (data.tool_count || 0);
             subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
@@ -676,8 +999,10 @@
             sendBtn.disabled = false;
             textarea.focus();
         } catch (err) {
-            subtitle.textContent = 'Connection failed';
-            appendBubble('error', `Failed to connect: ${err.message}`);
+            if (myToken === sessionSeq) {
+                subtitle.textContent = 'Connection failed';
+                appendBubble('error', `Failed to connect: ${err.message}`);
+            }
         }
     }
 
@@ -729,16 +1054,29 @@
                     setStreaming(false);
                     return;
                 }
+                // Claim the session-establishment token so an explicit New
+                // Session / model change made during this auto-reconnect wins:
+                // a slower reconnect must not clobber the user's later action.
+                const myToken = ++sessionSeq;
+                let data;
                 try {
-                    const data = await createSession();
-                    sessionId = data.session.id;
-                    toolCount = (data.tool_count || 0);
-                    subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
+                    data = await createSession(selectedSlug);
                 } catch (reconnectErr) {
-                    appendBubble('error', 'Session expired. Please send again.');
-                    setStreaming(false);
+                    if (myToken === sessionSeq) {
+                        appendBubble('error', 'Session expired. Please send again.');
+                        setStreaming(false);
+                    }
                     return;
                 }
+                // Superseded by a newer user action while reconnecting — discard
+                // the session we just created and let that action own the UI.
+                if (myToken !== sessionSeq) {
+                    deleteSessionById(data.session.id);
+                    return;
+                }
+                sessionId = data.session.id;
+                toolCount = (data.tool_count || 0);
+                subtitle.textContent = `${toolCount} skill${toolCount !== 1 ? 's' : ''} available`;
                 appendBubble('assistant', 'Session expired. Reconnected and retried.');
                 await sendMessage(message, true);
                 return;
@@ -1058,7 +1396,7 @@
 
         function apply(collapsed) {
             intro.classList.toggle('collapsed', collapsed);
-            toggle.textContent = collapsed ? 'Show' : 'Hide';
+            toggle.textContent = collapsed ? 'Settings' : 'Hide';
             toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         }
 
@@ -1072,6 +1410,116 @@
             try { localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); } catch (_) {}
         });
     })();
+
+    // -------------------------------------------------------------------------
+    // New-session confirmation
+    // -------------------------------------------------------------------------
+
+    // A session has history worth confirming only once it carries a real user
+    // turn. The greeting is an `assistant` bubble, so an empty/just-greeted
+    // session has no `.chat-bubble.user` and switching model / New Session there
+    // is frictionless. `chatArea.innerHTML = ''` on each new session resets this.
+    function hasChatHistory() {
+        return !!chatArea.querySelector('.chat-bubble.user');
+    }
+
+    // Show the in-page confirm modal; resolve true on Continue, false on Cancel.
+    // When there is no history, resolve true immediately without prompting.
+    function confirmNewSession(message) {
+        if (!hasChatHistory() || !confirmOverlay) return Promise.resolve(true);
+        if (confirmMessage && message) confirmMessage.textContent = message;
+        return new Promise(function (resolve) {
+            function cleanup(result) {
+                confirmOverlay.classList.remove('open');
+                confirmOkBtn.removeEventListener('click', onOk);
+                confirmCancelBtn.removeEventListener('click', onCancel);
+                confirmOverlay.removeEventListener('click', onBackdrop);
+                document.removeEventListener('keydown', onKey);
+                resolve(result);
+            }
+            function onOk() { cleanup(true); }
+            function onCancel() { cleanup(false); }
+            function onBackdrop(e) { if (e.target === confirmOverlay) cleanup(false); }
+            function onKey(e) { if (e.key === 'Escape') cleanup(false); }
+            confirmOkBtn.addEventListener('click', onOk);
+            confirmCancelBtn.addEventListener('click', onCancel);
+            confirmOverlay.addEventListener('click', onBackdrop);
+            document.addEventListener('keydown', onKey);
+            confirmOverlay.classList.add('open');
+            confirmOkBtn.focus();
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Model dropdown
+    // -------------------------------------------------------------------------
+
+    (function setupModelSelect() {
+        if (!modelSelect) return;
+        // Populate options from the active tenant's published endpoints. Show the
+        // endpoint slug (the user-facing endpoint identity, matching the "Name"
+        // column on the endpoints page) as both value and label.
+        (ENDPOINTS || []).forEach(function (e) {
+            const opt = document.createElement('option');
+            opt.value = e.slug;
+            opt.textContent = e.slug;
+            modelSelect.appendChild(opt);
+        });
+        if (!MODELS_AVAILABLE) {
+            // Nothing to select / no model to bind — leave the static "Default"
+            // option and disable the control.
+            modelSelect.disabled = true;
+            return;
+        }
+        // The slug is mandatory, so there is no empty "Default" target — drop the
+        // static placeholder option so the dropdown only offers real models.
+        Array.prototype.slice.call(modelSelect.options).forEach(function (o) {
+            if (o.value === '') modelSelect.removeChild(o);
+        });
+        // Reflect the resolved boot selection (stored slug, else the default /
+        // first published endpoint — resolveInitialSlug guarantees a real slug).
+        modelSelect.value = selectedSlug;
+
+        // Changing the model is a new chat: model choice is per-session and the
+        // prior transcript/compaction state belongs to the old model.
+        modelSelect.addEventListener('change', function () {
+            const next = ENDPOINT_SLUGS.has(modelSelect.value) ? modelSelect.value : '';
+            if (!next) {
+                // A non-selectable entry was picked (e.g. an "(unavailable)" pinned
+                // model). The slug is mandatory, so there is nothing valid to
+                // switch to — revert the control to the active model and do not
+                // attempt a slug-less create.
+                syncModelSelect(selectedSlug);
+                return;
+            }
+            // Confirm before discarding an in-progress chat. On cancel, revert
+            // the control to the active model (the change never commits).
+            confirmNewSession('Switching the model will start a new session and clear the current chat history. Continue?')
+                .then(function (ok) {
+                    if (!ok) {
+                        syncModelSelect(selectedSlug);
+                        return;
+                    }
+                    // Do NOT commit the selection here. startNewSession owns
+                    // selection state: it commits `next` only after the new session
+                    // is created, and reverts the control if creation fails — so
+                    // the dropdown/persisted selection can never claim a model the
+                    // chat is not actually running.
+                    startNewSession(next);
+                });
+        });
+    })();
+
+    if (newSessionBtn) {
+        if (!MODELS_AVAILABLE) {
+            newSessionBtn.disabled = true;
+        } else {
+            newSessionBtn.addEventListener('click', function () {
+                confirmNewSession('Starting a new session will clear the current chat history. Continue?')
+                    .then(function (ok) { if (ok) startNewSession(selectedSlug); });
+            });
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Boot
