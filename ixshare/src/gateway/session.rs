@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::gateway::http_gateway::{HttpGateway, GATEWAY_CONFIG};
 use crate::node_config::NODE_CONFIG;
+use crate::print::verbose_category::AGENT;
 
 const SessionTimeoutMinutes: i64 = 10;
 pub const SessionCleanupIntervalSecs: u64 = 60;
@@ -285,7 +286,8 @@ impl SessionStore {
             let duration = now.signed_duration_since(last_activity);
             if duration.num_minutes() > SessionTimeoutMinutes {
                 let session_id_clone = session.id.clone();
-                info!(
+                ctrace!(
+                    AGENT,
                     "Deleting timed-out session {} (idle for {} mins)",
                     session_id_clone,
                     duration.num_minutes()
@@ -337,7 +339,7 @@ impl SessionStore {
         }
 
         if cleanedCount > 0 {
-            info!("Cleaned up {} timed-out sessions", cleanedCount);
+            ctrace!(AGENT, "Cleaned up {} timed-out sessions", cleanedCount);
         }
 
         cleanedCount
@@ -1048,7 +1050,8 @@ async fn compact_session(
                     if trimmed.is_empty() {
                         CompactionResult::NoChange
                     } else {
-                        info!(
+                        ctrace!(
+                            AGENT,
                             "Compacting session {} ({} head msgs → summary)",
                             session_id,
                             head.len()
@@ -1246,7 +1249,8 @@ async fn CallSkillTool(
                             // Strip <think>…</think> blocks — they waste synthesis tokens
                             // and can confuse the main model with the skill's internal reasoning.
                             let stripped = strip_think_tags(content);
-                            info!(
+                            ctrace!(
+                                AGENT,
                                 "Skill tool response received from {} len={}",
                                 endpoint_url,
                                 stripped.len()
@@ -1371,7 +1375,7 @@ async fn CallModelBackend(
 
     let response = match response {
         Ok(r) => {
-            debug!("Got response with status: {}", r.status());
+            ctrace!(AGENT, "Got response with status: {}", r.status());
             r
         }
         Err(e) => {
@@ -1416,7 +1420,11 @@ async fn CallModelBackend(
             .filter_map(|tc| serde_json::from_value(tc.clone()).ok())
             .collect();
 
-        debug!("Non-streaming tool calls detected: {}", tool_calls.len());
+        ctrace!(
+            AGENT,
+            "Non-streaming tool calls detected: {}",
+            tool_calls.len()
+        );
 
         let mut synthesis_messages = Vec::new();
         synthesis_messages.push(ModelMessage {
@@ -1656,7 +1664,8 @@ pub async fn HandlePrompt(
             if prompt_tokens > 0 {
                 gw.sessions.UpdateTokens(&sessionId, prompt_tokens).await;
                 if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
-                    info!(
+                    ctrace!(
+                        AGENT,
                         "Session {} at {} prompt tokens, compacting (non-stream)",
                         sessionId, prompt_tokens
                     );
@@ -1795,7 +1804,8 @@ async fn run_synthesis_retry(
                         };
                         gw.sessions.AddMessage(session_id, retry_msg).await;
                         if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
-                            info!(
+                            ctrace!(
+                                AGENT,
                                 "Session {} at {} prompt tokens, compacting after retry synthesis",
                                 session_id, prompt_tokens
                             );
@@ -1911,7 +1921,7 @@ pub async fn HandlePromptStream(
     Path(sessionId): Path<String>,
     Json(req): Json<PromptRequest>,
 ) -> impl IntoResponse {
-    info!("[agent] prompt_stream start session={}", sessionId);
+    ctrace!(AGENT, "prompt_stream start session={}", sessionId);
 
     let session = match gw.sessions.GetSession(&sessionId).await {
         Some(s) => s,
@@ -1931,8 +1941,9 @@ pub async fn HandlePromptStream(
         .GetToolsForTenant(&tenant)
         .await
         .unwrap_or_default();
-    info!(
-        "[agent] tenant={} endpoint={} tools={}",
+    ctrace!(
+        AGENT,
+        "tenant={} endpoint={} tools={}",
         tenant,
         endpoint_str,
         routes.len()
@@ -2014,8 +2025,9 @@ pub async fn HandlePromptStream(
     let first_call_ratio = agent_first_call_compaction_ratio();
     let fc_estimate = estimate_serialized_tokens(&requestBody);
     let fc_should_compact = preflight_decision(fc_estimate, ctx, first_call_ratio);
-    info!(
-        "[agent] first-call preflight session={} estimate={} threshold={}% ctx={} compact={}",
+    ctrace!(
+        AGENT,
+        "first-call preflight session={} estimate={} threshold={}% ctx={} compact={}",
         sessionId, fc_estimate, first_call_ratio, ctx, fc_should_compact
     );
     if fc_should_compact {
@@ -2027,19 +2039,22 @@ pub async fn HandlePromptStream(
             .map(|s| s.model_messages)
             .unwrap_or_default();
         requestBody.messages = build_first_call_messages(&rebuilt);
-        info!(
-            "[agent] first-call rebuilt after compaction session={} estimate={}",
+        ctrace!(
+            AGENT,
+            "first-call rebuilt after compaction session={} estimate={}",
             sessionId,
             estimate_serialized_tokens(&requestBody)
         );
     }
 
-    info!(
-        "[agent] sending {} messages to model",
+    ctrace!(
+        AGENT,
+        "sending {} messages to model",
         requestBody.messages.len()
     );
-    debug!(
-        "[agent] model request messages={}",
+    ctrace!(
+        AGENT,
+        "model request messages={}",
         requestBody.messages.len()
     );
 
@@ -2108,7 +2123,7 @@ pub async fn HandlePromptStream(
         // synthesis preflight -> compact -> rebuild -> send sequence below is
         // serialized against any concurrent prompt for the same session.
         let _session_guard = session_guard;
-        info!("[agent] stream started session={}", sessionIdClone);
+        ctrace!(AGENT, "stream started session={}", sessionIdClone);
         let mut stream = initial_response.bytes_stream();
         let mut full_content = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -2134,7 +2149,7 @@ pub async fn HandlePromptStream(
 
                     for line in chunk_str.lines() {
                         if !line.is_empty() {
-                            debug!("[agent] model stream line: {}", line);
+                            ctrace!(AGENT, "model stream line: {}", line);
                         }
                         if line.starts_with("data: ") {
                             let data = &line[6..];
@@ -2153,12 +2168,13 @@ pub async fn HandlePromptStream(
                                         .get("completion_tokens")
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0);
-                                    debug!("Token usage: prompt={}, completion={}", p, c);
+                                    ctrace!(AGENT, "Token usage: prompt={}, completion={}", p, c);
                                     if p > 0 {
                                         prompt_tokens = p;
                                     }
-                                    info!(
-                                        "[agent] token usage session={} prompt={} completion={}",
+                                    ctrace!(
+                                        AGENT,
+                                        "token usage session={} prompt={} completion={}",
                                         sessionIdClone, p, c
                                     );
                                     continue;
@@ -2252,7 +2268,8 @@ pub async fn HandlePromptStream(
                                         choice.get("finish_reason").and_then(|v| v.as_str())
                                     {
                                         finish_reason = Some(fr.to_string());
-                                        debug!(
+                                        ctrace!(
+                                            AGENT,
                                             "finish_reason={} tool_calls={}",
                                             fr,
                                             tool_calls.len()
@@ -2272,7 +2289,7 @@ pub async fn HandlePromptStream(
         }
 
         if interrupted {
-            info!("[agent] stream interrupted session={}", sessionIdClone);
+            ctrace!(AGENT, "stream interrupted session={}", sessionIdClone);
             finalize_interrupted_prompt(
                 &gwClone,
                 &sessionIdClone,
@@ -2311,8 +2328,9 @@ pub async fn HandlePromptStream(
         }
 
         if !tool_calls.is_empty() || finish_reason.as_deref() == Some("tool_calls") {
-            info!(
-                "[agent] model requested {} tool call(s) session={}",
+            ctrace!(
+                AGENT,
+                "model requested {} tool call(s) session={}",
                 tool_calls.len(),
                 sessionIdClone
             );
@@ -2343,8 +2361,9 @@ pub async fn HandlePromptStream(
                         .to_string(),
                     )))
                     .await;
-                info!(
-                    "[agent] dispatching tool='{}' idx={} session={}",
+                ctrace!(
+                    AGENT,
+                    "dispatching tool='{}' idx={} session={}",
                     tool_call.function.name, idx, sessionIdClone
                 );
             }
@@ -2411,8 +2430,9 @@ pub async fn HandlePromptStream(
                     }
                     break;
                 };
-                info!(
-                    "[agent] tool='{}' idx={} response_len={} session={}",
+                ctrace!(
+                    AGENT,
+                    "tool='{}' idx={} response_len={} session={}",
                     name,
                     idx,
                     tool_response.len(),
@@ -2436,8 +2456,9 @@ pub async fn HandlePromptStream(
                 tool_results.push((tc_id, tool_response));
             }
 
-            info!(
-                "[agent] all tools done, sending synthesis request session={}",
+            ctrace!(
+                AGENT,
+                "all tools done, sending synthesis request session={}",
                 sessionIdClone
             );
             let client = Client::new();
@@ -2473,8 +2494,9 @@ pub async fn HandlePromptStream(
                 estimate_serialized_tokens(&candidate)
             };
             let syn_should_compact = preflight_decision(syn_estimate, ctx, syn_ratio);
-            info!(
-                        "[agent] synthesis preflight session={} anchor={} added={} estimate={} anchored={} threshold={}% ctx={} compact={}",
+            ctrace!(
+                        AGENT,
+                        "synthesis preflight session={} anchor={} added={} estimate={} anchored={} threshold={}% ctx={} compact={}",
                         sessionIdClone, prompt_tokens, added_estimate, syn_estimate, prompt_tokens > 0, syn_ratio, ctx, syn_should_compact
                     );
 
@@ -2499,8 +2521,9 @@ pub async fn HandlePromptStream(
                 // re-estimate the whole rebuilt request locally.
                 let rebuilt = build_synthesis_messages(&prior_messages, &synthesis_suffix);
                 let post_estimate = estimate_serialized_tokens(&rebuilt);
-                info!(
-                            "[agent] synthesis re-estimate after compaction session={} estimate={} threshold={}%",
+                ctrace!(
+                            AGENT,
+                            "synthesis re-estimate after compaction session={} estimate={} threshold={}%",
                             sessionIdClone, post_estimate, syn_ratio
                         );
                 if preflight_decision(post_estimate, ctx, syn_ratio) {
@@ -2539,8 +2562,9 @@ pub async fn HandlePromptStream(
                 }),
             };
 
-            debug!(
-                "[agent] synthesis request messages={}",
+            ctrace!(
+                AGENT,
+                "synthesis request messages={}",
                 final_request.messages.len()
             );
 
@@ -2593,7 +2617,7 @@ pub async fn HandlePromptStream(
                                     if postturn_compaction_threshold(ctx)
                                         .map_or(false, |t| prompt_tokens >= t)
                                     {
-                                        info!("Session {} at {} prompt tokens, compacting after tool synthesis", sessionIdClone, prompt_tokens);
+                                        ctrace!(AGENT, "Session {} at {} prompt tokens, compacting after tool synthesis", sessionIdClone, prompt_tokens);
                                         let _ = tx
                                             .send(Ok(Event::default().event("compacting").data("")))
                                             .await;
@@ -2780,8 +2804,9 @@ pub async fn HandlePromptStream(
                 .sessions
                 .AddMessage(&sessionIdClone, assistantMessage)
                 .await;
-            info!(
-                "[agent] assistant message stored len={} session={}",
+            ctrace!(
+                AGENT,
+                "assistant message stored len={} session={}",
                 full_content.len(),
                 sessionIdClone
             );
@@ -2817,7 +2842,7 @@ pub async fn HandlePromptStream(
                 .await;
         }
 
-        info!("[agent] stream done session={}", sessionIdClone);
+        ctrace!(AGENT, "stream done session={}", sessionIdClone);
         let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
 
         // Update stored token count and compact if over threshold
@@ -2827,7 +2852,8 @@ pub async fn HandlePromptStream(
                 .UpdateTokens(&sessionIdClone, prompt_tokens)
                 .await;
             if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
-                info!(
+                ctrace!(
+                    AGENT,
                     "Session {} at {} prompt tokens, compacting",
                     sessionIdClone, prompt_tokens
                 );

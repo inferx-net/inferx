@@ -80,8 +80,14 @@ pub mod verbose_category {
         name: "SKILL_PAYLOAD",
         env_name: "skill_payload",
     };
+    pub const AGENT: VerboseCategory = VerboseCategory {
+        mask: 1 << 6,
+        name: "AGENT",
+        env_name: "agent",
+    };
 
-    pub const ALL: &[VerboseCategory] = &[MCP, SCHEDULER, FUNC_AGENT, ROUTING, SKILL, SKILL_PAYLOAD];
+    pub const ALL: &[VerboseCategory] =
+        &[MCP, SCHEDULER, FUNC_AGENT, ROUTING, SKILL, SKILL_PAYLOAD, AGENT];
 }
 
 #[inline]

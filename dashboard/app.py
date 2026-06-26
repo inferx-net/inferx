@@ -159,6 +159,16 @@ KEYCLOAK_GOOGLE_IDP_ALIAS = os.getenv('KEYCLOAK_GOOGLE_IDP_ALIAS', "google").str
 KEYCLOAK_GITHUB_IDP_ALIAS = os.getenv('KEYCLOAK_GITHUB_IDP_ALIAS', "github").strip()
 FORCE_HTTPS_REDIRECTS = os.getenv('FORCE_HTTPS_REDIRECTS', 'false').lower() in ("1", "true", "yes")
 SESSION_SIZE_DEBUG = os.getenv('SESSION_SIZE_DEBUG', 'false').lower() in ("1", "true", "yes")
+# Verbose request/response tracing for the inferx agent proxy routes. Off by
+# default; enable with AGENT_VERBOSE_LOG=true. Error-level logs are always
+# emitted regardless of this flag.
+AGENT_VERBOSE_LOG = os.getenv('AGENT_VERBOSE_LOG', 'false').lower() in ("1", "true", "yes")
+
+
+def agent_log(fmt, *args):
+    """Emit an inferx-agent verbose trace line only when AGENT_VERBOSE_LOG is set."""
+    if AGENT_VERBOSE_LOG:
+        app.logger.info(fmt, *args)
 
 server_metadata_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM_NAME}/.well-known/openid-configuration"
 
@@ -1033,7 +1043,7 @@ def refresh_token_if_needed():
             return True
         except Exception as e:
             # Handle refresh error (e.g., invalid refresh token)
-            print(f"Token refresh failed: {e}")
+            app.logger.warning("Token refresh failed: %s", e)
             session.pop('access_token', None)
             session.pop('refresh_token', None)
             session.pop('token_expires_at', None)
@@ -7353,7 +7363,7 @@ def text2img():
         postreq["messages"][0]["content"][0]["text"] = prompt
     except (KeyError, IndexError):
         # Fallback in case the structure is slightly different
-        print("Warning: Could not find nested text field, falling back to top-level prompt.")
+        app.logger.warning("Could not find nested text field, falling back to top-level prompt.")
         postreq["prompt"] = prompt
 
     url = "{}/funccall/{}/{}/{}/{}".format(apihostaddr, tenant, namespace, funcname, sample["path"] )
@@ -7401,7 +7411,7 @@ def text2audio():
         postreq["input"] = prompt
     except (KeyError, IndexError):
         # Fallback in case the structure is slightly different
-        print("Warning: Could not find nested text field, falling back to top-level prompt.")
+        app.logger.warning("Could not find nested text field, falling back to top-level prompt.")
         postreq["prompt"] = prompt
 
     url = "{}/funccall/{}/{}/{}/{}".format(apihostaddr, tenant, namespace, funcname, sample["path"] )
@@ -7433,14 +7443,12 @@ def generate_namespaces():
         namespaces,
         include_public=can_access_public_tenant_in_dashboard(),
     )
-    print("namespaces ", namespaces)
     return namespaces
 
 @prefix_bp.route('/generate_roles', methods=['GET'])
 @require_login
 def generate_roles():
     roles = listroles()
-    print("roles ", roles)
     return roles
 
 @prefix_bp.route('/generate_funcs', methods=['GET'])
@@ -8249,14 +8257,14 @@ def AgentCreateSession():
         payload["agent_endpoint"] = agent_endpoint
 
     url = f"{apihostaddr}/sessions"
-    app.logger.info("[agent] -> POST %s tenant=%s agent_endpoint=%s", url, active_tenant, agent_endpoint)
+    agent_log("[agent] -> POST %s tenant=%s agent_endpoint=%s", url, active_tenant, agent_endpoint)
     resp = requests.post(
         url,
         json=payload,
         headers=gateway_request_headers(json_body=True),
         timeout=10,
     )
-    app.logger.info("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    agent_log("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 
@@ -8265,13 +8273,13 @@ def AgentCreateSession():
 @require_login
 def AgentGetCurrentSession():
     url = f"{apihostaddr}/sessions/current"
-    app.logger.info("[agent] -> GET %s", url)
+    agent_log("[agent] -> GET %s", url)
     resp = requests.get(
         url,
         headers=gateway_request_headers(json_body=False),
         timeout=10,
     )
-    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    agent_log("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 
@@ -8280,13 +8288,13 @@ def AgentGetCurrentSession():
 @require_login
 def AgentGetSession(session_id):
     url = f"{apihostaddr}/sessions/{session_id}"
-    app.logger.info("[agent] -> GET %s", url)
+    agent_log("[agent] -> GET %s", url)
     resp = requests.get(
         url,
         headers=gateway_request_headers(json_body=False),
         timeout=10,
     )
-    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    agent_log("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 
@@ -8295,13 +8303,13 @@ def AgentGetSession(session_id):
 @require_login
 def AgentDeleteSession(session_id):
     url = f"{apihostaddr}/sessions/{session_id}"
-    app.logger.info("[agent] -> DELETE %s", url)
+    agent_log("[agent] -> DELETE %s", url)
     resp = requests.delete(
         url,
         headers=gateway_request_headers(json_body=False),
         timeout=10,
     )
-    app.logger.info("[agent] <- DELETE %s status=%d", url, resp.status_code)
+    agent_log("[agent] <- DELETE %s status=%d", url, resp.status_code)
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 
@@ -8310,13 +8318,13 @@ def AgentDeleteSession(session_id):
 @require_login
 def AgentGetSessionMessages(session_id):
     url = f"{apihostaddr}/sessions/{session_id}/messages"
-    app.logger.info("[agent] -> GET %s", url)
+    agent_log("[agent] -> GET %s", url)
     resp = requests.get(
         url,
         headers=gateway_request_headers(json_body=False),
         timeout=10,
     )
-    app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    agent_log("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 
@@ -8326,7 +8334,7 @@ def AgentGetSessionMessages(session_id):
 def AgentPromptStream(session_id):
     body = request.get_json()
     url = f"{apihostaddr}/sessions/{session_id}/prompt_stream"
-    app.logger.info("[agent] -> POST %s body=%s", url, str(body)[:200])
+    agent_log("[agent] -> POST %s body=%s", url, str(body)[:200])
     resp = requests.post(
         url,
         json=body,
@@ -8340,7 +8348,7 @@ def AgentPromptStream(session_id):
                          url, resp.status_code, resp.text[:500])
         return Response(resp.content, status=resp.status_code,
                         content_type=upstream_ct or "application/json")
-    app.logger.info("[agent] <- POST %s status=%d streaming started", url, resp.status_code)
+    agent_log("[agent] <- POST %s status=%d streaming started", url, resp.status_code)
     return Response(
         stream_response(resp),
         status=resp.status_code,
@@ -8354,13 +8362,13 @@ def AgentPromptStream(session_id):
 @require_login
 def AgentInterruptSession(session_id):
     url = f"{apihostaddr}/sessions/{session_id}/interrupt"
-    app.logger.info("[agent] -> POST %s", url)
+    agent_log("[agent] -> POST %s", url)
     resp = requests.post(
         url,
         headers=gateway_request_headers(json_body=False),
         timeout=10,
     )
-    app.logger.info("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    agent_log("[agent] <- POST %s status=%d body=%s", url, resp.status_code, resp.text[:500])
     return Response(resp.content, status=resp.status_code, content_type="application/json")
 
 
@@ -9731,7 +9739,7 @@ def proxy1(path):
             stream=False
         )
     except requests.exceptions.RequestException as e:
-        print("error ....")
+        app.logger.error("backend proxy request failed: %s", e)
         return Response(f"Error connecting to backend server: {e}", status=502, mimetype='text/plain')
     
     response = Response(resp.content, resp.status_code, mimetype='text/plain')
