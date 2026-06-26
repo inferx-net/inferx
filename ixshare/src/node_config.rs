@@ -1095,15 +1095,6 @@ pub struct NodeConfig {
     #[serde(default)]
     pub inferx_tenant_policy: InferxTenantPolicy,
 
-    #[serde(default)]
-    pub agent_model_endpoint: String,
-
-    /// Max context length of the agent model in tokens.
-    /// When set, compaction triggers at `agent_postturn_compaction_ratio`% of
-    /// this value. 0 means compaction is disabled.
-    #[serde(default)]
-    pub agent_model_context_length: u64,
-
     /// Post-turn (reactive) compaction threshold, as a percentage of the model
     /// context window. Applied after a turn completes, against the provider's
     /// reported prompt_tokens — distinct from the preflight ratios, which run
@@ -1180,8 +1171,6 @@ mod tests {
             endpoints_default_policy: default_endpoints_policy(),
             inferx_endpoint_func_default_policy: default_inferx_endpoint_func_default_policy(),
             inferx_tenant_policy: InferxTenantPolicy::default(),
-            agent_model_endpoint: String::new(),
-            agent_model_context_length: 0,
             agent_postturn_compaction_ratio: default_agent_postturn_compaction_ratio(),
             agent_preflight_compaction_ratio: default_agent_preflight_compaction_ratio(),
             agent_first_call_compaction_ratio: default_agent_first_call_compaction_ratio(),

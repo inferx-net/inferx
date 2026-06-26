@@ -472,6 +472,24 @@
             top: -0.55em;
         }
 
+        nav a .nav-preview-badge {
+            display: inline-block;
+            margin-left: -4px;
+            padding: 0 3px;
+            border-radius: 999px;
+            background: #fbbf24;
+            color: #1f2937;
+            font-size: 0.24em;
+            font-weight: 700;
+            line-height: 1.3;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            position: relative;
+            top: -2.2em;
+            vertical-align: baseline;
+        }
+
         .brand-actions-cell {
             width: 240px;
             text-align: right;
@@ -669,8 +687,8 @@
     <nav>
         <a href="{{ hosturl }}endpoints" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
         {% if not is_public_visitor %}
-        <a href="{{ hosturl }}listskills/myskills" class="{% if nav_skills_active %}active{% endif %}"> Skills </a>
-        <a href="{{ hosturl }}agent" class="{% if nav_agent_active %}active{% endif %}"> Agent </a>
+        <a href="{{ hosturl }}listskills/myskills" class="{% if nav_skills_active %}active{% endif %}"> Skills <sup class="nav-preview-badge">Preview</sup></a>
+        <a href="{{ hosturl }}agent" class="{% if nav_agent_active %}active{% endif %}"> Agent <sup class="nav-preview-badge">Preview</sup></a>
         {% endif %}
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         {% if not is_public_visitor %}

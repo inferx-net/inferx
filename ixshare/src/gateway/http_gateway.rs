@@ -892,6 +892,26 @@ fn resolve_funccall_target(
     })
 }
 
+/// Validate that `slug` names a published endpoint accessible to `tenant`,
+/// using the same authoritative function-status check the routing path uses
+/// (not `Endpoints` row presence). `slug` is the bare endpoint funcname; a
+/// leading `endpoints/` is tolerated. Returns the backend error string on
+/// failure (e.g. `"endpoint ... is unpublished"`).
+pub fn validate_agent_endpoint_published(
+    gw: &HttpGateway,
+    tenant: &str,
+    slug: &str,
+) -> std::result::Result<(), String> {
+    let slug = slug.trim().trim_start_matches('/');
+    let slug = slug.strip_prefix("endpoints/").unwrap_or(slug);
+    if slug.is_empty() {
+        return Err("empty endpoint slug".to_string());
+    }
+    resolve_funccall_target(gw, tenant, VIRTUAL_ENDPOINTS_NAMESPACE, slug)
+        .map(|_| ())
+        .map_err(|e| format!("{:?}", e))
+}
+
 fn enforce_tenant_quota_for_write(
     token: &Arc<AccessToken>,
     gw: &HttpGateway,
@@ -1079,7 +1099,10 @@ impl HttpGateway {
             .nest_service("/mcp", mpcservice)
             .route("/sessions", post(super::session::CreateSession))
             .route("/sessions/current", get(super::session::GetCurrentSession))
-            .route("/sessions/:id", get(super::session::GetSession))
+            .route(
+                "/sessions/:id",
+                get(super::session::GetSession).delete(super::session::DeleteSession),
+            )
             .route(
                 "/sessions/:id/messages",
                 get(super::session::GetSessionMessages),
