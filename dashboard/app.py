@@ -197,6 +197,10 @@ KNOWLEDGEBASE_DIR = Path("/opt/inferx/kb")
 SKILLS_DIR = Path("/opt/inferx/skills")
 FUNCTION_MAPPINGS_ENV = "INFERX_FUNCTION_MAPPINGS"
 METADATA_GEN_MODEL = os.getenv("METADATA_GEN_MODEL", "").strip()
+# Default agent model (published-endpoint slug). The dashboard owns the agent's
+# default model now that the gateway has no fallback; used to preselect a model
+# on first open when the user has no stored selection.
+DEFAULT_AGENT_MODEL = os.getenv("DEFAULT_AGENT_MODEL", "").strip()
 DOCLING_URL = os.getenv("DOCLING_URL", "").strip().rstrip("/")
 DOCLING_TOKEN = os.getenv("DOCLING_TOKEN", "secret123")
 
@@ -8200,9 +8204,27 @@ def ListSkillsMarketplaceLegacy():
 @prefix_bp.route("/agent", methods=["GET"])
 @require_login
 def InferXAgent():
+    roles = listroles()
+    active_tenant = resolve_active_tenant_name(roles)
+    endpoints = []
+    if active_tenant:
+        try:
+            for entry in build_endpoint_list_entries(include_unpublished=False, tenant=active_tenant):
+                slug = str(entry.get("slug", "") or "").strip()
+                if slug == "":
+                    continue
+                endpoints.append({
+                    "slug": slug,
+                    "model_name": str(entry.get("model_name") or slug).strip(),
+                })
+        except Exception as e:
+            app.logger.error("[agent] failed to list endpoints for tenant=%s: %s", active_tenant, e)
     return render_template(
         "inferx_agent.html",
         back_href=url_for("prefix.ListSkills"),
+        active_tenant=active_tenant,
+        endpoints=endpoints,
+        default_agent_model=DEFAULT_AGENT_MODEL,
     )
 
 
@@ -8220,11 +8242,17 @@ def AgentCreateSession():
         app.logger.error("[agent] failed to resolve API key for tenant=%s: %s", active_tenant, e)
         return json_error(f"failed to resolve API key: {e}", 500)
 
+    payload = {"api_key": api_key}
+    incoming = request.get_json(silent=True) or {}
+    agent_endpoint = str(incoming.get("agent_endpoint", "") or "").strip()
+    if agent_endpoint != "":
+        payload["agent_endpoint"] = agent_endpoint
+
     url = f"{apihostaddr}/sessions"
-    app.logger.info("[agent] -> POST %s tenant=%s", url, active_tenant)
+    app.logger.info("[agent] -> POST %s tenant=%s agent_endpoint=%s", url, active_tenant, agent_endpoint)
     resp = requests.post(
         url,
-        json={"api_key": api_key},
+        json=payload,
         headers=gateway_request_headers(json_body=True),
         timeout=10,
     )
@@ -8259,6 +8287,21 @@ def AgentGetSession(session_id):
         timeout=10,
     )
     app.logger.info("[agent] <- GET %s status=%d body=%s", url, resp.status_code, resp.text[:500])
+    return Response(resp.content, status=resp.status_code,
+                    content_type="application/json")
+
+
+@prefix_bp.route("/agent/sessions/<session_id>", methods=["DELETE"])
+@require_login
+def AgentDeleteSession(session_id):
+    url = f"{apihostaddr}/sessions/{session_id}"
+    app.logger.info("[agent] -> DELETE %s", url)
+    resp = requests.delete(
+        url,
+        headers=gateway_request_headers(json_body=False),
+        timeout=10,
+    )
+    app.logger.info("[agent] <- DELETE %s status=%d", url, resp.status_code)
     return Response(resp.content, status=resp.status_code,
                     content_type="application/json")
 

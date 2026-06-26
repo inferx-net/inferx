@@ -952,6 +952,52 @@ impl SqlSecret {
         Ok(())
     }
 
+    pub async fn GetEndpointMetadata(&self, slug: &str) -> Result<Option<EndpointMetadata>> {
+        let query = r#"
+            SELECT
+                brief_intro,
+                detailed_intro,
+                cs_ttft,
+                recommended_use_cases,
+                tags,
+                provider,
+                parameter_count_b,
+                context_length,
+                concurrency
+            FROM Endpoints
+            WHERE slug = $1
+        "#;
+
+        let row = match sqlx::query(query)
+            .bind(slug)
+            .fetch_optional(&self.pool)
+            .await?
+        {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        let recommended_use_cases: serde_json::Value =
+            row.try_get("recommended_use_cases").unwrap_or(serde_json::Value::Null);
+        let tags: serde_json::Value =
+            row.try_get("tags").unwrap_or(serde_json::Value::Null);
+
+        let metadata = EndpointMetadata {
+            brief_intro: row.try_get::<Option<String>, _>("brief_intro").ok().flatten(),
+            detailed_intro: row.try_get::<Option<String>, _>("detailed_intro").ok().flatten(),
+            cs_ttft: row.try_get::<Option<String>, _>("cs_ttft").ok().flatten(),
+            recommended_use_cases: serde_json::from_value(recommended_use_cases)
+                .unwrap_or_default(),
+            tags: serde_json::from_value(tags).unwrap_or_default(),
+            provider: row.try_get::<Option<String>, _>("provider").ok().flatten(),
+            parameter_count_b: row.try_get::<Option<f64>, _>("parameter_count_b").ok().flatten(),
+            context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
+            concurrency: row.try_get::<Option<f64>, _>("concurrency").ok().flatten(),
+        };
+
+        Ok(Some(metadata))
+    }
+
     pub async fn PublishEndpoint(
         &self,
         slug: &str,

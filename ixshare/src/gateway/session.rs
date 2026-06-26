@@ -43,6 +43,12 @@ pub struct Session {
     pub skill_api_key: String,
     #[serde(skip)]
     pub last_prompt_tokens: u64,
+    /// Published-endpoint slug selected as the agent (main) model for this
+    /// session. **Mandatory and always present**: `CreateSession` rejects a
+    /// slug-less request, so by prompt time the slug is guaranteed set (there is
+    /// no gateway default model). Serialized to the client so the dashboard can
+    /// compare a resumed session's endpoint against the locally-selected slug.
+    pub agent_endpoint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +108,12 @@ impl SessionStore {
         }
     }
 
-    pub async fn CreateSession(&self, tenant: String, skill_api_key: String) -> Session {
+    pub async fn CreateSession(
+        &self,
+        tenant: String,
+        skill_api_key: String,
+        agent_endpoint: String,
+    ) -> Session {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let session = Session {
@@ -115,6 +126,7 @@ impl SessionStore {
             model_messages: Vec::new(),
             skill_api_key,
             last_prompt_tokens: 0,
+            agent_endpoint,
         };
         self.sessions
             .write()
@@ -287,6 +299,19 @@ impl SessionStore {
         false
     }
 
+    /// Explicitly drop a single session: remove it from the store, drop its
+    /// critical-section lock, and cancel any in-flight stream. Mirrors the
+    /// timeout-cleanup trio, scoped to one id. Returns `true` if a session was
+    /// removed, `false` if no such session existed.
+    pub async fn DeleteSession(&self, id: &str) -> bool {
+        let removed = self.sessions.write().await.remove(id).is_some();
+        if removed {
+            self.remove_session_lock(id);
+            self.clear_active_stream_cancel(id);
+        }
+        removed
+    }
+
     pub async fn CleanupTimedOutSessions(&self) -> usize {
         let now = Utc::now();
         let mut sessions = self.sessions.write().await;
@@ -337,6 +362,11 @@ pub struct SessionResponse {
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
     pub api_key: String,
+    /// Published-endpoint slug ("namespace/modelname") selected as the agent
+    /// model. Omitted by old clients / when no model is picked, in which case
+    /// resolution falls through to the env -> config -> loopback default.
+    #[serde(default)]
+    pub agent_endpoint: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -512,20 +542,25 @@ fn agent_base_url() -> String {
     format!("http://127.0.0.1:{}", GATEWAY_CONFIG.gatewayPort)
 }
 
-fn agent_model_endpoint(tenant: &str) -> String {
-    let env_endpoint = std::env::var("AGENT_MODEL_ENDPOINT").unwrap_or_default();
-    let ep = env_endpoint.trim().to_string();
-    let ep = if ep.is_empty() {
-        NODE_CONFIG.agent_model_endpoint.trim().to_string()
-    } else {
-        ep
-    };
-    if ep.is_empty() {
-        return format!("http://127.0.0.1:{}/funccall", GATEWAY_CONFIG.gatewayPort);
-    }
+/// Resolve the agent model endpoint URL from the session-bound published-endpoint
+/// `slug` (the funcname under the virtual "endpoints" namespace). The slug is
+/// **mandatory** — `CreateSession` rejects a slug-less request — so there is no
+/// env/config/loopback default model. An empty slug (which should not occur)
+/// produces a URL that fails to route, surfacing as a "pick a model" error rather
+/// than silently selecting some other model.
+fn agent_model_endpoint(tenant: &str, slug: &str) -> String {
+    let slug = slug.trim().trim_start_matches('/');
+    let bare = slug.strip_prefix("endpoints/").unwrap_or(slug);
+    agent_endpoint_url(tenant, &format!("endpoints/{}", bare))
+}
 
+/// Build the funccall URL for an endpoint reference (`ep`), which may be an
+/// absolute URL, an `endpoints/<slug>` reference, a `namespace/modelname`
+/// slug, or a raw path fragment.
+fn agent_endpoint_url(tenant: &str, ep: &str) -> String {
+    let ep = ep.trim();
     if ep.starts_with("http://") || ep.starts_with("https://") {
-        return ep;
+        return ep.to_string();
     }
 
     let base = agent_base_url();
@@ -689,11 +724,39 @@ async fn consume_content_stream(
     ContentStreamOutcome::Completed(state)
 }
 
-fn agent_model_context_length() -> u64 {
-    std::env::var("AGENT_MODEL_CONTEXT_LENGTH")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(NODE_CONFIG.agent_model_context_length)
+/// Conservative built-in context window used only when a published endpoint's
+/// `Endpoints.context_length` is NULL/missing or its lookup errors. It is a
+/// modest, model-agnostic floor — never 0 (which would disable compaction) — and
+/// deliberately NOT the old global `AGENT_MODEL_CONTEXT_LENGTH`: that value is
+/// the configured *default* model's window, so applying it to a *different*
+/// user-chosen endpoint would silently compact against the wrong window.
+const AGENT_FALLBACK_CTX: u64 = 8192;
+
+/// Resolve the agent model context length for the turn.
+///
+/// The `slug` is the session-bound published-endpoint slug (mandatory). The value
+/// is read live from `Endpoints.context_length` (assumed present for a published
+/// endpoint). A NULL/missing/non-positive value or any lookup failure falls back
+/// to [`AGENT_FALLBACK_CTX`] — never 0, and never another model's window.
+async fn agent_model_context_length(
+    secret: &crate::gateway::secret::SqlSecret,
+    slug: &str,
+) -> u64 {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return AGENT_FALLBACK_CTX;
+    }
+    match secret.GetEndpointMetadata(slug).await {
+        Ok(Some(meta)) => match meta.context_length {
+            Some(ctx) if ctx > 0 => ctx as u64,
+            _ => AGENT_FALLBACK_CTX,
+        },
+        Ok(None) => AGENT_FALLBACK_CTX,
+        Err(e) => {
+            error!("GetEndpointMetadata({}) failed: {:?}", slug, e);
+            AGENT_FALLBACK_CTX
+        }
+    }
 }
 
 /// Post-turn (reactive) compaction ratio (percent of context window). Applied
@@ -709,8 +772,10 @@ fn agent_postturn_compaction_ratio() -> u64 {
         .min(100)
 }
 
-fn postturn_compaction_threshold() -> Option<u64> {
-    let ctx = agent_model_context_length();
+/// Post-turn compaction threshold for the turn's resolved context length
+/// (`ctx`). `ctx` is resolved once at prompt start and threaded through the
+/// turn so the window cannot change mid-turn.
+fn postturn_compaction_threshold(ctx: u64) -> Option<u64> {
     if ctx == 0 {
         None
     } else {
@@ -719,8 +784,7 @@ fn postturn_compaction_threshold() -> Option<u64> {
 }
 
 /// Anchored synthesis preflight threshold (percent of context window).
-/// Env `AGENT_PREFLIGHT_COMPACTION_RATIO` overrides config, matching the
-/// `AGENT_MODEL_CONTEXT_LENGTH` precedence (env overrides config).
+/// Env `AGENT_PREFLIGHT_COMPACTION_RATIO` overrides config (env over config).
 fn agent_preflight_compaction_ratio() -> u64 {
     std::env::var("AGENT_PREFLIGHT_COMPACTION_RATIO")
         .ok()
@@ -1229,13 +1293,44 @@ impl std::fmt::Display for ModelBackendError {
     }
 }
 
+/// A session-bound endpoint can become unpublished/unroutable after the session
+/// was created. Dispatch to it then fails with an "unpublished" / "endpoint not
+/// found" message (the existing dispatch-time published check). Classify that
+/// case so both prompt paths return a clear, actionable error telling the user
+/// to pick a model / start a new session, rather than a generic "Model error"
+/// — and crucially without falling through to any default endpoint. Returns
+/// `None` for unrelated backend failures, which keep their original message.
+fn classify_endpoint_dispatch_error(raw: &str) -> Option<String> {
+    let lowered = raw.to_lowercase();
+    // The funccall route normalizes a deleted/unpublished endpoint to
+    // "service failure: endpoint not found" (NotExist from GetFunc, missing
+    // funcstatus, and unpublished all collapse to this). The raw internal
+    // strings ("is unpublished", "... does not exist") are matched too in case
+    // any path surfaces them directly.
+    if lowered.contains("is unpublished")
+        || lowered.contains("endpoint not found")
+        || lowered.contains("does not exist")
+    {
+        Some(
+            "The selected model is no longer available (it may have been unpublished). \
+             Pick a model and start a new session."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+/// On success returns `(content, prompt_tokens)` where `prompt_tokens` is the
+/// provider-reported usage from the final model call (synthesis when tools ran),
+/// 0 if the backend omitted usage.
 async fn CallModelBackend(
     messages: &[Message],
     endpoint: &str,
     api_key: &str,
     tools: Option<Vec<Tool>>,
     routes: &[crate::gateway::secret::TenantToolRoute],
-) -> Result<String, ModelBackendError> {
+) -> Result<(String, u64), ModelBackendError> {
     let client = Client::new();
 
     let mut model_messages = Vec::new();
@@ -1444,8 +1539,9 @@ async fn CallModelBackend(
         // Empty synthesis content after tools ran: treat as a no-reply turn,
         // matching the streaming path's empty_response handling. tools_executed
         // is true so the caller keeps the user message (real multi-step turn).
+        let synth_prompt_tokens = extract_prompt_tokens(&synthesis_json).unwrap_or(0);
         return match content {
-            Some(c) => Ok(c.to_string()),
+            Some(c) => Ok((c.to_string(), synth_prompt_tokens)),
             None => Err(ModelBackendError {
                 message: "Model returned no content".to_string(),
                 tools_executed: true,
@@ -1462,8 +1558,9 @@ async fn CallModelBackend(
         .map(|c| c.trim())
         .filter(|c| !c.is_empty());
 
+    let prompt_tokens = extract_prompt_tokens(&model_response).unwrap_or(0);
     match content {
-        Some(c) => Ok(c.to_string()),
+        Some(c) => Ok((c.to_string(), prompt_tokens)),
         None => Err(ModelBackendError {
             message: "Model returned no content".to_string(),
             tools_executed: false,
@@ -1490,7 +1587,12 @@ pub async fn HandlePrompt(
     }
 
     let tenant = session.tenant.clone();
-    let endpoint = agent_model_endpoint(&tenant);
+    let agent_endpoint = session.agent_endpoint.clone();
+    let endpoint = agent_model_endpoint(&tenant, &agent_endpoint);
+    // Resolve the context window once for the whole turn (one metadata read),
+    // mirroring the streaming path, so post-turn compaction is computed against
+    // the selected model's window.
+    let ctx = agent_model_context_length(&gw.sqlSecret, &agent_endpoint).await;
     let api_key = session.skill_api_key.clone();
     let routes = gw
         .sqlSecret
@@ -1533,7 +1635,7 @@ pub async fn HandlePrompt(
     let messages = session.map(|s| s.model_messages).unwrap_or_default();
 
     match CallModelBackend(&messages, &endpoint, &api_key, tools_for_request, &routes).await {
-        Ok(responseText) => {
+        Ok((responseText, prompt_tokens)) => {
             let assistantMessageId = Uuid::new_v4().to_string();
             let parts = vec![Part::Text {
                 text: responseText.clone(),
@@ -1548,6 +1650,19 @@ pub async fn HandlePrompt(
             };
 
             gw.sessions.AddMessage(&sessionId, assistantMessage).await;
+
+            // Update stored token count and compact if over the selected model's
+            // post-turn threshold, mirroring the streaming path.
+            if prompt_tokens > 0 {
+                gw.sessions.UpdateTokens(&sessionId, prompt_tokens).await;
+                if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
+                    info!(
+                        "Session {} at {} prompt tokens, compacting (non-stream)",
+                        sessionId, prompt_tokens
+                    );
+                    compact_session(&gw, &sessionId, &endpoint, &api_key).await;
+                }
+            }
 
             (
                 StatusCode::OK,
@@ -1574,7 +1689,8 @@ pub async fn HandlePrompt(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(PromptResponse {
                     messageId: String::new(),
-                    content: format!("Model error: {}", e),
+                    content: classify_endpoint_dispatch_error(&e.message)
+                        .unwrap_or_else(|| format!("Model error: {}", e)),
                     parts: vec![],
                 }),
             )
@@ -1678,7 +1794,7 @@ async fn run_synthesis_retry(
                             }],
                         };
                         gw.sessions.AddMessage(session_id, retry_msg).await;
-                        if postturn_compaction_threshold().map_or(false, |t| prompt_tokens >= t) {
+                        if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
                             info!(
                                 "Session {} at {} prompt tokens, compacting after retry synthesis",
                                 session_id, prompt_tokens
@@ -1807,7 +1923,8 @@ pub async fn HandlePromptStream(
     }
 
     let tenant = session.tenant.clone();
-    let endpoint_str = agent_model_endpoint(&tenant);
+    let agent_endpoint = session.agent_endpoint.clone();
+    let endpoint_str = agent_model_endpoint(&tenant, &agent_endpoint);
     let api_key_str = session.skill_api_key.clone();
     let routes = gw
         .sqlSecret
@@ -1854,7 +1971,10 @@ pub async fn HandlePromptStream(
     gw.sessions
         .register_active_stream_cancel(&sessionId, cancel_token.clone());
 
-    let ctx = agent_model_context_length();
+    // Resolve the context window once for the whole turn (one metadata read),
+    // then thread it through first-call preflight, synthesis preflight, and
+    // post-turn compaction so the window cannot change mid-turn.
+    let ctx = agent_model_context_length(&gw.sqlSecret, &agent_endpoint).await;
     let tools_option = if routes.is_empty() {
         None
     } else {
@@ -1969,7 +2089,8 @@ pub async fn HandlePromptStream(
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({
                 "error": "model_error",
-                "message": format!("Model error: {}", error_text)
+                "message": classify_endpoint_dispatch_error(&error_text)
+                    .unwrap_or_else(|| format!("Model error: {}", error_text))
             })),
         )
             .into_response();
@@ -2469,7 +2590,7 @@ pub async fn HandlePromptStream(
                                         .AddMessage(&sessionIdClone, finalMessage)
                                         .await;
 
-                                    if postturn_compaction_threshold()
+                                    if postturn_compaction_threshold(ctx)
                                         .map_or(false, |t| prompt_tokens >= t)
                                     {
                                         info!("Session {} at {} prompt tokens, compacting after tool synthesis", sessionIdClone, prompt_tokens);
@@ -2705,7 +2826,7 @@ pub async fn HandlePromptStream(
                 .sessions
                 .UpdateTokens(&sessionIdClone, prompt_tokens)
                 .await;
-            if postturn_compaction_threshold().map_or(false, |t| prompt_tokens >= t) {
+            if postturn_compaction_threshold(ctx).map_or(false, |t| prompt_tokens >= t) {
                 info!(
                     "Session {} at {} prompt tokens, compacting",
                     sessionIdClone, prompt_tokens
@@ -2784,7 +2905,53 @@ pub async fn CreateSession(
             .into_response();
     }
 
-    let session = gw.sessions.CreateSession(tenant.clone(), req.api_key).await;
+    // Validate a selected agent endpoint against the authoritative published
+    // check (function status), not Endpoints row presence, so failures surface
+    // here at session creation rather than on the first model call. Store only
+    // the bare slug on the session; the context length is looked up live.
+    let agent_endpoint = match req.agent_endpoint.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => {
+            let normalized = raw.trim().trim_start_matches('/');
+            let normalized = normalized
+                .strip_prefix("endpoints/")
+                .unwrap_or(normalized)
+                .to_string();
+            if let Err(msg) = crate::gateway::http_gateway::validate_agent_endpoint_published(
+                &gw, &tenant, &normalized,
+            ) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid_agent_endpoint",
+                        "message": format!(
+                            "Selected model '{}' is not available: {}",
+                            normalized, msg
+                        )
+                    })),
+                )
+                    .into_response();
+            }
+            normalized
+        }
+        // The slug is mandatory: the dashboard owns the default model and always
+        // sends one. There is no gateway-side default model to fall back to, so a
+        // slug-less request is rejected rather than silently routed somewhere.
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "no_agent_model",
+                    "message": "select a model"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let session = gw
+        .sessions
+        .CreateSession(tenant.clone(), req.api_key, agent_endpoint)
+        .await;
     let tool_count = gw
         .sqlSecret
         .GetToolsForTenant(&tenant)
@@ -2826,6 +2993,26 @@ pub async fn GetSession(
         }
         Some(_) => session_forbidden_response(),
         None => (StatusCode::NOT_FOUND, "Session not found").into_response(),
+    }
+}
+
+pub async fn DeleteSession(
+    State(gw): State<HttpGateway>,
+    axum::extract::Extension(token): axum::extract::Extension<
+        std::sync::Arc<crate::gateway::auth_layer::AccessToken>,
+    >,
+    Path(sessionId): Path<String>,
+) -> impl IntoResponse {
+    let tenant = caller_tenant(&token);
+    match gw.sessions.GetSession(&sessionId).await {
+        Some(session) if session.tenant == tenant => {
+            gw.sessions.DeleteSession(&sessionId).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
+        // Per the design contract, a session not owned by the caller is treated
+        // as not found (404) — same as a missing id — rather than 403, so the
+        // delete endpoint does not reveal that another tenant's session exists.
+        _ => (StatusCode::NOT_FOUND, "Session not found").into_response(),
     }
 }
 
