@@ -142,6 +142,133 @@
             </div>
         </form>
     </div>
+
+    {% set orp = endpoint_prefill.get('openrouter', {}) %}
+    {% set is_published = endpoint_state.code == 'published' %}
+    <div class="endpoint-panel">
+        <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
+            <div>
+                <h2 style="margin: 0;">OpenRouter Listing</h2>
+                <p style="margin: 6px 0 0 0; color: #64748b;">
+                    Publish this endpoint into the flat <code>/v1/models</code> provider catalog.
+                    Separate from the InferX publish controls above &mdash; the <strong>List</strong>
+                    button validates every required field server-side before going live.
+                </p>
+            </div>
+            <div style="text-align: right; color: #475569; font-size: 13px;">
+                <div>Listed: <strong>{{ 'yes' if orp.get('or_listed') else 'no' }}</strong></div>
+                {% if orp.get('or_listed') %}
+                <div>is_ready: <strong>{{ 'true' if orp.get('or_is_ready') else 'false' }}</strong></div>
+                <div>OpenRouter slug: <strong>{{ orp.get('openrouter_slug') or '(new page)' }}</strong></div>
+                {% if orp.get('or_listed_at_display') %}<div>Listed at: {{ orp.get('or_listed_at_display') }}</div>{% endif %}
+                {% if orp.get('or_listed_by') %}<div>By: {{ orp.get('or_listed_by') }}</div>{% endif %}
+                {% endif %}
+            </div>
+        </div>
+
+        {% if not is_published %}
+        <p class="endpoint-hint" style="margin-top: 12px; color: #b45309;">
+            Publish the endpoint first &mdash; OpenRouter cannot serve a slug without an
+            <code>inferx/endpoint/{{ endpoint_slug }}</code> function.
+        </p>
+        {% endif %}
+
+        <div id="or-editor-message" class="endpoint-message" style="margin-top: 12px;"></div>
+        <form id="or-editor-form">
+            <fieldset style="border: 0; padding: 0; margin: 0;" {{ 'disabled' if not is_published }}>
+            <div class="endpoint-form-grid">
+                <label for="or_name">Display Name</label>
+                <div>
+                    <input id="or_name" type="text" value="{{ orp.get('or_name', '') }}">
+                    <div class="endpoint-hint">OpenRouter <code>name</code>. Blank &rarr; <code>"{{ endpoint_slug }} (InferX)"</code>.</div>
+                </div>
+
+                <label for="hugging_face_id">Hugging Face ID</label>
+                <div>
+                    <input id="hugging_face_id" type="text" value="{{ orp.get('hugging_face_id', '') }}" placeholder="e.g. Qwen/QwQ-32B">
+                    <div class="endpoint-hint">Join key used to auto-resolve the canonical OpenRouter page. Blank &rarr; new provider-local page.</div>
+                </div>
+
+                <label for="quantization">Quantization</label>
+                <div>
+                    <input id="quantization" type="text" value="{{ orp.get('quantization', '') }}" placeholder="bf16 / fp8 / int4">
+                    <div class="endpoint-hint">Documented OpenRouter enum value only &mdash; never guess.</div>
+                </div>
+
+                <label for="input_modalities">Input Modalities</label>
+                <div>
+                    <input id="input_modalities" type="text" value="{{ orp.get('input_modalities', '') }}" placeholder="text, image">
+                    <div class="endpoint-hint">Comma-separated. Required &mdash; leaving blank blocks listing (no silent default).</div>
+                </div>
+
+                <label for="output_modalities">Output Modalities</label>
+                <div>
+                    <input id="output_modalities" type="text" value="{{ orp.get('output_modalities', '') }}" placeholder="text">
+                </div>
+
+                <label for="max_output_length">Max Output Length</label>
+                <div>
+                    <input id="max_output_length" type="number" step="1" value="{{ orp.get('max_output_length', '') }}">
+                </div>
+
+                <label for="pricing">Pricing (JSON)</label>
+                <div>
+                    <textarea id="pricing" placeholder='{ "prompt": "0.0000004", "completion": "0.0000012" }'>{{ orp.get('pricing', '') }}</textarea>
+                    <div class="endpoint-hint">USD-per-token strings. Single object or array of up to 2 tiers.</div>
+                </div>
+
+                <label for="discount_to_user">Discount to User</label>
+                <div>
+                    <input id="discount_to_user" type="number" step="0.0001" value="{{ orp.get('discount_to_user', '') }}">
+                    <div class="endpoint-hint">Optional. <code>user_price = base &times; (1 &minus; discount)</code>.</div>
+                </div>
+
+                <label for="supported_sampling_parameters">Sampling Parameters</label>
+                <div>
+                    <input id="supported_sampling_parameters" type="text" value="{{ orp.get('supported_sampling_parameters', '') }}" placeholder="temperature, top_p, stop, max_tokens, seed">
+                    <div class="endpoint-hint">Comma-separated.</div>
+                </div>
+
+                <label for="supported_features">Supported Features</label>
+                <div>
+                    <input id="supported_features" type="text" value="{{ orp.get('supported_features', '') }}" placeholder="tools, json_mode">
+                    <div class="endpoint-hint">Comma-separated. Empty list allowed if genuinely none.</div>
+                </div>
+
+                <label for="or_slug_override">OpenRouter Slug Override</label>
+                <div>
+                    <input id="or_slug_override" type="text" value="{{ orp.get('or_slug_override', '') }}" placeholder="qwen/qwq-32b">
+                    <div class="endpoint-hint">Pins the canonical page; wins over auto-resolution. Leave blank to auto-resolve.</div>
+                </div>
+
+                <label for="or_deprecation_date">Deprecation Date</label>
+                <div>
+                    <input id="or_deprecation_date" type="date" value="{{ orp.get('or_deprecation_date', '') }}">
+                    <div class="endpoint-hint">Optional planned-sunset date sent with Take offline.</div>
+                </div>
+            </div>
+
+            <div class="endpoint-actions">
+                <button type="button" class="ix-btn secondary" onclick="submitOpenRouter('save')">Save listing fields</button>
+                {% if not orp.get('or_listed') %}
+                <button type="button" class="ix-btn" onclick="submitOpenRouter('list')">List on OpenRouter</button>
+                {% elif orp.get('or_is_ready') == false %}
+                {# Step 2: offline + drained → Delist is now allowed (§4.3.2). #}
+                <button type="button" class="ix-btn" onclick="submitOpenRouter('unlist')">Delist</button>
+                {% else %}
+                {# Step 1: live → only Take offline is offered (no hard delist). #}
+                <button type="button" class="ix-btn" onclick="submitOpenRouter('offline')">Take offline</button>
+                {% endif %}
+            </div>
+            {% if orp.get('or_listed') and orp.get('or_is_ready') == false %}
+            <p class="endpoint-hint" style="margin-top: 8px; color: #b45309;">
+                This model is <strong>offline</strong> (is_ready=false) and still listed for draining.
+                Delist once OpenRouter has confirmed traffic has drained.
+            </p>
+            {% endif %}
+            </fieldset>
+        </form>
+    </div>
 </section>
 
 {% include '_metadata_picker_script.html' %}
@@ -219,6 +346,79 @@
             }, 500);
         } catch (err) {
             setEndpointEditorMessage('error', err.message || String(err));
+        }
+    }
+
+    function splitCommaList(value) {
+        return (value || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s !== '');
+    }
+
+    function openRouterPayload() {
+        return {
+            or_name: (document.getElementById('or_name')?.value || '').trim(),
+            hugging_face_id: (document.getElementById('hugging_face_id')?.value || '').trim(),
+            quantization: (document.getElementById('quantization')?.value || '').trim(),
+            input_modalities: splitCommaList(document.getElementById('input_modalities')?.value),
+            output_modalities: splitCommaList(document.getElementById('output_modalities')?.value),
+            max_output_length: (document.getElementById('max_output_length')?.value || '').trim(),
+            // raw JSON text; the server parses and validates it
+            pricing: (document.getElementById('pricing')?.value || '').trim(),
+            discount_to_user: (document.getElementById('discount_to_user')?.value || '').trim(),
+            supported_sampling_parameters: splitCommaList(document.getElementById('supported_sampling_parameters')?.value),
+            supported_features: splitCommaList(document.getElementById('supported_features')?.value),
+            or_slug_override: (document.getElementById('or_slug_override')?.value || '').trim(),
+        };
+    }
+
+    function setOpenRouterMessage(kind, text) {
+        const el = document.getElementById('or-editor-message');
+        if (!el) return;
+        el.className = `endpoint-message ${kind}`;
+        el.textContent = text || '';
+    }
+
+    const openRouterUrls = {
+        save: {{ url_for('prefix.EndpointAdminSaveOpenRouter', slug=endpoint_slug)|tojson }},
+        list: {{ url_for('prefix.EndpointAdminListOpenRouter', slug=endpoint_slug)|tojson }},
+        offline: {{ url_for('prefix.EndpointAdminTakeOfflineOpenRouter', slug=endpoint_slug)|tojson }},
+        unlist: {{ url_for('prefix.EndpointAdminUnlistOpenRouter', slug=endpoint_slug)|tojson }},
+    };
+
+    async function submitOpenRouter(mode) {
+        setOpenRouterMessage('', '');
+        let url = openRouterUrls[mode];
+        let method = mode === 'save' ? 'PUT' : 'POST';
+        let payload;
+        if (mode === 'save' || mode === 'list') {
+            payload = openRouterPayload();
+        } else if (mode === 'offline') {
+            payload = { deprecation_date: (document.getElementById('or_deprecation_date')?.value || '').trim() };
+        } else {
+            payload = {};
+        }
+        try {
+            const resp = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+            const messages = {
+                save: 'OpenRouter listing fields saved.',
+                list: 'Endpoint listed on OpenRouter.',
+                offline: 'Endpoint taken offline (is_ready=false).',
+                unlist: 'Endpoint delisted from OpenRouter.',
+            };
+            setOpenRouterMessage('success', messages[mode] || 'Done.');
+            if (mode !== 'save') {
+                window.setTimeout(() => { window.location.reload(); }, 600);
+            }
+        } catch (err) {
+            setOpenRouterMessage('error', err.message || String(err));
         }
     }
 </script>

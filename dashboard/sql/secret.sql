@@ -114,10 +114,32 @@ CREATE TABLE Endpoints (
     concurrency             NUMERIC(10,2),
     last_published_at       TIMESTAMPTZ,
     last_published_by       VARCHAR,
+    -- OpenRouter provider-listing metadata (§4.3.1). Modality columns are nullable
+    -- with NO default: NULL means "not set" and ListOnOpenRouter refuses to list
+    -- such a row rather than silently defaulting and mis-advertising capabilities.
+    or_name                 VARCHAR,
+    hugging_face_id         VARCHAR,
+    quantization            VARCHAR,
+    input_modalities        JSONB,
+    output_modalities       JSONB,
+    max_output_length       BIGINT,
+    pricing                 JSONB,
+    discount_to_user        NUMERIC,
+    supported_sampling_parameters JSONB,
+    supported_features      JSONB,
+    openrouter_slug         VARCHAR,
+    or_slug_override        VARCHAR,
+    -- OpenRouter listing lifecycle + audit (§4.3.2).
+    or_listed               BOOLEAN NOT NULL DEFAULT false,
+    or_is_ready             BOOLEAN,
+    or_deprecation_date     DATE,
+    or_listed_at            TIMESTAMPTZ,
+    or_listed_by            VARCHAR,
     updatetime              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_endpoints_tags ON Endpoints USING GIN (tags);
+CREATE INDEX idx_endpoints_or_listed ON Endpoints (or_listed) WHERE or_listed;
 
 CREATE TRIGGER endpoints_updatetime BEFORE UPDATE ON Endpoints
 FOR EACH ROW EXECUTE FUNCTION set_updatetime();

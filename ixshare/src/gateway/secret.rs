@@ -87,6 +87,128 @@ pub struct EndpointMetadata {
     pub concurrency: Option<f64>,
 }
 
+/// Operator-authored OpenRouter listing metadata persisted on the Endpoints row
+/// and emitted by the flat `GET /v1/models` adapter (§4.3.1). This is the editable
+/// field group from the admin "OpenRouter listing" section; the listing/lifecycle
+/// state (`or_listed`, `or_is_ready`, audit) is set by the list/unlist ops, not here.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct EndpointOpenRouterMetadata {
+    pub or_name: Option<String>,
+    pub hugging_face_id: Option<String>,
+    pub quantization: Option<String>,
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
+    #[serde(default)]
+    pub output_modalities: Option<Vec<String>>,
+    pub max_output_length: Option<i64>,
+    /// OpenRouter `pricing`: a single object or an array of up to 2 tiers (§4.4).
+    pub pricing: Option<serde_json::Value>,
+    pub discount_to_user: Option<f64>,
+    #[serde(default)]
+    pub supported_sampling_parameters: Option<Vec<String>>,
+    #[serde(default)]
+    pub supported_features: Option<Vec<String>>,
+    /// Operator-pinned OpenRouter slug; wins over auto-resolution (§4.1.1).
+    pub or_slug_override: Option<String>,
+}
+
+/// A fully-resolved endpoint row eligible for `/v1/models` (or_listed = true).
+/// Carries everything the adapter needs to emit one OpenRouter catalog entry.
+#[derive(Debug, Clone)]
+pub struct ListedEndpoint {
+    pub slug: String,
+    pub or_name: Option<String>,
+    pub hugging_face_id: Option<String>,
+    pub quantization: Option<String>,
+    pub input_modalities: Option<Vec<String>>,
+    pub output_modalities: Option<Vec<String>>,
+    pub context_length: Option<i64>,
+    pub max_output_length: Option<i64>,
+    pub pricing: Option<serde_json::Value>,
+    pub discount_to_user: Option<f64>,
+    pub supported_sampling_parameters: Option<Vec<String>>,
+    pub supported_features: Option<Vec<String>>,
+    pub openrouter_slug: Option<String>,
+    pub or_slug_override: Option<String>,
+    pub or_listed: bool,
+    pub or_is_ready: Option<bool>,
+    pub or_deprecation_date: Option<chrono::NaiveDate>,
+    pub last_published_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub or_listed_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Column list shared by the single-row and listing reads. `discount_to_user` is
+/// cast to float8 because the build's sqlx has no decimal feature (NUMERIC can't
+/// decode to f64 directly).
+const ENDPOINT_LISTING_SELECT_COLUMNS: &str = r#"
+    SELECT
+        slug,
+        or_name,
+        hugging_face_id,
+        quantization,
+        input_modalities,
+        output_modalities,
+        context_length,
+        max_output_length,
+        pricing,
+        discount_to_user::float8 AS discount_to_user,
+        supported_sampling_parameters,
+        supported_features,
+        openrouter_slug,
+        or_slug_override,
+        or_listed,
+        or_is_ready,
+        or_deprecation_date,
+        last_published_at,
+        or_listed_at
+    FROM Endpoints
+"#;
+
+fn opt_string_vec_to_json(v: &Option<Vec<String>>) -> Option<serde_json::Value> {
+    v.as_ref().map(|items| serde_json::json!(items))
+}
+
+fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
+    let read_vec = |col: &str| -> Option<Vec<String>> {
+        let v: Option<serde_json::Value> = row.try_get(col).ok().flatten();
+        v.and_then(|val| serde_json::from_value(val).ok())
+    };
+    ListedEndpoint {
+        slug: row.try_get("slug").unwrap_or_default(),
+        or_name: row.try_get::<Option<String>, _>("or_name").ok().flatten(),
+        hugging_face_id: row.try_get::<Option<String>, _>("hugging_face_id").ok().flatten(),
+        quantization: row.try_get::<Option<String>, _>("quantization").ok().flatten(),
+        input_modalities: read_vec("input_modalities"),
+        output_modalities: read_vec("output_modalities"),
+        context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
+        max_output_length: row.try_get::<Option<i64>, _>("max_output_length").ok().flatten(),
+        pricing: row.try_get::<Option<serde_json::Value>, _>("pricing").ok().flatten(),
+        discount_to_user: row.try_get::<Option<f64>, _>("discount_to_user").ok().flatten(),
+        supported_sampling_parameters: read_vec("supported_sampling_parameters"),
+        supported_features: read_vec("supported_features"),
+        openrouter_slug: row.try_get::<Option<String>, _>("openrouter_slug").ok().flatten(),
+        or_slug_override: row.try_get::<Option<String>, _>("or_slug_override").ok().flatten(),
+        or_listed: row
+            .try_get::<Option<bool>, _>("or_listed")
+            .ok()
+            .flatten()
+            .unwrap_or(false),
+        or_is_ready: row.try_get::<Option<bool>, _>("or_is_ready").ok().flatten(),
+        or_deprecation_date: row
+            .try_get::<Option<chrono::NaiveDate>, _>("or_deprecation_date")
+            .ok()
+            .flatten(),
+        last_published_at: row
+            .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_published_at")
+            .ok()
+            .flatten(),
+        or_listed_at: row
+            .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("or_listed_at")
+            .ok()
+            .flatten(),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct SkillTemplate {
     pub template_id: i64,
@@ -1055,6 +1177,164 @@ impl SqlSecret {
             .execute(&self.pool)
             .await?;
 
+        Ok(())
+    }
+
+    /// Persist the operator-authored OpenRouter listing metadata (§4.3.1) onto an
+    /// existing published endpoint row. The OpenRouter section is gated on publish,
+    /// so the row must already exist — error otherwise rather than silently insert.
+    pub async fn SaveEndpointOpenRouterMetadata(
+        &self,
+        slug: &str,
+        meta: &EndpointOpenRouterMetadata,
+    ) -> Result<()> {
+        let query = r#"
+            UPDATE Endpoints SET
+                or_name = $2,
+                hugging_face_id = $3,
+                quantization = $4,
+                input_modalities = $5::jsonb,
+                output_modalities = $6::jsonb,
+                max_output_length = $7,
+                pricing = $8::jsonb,
+                discount_to_user = $9,
+                supported_sampling_parameters = $10::jsonb,
+                supported_features = $11::jsonb,
+                or_slug_override = $12
+            WHERE slug = $1
+        "#;
+
+        let res = sqlx::query(query)
+            .bind(slug)
+            .bind(&meta.or_name)
+            .bind(&meta.hugging_face_id)
+            .bind(&meta.quantization)
+            .bind(opt_string_vec_to_json(&meta.input_modalities))
+            .bind(opt_string_vec_to_json(&meta.output_modalities))
+            .bind(meta.max_output_length)
+            .bind(&meta.pricing)
+            .bind(meta.discount_to_user)
+            .bind(opt_string_vec_to_json(&meta.supported_sampling_parameters))
+            .bind(opt_string_vec_to_json(&meta.supported_features))
+            .bind(&meta.or_slug_override)
+            .execute(&self.pool)
+            .await?;
+
+        if res.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "endpoint {} not found (publish before editing OpenRouter listing)",
+                slug
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Read one endpoint's full OpenRouter listing row (for the list/unlist ops:
+    /// validation + slug resolution). Returns None if the slug has no row.
+    pub async fn GetEndpointForListing(&self, slug: &str) -> Result<Option<ListedEndpoint>> {
+        let query = format!(
+            "{} WHERE slug = $1",
+            ENDPOINT_LISTING_SELECT_COLUMNS
+        );
+        let row = match sqlx::query(&query)
+            .bind(slug)
+            .fetch_optional(&self.pool)
+            .await?
+        {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+        Ok(Some(listed_endpoint_from_row(&row)))
+    }
+
+    /// All endpoints currently emitted into `/v1/models` (or_listed = true).
+    pub async fn ListListedEndpoints(&self) -> Result<Vec<ListedEndpoint>> {
+        let query = format!(
+            "{} WHERE or_listed = true ORDER BY slug ASC",
+            ENDPOINT_LISTING_SELECT_COLUMNS
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        Ok(rows.iter().map(listed_endpoint_from_row).collect())
+    }
+
+    /// Flip an endpoint live on OpenRouter (§4.3.2): set or_listed=true, record the
+    /// resolved canonical slug, and stamp the audit columns. `or_is_ready` is set to
+    /// true so OpenRouter runs its baseline tests and stages the endpoint.
+    pub async fn SetEndpointListed(
+        &self,
+        slug: &str,
+        openrouter_slug: Option<&str>,
+        listed_by: &str,
+    ) -> Result<()> {
+        let query = r#"
+            UPDATE Endpoints SET
+                or_listed = true,
+                or_is_ready = true,
+                or_deprecation_date = NULL,
+                openrouter_slug = $2,
+                or_listed_at = NOW(),
+                or_listed_by = $3
+            WHERE slug = $1
+        "#;
+        let res = sqlx::query(query)
+            .bind(slug)
+            .bind(openrouter_slug)
+            .bind(listed_by)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotExist(format!("endpoint {} not found", slug)));
+        }
+        Ok(())
+    }
+
+    /// Step 1 of graceful delist (§4.3.2): take a still-listed endpoint offline by
+    /// emitting `is_ready:false` (+ optional planned deprecation date). The row is
+    /// still listed so OpenRouter can drain in coordination.
+    pub async fn SetEndpointOpenRouterReady(
+        &self,
+        slug: &str,
+        ready: bool,
+        deprecation_date: Option<chrono::NaiveDate>,
+    ) -> Result<()> {
+        let query = r#"
+            UPDATE Endpoints SET
+                or_is_ready = $2,
+                or_deprecation_date = COALESCE($3, or_deprecation_date)
+            WHERE slug = $1 AND or_listed = true
+        "#;
+        let res = sqlx::query(query)
+            .bind(slug)
+            .bind(ready)
+            .bind(deprecation_date)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotExist(format!(
+                "endpoint {} is not currently listed on OpenRouter",
+                slug
+            )));
+        }
+        Ok(())
+    }
+
+    /// Step 2 of graceful delist (§4.3.2): drop the row from `/v1/models` after
+    /// drain.
+    pub async fn SetEndpointUnlisted(&self, slug: &str) -> Result<()> {
+        let query = r#"
+            UPDATE Endpoints SET
+                or_listed = false,
+                or_is_ready = false
+            WHERE slug = $1
+        "#;
+        let res = sqlx::query(query)
+            .bind(slug)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotExist(format!("endpoint {} not found", slug)));
+        }
         Ok(())
     }
 

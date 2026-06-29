@@ -100,7 +100,8 @@ use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
-use super::secret::{EndpointMetadata, SkillDetail, SqlSecret};
+use super::http_gw::BuildOpenRouterModelEntry;
+use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
 use super::skill_chain::{
     extract_is_child_request, handle_skill_call_chain, SkillChatCompletionsWireRequest,
     SkillInvocationContext, SKILL_CHAIN_DEPTH_HEADER,
@@ -1132,6 +1133,23 @@ impl HttpGateway {
             .route("/admin/endpoints/:slug/metadata", put(SaveEndpointMetadata))
             .route("/admin/endpoints/:slug/publish", post(PublishEndpoint))
             .route("/admin/endpoints/:slug/unpublish", post(UnpublishEndpoint))
+            .route(
+                "/admin/endpoints/:slug/openrouter",
+                put(SaveEndpointOpenRouterMetadata),
+            )
+            .route(
+                "/admin/endpoints/:slug/openrouter/list",
+                post(ListOnOpenRouter),
+            )
+            .route(
+                "/admin/endpoints/:slug/openrouter/offline",
+                post(TakeOfflineOnOpenRouter),
+            )
+            .route(
+                "/admin/endpoints/:slug/openrouter/unlist",
+                post(UnlistFromOpenRouter),
+            )
+            .route("/v1/models", get(OpenRouterModels))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -4068,6 +4086,127 @@ async fn UnpublishEndpoint(
         }
         Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
     }
+}
+
+fn endpoint_admin_ok_response() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Body::from("ok"))
+        .unwrap()
+}
+
+async fn SaveEndpointOpenRouterMetadata(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+    Json(metadata): Json<EndpointOpenRouterMetadata>,
+) -> SResult<Response, StatusCode> {
+    match gw
+        .SaveEndpointOpenRouterMetadata(&token, &slug, &metadata)
+        .await
+    {
+        Ok(()) => Ok(endpoint_admin_ok_response()),
+        Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
+    }
+}
+
+async fn ListOnOpenRouter(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+) -> SResult<Response, StatusCode> {
+    match gw.ListOnOpenRouter(&token, &slug).await {
+        Ok(()) => Ok(endpoint_admin_ok_response()),
+        Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
+    }
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TakeOfflineRequest {
+    #[serde(default)]
+    deprecation_date: Option<String>,
+}
+
+async fn TakeOfflineOnOpenRouter(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+    Json(req): Json<TakeOfflineRequest>,
+) -> SResult<Response, StatusCode> {
+    let deprecation_date = match req.deprecation_date.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => {
+            match chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                Ok(d) => Some(d),
+                Err(_) => {
+                    return Ok(error_response_for_endpoint_admin_action(Error::CommonError(
+                        format!("invalid deprecation_date {:?}; expected YYYY-MM-DD", s),
+                    )));
+                }
+            }
+        }
+        _ => None,
+    };
+    match gw
+        .TakeOfflineOnOpenRouter(&token, &slug, deprecation_date)
+        .await
+    {
+        Ok(()) => Ok(endpoint_admin_ok_response()),
+        Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
+    }
+}
+
+async fn UnlistFromOpenRouter(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+) -> SResult<Response, StatusCode> {
+    match gw.UnlistFromOpenRouter(&token, &slug).await {
+        Ok(()) => Ok(endpoint_admin_ok_response()),
+        Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
+    }
+}
+
+/// Flat provider catalog (§4.2, G1/G2). Emits the OpenRouter-required schema for
+/// every endpoint with `or_listed = true`, read from Postgres (not etcd). Requires
+/// a key with inference access to `inferx/endpoint` (§4.7). `or_listed` is the
+/// source of truth: rows are emitted verbatim and only leave the catalog through the
+/// offline/delist lifecycle (§4.3.2) — `ListOnOpenRouter` and the save guard keep a
+/// listed row valid, so the read path does not silently drop entries.
+async fn OpenRouterModels(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsNamespaceInferenceUser(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE) {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("unauthorized"))
+            .unwrap());
+    }
+
+    let rows = match gw.sqlSecret.ListListedEndpoints().await {
+        Ok(rows) => rows,
+        Err(e) => {
+            return Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(format!("service failure: list models failed {:?}", e)))
+                .unwrap());
+        }
+    };
+
+    let data: Vec<Value> = rows.iter().map(BuildOpenRouterModelEntry).collect();
+
+    let response_body = serde_json::json!({ "data": data });
+    let bytes = match serde_json::to_vec(&response_body) {
+        Ok(b) => b,
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 fn error_response_for_endpoint_admin_action(err: Error) -> Response {
