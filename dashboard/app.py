@@ -4688,6 +4688,8 @@ ENDPOINT_ENTRY_SELECT_COLUMNS = """
         supported_sampling_parameters,
         supported_features,
         openrouter_slug,
+        capacity_tpm,
+        datacenters,
         or_listed,
         or_is_ready,
         or_deprecation_date,
@@ -4739,6 +4741,7 @@ def normalize_endpoint_row(row):
         "supported_sampling_parameters",
         "supported_features",
         "pricing",
+        "datacenters",
     ):
         if key in entry:
             entry[key] = normalize_catalog_json_field(entry.get(key))
@@ -4757,12 +4760,22 @@ def normalize_endpoint_row(row):
         except Exception:
             entry["max_output_length"] = None
 
+    capacity_tpm = entry.get("capacity_tpm")
+    if capacity_tpm is not None:
+        try:
+            entry["capacity_tpm"] = int(capacity_tpm)
+        except Exception:
+            entry["capacity_tpm"] = None
+
     entry["or_listed"] = bool(entry.get("or_listed"))
     if entry.get("or_is_ready") is not None:
         entry["or_is_ready"] = bool(entry.get("or_is_ready"))
 
+    # or_deprecation_date is now TIMESTAMPTZ (was DATE). Normalize like the other
+    # timestamp columns so it round-trips a full instant rather than a bare date.
     dep = entry.get("or_deprecation_date")
-    entry["or_deprecation_date"] = "" if dep is None else str(dep)
+    entry["or_deprecation_date_display"] = format_catalog_datetime(dep)
+    entry["or_deprecation_date"] = normalize_catalog_datetime_value(dep)
     entry["or_listed_at_display"] = format_catalog_datetime(entry.get("or_listed_at"))
     entry["or_listed_at"] = normalize_catalog_datetime_value(entry.get("or_listed_at"))
     return entry
@@ -5417,6 +5430,25 @@ def _or_optional_pricing(value):
     return parsed
 
 
+def _or_optional_datacenters(value):
+    # OpenRouter `datacenters`: a JSON array of { "country_code": "US" } objects
+    # (ISO 3166-1 alpha-2). Optional — NULL when blank.
+    if value in (None, ""):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            raise ValueError("`datacenters` must be valid JSON")
+    if not isinstance(parsed, list):
+        raise ValueError("`datacenters` must be a JSON array of { \"country_code\": .. } objects")
+    for item in parsed:
+        if not isinstance(item, dict) or not str(item.get("country_code", "")).strip():
+            raise ValueError("each `datacenters` entry must have a non-empty `country_code`")
+    return parsed
+
+
 def _or_optional_number(value, field_name):
     if value in (None, ""):
         return None
@@ -5468,6 +5500,11 @@ def endpoint_openrouter_payload_from_prefill(data):
         # The single editable, catalog-validated attach slug. A changed value is
         # validated by the gateway on Save before it is persisted.
         "openrouter_slug": _or_optional_string(entry.get("openrouter_slug")),
+        # Optional OpenRouter catalog metadata.
+        "capacity_tpm": _or_optional_int(entry.get("capacity_tpm"), "capacity_tpm"),
+        "datacenters": _or_optional_datacenters(entry.get("datacenters")),
+        # UTC RFC 3339 instant; None when blank.
+        "or_deprecation_date": _or_optional_string(entry.get("or_deprecation_date")),
     }
 
 
@@ -5729,6 +5766,21 @@ def build_endpoint_openrouter_prefill(existing_entry, platform_commands=None):
 
     discount = src.get("discount_to_user")
     max_out = src.get("max_output_length")
+    capacity_tpm = src.get("capacity_tpm")
+
+    # datacenters: stored JSON list of { "country_code": ".." }. Pretty-print for the
+    # JSON textarea, mirroring how pricing is prefilled.
+    datacenters = src.get("datacenters")
+    if datacenters in (None, ""):
+        datacenters_text = ""
+    else:
+        try:
+            datacenters_text = json.dumps(datacenters, indent=2)
+        except Exception:
+            datacenters_text = ""
+
+    # UTC ISO timestamp; the picker converts UTC<->local (see data-utc).
+    dep_utc_iso = str(src.get("or_deprecation_date", "") or "").strip()
 
     # hugging_face_id: stored value, else derive from the func's `--model` (the actual
     # weights the pod loads) when it has the HF `author/name` shape. Cheap — reads the
@@ -5764,9 +5816,11 @@ def build_endpoint_openrouter_prefill(existing_entry, platform_commands=None):
         "supported_sampling_parameters": join_list(src.get("supported_sampling_parameters")),
         "supported_features": join_list(src.get("supported_features")),
         "openrouter_slug": str(src.get("openrouter_slug", "") or "").strip(),
+        "capacity_tpm": "" if capacity_tpm in (None, "") else int(capacity_tpm),
+        "datacenters": datacenters_text,
         "or_listed": bool(src.get("or_listed")),
         "or_is_ready": src.get("or_is_ready"),
-        "or_deprecation_date": str(src.get("or_deprecation_date", "") or "").strip(),
+        "or_deprecation_date": dep_utc_iso,
         "or_listed_at_display": str(src.get("or_listed_at_display", "") or "").strip(),
         "or_listed_by": str(src.get("or_listed_by", "") or "").strip(),
     }
@@ -8053,6 +8107,8 @@ def EndpointAdminDetail(slug):
         detail = load_live_endpoint_detail(slug)
         entry = detail["entry"]
         endpoint_state = detail["endpoint_state"]
+        metadata_entry = detail["metadata_entry"]
+        platform_detail = detail["platform_detail"]
     except LookupError:
         return render_resource_unavailable_page(
             resource_kind="Endpoint",
@@ -8100,6 +8156,11 @@ def EndpointAdminDetail(slug):
         endpoint_funcspec = json.dumps(project_func_for_edit(entry.get("platform_detail"))["spec"], indent=4)
     except Exception:
         endpoint_funcspec = ""
+
+    platform_spec = (((platform_detail or {}).get("func") or {}).get("object") or {}).get("spec")
+    platform_commands = platform_spec.get("commands") if isinstance(platform_spec, dict) else []
+    endpoint_openrouter = build_endpoint_openrouter_prefill(metadata_entry, platform_commands)
+
     return render_template(
         "endpoint_detail.html",
         endpoint_entry=entry,
@@ -8124,6 +8185,8 @@ def EndpointAdminDetail(slug):
         endpoint_tenant_href=dashboard_href("prefix.EndpointDetail", slug=slug, view="tenant"),
         endpoint_state=endpoint_state,
         endpoint_funcspec=endpoint_funcspec,
+        endpoint_openrouter=endpoint_openrouter,
+        endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
     )
 
 
@@ -8158,9 +8221,45 @@ def EndpointAdminEdit(slug):
         endpoint_prefill=prefill,
         endpoint_catalog_entry=catalog_entry,
         endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
+        endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
         endpoint_state=endpoint_state,
         catalog_tag_groups=CATALOG_TAG_GROUPS,
         catalog_use_case_groups=CATALOG_RECOMMENDED_USE_CASE_GROUPS,
+    )
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/edit", methods=["GET"])
+@require_login
+@require_admin
+def EndpointAdminOpenRouterEdit(slug):
+    try:
+        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False)
+        existing_entry = detail["metadata_entry"]
+        platform_detail = detail["platform_detail"]
+    except LookupError:
+        return render_resource_unavailable_page(
+            resource_kind="Endpoint",
+            resource_name=slug,
+            tenant="inferx",
+            namespace="endpoint",
+            message="This platform endpoint is no longer available.",
+            suggestion="It may have been removed or renamed.",
+            primary_href=dashboard_href("prefix.EndpointList", view="admin"),
+            primary_label="Back to Endpoints",
+            status=404,
+        )
+    except Exception as e:
+        return json_error(f"failed to load OpenRouter editor for `{slug}`: {e}", 500)
+
+    platform_spec = (((platform_detail or {}).get("func") or {}).get("object") or {}).get("spec")
+    platform_commands = platform_spec.get("commands") if isinstance(platform_spec, dict) else []
+    orp = build_endpoint_openrouter_prefill(existing_entry, platform_commands)
+
+    return render_template(
+        "endpoint_openrouter_edit.html",
+        endpoint_slug=slug,
+        orp=orp,
+        endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
     )
 
 
@@ -8281,10 +8380,8 @@ def EndpointAdminListOpenRouter(slug):
 @require_login
 @require_admin
 def EndpointAdminTakeOfflineOpenRouter(slug):
-    req = request.get_json(silent=True) or {}
-    body = {"deprecation_date": str(req.get("deprecation_date", "") or "").strip()}
     try:
-        proxy_gateway_endpoint_openrouter_action("offline", slug, body=body)
+        proxy_gateway_endpoint_openrouter_action("offline", slug)
     except Exception as e:
         return json_error(f"failed to take endpoint offline on OpenRouter: {e}", 502)
     return jsonify({"slug": slug, "or_is_ready": False})

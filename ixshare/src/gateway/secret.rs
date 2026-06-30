@@ -116,6 +116,13 @@ pub struct EndpointOpenRouterMetadata {
     /// draft save means "leave as-is" semantics are applied by the gateway: a changed
     /// value is validated against the live catalog before it is persisted.
     pub openrouter_slug: Option<String>,
+    /// Optional OpenRouter `capacity_tpm`: input tokens/minute capacity for this model.
+    pub capacity_tpm: Option<i64>,
+    /// Optional OpenRouter `datacenters`: list of `{ "country_code": "US" }` entries
+    /// (ISO 3166-1 alpha-2). Stored verbatim as JSON.
+    pub datacenters: Option<serde_json::Value>,
+    /// Optional OpenRouter `deprecation_date`. Catalog metadata, saved only via Save.
+    pub or_deprecation_date: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// A fully-resolved endpoint row eligible for `/v1/models` (or_listed = true).
@@ -135,9 +142,11 @@ pub struct ListedEndpoint {
     pub supported_sampling_parameters: Option<Vec<String>>,
     pub supported_features: Option<Vec<String>>,
     pub openrouter_slug: Option<String>,
+    pub capacity_tpm: Option<i64>,
+    pub datacenters: Option<serde_json::Value>,
     pub or_listed: bool,
     pub or_is_ready: Option<bool>,
-    pub or_deprecation_date: Option<chrono::NaiveDate>,
+    pub or_deprecation_date: Option<chrono::DateTime<chrono::Utc>>,
     pub last_published_at: Option<chrono::DateTime<chrono::Utc>>,
     pub or_listed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -160,6 +169,8 @@ const ENDPOINT_LISTING_SELECT_COLUMNS: &str = r#"
         supported_sampling_parameters,
         supported_features,
         openrouter_slug,
+        capacity_tpm,
+        datacenters,
         or_listed,
         or_is_ready,
         or_deprecation_date,
@@ -191,6 +202,8 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
         supported_sampling_parameters: read_vec("supported_sampling_parameters"),
         supported_features: read_vec("supported_features"),
         openrouter_slug: row.try_get::<Option<String>, _>("openrouter_slug").ok().flatten(),
+        capacity_tpm: row.try_get::<Option<i64>, _>("capacity_tpm").ok().flatten(),
+        datacenters: row.try_get::<Option<serde_json::Value>, _>("datacenters").ok().flatten(),
         or_listed: row
             .try_get::<Option<bool>, _>("or_listed")
             .ok()
@@ -198,7 +211,7 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
             .unwrap_or(false),
         or_is_ready: row.try_get::<Option<bool>, _>("or_is_ready").ok().flatten(),
         or_deprecation_date: row
-            .try_get::<Option<chrono::NaiveDate>, _>("or_deprecation_date")
+            .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("or_deprecation_date")
             .ok()
             .flatten(),
         last_published_at: row
@@ -1213,9 +1226,12 @@ impl SqlSecret {
                 discount_to_user,
                 supported_sampling_parameters,
                 supported_features,
-                openrouter_slug
+                openrouter_slug,
+                capacity_tpm,
+                datacenters,
+                or_deprecation_date
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11, $12::jsonb, $13::jsonb, $14
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11, $12::jsonb, $13::jsonb, $14, $15, $16::jsonb, $17
             )
             ON CONFLICT (slug)
             DO UPDATE SET
@@ -1230,7 +1246,10 @@ impl SqlSecret {
                 discount_to_user = EXCLUDED.discount_to_user,
                 supported_sampling_parameters = EXCLUDED.supported_sampling_parameters,
                 supported_features = EXCLUDED.supported_features,
-                openrouter_slug = EXCLUDED.openrouter_slug
+                openrouter_slug = EXCLUDED.openrouter_slug,
+                capacity_tpm = EXCLUDED.capacity_tpm,
+                datacenters = EXCLUDED.datacenters,
+                or_deprecation_date = EXCLUDED.or_deprecation_date
         "#;
 
         sqlx::query(query)
@@ -1248,6 +1267,9 @@ impl SqlSecret {
             .bind(opt_string_vec_to_json(&meta.supported_sampling_parameters))
             .bind(opt_string_vec_to_json(&meta.supported_features))
             .bind(&meta.openrouter_slug)
+            .bind(meta.capacity_tpm)
+            .bind(&meta.datacenters)
+            .bind(meta.or_deprecation_date)
             .execute(&self.pool)
             .await?;
 
@@ -1303,6 +1325,7 @@ impl SqlSecret {
     /// Flip an endpoint live on OpenRouter: set or_listed=true, record the
     /// resolved canonical slug, and stamp the audit columns. `or_is_ready` is set to
     /// true so OpenRouter runs its baseline tests and stages the endpoint.
+    /// `or_deprecation_date` is left untouched (catalog metadata owned by Save).
     pub async fn SetEndpointListed(
         &self,
         slug: &str,
@@ -1313,7 +1336,6 @@ impl SqlSecret {
             UPDATE Endpoints SET
                 or_listed = true,
                 or_is_ready = true,
-                or_deprecation_date = NULL,
                 openrouter_slug = $2,
                 or_listed_at = NOW(),
                 or_listed_by = $3
@@ -1332,24 +1354,20 @@ impl SqlSecret {
     }
 
     /// Step 1 of graceful delist: take a still-listed endpoint offline by
-    /// emitting `is_ready:false` (+ optional planned deprecation date). The row is
-    /// still listed so OpenRouter can drain in coordination.
+    /// emitting `is_ready:false`. Still listed so OpenRouter can drain.
     pub async fn SetEndpointOpenRouterReady(
         &self,
         slug: &str,
         ready: bool,
-        deprecation_date: Option<chrono::NaiveDate>,
     ) -> Result<()> {
         let query = r#"
             UPDATE Endpoints SET
-                or_is_ready = $2,
-                or_deprecation_date = COALESCE($3, or_deprecation_date)
+                or_is_ready = $2
             WHERE slug = $1 AND or_listed = true
         "#;
         let res = sqlx::query(query)
             .bind(slug)
             .bind(ready)
-            .bind(deprecation_date)
             .execute(&self.pool)
             .await?;
         if res.rows_affected() == 0 {

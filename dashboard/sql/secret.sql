@@ -128,10 +128,14 @@ CREATE TABLE Endpoints (
     supported_sampling_parameters JSONB,
     supported_features      JSONB,
     openrouter_slug         VARCHAR,
+    capacity_tpm            BIGINT,   -- optional: input tokens/minute (distinct from `concurrency`, which is request-concurrency)
+    datacenters             JSONB,    -- optional: [{ "country_code": "US" }, ...] (ISO 3166-1 alpha-2)
     -- OpenRouter listing lifecycle + audit.
     or_listed               BOOLEAN NOT NULL DEFAULT false,
     or_is_ready             BOOLEAN,
-    or_deprecation_date     DATE,
+    -- TIMESTAMPTZ, not DATE: OpenRouter's `deprecation_date` is an ISO 8601 datetime
+    -- ("date or UTC hour", e.g. 2025-06-01T15:00:00Z); DATE would truncate the hour.
+    or_deprecation_date     TIMESTAMPTZ,
     or_listed_at            TIMESTAMPTZ,
     or_listed_by            VARCHAR,
     updatetime              TIMESTAMPTZ NOT NULL DEFAULT now()

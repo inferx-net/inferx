@@ -331,6 +331,7 @@
                     {% endif %}
                     {% if is_admin_view %}
                     <th>State</th>
+                    <th>OpenRouter</th>
                     <th>Published At</th>
                     <th>Actions</th>
                     {% endif %}
@@ -386,6 +387,13 @@
                     {% if is_admin_view %}
                     {% set state = entry.get('state', {'code': 'deploying', 'label': 'Deploying'}) %}
                     <td><span class="endpoint-state {{ state.code }}">{{ state.label }}</span></td>
+                    <td>
+                        {% if entry.get('or_listed') %}
+                        <span class="endpoint-state {{ 'published' if entry.get('or_is_ready') else 'unpublished' }}">{{ 'Listed' if entry.get('or_is_ready') else 'Offline' }}</span>
+                        {% else %}
+                        <span class="endpoint-state deploying">Unlisted</span>
+                        {% endif %}
+                    </td>
                     <td class="endpoint-published-at">{{ entry.get('last_published_at_display', '') or '—' }}</td>
                     <td>
                         <div class="ix-row-actions">
@@ -403,13 +411,14 @@
                             {% else %}
                             <a class="ix-btn secondary" href="{{ url_for('prefix.EndpointAdminEdit', slug=slug) }}">Edit</a>
                             {% endif %}
+                            <a class="ix-btn secondary" href="{{ url_for('prefix.EndpointAdminOpenRouterEdit', slug=slug) }}">OpenRouter</a>
                         </div>
                     </td>
                     {% endif %}
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="{% if is_admin_view %}8{% else %}6{% endif %}" class="endpoint-empty">
+                    <td colspan="{% if is_admin_view %}9{% else %}6{% endif %}" class="endpoint-empty">
                         No endpoints are available right now.
                     </td>
                 </tr>

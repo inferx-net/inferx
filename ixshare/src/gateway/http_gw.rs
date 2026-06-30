@@ -426,17 +426,15 @@ impl HttpGateway {
     }
 
     /// Step 1 of graceful delist: take a listed endpoint offline by emitting
-    /// `is_ready:false` (+ optional planned deprecation date). Still listed so
-    /// OpenRouter drains.
+    /// `is_ready:false`. Still listed so OpenRouter drains.
     pub async fn TakeOfflineOnOpenRouter(
         &self,
         token: &Arc<AccessToken>,
         slug: &str,
-        deprecation_date: Option<chrono::NaiveDate>,
     ) -> Result<()> {
         self.EnsurePlatformEndpointAdmin(token)?;
         self.sqlSecret
-            .SetEndpointOpenRouterReady(slug, false, deprecation_date)
+            .SetEndpointOpenRouterReady(slug, false)
             .await?;
         Ok(())
     }
@@ -2634,10 +2632,20 @@ pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
         obj.insert("is_ready".into(), serde_json::json!(ready));
     }
     if let Some(dep) = row.or_deprecation_date {
+        // RFC 3339 / ISO 8601 with the UTC hour, matching OpenRouter's documented
+        // `deprecation_date` shape (e.g. 2025-06-01T15:00:00Z) — not date-only.
         obj.insert(
             "deprecation_date".into(),
-            serde_json::json!(dep.format("%Y-%m-%d").to_string()),
+            serde_json::json!(dep.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         );
+    }
+    if let Some(cap) = row.capacity_tpm {
+        obj.insert("capacity_tpm".into(), serde_json::json!(cap));
+    }
+    if let Some(dc) = &row.datacenters {
+        if !dc.is_null() {
+            obj.insert("datacenters".into(), dc.clone());
+        }
     }
 
     entry
@@ -2777,9 +2785,11 @@ fn MergeListingMetadata(
         supported_sampling_parameters: meta.supported_sampling_parameters.clone(),
         supported_features: meta.supported_features.clone(),
         openrouter_slug: meta.openrouter_slug.clone(),
+        capacity_tpm: meta.capacity_tpm,
+        datacenters: meta.datacenters.clone(),
+        or_deprecation_date: meta.or_deprecation_date,
         or_listed: existing.or_listed,
         or_is_ready: existing.or_is_ready,
-        or_deprecation_date: existing.or_deprecation_date,
         last_published_at: existing.last_published_at,
         or_listed_at: existing.or_listed_at,
     }
@@ -2804,6 +2814,8 @@ mod openrouter_tests {
             supported_sampling_parameters: Some(vec!["temperature".into()]),
             supported_features: Some(vec![]),
             openrouter_slug: Some("qwen/qwq-32b".into()),
+            capacity_tpm: None,
+            datacenters: None,
             or_listed: false,
             or_is_ready: None,
             or_deprecation_date: None,
@@ -2933,6 +2945,9 @@ mod openrouter_tests {
             supported_features: Some(vec![]),
             context_length: Some(32768),
             openrouter_slug: Some("qwen/qwq-32b".into()),
+            capacity_tpm: None,
+            datacenters: None,
+            or_deprecation_date: None,
         }
     }
 

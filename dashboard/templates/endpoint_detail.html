@@ -392,6 +392,27 @@
     {% endif %}
 
     {% if is_admin_view %}
+    {% set orp = endpoint_openrouter or {} %}
+    <section class="model-user-section">
+        <div class="section-heading-row">
+            <h3>OpenRouter Listing</h3>
+            <a class="ix-btn" href="{{ endpoint_openrouter_href }}">Manage listing</a>
+        </div>
+        <div class="endpoint-meta-grid">
+            <strong>Listed</strong><div>{{ 'yes' if orp.get('or_listed') else 'no' }}</div>
+            {% if orp.get('or_listed') %}
+            <strong>is_ready</strong><div>{{ 'true' if orp.get('or_is_ready') else 'false' }}</div>
+            <strong>OpenRouter slug</strong><div>{{ orp.get('openrouter_slug') or '(unset)' }}</div>
+            {% if orp.get('or_listed_at_display') %}<strong>Listed At</strong><div>{{ orp.get('or_listed_at_display') }}</div>{% endif %}
+            {% if orp.get('or_listed_by') %}<strong>Listed By</strong><div>{{ orp.get('or_listed_by') }}</div>{% endif %}
+            {% endif %}
+        </div>
+        <p class="status-note" style="margin: 12px 0 0 0;">
+            OpenRouter serving is gated on <strong>List</strong> (<code>or_listed</code>), decoupled from
+            InferX publish. Use <strong>Manage listing</strong> to edit fields and List / Delist / Take offline.
+        </p>
+    </section>
+
     <section class="model-user-section">
         <h3>Platform Function</h3>
         <div class="endpoint-meta-grid">

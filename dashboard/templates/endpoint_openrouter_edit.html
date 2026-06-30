@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .endpoint-editor { max-width: 980px; margin: 0 auto 32px auto; }
+    .endpoint-panel {
+        background: #fff;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        padding: 16px 18px;
+        margin-bottom: 14px;
+    }
+    .endpoint-form-grid {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 10px 12px;
+        align-items: start;
+    }
+    .endpoint-form-grid label { font-weight: 600; color: #334155; }
+    .endpoint-form-grid input,
+    .endpoint-form-grid textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 8px 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 14px;
+    }
+    .endpoint-form-grid textarea {
+        min-height: 110px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        line-height: 1.35;
+    }
+    .endpoint-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+    .endpoint-message {
+        display: none;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border-radius: 4px;
+    }
+    .endpoint-message.error { display: block; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; }
+    .endpoint-message.success { display: block; border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
+    .endpoint-hint { color: #64748b; font-size: 12px; line-height: 1.45; }
+    @media (max-width: 900px) {
+        .endpoint-form-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<section class="endpoint-editor">
+    <div class="endpoint-panel">
+        <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
+            <div>
+                <h2 style="margin: 0;">Manage OpenRouter Listing</h2>
+                <p style="margin: 6px 0 0 0; color: #64748b;">For `inferx/endpoint/{{ endpoint_slug }}`. Separate from the InferX publish flow.</p>
+            </div>
+            <a class="ix-btn secondary" href="{{ endpoint_detail_href }}">Back to Endpoint</a>
+        </div>
+    </div>
+
+    {% include '_openrouter_listing.html' %}
+</section>
+{% endblock %}

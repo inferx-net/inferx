@@ -4167,35 +4167,12 @@ async fn ListOnOpenRouter(
     }
 }
 
-#[derive(serde::Deserialize, Default)]
-struct TakeOfflineRequest {
-    #[serde(default)]
-    deprecation_date: Option<String>,
-}
-
 async fn TakeOfflineOnOpenRouter(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     Path(slug): Path<String>,
-    Json(req): Json<TakeOfflineRequest>,
 ) -> SResult<Response, StatusCode> {
-    let deprecation_date = match req.deprecation_date.as_deref().map(str::trim) {
-        Some(s) if !s.is_empty() => {
-            match chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-                Ok(d) => Some(d),
-                Err(_) => {
-                    return Ok(error_response_for_endpoint_admin_action(Error::CommonError(
-                        format!("invalid deprecation_date {:?}; expected YYYY-MM-DD", s),
-                    )));
-                }
-            }
-        }
-        _ => None,
-    };
-    match gw
-        .TakeOfflineOnOpenRouter(&token, &slug, deprecation_date)
-        .await
-    {
+    match gw.TakeOfflineOnOpenRouter(&token, &slug).await {
         Ok(()) => Ok(endpoint_admin_ok_response()),
         Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
     }
