@@ -114,7 +114,7 @@ CREATE TABLE Endpoints (
     concurrency             NUMERIC(10,2),
     last_published_at       TIMESTAMPTZ,
     last_published_by       VARCHAR,
-    -- OpenRouter provider-listing metadata (§4.3.1). Modality columns are nullable
+    -- OpenRouter provider-listing metadata. Modality columns are nullable
     -- with NO default: NULL means "not set" and ListOnOpenRouter refuses to list
     -- such a row rather than silently defaulting and mis-advertising capabilities.
     or_name                 VARCHAR,
@@ -128,8 +128,7 @@ CREATE TABLE Endpoints (
     supported_sampling_parameters JSONB,
     supported_features      JSONB,
     openrouter_slug         VARCHAR,
-    or_slug_override        VARCHAR,
-    -- OpenRouter listing lifecycle + audit (§4.3.2).
+    -- OpenRouter listing lifecycle + audit.
     or_listed               BOOLEAN NOT NULL DEFAULT false,
     or_is_ready             BOOLEAN,
     or_deprecation_date     DATE,

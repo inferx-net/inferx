@@ -1138,6 +1138,10 @@ impl HttpGateway {
                 put(SaveEndpointOpenRouterMetadata),
             )
             .route(
+                "/admin/endpoints/:slug/openrouter/suggest",
+                post(SuggestEndpointOpenRouterSlug),
+            )
+            .route(
                 "/admin/endpoints/:slug/openrouter/list",
                 post(ListOnOpenRouter),
             )
@@ -1150,6 +1154,8 @@ impl HttpGateway {
                 post(UnlistFromOpenRouter),
             )
             .route("/v1/models", get(OpenRouterModels))
+            .route("/v1/chat/completions", post(OpenRouterChatCompletions))
+            .route("/v1/completions", post(OpenRouterChatCompletions))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -4106,9 +4112,48 @@ async fn SaveEndpointOpenRouterMetadata(
         .SaveEndpointOpenRouterMetadata(&token, &slug, &metadata)
         .await
     {
-        Ok(()) => Ok(endpoint_admin_ok_response()),
+        // Non-blocking slug warnings (HF-mismatch / `:free`) ride back in the body so
+        // the caller can surface them and gate the auto-list on an explicit acknowledge.
+        Ok(warnings) => {
+            let body = serde_json::json!({ "saved": true, "warnings": warnings });
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+                .unwrap())
+        }
         Err(e) => Ok(error_response_for_endpoint_admin_action(e)),
     }
+}
+
+#[derive(serde::Deserialize, Default)]
+struct SuggestSlugRequest {
+    #[serde(default)]
+    hugging_face_id: Option<String>,
+}
+
+/// Suggestion/auto path exposed for the editor's "Suggest from HF ID" action. Takes
+/// the HF id as a request parameter (from the live form, NOT the DB row — a first
+/// listing has no stored HF id). Best-effort: returns the resolved slug or null; never
+/// errors, so the dialog degrades to manual entry on no-match / ambiguity / fetch fail.
+async fn SuggestEndpointOpenRouterSlug(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+    Json(req): Json<SuggestSlugRequest>,
+) -> SResult<Response, StatusCode> {
+    let _ = slug;
+    if let Err(e) = gw.EnsurePlatformEndpointAdmin(&token) {
+        return Ok(error_response_for_endpoint_admin_action(e));
+    }
+    let hf_id = req.hugging_face_id.unwrap_or_default();
+    let suggestion = gw.suggest_openrouter_slug(&hf_id).await;
+    let body = serde_json::json!({ "openrouter_slug": suggestion });
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap_or_default()))
+        .unwrap())
 }
 
 async fn ListOnOpenRouter(
@@ -4167,11 +4212,11 @@ async fn UnlistFromOpenRouter(
     }
 }
 
-/// Flat provider catalog (§4.2, G1/G2). Emits the OpenRouter-required schema for
-/// every endpoint with `or_listed = true`, read from Postgres (not etcd). Requires
-/// a key with inference access to `inferx/endpoint` (§4.7). `or_listed` is the
-/// source of truth: rows are emitted verbatim and only leave the catalog through the
-/// offline/delist lifecycle (§4.3.2) — `ListOnOpenRouter` and the save guard keep a
+/// Flat provider catalog. Emits the OpenRouter-required schema for every endpoint
+/// with `or_listed = true`, read from Postgres (not etcd). Requires a key with
+/// inference access to `inferx/endpoint`. `or_listed` is the source of truth: rows
+/// are emitted verbatim and only leave the catalog through the offline/delist
+/// lifecycle — `ListOnOpenRouter` and the save guard keep a
 /// listed row valid, so the read path does not silently drop entries.
 async fn OpenRouterModels(
     Extension(token): Extension<Arc<AccessToken>>,
@@ -4207,6 +4252,66 @@ async fn OpenRouterModels(
         .header(CONTENT_TYPE, "application/json")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+/// Root OpenRouter inference entrypoint. Pulls `model` from the JSON body, gates on
+/// `or_listed`, and rewrites to `/funccall/inferx/endpoint/{model}{remainPath}` before
+/// delegating to `FuncCall1`.
+async fn OpenRouterChatCompletions(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    let remainPath = req.uri().path().to_string();
+
+    let (mut reqParts, body) = req.into_parts();
+    reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
+    let bytes = match axum::body::to_bytes(body, FUNCCALL_MAX_BODY_BYTES).await {
+        Ok(b) => b,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let mut jsonReq: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let modelName = jsonReq
+        .as_object_mut()
+        .and_then(|obj| obj.remove("model"))
+        .and_then(|val| val.as_str().map(|s| s.to_string()))
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let bytes = serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Serve only `or_listed` endpoints (regardless of `published`).
+    let or_listed = match gw.sqlSecret.GetEndpointForListing(&modelName).await {
+        Ok(Some(row)) => row.or_listed,
+        _ => false,
+    };
+    if !or_listed {
+        let body = Body::from("service failure: endpoint not found");
+        let resp = Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(body)
+            .unwrap();
+        return Ok(resp);
+    }
+
+    // Route to the physical `inferx/endpoint` namespace so RBAC matches a provider key
+    // restricted to it.
+    let finalPath = format!(
+        "/funccall/{}/{}/{}{}",
+        PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE, modelName, remainPath
+    );
+
+    let mut newReq = Request::from_parts(reqParts, Body::from(bytes));
+    *newReq.uri_mut() = Uri::try_from(finalPath).unwrap();
+    newReq
+        .headers_mut()
+        .insert("X-Inferx-Model", HeaderValue::from_str(&modelName).unwrap());
+    newReq
+        .headers_mut()
+        .insert("X-Inferx-Model-Call", HeaderValue::from_static("true"));
+
+    FuncCall1(&token, &gw, newReq).await
 }
 
 fn error_response_for_endpoint_admin_action(err: Error) -> Response {

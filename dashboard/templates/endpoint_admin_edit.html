@@ -144,7 +144,6 @@
     </div>
 
     {% set orp = endpoint_prefill.get('openrouter', {}) %}
-    {% set is_published = endpoint_state.code == 'published' %}
     <div class="endpoint-panel">
         <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
             <div>
@@ -159,23 +158,22 @@
                 <div>Listed: <strong>{{ 'yes' if orp.get('or_listed') else 'no' }}</strong></div>
                 {% if orp.get('or_listed') %}
                 <div>is_ready: <strong>{{ 'true' if orp.get('or_is_ready') else 'false' }}</strong></div>
-                <div>OpenRouter slug: <strong>{{ orp.get('openrouter_slug') or '(new page)' }}</strong></div>
+                <div>OpenRouter slug: <strong>{{ orp.get('openrouter_slug') or '(unset)' }}</strong></div>
                 {% if orp.get('or_listed_at_display') %}<div>Listed at: {{ orp.get('or_listed_at_display') }}</div>{% endif %}
                 {% if orp.get('or_listed_by') %}<div>By: {{ orp.get('or_listed_by') }}</div>{% endif %}
                 {% endif %}
             </div>
         </div>
 
-        {% if not is_published %}
-        <p class="endpoint-hint" style="margin-top: 12px; color: #b45309;">
-            Publish the endpoint first &mdash; OpenRouter cannot serve a slug without an
-            <code>inferx/endpoint/{{ endpoint_slug }}</code> function.
+        <p class="endpoint-hint" style="margin-top: 12px; color: #64748b;">
+            OpenRouter serving is gated on <strong>List</strong> (<code>or_listed</code>),
+            decoupled from InferX publish &mdash; a deployed endpoint can be listed and
+            served to OpenRouter without being published to InferX tenants.
         </p>
-        {% endif %}
 
         <div id="or-editor-message" class="endpoint-message" style="margin-top: 12px;"></div>
         <form id="or-editor-form">
-            <fieldset style="border: 0; padding: 0; margin: 0;" {{ 'disabled' if not is_published }}>
+            <fieldset style="border: 0; padding: 0; margin: 0;">
             <div class="endpoint-form-grid">
                 <label for="or_name">Display Name</label>
                 <div>
@@ -186,7 +184,7 @@
                 <label for="hugging_face_id">Hugging Face ID</label>
                 <div>
                     <input id="hugging_face_id" type="text" value="{{ orp.get('hugging_face_id', '') }}" placeholder="e.g. Qwen/QwQ-32B">
-                    <div class="endpoint-hint">Join key used to auto-resolve the canonical OpenRouter page. Blank &rarr; new provider-local page.</div>
+                    <div class="endpoint-hint"><strong>Required.</strong> Provenance + the join key for "Suggest from HF ID". Pre-filled from the func's <code>--model</code> when it has the <code>author/name</code> shape.</div>
                 </div>
 
                 <label for="quantization">Quantization</label>
@@ -204,6 +202,12 @@
                 <label for="output_modalities">Output Modalities</label>
                 <div>
                     <input id="output_modalities" type="text" value="{{ orp.get('output_modalities', '') }}" placeholder="text">
+                </div>
+
+                <label for="or_context_length">Context Length</label>
+                <div>
+                    <input id="or_context_length" type="number" step="1" value="{{ orp.get('context_length', '') }}">
+                    <div class="endpoint-hint">Required. Pre-filled from the func's <code>--max-model-len</code>; writes the base <code>context_length</code> column. Confirm or override.</div>
                 </div>
 
                 <label for="max_output_length">Max Output Length</label>
@@ -235,10 +239,14 @@
                     <div class="endpoint-hint">Comma-separated. Empty list allowed if genuinely none.</div>
                 </div>
 
-                <label for="or_slug_override">OpenRouter Slug Override</label>
+                <label for="openrouter_slug">OpenRouter Slug</label>
                 <div>
-                    <input id="or_slug_override" type="text" value="{{ orp.get('or_slug_override', '') }}" placeholder="qwen/qwq-32b">
-                    <div class="endpoint-hint">Pins the canonical page; wins over auto-resolution. Leave blank to auto-resolve.</div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input id="openrouter_slug" type="text" value="{{ orp.get('openrouter_slug', '') }}" placeholder="qwen/qwq-32b" style="flex: 1;">
+                        <button type="button" class="ix-btn secondary" onclick="suggestOpenRouterSlug()">Suggest from HF ID</button>
+                    </div>
+                    <div class="endpoint-hint">The catalog <code>id</code> this listing attaches to. A <em>changed</em> value is validated against the live OpenRouter catalog on Save (must be a real id). "Suggest from HF ID" auto-resolves it from the HF id above; clear it to re-suggest.</div>
+                    <div id="or-slug-warnings" class="endpoint-hint" style="display: none; color: #b45309; margin-top: 6px;"></div>
                 </div>
 
                 <label for="or_deprecation_date">Deprecation Date</label>
@@ -253,7 +261,7 @@
                 {% if not orp.get('or_listed') %}
                 <button type="button" class="ix-btn" onclick="submitOpenRouter('list')">List on OpenRouter</button>
                 {% elif orp.get('or_is_ready') == false %}
-                {# Step 2: offline + drained → Delist is now allowed (§4.3.2). #}
+                {# Step 2: offline + drained -> Delist is now allowed. #}
                 <button type="button" class="ix-btn" onclick="submitOpenRouter('unlist')">Delist</button>
                 {% else %}
                 {# Step 1: live → only Take offline is offered (no hard delist). #}
@@ -363,14 +371,63 @@
             quantization: (document.getElementById('quantization')?.value || '').trim(),
             input_modalities: splitCommaList(document.getElementById('input_modalities')?.value),
             output_modalities: splitCommaList(document.getElementById('output_modalities')?.value),
+            context_length: (document.getElementById('or_context_length')?.value || '').trim(),
             max_output_length: (document.getElementById('max_output_length')?.value || '').trim(),
             // raw JSON text; the server parses and validates it
             pricing: (document.getElementById('pricing')?.value || '').trim(),
             discount_to_user: (document.getElementById('discount_to_user')?.value || '').trim(),
             supported_sampling_parameters: splitCommaList(document.getElementById('supported_sampling_parameters')?.value),
             supported_features: splitCommaList(document.getElementById('supported_features')?.value),
-            or_slug_override: (document.getElementById('or_slug_override')?.value || '').trim(),
+            openrouter_slug: (document.getElementById('openrouter_slug')?.value || '').trim(),
         };
+    }
+
+    function renderSlugWarnings(warnings) {
+        const el = document.getElementById('or-slug-warnings');
+        if (!el) return;
+        // Warnings echo the (admin-supplied) slug / HF id, so build them as text nodes —
+        // never innerHTML — to avoid injecting markup into the admin page.
+        el.textContent = '';
+        if (!warnings || warnings.length === 0) {
+            el.style.display = 'none';
+            return;
+        }
+        el.style.display = 'block';
+        warnings.forEach((w) => {
+            const line = document.createElement('div');
+            line.textContent = '⚠ ' + String(w);
+            el.appendChild(line);
+        });
+    }
+
+    async function suggestOpenRouterSlug() {
+        const hfId = (document.getElementById('hugging_face_id')?.value || '').trim();
+        if (hfId === '') {
+            setOpenRouterMessage('error', 'Enter a Hugging Face ID first, then Suggest.');
+            return;
+        }
+        setOpenRouterMessage('', '');
+        try {
+            const resp = await fetch(
+                {{ url_for('prefix.EndpointAdminSuggestOpenRouter', slug=endpoint_slug)|tojson }},
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hugging_face_id: hfId }),
+                },
+            );
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+            const slug = body.openrouter_slug;
+            if (slug) {
+                document.getElementById('openrouter_slug').value = slug;
+                setOpenRouterMessage('success', `Suggested slug: ${slug}. Review, then Save / List.`);
+            } else {
+                setOpenRouterMessage('error', "Couldn't auto-suggest a slug (no unambiguous catalog match). Type a catalog id.");
+            }
+        } catch (err) {
+            setOpenRouterMessage('error', err.message || String(err));
+        }
     }
 
     function setOpenRouterMessage(kind, text) {
@@ -387,13 +444,17 @@
         unlist: {{ url_for('prefix.EndpointAdminUnlistOpenRouter', slug=endpoint_slug)|tojson }},
     };
 
-    async function submitOpenRouter(mode) {
+    async function submitOpenRouter(mode, confirm) {
         setOpenRouterMessage('', '');
+        renderSlugWarnings([]);
         let url = openRouterUrls[mode];
         let method = mode === 'save' ? 'PUT' : 'POST';
         let payload;
         if (mode === 'save' || mode === 'list') {
             payload = openRouterPayload();
+            if (mode === 'list' && confirm) {
+                payload.confirm = true;
+            }
         } else if (mode === 'offline') {
             payload = { deprecation_date: (document.getElementById('or_deprecation_date')?.value || '').trim() };
         } else {
@@ -407,19 +468,45 @@
             });
             const body = await resp.json().catch(() => ({}));
             if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+
+            const warnings = body.warnings || [];
+            renderSlugWarnings(warnings);
+
+            // Warning gate: a save-then-list whose Save returned a non-blocking warning
+            // stops before List and asks for an explicit "List anyway".
+            if (mode === 'list' && body.needs_confirm) {
+                setOpenRouterMessage('error', 'Slug warning — review below, then confirm to list.');
+                showListAnywayPrompt();
+                return;
+            }
+
             const messages = {
-                save: 'OpenRouter listing fields saved.',
+                save: warnings.length ? 'Saved with warnings (see below).' : 'OpenRouter listing fields saved.',
                 list: 'Endpoint listed on OpenRouter.',
                 offline: 'Endpoint taken offline (is_ready=false).',
                 unlist: 'Endpoint delisted from OpenRouter.',
             };
-            setOpenRouterMessage('success', messages[mode] || 'Done.');
+            setOpenRouterMessage(warnings.length && mode === 'save' ? 'error' : 'success', messages[mode] || 'Done.');
             if (mode !== 'save') {
                 window.setTimeout(() => { window.location.reload(); }, 600);
             }
         } catch (err) {
             setOpenRouterMessage('error', err.message || String(err));
         }
+    }
+
+    function showListAnywayPrompt() {
+        const el = document.getElementById('or-slug-warnings');
+        if (!el || document.getElementById('or-list-anyway-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'or-list-anyway-btn';
+        btn.className = 'ix-btn';
+        btn.style.marginTop = '8px';
+        btn.textContent = 'List anyway';
+        btn.onclick = () => { btn.remove(); submitOpenRouter('list', true); };
+        el.appendChild(document.createElement('br'));
+        el.appendChild(btn);
     }
 </script>
 {% endblock %}

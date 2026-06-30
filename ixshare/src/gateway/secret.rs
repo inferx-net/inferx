@@ -88,7 +88,7 @@ pub struct EndpointMetadata {
 }
 
 /// Operator-authored OpenRouter listing metadata persisted on the Endpoints row
-/// and emitted by the flat `GET /v1/models` adapter (§4.3.1). This is the editable
+/// and emitted by the flat `GET /v1/models` adapter. This is the editable
 /// field group from the admin "OpenRouter listing" section; the listing/lifecycle
 /// state (`or_listed`, `or_is_ready`, audit) is set by the list/unlist ops, not here.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -101,15 +101,21 @@ pub struct EndpointOpenRouterMetadata {
     #[serde(default)]
     pub output_modalities: Option<Vec<String>>,
     pub max_output_length: Option<i64>,
-    /// OpenRouter `pricing`: a single object or an array of up to 2 tiers (§4.4).
+    /// OpenRouter `pricing`: a single object or an array of up to 2 tiers.
     pub pricing: Option<serde_json::Value>,
     pub discount_to_user: Option<f64>,
     #[serde(default)]
     pub supported_sampling_parameters: Option<Vec<String>>,
     #[serde(default)]
     pub supported_features: Option<Vec<String>>,
-    /// Operator-pinned OpenRouter slug; wins over auto-resolution (§4.1.1).
-    pub or_slug_override: Option<String>,
+    /// OpenRouter-required `context_length`. Lives on the base `Endpoints.context_length`
+    /// column but is editable from the OpenRouter section (one column, two UIs) so a
+    /// from-scratch listing is self-contained — no separate base-metadata save needed.
+    pub context_length: Option<i64>,
+    /// The single editable, catalog-validated attach slug. Empty/absent on a
+    /// draft save means "leave as-is" semantics are applied by the gateway: a changed
+    /// value is validated against the live catalog before it is persisted.
+    pub openrouter_slug: Option<String>,
 }
 
 /// A fully-resolved endpoint row eligible for `/v1/models` (or_listed = true).
@@ -129,7 +135,6 @@ pub struct ListedEndpoint {
     pub supported_sampling_parameters: Option<Vec<String>>,
     pub supported_features: Option<Vec<String>>,
     pub openrouter_slug: Option<String>,
-    pub or_slug_override: Option<String>,
     pub or_listed: bool,
     pub or_is_ready: Option<bool>,
     pub or_deprecation_date: Option<chrono::NaiveDate>,
@@ -155,7 +160,6 @@ const ENDPOINT_LISTING_SELECT_COLUMNS: &str = r#"
         supported_sampling_parameters,
         supported_features,
         openrouter_slug,
-        or_slug_override,
         or_listed,
         or_is_ready,
         or_deprecation_date,
@@ -187,7 +191,6 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
         supported_sampling_parameters: read_vec("supported_sampling_parameters"),
         supported_features: read_vec("supported_features"),
         openrouter_slug: row.try_get::<Option<String>, _>("openrouter_slug").ok().flatten(),
-        or_slug_override: row.try_get::<Option<String>, _>("or_slug_override").ok().flatten(),
         or_listed: row
             .try_get::<Option<bool>, _>("or_listed")
             .ok()
@@ -1180,53 +1183,92 @@ impl SqlSecret {
         Ok(())
     }
 
-    /// Persist the operator-authored OpenRouter listing metadata (§4.3.1) onto an
-    /// existing published endpoint row. The OpenRouter section is gated on publish,
-    /// so the row must already exist — error otherwise rather than silently insert.
+    /// Persist the operator-authored OpenRouter listing metadata.
+    ///
+    /// UPSERT (decided: option a): OpenRouter serving is decoupled from publish, so the
+    /// row may not exist yet for a deployed-but-never-base-saved endpoint. Bootstrap a
+    /// minimal row keyed on `slug` + `func_revision` (from the deployed func) when
+    /// absent; otherwise update the OR fields in place. `context_length` is written from
+    /// the OR form (one column, two UIs). Base metadata (`brief_intro`, publish state,
+    /// …) stays null/default on a bootstrap. The caller has already resolved
+    /// `meta.openrouter_slug` to the value to persist (keep-existing or validated edit).
     pub async fn SaveEndpointOpenRouterMetadata(
         &self,
         slug: &str,
+        func_revision: i64,
         meta: &EndpointOpenRouterMetadata,
     ) -> Result<()> {
         let query = r#"
-            UPDATE Endpoints SET
-                or_name = $2,
-                hugging_face_id = $3,
-                quantization = $4,
-                input_modalities = $5::jsonb,
-                output_modalities = $6::jsonb,
-                max_output_length = $7,
-                pricing = $8::jsonb,
-                discount_to_user = $9,
-                supported_sampling_parameters = $10::jsonb,
-                supported_features = $11::jsonb,
-                or_slug_override = $12
-            WHERE slug = $1
+            INSERT INTO Endpoints (
+                slug,
+                func_revision,
+                or_name,
+                hugging_face_id,
+                quantization,
+                input_modalities,
+                output_modalities,
+                context_length,
+                max_output_length,
+                pricing,
+                discount_to_user,
+                supported_sampling_parameters,
+                supported_features,
+                openrouter_slug
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11, $12::jsonb, $13::jsonb, $14
+            )
+            ON CONFLICT (slug)
+            DO UPDATE SET
+                or_name = EXCLUDED.or_name,
+                hugging_face_id = EXCLUDED.hugging_face_id,
+                quantization = EXCLUDED.quantization,
+                input_modalities = EXCLUDED.input_modalities,
+                output_modalities = EXCLUDED.output_modalities,
+                context_length = EXCLUDED.context_length,
+                max_output_length = EXCLUDED.max_output_length,
+                pricing = EXCLUDED.pricing,
+                discount_to_user = EXCLUDED.discount_to_user,
+                supported_sampling_parameters = EXCLUDED.supported_sampling_parameters,
+                supported_features = EXCLUDED.supported_features,
+                openrouter_slug = EXCLUDED.openrouter_slug
         "#;
 
-        let res = sqlx::query(query)
+        sqlx::query(query)
             .bind(slug)
+            .bind(func_revision)
             .bind(&meta.or_name)
             .bind(&meta.hugging_face_id)
             .bind(&meta.quantization)
             .bind(opt_string_vec_to_json(&meta.input_modalities))
             .bind(opt_string_vec_to_json(&meta.output_modalities))
+            .bind(meta.context_length)
             .bind(meta.max_output_length)
             .bind(&meta.pricing)
             .bind(meta.discount_to_user)
             .bind(opt_string_vec_to_json(&meta.supported_sampling_parameters))
             .bind(opt_string_vec_to_json(&meta.supported_features))
-            .bind(&meta.or_slug_override)
+            .bind(&meta.openrouter_slug)
             .execute(&self.pool)
             .await?;
 
-        if res.rows_affected() == 0 {
-            return Err(Error::NotExist(format!(
-                "endpoint {} not found (publish before editing OpenRouter listing)",
-                slug
-            )));
-        }
+        Ok(())
+    }
 
+    /// Set `hugging_face_id` from the func's `--model` at publish time, but only when
+    /// the column is currently empty. Never overwrites a stored
+    /// value — a re-typed/edited HF id wins. No-op (0 rows) when already set or no row.
+    pub async fn SetEndpointHuggingFaceIdIfEmpty(&self, slug: &str, hf_id: &str) -> Result<()> {
+        let query = r#"
+            UPDATE Endpoints
+            SET hugging_face_id = $2
+            WHERE slug = $1
+              AND (hugging_face_id IS NULL OR trim(hugging_face_id) = '')
+        "#;
+        sqlx::query(query)
+            .bind(slug)
+            .bind(hf_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -1258,7 +1300,7 @@ impl SqlSecret {
         Ok(rows.iter().map(listed_endpoint_from_row).collect())
     }
 
-    /// Flip an endpoint live on OpenRouter (§4.3.2): set or_listed=true, record the
+    /// Flip an endpoint live on OpenRouter: set or_listed=true, record the
     /// resolved canonical slug, and stamp the audit columns. `or_is_ready` is set to
     /// true so OpenRouter runs its baseline tests and stages the endpoint.
     pub async fn SetEndpointListed(
@@ -1289,7 +1331,7 @@ impl SqlSecret {
         Ok(())
     }
 
-    /// Step 1 of graceful delist (§4.3.2): take a still-listed endpoint offline by
+    /// Step 1 of graceful delist: take a still-listed endpoint offline by
     /// emitting `is_ready:false` (+ optional planned deprecation date). The row is
     /// still listed so OpenRouter can drain in coordination.
     pub async fn SetEndpointOpenRouterReady(
@@ -1319,7 +1361,7 @@ impl SqlSecret {
         Ok(())
     }
 
-    /// Step 2 of graceful delist (§4.3.2): drop the row from `/v1/models` after
+    /// Step 2 of graceful delist: drop the row from `/v1/models` after
     /// drain.
     pub async fn SetEndpointUnlisted(&self, slug: &str) -> Result<()> {
         let query = r#"
