@@ -39,7 +39,7 @@ use hyper_util::rt::TokioIo;
 use inferxlib::data_obj::DeltaEvent;
 
 use crate::common::*;
-use crate::gateway::metrics::{FunccallLabels, GATEWAY_METRICS, GpuCountLabels};
+use crate::gateway::metrics::{FunccallLabels, GpuCountLabels, GATEWAY_METRICS};
 use crate::na::LeaseWorkerResp;
 use crate::peer_mgr::IxTcpClient;
 use inferxlib::obj_mgr::func_mgr::HttpEndpoint;
@@ -144,6 +144,7 @@ pub struct FuncWorkerInner {
     pub ipAddr: Mutex<IpAddress>,
     pub hostIpaddr: Mutex<IpAddress>,
     pub hostport: Mutex<u16>,
+    pub hostnetwork: AtomicBool,
     pub endpoint: HttpEndpoint,
     pub keepalive: AtomicBool, // is this a new worker and a keepalive worker
 
@@ -258,6 +259,7 @@ impl FuncWorker {
             keepalive: AtomicBool::new(false),
             hostIpaddr: Mutex::new(IpAddress::default()),
             hostport: Mutex::new(0),
+            hostnetwork: AtomicBool::new(false),
 
             parallelLevel: parallelLeve,
             keepaliveTime,
@@ -597,6 +599,7 @@ impl FuncWorker {
         self.keepalive.store(keepalive, Ordering::SeqCst);
         *self.hostIpaddr.lock().unwrap() = IpAddress(hostipaddr);
         *self.hostport.lock().unwrap() = hostport;
+        self.hostnetwork.store(resp.hostnetwork, Ordering::SeqCst);
 
         // Populate GPU tracking info for billing
         {
@@ -645,7 +648,13 @@ impl FuncWorker {
         self.publish_gpu_count_metric().await;
 
         self.connPool
-            .Init(id, IpAddress(ipaddr), IpAddress(hostipaddr), hostport)
+            .Init(
+                id,
+                IpAddress(ipaddr),
+                IpAddress(hostipaddr),
+                hostport,
+                self.hostnetwork.load(Ordering::Relaxed),
+            )
             .await;
 
         let mut idleClientRx = idleClientRx;
@@ -754,7 +763,7 @@ impl FuncWorker {
                                 Err(e) => {
                                     error!("Funcworker connect fail with error {:?}", &e);
                                     let err = Error::CommonError(format!(
-                                "Funcworker connect fail with error {:?}",
+                                        "Funcworker connect fail with error {:?}",
                                         &e
                                     ));
                                     req.Send(Err(err));
@@ -1090,6 +1099,7 @@ pub struct ConnectionPoolInner {
     pub ipAddr: Mutex<IpAddress>,
     pub hostIpaddr: Mutex<IpAddress>,
     pub hostport: Mutex<u16>,
+    pub hostnetwork: AtomicBool,
     pub endpoint: HttpEndpoint,
     pub finishQueue: mpsc::Sender<HttpSender>,
     pub joinset: TMutex<JoinSet<Result<QHttpCallClient>>>,
@@ -1128,6 +1138,7 @@ impl ConnectionPool {
             ipAddr: Mutex::new(IpAddress::default()),
             hostIpaddr: Mutex::new(Default::default()),
             hostport: Mutex::new(0),
+            hostnetwork: AtomicBool::new(false),
             endpoint: endpoint,
             finishQueue: finishQueue,
             joinset: TMutex::new(joinset),
@@ -1145,11 +1156,19 @@ impl ConnectionPool {
         self.senders.lock().await.clear();
     }
 
-    pub async fn Init(&self, id: isize, ipaddr: IpAddress, hostipaddr: IpAddress, hostport: u16) {
+    pub async fn Init(
+        &self,
+        id: isize,
+        ipaddr: IpAddress,
+        hostipaddr: IpAddress,
+        hostport: u16,
+        hostnetwork: bool,
+    ) {
         *self.ipAddr.lock().unwrap() = ipaddr;
         self.id.store(id, Ordering::SeqCst);
         *self.hostIpaddr.lock().unwrap() = hostipaddr;
         *self.hostport.lock().unwrap() = hostport;
+        self.hostnetwork.store(hostnetwork, Ordering::SeqCst);
         // let mut joinset = self.joinset.lock().await;
         // for _i in 0..self.queueLen - 1 {
         //     let clone = self.clone();
@@ -1244,6 +1263,7 @@ impl ConnectionPool {
             dstPort: port,
             srcIp: 0x01020304,
             srcPort: 123,
+            hostNetwork: self.hostnetwork.load(Ordering::Relaxed),
         };
 
         return tcpclient.Connect().await;

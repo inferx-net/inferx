@@ -134,6 +134,18 @@ pub struct ContainerPort {
     pub protocol: Option<String>,
 }
 
+impl ContainerPort {
+    pub fn New(containerPort: u16, hostPort: u16) -> Self {
+        return Self {
+            container_port: containerPort as i32,
+            host_ip: None,
+            host_port: Some(hostPort as i32),
+            name: None,
+            protocol: None,
+        };
+    }
+}
+
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct ContainerDef {
     pub annotations: Labels,

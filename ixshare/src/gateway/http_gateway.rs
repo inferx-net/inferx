@@ -1175,6 +1175,9 @@ impl HttpGateway {
             .route("/funccall/*rest", post(FuncCall))
             .route("/funccall/*rest", get(FuncCall))
             .route("/funccall/*rest", head(FuncCall))
+            .route("/modelcall/*rest", post(FuncCallWithTokenTracking))
+            .route("/modelcall/*rest", get(FuncCallWithTokenTracking))
+            .route("/modelcall/*rest", head(FuncCallWithTokenTracking))
             .route("/skilltemplates", get(ListSkillTemplates))
             .route("/skills", get(ListPublishedSkills))
             .route("/skills/:owner_tenant", get(ListSkillsByTenant))
@@ -1749,6 +1752,7 @@ async fn DirectFuncCallProc(gw: &HttpGateway, mut req: Request) -> Result<Respon
     let tcpclient = IxTcpClient {
         hostIp: hostip.0,
         hostPort: hostport,
+        hostNetwork: pod.NvidiaRuntime(),
         tenant: pod.tenant.clone(),
         namespace: pod.namespace.clone(),
         dstIp: dstIp,
@@ -2021,6 +2025,14 @@ async fn FuncCall(
     req: Request,
 ) -> SResult<Response, StatusCode> {
     return FuncCall1(&token, &gw, req).await;
+}
+
+async fn FuncCallWithTokenTracking(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    crate::gateway::req_token::FuncCallWithTokenTracking(&token, &gw, req).await
 }
 
 pub async fn FuncCall1(

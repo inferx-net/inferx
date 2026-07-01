@@ -45,7 +45,7 @@ impl IdxList {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CreatePodType {
     Normal,
     Snapshot,
@@ -68,6 +68,22 @@ impl CreatePodType {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum Runtime {
+    InferX,
+    Nvidia,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        return Self::InferX;
+    }
+}
+
+fn default_runtime() -> Runtime {
+    Runtime::InferX
+}
+
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct FuncPodSpec {
     pub funcname: String,
@@ -88,6 +104,9 @@ pub struct FuncPodSpec {
     pub deletion_grace_period_seconds: Option<i32>,
     pub termination_grace_period_seconds: Option<i32>,
     pub runtime_class_name: Option<String>,
+
+    #[serde(default = "default_runtime")]
+    pub runtime: Runtime,
     pub ipAddr: u32,
     pub create_type: CreatePodType,
 
@@ -147,6 +166,10 @@ impl FuncPod {
             alloc.insert(*id, k.list.len() as u64);
         }
         return alloc;
+    }
+
+    pub fn NvidiaRuntime(&self) -> bool {
+        return self.object.spec.runtime == Runtime::Nvidia;
     }
 
     pub fn FuncPodKey(

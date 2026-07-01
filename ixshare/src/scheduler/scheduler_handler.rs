@@ -17,6 +17,7 @@ use inferxlib::data_obj::ObjRef;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicy;
 use inferxlib::obj_mgr::funcpolicy_mgr::FuncPolicySpec;
 use inferxlib::obj_mgr::funcstatus_mgr::FunctionStatus;
+use inferxlib::obj_mgr::pod_mgr::Runtime;
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use rand::prelude::SliceRandom;
@@ -529,6 +530,7 @@ impl FuncStatus {
                             keepalive: false,
                             hostipaddr: peer.hostIp,
                             hostport: peer.port as u32,
+                            hostnetwork: pod.pod.NvidiaRuntime(),
                         };
 
                         match tx.send(resp) {
@@ -1800,6 +1802,20 @@ impl SchedulerHandler {
                     &podKey
                 );
 
+                if pod.object.spec.runtime != Runtime::InferX {
+                    let ipaddr = IpAddress::FromString(&pod.object.spec.host_ip).unwrap();
+                    let resp = na::LeaseWorkerResp {
+                        error: String::new(),
+                        id: pod.object.spec.id.clone(),
+                        ipaddr: ipaddr.0,
+                        keepalive: true,
+                        hostipaddr: ipaddr.0,
+                        hostport: pod.object.spec.host_port as u32,
+                        hostnetwork: pod.NvidiaRuntime(),
+                    };
+                    tx.send(resp).unwrap();
+                    return Ok(());
+                }
                 let peer = match PEER_MGR.LookforPeer(pod.object.spec.ipAddr) {
                     Ok(p) => p,
                     Err(e) => {
@@ -1849,6 +1865,7 @@ impl SchedulerHandler {
                     keepalive: true,
                     hostipaddr: peer.hostIp,
                     hostport: peer.port as u32,
+                    hostnetwork: pod.NvidiaRuntime(),
                 };
                 tx.send(resp).unwrap();
                 return Ok(());
@@ -1865,7 +1882,7 @@ impl SchedulerHandler {
         let readyCnt = self.ReadyPodCount(&funcname);
 
         if policy.maxReplica <= readyCnt as u64 {
-            let resp = na::LeaseWorkerResp {
+            let resp: na::LeaseWorkerResp = na::LeaseWorkerResp {
                 error: format!(
                     "ProcessLeaseWorkerReq can't create pod for func {} as reach max_replica limitation {} ready pod count {}",
                     funcname,
@@ -3406,14 +3423,29 @@ impl SchedulerHandler {
         return count;
     }
 
+    pub fn NvidiaRuntimePodCount(&self, funcname: &str) -> usize {
+        let mut count = 0;
+        match self.funcs.get(funcname) {
+            None => (),
+            Some(status) => {
+                for (_, pod) in &status.pods {
+                    if pod.NvidiaRuntime() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
+
     // find a node to run the pod (snapshot or standy resume), if there is no enough free resource, add list of evaction pods
     // ret ==> (node, evacation pods)
     pub async fn FindNode4Pod(
         &mut self,
         func: &Function,
-        forStandby: bool,
+        findnodeType: FindNodeType,
         candidateNodes: &BTreeSet<String>,
-        createSnapshot: bool,
     ) -> Result<(String, Vec<WorkerPod>, NodeResources)> {
         let mut nodeSnapshots = BTreeMap::new();
         let mut allocStates = BTreeMap::new();
@@ -3427,7 +3459,7 @@ impl SchedulerHandler {
                 error!("FindNode4Pod 1 ns is {:#?}", &node.available);
             }
 
-            if !createSnapshot {
+            if findnodeType == FindNodeType::Resume {
                 let mut standbyPod = 0;
                 for (podname, pod) in &node.pods {
                     if pod.pod.object.status.state != PodState::Standby {
@@ -3452,14 +3484,14 @@ impl SchedulerHandler {
 
             let nr = node.available.clone();
             let contextCount = nr.maxContextCnt;
-            let req = if !forStandby {
+            let req = if findnodeType != FindNodeType::Resume {
                 // snapshot need to take whole gpu
                 func.object.spec.SnapshotResource(contextCount as u64)
             } else {
                 self.ReqResumeResource(&func.object.spec.RunningResource(), &func.Id(), &nodename)
             };
 
-            let state = nr.CanAlloc(&req, createSnapshot);
+            let state = nr.CanAlloc(&req, findnodeType != FindNodeType::Resume);
             if state.Ok() {
                 trace!(
                     "FindNode4Pod 1 for resuming func {:?} with nr {:#?}",
@@ -3513,7 +3545,7 @@ impl SchedulerHandler {
                             );
                             nr.Add(&pod.pod.object.spec.allocResources).unwrap();
 
-                            let req = if !forStandby {
+                            let req = if findnodeType != FindNodeType::Resume {
                                 func.object.spec.SnapshotResource(nr.maxContextCnt as u64)
                             } else {
                                 self.ReqResumeResource(
@@ -3522,7 +3554,7 @@ impl SchedulerHandler {
                                     &pod.pod.object.spec.nodename,
                                 )
                             };
-                            let state = nr.CanAlloc(&req, createSnapshot);
+                            let state = nr.CanAlloc(&req, findnodeType != FindNodeType::Resume);
                             if state.Ok() {
                                 findnodeName = Some(pod.pod.object.spec.nodename.clone());
                                 nodeResource = nr.clone();
@@ -3541,7 +3573,7 @@ impl SchedulerHandler {
         }
 
         if findnodeName.is_none() {
-            let req = if !forStandby {
+            let req = if findnodeType != FindNodeType::Resume {
                 func.object.spec.SnapshotResource(1)
             } else {
                 func.object.spec.RunningResource()
@@ -3573,6 +3605,34 @@ impl SchedulerHandler {
         let (_, workids) = nodeSnapshots.get(&nodename).unwrap().clone();
 
         return Ok((nodename, workids, nodeResource));
+    }
+
+    pub async fn GetBestNvidiaRuntimeNode(
+        &mut self,
+        fp: &Function,
+    ) -> Result<(String, Vec<WorkerPod>, NodeResources)> {
+        let funcid = fp.Id();
+
+        let mut nodes = BTreeSet::new();
+
+        for (nodename, ns) in &self.nodes {
+            if ns.state == NAState::NodeAgentReady {
+                nodes.insert(nodename.to_owned());
+            }
+        }
+
+        if nodes.len() == 0 {
+            return Err(Error::SchedulerErr(format!(
+                "No resource for nvidia runtime for func {:?}",
+                &funcid
+            )));
+        }
+
+        let (nodename, terminateWorkers, nodeResources) = self
+            .FindNode4Pod(fp, FindNodeType::NvidiaRuntimePod, &nodes)
+            .await?;
+
+        return Ok((nodename, terminateWorkers, nodeResources));
     }
 
     pub async fn GetBestResumeWorker(
@@ -3610,7 +3670,7 @@ impl SchedulerHandler {
         }
 
         let (nodename, termimalworkers, nodeResource) =
-            self.FindNode4Pod(fp, true, &nodes, false).await?;
+            self.FindNode4Pod(fp, FindNodeType::Resume, &nodes).await?;
 
         for worker in &pods {
             if worker.pod.object.status.state != PodState::Standby {
@@ -3711,25 +3771,6 @@ impl SchedulerHandler {
 
         return nodes;
     }
-
-    // pub async fn GetBestNodeToSnapshot(
-    //     &mut self,
-    //     func: &Function,
-    // ) -> Result<(String, Vec<(u64, WorkerPod)>, NodeResources)> {
-    //     let snapshotCandidateNodes = self.GetSnapshotCandidateNodes(&func);
-    //     if snapshotCandidateNodes.len() == 0 {
-    //         return Err(Error::SchedulerErr(format!(
-    //             "GetBestNodeToSnapshot can't schedule {}, no enough resource",
-    //             func.Id(),
-    //         )));
-    //     }
-
-    //     let (nodename, workers, nodeResource) = self
-    //         .FindNode4Pod(func, false, &snapshotCandidateNodes, true)
-    //         .await?;
-
-    //     return Ok((nodename, workers, nodeResource));
-    // }
 
     pub async fn GetBestNodeToRestore(&mut self, fp: &Function) -> Result<String> {
         let funcid = fp.Id();
@@ -3835,12 +3876,36 @@ impl SchedulerHandler {
     }
 
     pub fn AddSnapshotTask(&mut self, nodename: &str, funcId: &str) {
+        match self.funcs.get(funcId) {
+            None => unreachable!(),
+            Some(f) => {
+                let policy = self.FuncPolicy(
+                    &f.func.tenant,
+                    &f.func.namespace,
+                    &f.func.name,
+                    &f.func.object.spec.policy,
+                );
+
+                // skip if no need snapshot
+                if policy.standbyPerNode == 0 {
+                    return;
+                }
+            }
+        }
+
         self.schedule_delayed_task(
             Duration::from_secs(1),
             SchedTask::SnapshotTask(FuncNodePair {
                 nodename: nodename.to_owned(),
                 funcId: funcId.to_owned(),
             }),
+        );
+    }
+
+    pub fn AddNvidiaPodTask(&mut self, funcId: &str) {
+        self.schedule_delayed_task(
+            Duration::from_secs(1),
+            SchedTask::NvidiaPodTask(funcId.to_owned()),
         );
     }
 
@@ -3876,6 +3941,9 @@ impl SchedulerHandler {
                 self.TryCreateSnapshotOnNode(&p.funcId, &p.nodename)
                     .await
                     .ok();
+            }
+            SchedTask::NvidiaPodTask(funcId) => {
+                self.CreateOneNividaPod(&funcId).await.ok();
             }
             SchedTask::StandbyTask(nodename) => {
                 self.TryAdjustStandbyPodsOnNode(&nodename).await.ok();
@@ -3934,6 +4002,11 @@ impl SchedulerHandler {
                 }
                 Some(pod) => {
                     if &pod.pod.object.spec.nodename != nodename {
+                        continue;
+                    }
+
+                    if pod.pod.NvidiaRuntime() {
+                        // we didn't free nvidia runtime pods
                         continue;
                     }
 
@@ -4010,6 +4083,119 @@ impl SchedulerHandler {
         return sqlaudit
             .FuncCount(tenant, namespace, fpname, fprevision, podtype, nodename)
             .await;
+    }
+
+    pub async fn CreateOneNividaPod(&mut self, funcId: &str) -> Result<()> {
+        let func = match self.funcs.get(funcId) {
+            None => {
+                return Err(Error::NotExist(format!(
+                    "CreateWorker can't find funcpcakge with id {} {:?}",
+                    funcId,
+                    self.funcs.keys(),
+                )));
+            }
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        let (nodename, terminateWorkers, mut nodeResources) =
+            self.GetBestNvidiaRuntimeNode(&func).await?;
+
+        // Track pods marked for termination - don't free their resources yet
+        // Resources will be freed when the snapshot pod becomes Ready or fails
+        for worker in &terminateWorkers {
+            let terminated_podkey = worker.pod.PodKey();
+            // Remove from idle pool but don't free resources yet
+            let removed = self.idlePods.pop(&terminated_podkey).is_some();
+            assert!(removed);
+            self.mark_terminating(worker);
+        }
+
+        // CRITICAL: Reserve snapshot resource BEFORE RPC to prevent race condition
+        // This follows the same pattern as ResumePod:
+        // 1. Allocate from the simulated nodeResources (which includes freed idle pod resources)
+        // 2. Subtract directly from actual available (may go temporarily negative with i64)
+        let resources;
+        let nodeAgentUrl;
+        {
+            let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+
+            // Add terminated pods to node's stoppingPods so deletion events don't free resources prematurely
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                nodeStatus.AddStoppingPod(&terminated_podkey);
+            }
+
+            // Also add to each pod's func stoppingPods (pods may belong to different funcs)
+            for worker in &terminateWorkers {
+                let terminated_podkey = worker.pod.PodKey();
+                let terminated_funckey = worker.pod.FuncKey();
+                if let Some(funcStatus) = self.funcs.get_mut(&terminated_funckey) {
+                    funcStatus.AddStoppingPod(&terminated_podkey);
+                } else {
+                    error!(
+                        "CreateOneNividaPod: missing funcStatus for {} when marking stopping pod {}",
+                        terminated_funckey, terminated_podkey
+                    );
+                }
+            }
+            let contextCnt = nodeStatus.node.object.resources.GPUResource().maxContextCnt;
+            let snapshotResource = func.object.spec.SnapshotResource(contextCnt as u64);
+
+            // Allocate from simulated nodeResources (which has idle pods' resources added by TryFreeResources)
+            // This validates the allocation will work once idle pods are terminated
+            resources = nodeResources.Alloc(&snapshotResource, true)?;
+
+            // Subtract directly from actual available (no validation, may go negative)
+            // The idle pods still hold their resources until deleted, so available may go negative temporarily
+            nodeStatus.available.Sub(&resources)?;
+
+            nodeAgentUrl = nodeStatus.node.NodeAgentUrl();
+
+            info!(
+                "Before CreateSnapshot RPC for func {} reserved {} snapshot resource (idle pods still allocated), node available is {:#?}",
+                funcId,
+                serde_json::to_string(&resources).unwrap_or_default(),
+                &nodeStatus.available
+            );
+        }
+
+        // 3. Spawn async snapshot RPC (non-blocking) - returns pod ID immediately
+        // The RPC executes in background; tracking happens after to use the generated ID
+        let id: u64 = match self
+            .StartWorker(
+                &nodeAgentUrl,
+                &func,
+                &resources,
+                &resources,
+                na::CreatePodType::Normal,
+                &terminateWorkers,
+                &nodename,
+            )
+            .await
+        {
+            Err(e) => {
+                error!(
+                    "TryCreateSnapshotOnNode: RPC failed for func {} on node {} - {:?}",
+                    funcId, nodename, e
+                );
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        let podKey = FuncPod::FuncPodKey(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            func.Version(),
+            &format!("{id}"),
+        );
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, funcId, &resources);
+        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+
+        return Ok(());
     }
 
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
@@ -4545,6 +4731,11 @@ impl SchedulerHandler {
             &func.name,
             &func.object.spec.policy,
         );
+
+        if policy.nvidiaReplica > self.NvidiaRuntimePodCount(funcid) as u64 {
+            self.CreateOneNividaPod(funcid).await.ok();
+        }
+
         if policy.minReplica > self.ReadyPodCount(funcid) as u64 {
             match self.ResumePod(&funcid, None).await {
                 Err(e) => {
@@ -4914,82 +5105,6 @@ impl SchedulerHandler {
         );
 
         return Ok(id);
-    }
-
-    // TODO: dead code, remove
-    pub async fn CreateSnapshotWorker(
-        &self,
-        naUrl: &str,
-        func: &Function,
-        id: u64,
-        allocResources: &NodeResources,
-        resourceQuota: &NodeResources,
-        terminatePods: &Vec<WorkerPod>,
-    ) -> Result<()> {
-        let tenant = &func.tenant;
-        let namespace = &func.namespace;
-        let funcname = &func.name;
-        let fpRevision = func.Version();
-
-        let mut client =
-            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl.to_owned())
-                .await?;
-
-        let mut annotations = Vec::new();
-        annotations.push(Kv {
-            key: FUNCPOD_TYPE.to_owned(),
-            val: FUNCPOD_PROMPT.to_owned(),
-        });
-
-        annotations.push(Kv {
-            key: FUNCPOD_FUNCNAME.to_owned(),
-            val: funcname.to_owned(),
-        });
-
-        let mut tps = Vec::new();
-        for p in terminatePods {
-            let pod = p.pod.clone();
-            let termniatePod = TerminatePodReq {
-                tenant: pod.tenant.clone(),
-                namespace: pod.namespace.clone(),
-                funcname: pod.object.spec.funcname.clone(),
-                fprevision: pod.object.spec.fprevision.clone(),
-                id: pod.object.spec.id.clone(),
-            };
-            tps.push(termniatePod);
-        }
-
-        let mut spec = func.object.spec.clone();
-        let policy = self.FuncPolicy(&tenant, &func.namespace, &func.name, &spec.policy);
-        spec.policy = ObjRef::Obj(policy);
-
-        let request = tonic::Request::new(na::CreateFuncPodReq {
-            tenant: tenant.to_owned(),
-            namespace: namespace.to_owned(),
-            funcname: funcname.to_owned(),
-            fprevision: fpRevision,
-            id: format!("{id}"),
-            labels: Vec::new(),
-            annotations: annotations,
-            create_type: na::CreatePodType::Snapshot.into(),
-            funcspec: serde_json::to_string(&spec)?,
-            alloc_resources: serde_json::to_string(allocResources).unwrap(),
-            resource_quota: serde_json::to_string(resourceQuota).unwrap(),
-            terminate_pods: tps,
-        });
-
-        // Wait for response (blocks scheduler but prevents race conditions)
-        let response = client.create_func_pod(request).await?;
-        let resp = response.into_inner();
-        if !resp.error.is_empty() {
-            error!(
-                "Scheduler: Fail to CreateSnapshotWorker {} {} {} {}",
-                namespace, funcname, id, resp.error
-            );
-            return Err(Error::CommonError(resp.error));
-        }
-
-        Ok(())
     }
 
     /// Resume a standby worker pod to Ready state (non-blocking, async) with spawn_rpc
@@ -6221,4 +6336,10 @@ pub async fn GetClientWithRetry() -> Result<CacherClient> {
 
     let errstr = format!("GetClient fail: after {} attempt(s)", max_retries);
     return Err(Error::CommonError(errstr));
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum FindNodeType {
+    Resume,
+    NvidiaRuntimePod,
 }
