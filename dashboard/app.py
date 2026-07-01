@@ -4676,7 +4676,25 @@ ENDPOINT_ENTRY_SELECT_COLUMNS = """
         context_length,
         concurrency,
         last_published_at,
-        last_published_by
+        last_published_by,
+        or_name,
+        hugging_face_id,
+        quantization,
+        input_modalities,
+        output_modalities,
+        max_output_length,
+        pricing,
+        discount_to_user::float8 AS discount_to_user,
+        supported_sampling_parameters,
+        supported_features,
+        openrouter_slug,
+        capacity_tpm,
+        datacenters,
+        or_listed,
+        or_is_ready,
+        or_deprecation_date,
+        or_listed_at,
+        or_listed_by
     FROM Endpoints
 """
 
@@ -4714,6 +4732,52 @@ def normalize_endpoint_row(row):
 
     entry["last_published_at_display"] = format_catalog_datetime(entry.get("last_published_at"))
     entry["last_published_at"] = normalize_catalog_datetime_value(entry.get("last_published_at"))
+
+    # OpenRouter listing fields. JSONB columns are parsed to native
+    # objects/lists; absent columns (pre-migration rows) normalize to None/[].
+    for key in (
+        "input_modalities",
+        "output_modalities",
+        "supported_sampling_parameters",
+        "supported_features",
+        "pricing",
+        "datacenters",
+    ):
+        if key in entry:
+            entry[key] = normalize_catalog_json_field(entry.get(key))
+
+    discount = entry.get("discount_to_user")
+    if discount is not None:
+        try:
+            entry["discount_to_user"] = float(discount)
+        except Exception:
+            entry["discount_to_user"] = None
+
+    max_output_length = entry.get("max_output_length")
+    if max_output_length is not None:
+        try:
+            entry["max_output_length"] = int(max_output_length)
+        except Exception:
+            entry["max_output_length"] = None
+
+    capacity_tpm = entry.get("capacity_tpm")
+    if capacity_tpm is not None:
+        try:
+            entry["capacity_tpm"] = int(capacity_tpm)
+        except Exception:
+            entry["capacity_tpm"] = None
+
+    entry["or_listed"] = bool(entry.get("or_listed"))
+    if entry.get("or_is_ready") is not None:
+        entry["or_is_ready"] = bool(entry.get("or_is_ready"))
+
+    # or_deprecation_date is now TIMESTAMPTZ (was DATE). Normalize like the other
+    # timestamp columns so it round-trips a full instant rather than a bare date.
+    dep = entry.get("or_deprecation_date")
+    entry["or_deprecation_date_display"] = format_catalog_datetime(dep)
+    entry["or_deprecation_date"] = normalize_catalog_datetime_value(dep)
+    entry["or_listed_at_display"] = format_catalog_datetime(entry.get("or_listed_at"))
+    entry["or_listed_at"] = normalize_catalog_datetime_value(entry.get("or_listed_at"))
     return entry
 
 
@@ -5332,6 +5396,160 @@ def endpoint_metadata_payload_from_prefill(data):
     }
 
 
+def _or_optional_string(value):
+    normalized = str(value or "").strip()
+    return normalized if normalized != "" else None
+
+
+def _or_optional_string_list(values, field_name):
+    normalized = normalize_catalog_string_list(values, field_name)
+    # None (SQL NULL) when empty so ListOnOpenRouter rejects unset required fields
+    # rather than treating an empty list as a real (synthesized) value. Used for the
+    # modality fields, which must be non-empty to list.
+    return normalized if normalized else None
+
+
+def _or_string_list_allow_empty(values, field_name):
+    # Empty list is a valid "genuinely none" value for supported_*, so
+    # persist [] rather than collapsing to NULL — the validator accepts an explicit
+    # empty list but rejects NULL.
+    return normalize_catalog_string_list(values, field_name)
+
+
+def _or_optional_pricing(value):
+    if value in (None, ""):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            raise ValueError("`pricing` must be valid JSON")
+    if not isinstance(parsed, (dict, list)):
+        raise ValueError("`pricing` must be a JSON object or array of tiers")
+    return parsed
+
+
+def _or_optional_datacenters(value):
+    # OpenRouter `datacenters`: a JSON array of { "country_code": "US" } objects
+    # (ISO 3166-1 alpha-2). Optional — NULL when blank.
+    if value in (None, ""):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            raise ValueError("`datacenters` must be valid JSON")
+    if not isinstance(parsed, list):
+        raise ValueError("`datacenters` must be a JSON array of { \"country_code\": .. } objects")
+    for item in parsed:
+        if not isinstance(item, dict) or not str(item.get("country_code", "")).strip():
+            raise ValueError("each `datacenters` entry must have a non-empty `country_code`")
+    return parsed
+
+
+def _or_optional_number(value, field_name):
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"`{field_name}` must be a number")
+    try:
+        return float(value)
+    except Exception:
+        raise ValueError(f"`{field_name}` must be a number")
+
+
+def _or_optional_int(value, field_name):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        raise ValueError(f"`{field_name}` must be an integer")
+
+
+def endpoint_openrouter_payload_from_prefill(data):
+    """Build the EndpointOpenRouterMetadata body sent to the gateway.
+
+    This is the draft-save shape; it is NOT the completeness gate — ListOnOpenRouter
+    validates required fields server-side."""
+    entry = data if isinstance(data, dict) else {}
+    return {
+        "or_name": _or_optional_string(entry.get("or_name")),
+        "hugging_face_id": _or_optional_string(entry.get("hugging_face_id")),
+        "quantization": _or_optional_string(entry.get("quantization")),
+        "input_modalities": _or_optional_string_list(
+            entry.get("input_modalities"), "input_modalities"
+        ),
+        "output_modalities": _or_optional_string_list(
+            entry.get("output_modalities"), "output_modalities"
+        ),
+        "max_output_length": _or_optional_int(entry.get("max_output_length"), "max_output_length"),
+        "pricing": _or_optional_pricing(entry.get("pricing")),
+        "discount_to_user": _or_optional_number(entry.get("discount_to_user"), "discount_to_user"),
+        "supported_sampling_parameters": _or_string_list_allow_empty(
+            entry.get("supported_sampling_parameters"), "supported_sampling_parameters"
+        ),
+        "supported_features": _or_string_list_allow_empty(
+            entry.get("supported_features"), "supported_features"
+        ),
+        # context_length lives on the base Endpoints column but is editable from the OR
+        # section (one column, two UIs) so a from-scratch listing is self-contained.
+        "context_length": _or_optional_int(entry.get("context_length"), "context_length"),
+        # The single editable, catalog-validated attach slug. A changed value is
+        # validated by the gateway on Save before it is persisted.
+        "openrouter_slug": _or_optional_string(entry.get("openrouter_slug")),
+        # Optional OpenRouter catalog metadata.
+        "capacity_tpm": _or_optional_int(entry.get("capacity_tpm"), "capacity_tpm"),
+        "datacenters": _or_optional_datacenters(entry.get("datacenters")),
+        # UTC RFC 3339 instant; None when blank.
+        "or_deprecation_date": _or_optional_string(entry.get("or_deprecation_date")),
+    }
+
+
+def proxy_gateway_endpoint_openrouter_action(action: str, slug: str, *, metadata=None, body=None):
+    """Proxy the OpenRouter listing ops to the gateway.
+
+    action: "save" (PUT metadata; returns {"warnings": [...]}), "suggest" (POST hf id;
+    returns {"openrouter_slug": ...}), "list", "offline", or "unlist".
+
+    Returns the parsed JSON body when the gateway returns JSON, else the raw text."""
+    normalized_slug = str(slug or "").strip()
+    if normalized_slug == "":
+        raise ValueError("endpoint slug is required")
+
+    base = f"{apihostaddr}/admin/endpoints/{normalized_slug}/openrouter"
+    if action == "save":
+        resp = requests.put(
+            base,
+            headers=gateway_request_headers(json_body=True),
+            json=metadata,
+        )
+    elif action == "suggest":
+        resp = requests.post(
+            f"{base}/suggest",
+            headers=gateway_request_headers(json_body=True),
+            json=body if body is not None else {},
+        )
+    elif action in ("list", "offline", "unlist"):
+        resp = requests.post(
+            f"{base}/{action}",
+            headers=gateway_request_headers(json_body=True),
+            json=body if body is not None else {},
+        )
+    else:
+        raise ValueError(f"unknown OpenRouter action `{action}`")
+
+    text = (resp.text or "").strip()
+    if not resp.ok:
+        raise RuntimeError(text if text != "" else f"HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except Exception:
+        return text
+
+
 def resolve_endpoint_model_name(sample_query, spec=None, fallback_slug: str = "") -> str:
     model_name = extract_sample_query_model_target(sample_query)
     if model_name == "":
@@ -5504,7 +5722,108 @@ def build_endpoint_editor_prefill(slug: str, existing_entry, platform_func):
     if prefill["concurrency"] is None:
         prefill["concurrency"] = ""
 
+    prefill["openrouter"] = build_endpoint_openrouter_prefill(existing_entry, platform_commands)
+
     return prefill, catalog_entry
+
+
+def looks_like_hf_repo_id(value):
+    """True when `value` has the Hugging Face `author/name` repo-id shape: exactly one
+    `/`, both sides non-empty, no whitespace. Mirrors the gateway `looks_like_hf_repo_id`
+    so the dashboard derives the same HF id from the func's `--model`."""
+    text = str(value or "").strip()
+    if text == "" or any(c.isspace() for c in text):
+        return False
+    parts = text.split("/")
+    return len(parts) == 2 and parts[0] != "" and parts[1] != ""
+
+
+def build_endpoint_openrouter_prefill(existing_entry, platform_commands=None):
+    """OpenRouter listing-section prefill. Computed server-side at render time
+    (no client-side / catalog fetch). The slug uses the STORED value only — auto-suggest
+    is the explicit "Suggest from HF ID" button, never a page-load catalog fetch.
+
+    hugging_face_id and context_length get cheap func-spec fallbacks (no external call):
+    a blank HF id is derived from the func's `--model` when it has the `author/name`
+    shape; a blank context_length from `--max-model-len`. Both are prefill defaults the
+    operator confirms or overrides. Lists are comma-joined; pricing is pretty JSON."""
+    src = existing_entry if isinstance(existing_entry, dict) else {}
+    commands = platform_commands if isinstance(platform_commands, list) else []
+
+    def join_list(value):
+        if isinstance(value, list):
+            return ", ".join(str(item).strip() for item in value if str(item).strip() != "")
+        return ""
+
+    pricing = src.get("pricing")
+    if pricing in (None, ""):
+        pricing_text = ""
+    else:
+        try:
+            pricing_text = json.dumps(pricing, indent=2)
+        except Exception:
+            pricing_text = ""
+
+    discount = src.get("discount_to_user")
+    max_out = src.get("max_output_length")
+    capacity_tpm = src.get("capacity_tpm")
+
+    # datacenters: stored JSON list of { "country_code": ".." }. Pretty-print for the
+    # JSON textarea, mirroring how pricing is prefilled.
+    datacenters = src.get("datacenters")
+    if datacenters in (None, ""):
+        datacenters_text = ""
+    else:
+        try:
+            datacenters_text = json.dumps(datacenters, indent=2)
+        except Exception:
+            datacenters_text = ""
+
+    # UTC ISO timestamp; the picker converts UTC<->local (see data-utc).
+    dep_utc_iso = str(src.get("or_deprecation_date", "") or "").strip()
+
+    # hugging_face_id: stored value, else derive from the func's `--model` (the actual
+    # weights the pod loads) when it has the HF `author/name` shape. Cheap — reads the
+    # func spec, no external call. A local mount path → left empty for manual entry.
+    hugging_face_id = str(src.get("hugging_face_id", "") or "").strip()
+    if hugging_face_id == "":
+        model_arg = parse_named_command_arg(commands, "--model")
+        if looks_like_hf_repo_id(model_arg):
+            hugging_face_id = str(model_arg).strip()
+
+    # context_length: stored base value, else the func's `--max-model-len` (same derive
+    # the base editor uses). Editable here; the OR Save writes the base column.
+    context_length = src.get("context_length")
+    if context_length in (None, ""):
+        max_model_len = parse_named_command_arg(commands, "--max-model-len")
+        if str(max_model_len).strip() != "":
+            try:
+                context_length = int(max_model_len)
+            except Exception:
+                context_length = ""
+    context_length = "" if context_length in (None, "") else int(context_length)
+
+    return {
+        "or_name": str(src.get("or_name", "") or "").strip(),
+        "hugging_face_id": hugging_face_id,
+        "quantization": str(src.get("quantization", "") or "").strip(),
+        "input_modalities": join_list(src.get("input_modalities")),
+        "output_modalities": join_list(src.get("output_modalities")),
+        "context_length": context_length,
+        "max_output_length": "" if max_out in (None, "") else int(max_out),
+        "pricing": pricing_text,
+        "discount_to_user": "" if discount in (None, "") else discount,
+        "supported_sampling_parameters": join_list(src.get("supported_sampling_parameters")),
+        "supported_features": join_list(src.get("supported_features")),
+        "openrouter_slug": str(src.get("openrouter_slug", "") or "").strip(),
+        "capacity_tpm": "" if capacity_tpm in (None, "") else int(capacity_tpm),
+        "datacenters": datacenters_text,
+        "or_listed": bool(src.get("or_listed")),
+        "or_is_ready": src.get("or_is_ready"),
+        "or_deprecation_date": dep_utc_iso,
+        "or_listed_at_display": str(src.get("or_listed_at_display", "") or "").strip(),
+        "or_listed_by": str(src.get("or_listed_by", "") or "").strip(),
+    }
 
 
 def endpoint_state_from_sources(*, published: bool, metadata_entry, platform_detail):
@@ -7788,6 +8107,8 @@ def EndpointAdminDetail(slug):
         detail = load_live_endpoint_detail(slug)
         entry = detail["entry"]
         endpoint_state = detail["endpoint_state"]
+        metadata_entry = detail["metadata_entry"]
+        platform_detail = detail["platform_detail"]
     except LookupError:
         return render_resource_unavailable_page(
             resource_kind="Endpoint",
@@ -7835,6 +8156,11 @@ def EndpointAdminDetail(slug):
         endpoint_funcspec = json.dumps(project_func_for_edit(entry.get("platform_detail"))["spec"], indent=4)
     except Exception:
         endpoint_funcspec = ""
+
+    platform_spec = (((platform_detail or {}).get("func") or {}).get("object") or {}).get("spec")
+    platform_commands = platform_spec.get("commands") if isinstance(platform_spec, dict) else []
+    endpoint_openrouter = build_endpoint_openrouter_prefill(metadata_entry, platform_commands)
+
     return render_template(
         "endpoint_detail.html",
         endpoint_entry=entry,
@@ -7859,6 +8185,8 @@ def EndpointAdminDetail(slug):
         endpoint_tenant_href=dashboard_href("prefix.EndpointDetail", slug=slug, view="tenant"),
         endpoint_state=endpoint_state,
         endpoint_funcspec=endpoint_funcspec,
+        endpoint_openrouter=endpoint_openrouter,
+        endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
     )
 
 
@@ -7893,9 +8221,45 @@ def EndpointAdminEdit(slug):
         endpoint_prefill=prefill,
         endpoint_catalog_entry=catalog_entry,
         endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
+        endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
         endpoint_state=endpoint_state,
         catalog_tag_groups=CATALOG_TAG_GROUPS,
         catalog_use_case_groups=CATALOG_RECOMMENDED_USE_CASE_GROUPS,
+    )
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/edit", methods=["GET"])
+@require_login
+@require_admin
+def EndpointAdminOpenRouterEdit(slug):
+    try:
+        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False)
+        existing_entry = detail["metadata_entry"]
+        platform_detail = detail["platform_detail"]
+    except LookupError:
+        return render_resource_unavailable_page(
+            resource_kind="Endpoint",
+            resource_name=slug,
+            tenant="inferx",
+            namespace="endpoint",
+            message="This platform endpoint is no longer available.",
+            suggestion="It may have been removed or renamed.",
+            primary_href=dashboard_href("prefix.EndpointList", view="admin"),
+            primary_label="Back to Endpoints",
+            status=404,
+        )
+    except Exception as e:
+        return json_error(f"failed to load OpenRouter editor for `{slug}`: {e}", 500)
+
+    platform_spec = (((platform_detail or {}).get("func") or {}).get("object") or {}).get("spec")
+    platform_commands = platform_spec.get("commands") if isinstance(platform_spec, dict) else []
+    orp = build_endpoint_openrouter_prefill(existing_entry, platform_commands)
+
+    return render_template(
+        "endpoint_openrouter_edit.html",
+        endpoint_slug=slug,
+        orp=orp,
+        endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
     )
 
 
@@ -7949,6 +8313,89 @@ def EndpointAdminUnpublish(slug):
     except Exception as e:
         return json_error(f"failed to unpublish endpoint: {e}", 502)
     return jsonify({"slug": slug, "version": version, "published": False})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter", methods=["PUT"])
+@require_login
+@require_admin
+def EndpointAdminSaveOpenRouter(slug):
+    req = request.get_json(silent=True) or {}
+    try:
+        payload = endpoint_openrouter_payload_from_prefill(req)
+        result = proxy_gateway_endpoint_openrouter_action("save", slug, metadata=payload)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except Exception as e:
+        return json_error(f"failed to save OpenRouter listing metadata: {e}", 502)
+    warnings = result.get("warnings", []) if isinstance(result, dict) else []
+    return jsonify({"slug": slug, "saved": True, "warnings": warnings})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/suggest", methods=["POST"])
+@require_login
+@require_admin
+def EndpointAdminSuggestOpenRouter(slug):
+    """Best-effort "Suggest from HF ID": send the currently-typed HF id to the gateway
+    suggest endpoint and return the resolved slug (or null). Keeps the external catalog
+    fetch off the page-render path — it fires only when the admin clicks the button."""
+    req = request.get_json(silent=True) or {}
+    hf_id = str(req.get("hugging_face_id", "") or "").strip()
+    try:
+        result = proxy_gateway_endpoint_openrouter_action(
+            "suggest", slug, body={"hugging_face_id": hf_id}
+        )
+    except Exception as e:
+        return json_error(f"failed to suggest OpenRouter slug: {e}", 502)
+    suggestion = result.get("openrouter_slug") if isinstance(result, dict) else None
+    return jsonify({"slug": slug, "openrouter_slug": suggestion})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/list", methods=["POST"])
+@require_login
+@require_admin
+def EndpointAdminListOpenRouter(slug):
+    req = request.get_json(silent=True) or {}
+    confirm = bool(req.get("confirm"))
+    try:
+        # Persist the latest field values first (Save validates a changed slug), then
+        # run the validated list op. Warnings gate the auto-list: if Save returns a
+        # non-blocking warning (HF-mismatch / :free) and the admin has not confirmed,
+        # stop before List and ask for an explicit "List anyway".
+        payload = endpoint_openrouter_payload_from_prefill(req)
+        save_result = proxy_gateway_endpoint_openrouter_action("save", slug, metadata=payload)
+        warnings = save_result.get("warnings", []) if isinstance(save_result, dict) else []
+        if warnings and not confirm:
+            return jsonify(
+                {"slug": slug, "or_listed": False, "needs_confirm": True, "warnings": warnings}
+            )
+        proxy_gateway_endpoint_openrouter_action("list", slug)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except Exception as e:
+        return json_error(f"failed to list endpoint on OpenRouter: {e}", 502)
+    return jsonify({"slug": slug, "or_listed": True, "warnings": warnings})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/offline", methods=["POST"])
+@require_login
+@require_admin
+def EndpointAdminTakeOfflineOpenRouter(slug):
+    try:
+        proxy_gateway_endpoint_openrouter_action("offline", slug)
+    except Exception as e:
+        return json_error(f"failed to take endpoint offline on OpenRouter: {e}", 502)
+    return jsonify({"slug": slug, "or_is_ready": False})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/openrouter/unlist", methods=["POST"])
+@require_login
+@require_admin
+def EndpointAdminUnlistOpenRouter(slug):
+    try:
+        proxy_gateway_endpoint_openrouter_action("unlist", slug)
+    except Exception as e:
+        return json_error(f"failed to delist endpoint from OpenRouter: {e}", 502)
+    return jsonify({"slug": slug, "or_listed": False})
 
 
 @prefix_bp.route("/admin/skilltemplates", methods=["GET"])

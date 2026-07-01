@@ -33,7 +33,7 @@ use super::{
     },
     gw_obj_repo::{FuncBrief, FuncDetail},
     http_gateway::{HttpGateway, GATEWAY_CONFIG},
-    secret::EndpointMetadata,
+    secret::{EndpointMetadata, EndpointOpenRouterMetadata, ListedEndpoint},
 };
 
 const ONBOARD_TENANT_PREFIX: &str = "tn-";
@@ -257,6 +257,19 @@ impl HttpGateway {
                 .PublishEndpoint(slug, func.Version(), metadata, &token.username)
                 .await?;
 
+            // Derive hugging_face_id from the func's `--model` (the actual weights the
+            // pod loads) when the column is empty and the value has the `author/name`
+            // HF shape (§ derive at publish). This makes the HF id present before the
+            // OpenRouter dialog opens and ties it to the served weights. A local mount
+            // path (no HF shape) is left for manual entry. Never overwrites a stored id.
+            if let Some(model_path) = func.object.spec.ModelPath() {
+                if looks_like_hf_repo_id(&model_path) {
+                    self.sqlSecret
+                        .SetEndpointHuggingFaceIdIfEmpty(slug, model_path.trim())
+                        .await?;
+                }
+            }
+
             status.object.published = true;
             match self.client.Update(&status.DataObject(), status.revision).await {
                 Ok(revision) => return Ok(revision),
@@ -287,7 +300,248 @@ impl HttpGateway {
         }
     }
 
-    fn EnsurePlatformEndpointAdmin(&self, token: &Arc<AccessToken>) -> Result<()> {
+    /// Persist the operator-authored OpenRouter listing metadata. This is the
+    /// draft-save path for the admin "OpenRouter listing" section. It does NOT validate
+    /// listing completeness (`ListOnOpenRouter` is that chokepoint), but it IS the
+    /// single write gate for `openrouter_slug`: a *changed* slug is catalog-validated
+    /// before it is persisted, so the column never holds an invalid
+    /// value. Decoupled from publish — only the func must be deployed, not published.
+    ///
+    /// Returns the non-blocking slug warnings (HF-id mismatch / `:free` pin) so the
+    /// caller can surface them and gate the auto-list on an explicit acknowledge.
+    pub async fn SaveEndpointOpenRouterMetadata(
+        &self,
+        token: &Arc<AccessToken>,
+        slug: &str,
+        metadata: &EndpointOpenRouterMetadata,
+    ) -> Result<Vec<String>> {
+        self.EnsurePlatformEndpointAdmin(token)?;
+        // The func must be deployed (proves it exists). This does NOT check `published`
+        // — OpenRouter serving is decoupled from publish (§ Publish decoupling).
+        let func = self.GetPlatformEndpointFunc(slug).await?;
+
+        let existing = self.sqlSecret.GetEndpointForListing(slug).await?;
+
+        // Resolve the slug to persist under the one-column invariant:
+        //   - unchanged      → keep the stored value, no catalog fetch / re-validation
+        //   - changed→value  → validate against the live catalog; store only if a real
+        //                      catalog `id` (warnings, not rejection, for :free/mismatch)
+        //   - changed→empty  → cleared; go back to auto (re-suggested on next dialog open)
+        let stored_slug = existing
+            .as_ref()
+            .and_then(|e| e.openrouter_slug.clone())
+            .filter(|s| !s.trim().is_empty());
+        let submitted_slug = metadata
+            .openrouter_slug
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let mut warnings: Vec<String> = Vec::new();
+        let final_slug: Option<String> = if submitted_slug == stored_slug {
+            stored_slug.clone()
+        } else if let Some(sub) = &submitted_slug {
+            // Catalog fetch happens ONLY here — when the slug actually changed.
+            let validation = self
+                .validate_openrouter_slug(sub, metadata.hugging_face_id.as_deref())
+                .await?;
+            warnings = validation.warnings;
+            Some(sub.clone())
+        } else {
+            None
+        };
+
+        let mut to_store = metadata.clone();
+        to_store.openrouter_slug = final_slug;
+
+        // Guard the live catalog: while an endpoint is listed, a draft save must not
+        // make it invalid. `/v1/models` emits the `or_listed` subset verbatim, so a
+        // breaking save would silently degrade the live entry outside the
+        // offline/delist lifecycle. Require the operator to take it offline / delist
+        // before editing a required field on a live listing.
+        if let Some(existing) = &existing {
+            if existing.or_listed {
+                let prospective = MergeListingMetadata(existing, &to_store);
+                if let Err(e) = ValidateOpenRouterListing(&prospective) {
+                    return Err(Error::CommonError(format!(
+                        "endpoint {} is live on OpenRouter; this change would make it invalid ({:?}). Take it offline / delist before editing required fields.",
+                        slug, e
+                    )));
+                }
+            }
+        }
+
+        self.sqlSecret
+            .SaveEndpointOpenRouterMetadata(slug, func.Version(), &to_store)
+            .await?;
+        Ok(warnings)
+    }
+
+    /// List a published endpoint on OpenRouter. The single validation
+    /// chokepoint: confirms every OpenRouter-required field is present & well-formed
+    /// (rejecting null required modalities and refusing to guess), resolves the
+    /// canonical `openrouter_slug`, then flips `or_listed=true`.
+    pub async fn ListOnOpenRouter(&self, token: &Arc<AccessToken>, slug: &str) -> Result<()> {
+        self.EnsurePlatformEndpointAdmin(token)?;
+        // Endpoint must be published first (the func must exist).
+        self.GetPlatformEndpointFunc(slug).await?;
+
+        let row = self
+            .sqlSecret
+            .GetEndpointForListing(slug)
+            .await?
+            .ok_or_else(|| {
+                Error::NotExist(format!(
+                    "endpoint {} has no listing metadata; fill the OpenRouter section first",
+                    slug
+                ))
+            })?;
+
+        // Validates every emitted-schema field, including the required `hugging_face_id`
+        // (proposal rule 2: provenance + the auto-discovery join key). A manual slug
+        // edit does NOT exempt the row from carrying an HF id.
+        ValidateOpenRouterListing(&row)?;
+
+        // Attach-or-fail (one-column model): List never recomputes the slug — it
+        // emits the stored `openrouter_slug`, which was resolved at Save (a validated
+        // admin edit) or at prefill (auto-suggest accepted into a previously-empty
+        // column, then persisted by that Save). An empty slug fails closed; there is
+        // no "list without openrouter.slug / new page" fallback.
+        let openrouter_slug = row
+            .openrouter_slug
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                Error::CommonError(format!(
+                    "endpoint {} has no openrouter_slug; resolve it in the OpenRouter section (\"Suggest from HF ID\", or type a catalog id) before listing",
+                    slug
+                ))
+            })?;
+
+        self.sqlSecret
+            .SetEndpointListed(slug, Some(openrouter_slug), &token.username)
+            .await?;
+        Ok(())
+    }
+
+    /// Step 1 of graceful delist: take a listed endpoint offline by emitting
+    /// `is_ready:false`. Still listed so OpenRouter drains.
+    pub async fn TakeOfflineOnOpenRouter(
+        &self,
+        token: &Arc<AccessToken>,
+        slug: &str,
+    ) -> Result<()> {
+        self.EnsurePlatformEndpointAdmin(token)?;
+        self.sqlSecret
+            .SetEndpointOpenRouterReady(slug, false)
+            .await?;
+        Ok(())
+    }
+
+    /// Step 2 of graceful delist: drop the row from `/v1/models` after drain.
+    /// Enforces the offline-first ordering — refuses to hard-remove a row that is
+    /// still `is_ready`, since OpenRouter is silent on in-flight traffic when an
+    /// entry just vanishes.
+    pub async fn UnlistFromOpenRouter(&self, token: &Arc<AccessToken>, slug: &str) -> Result<()> {
+        self.EnsurePlatformEndpointAdmin(token)?;
+
+        let row = self
+            .sqlSecret
+            .GetEndpointForListing(slug)
+            .await?
+            .ok_or_else(|| Error::NotExist(format!("endpoint {} not found", slug)))?;
+        if !row.or_listed {
+            return Err(Error::CommonError(format!(
+                "endpoint {} is not listed on OpenRouter",
+                slug
+            )));
+        }
+        if row.or_is_ready != Some(false) {
+            return Err(Error::CommonError(format!(
+                "endpoint {} must be taken offline (is_ready=false) and drained before delisting",
+                slug
+            )));
+        }
+
+        self.sqlSecret.SetEndpointUnlisted(slug).await?;
+        Ok(())
+    }
+
+    /// Fetch the OpenRouter public catalog `data` array (bounded timeout so a hung
+    /// fetch can't block the admin op forever). Shared by the suggest (auto) and
+    /// validate (admin-edit) paths.
+    async fn fetch_openrouter_catalog(&self) -> Result<Vec<Value>> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| Error::CommonError(format!("failed to build HTTP client: {e}")))?;
+        let catalog: Value = client
+            .get("https://openrouter.ai/api/v1/models")
+            .send()
+            .await
+            .map_err(|e| Error::CommonError(format!("failed to fetch OpenRouter catalog: {e}")))?
+            .json()
+            .await
+            .map_err(|e| Error::CommonError(format!("invalid OpenRouter catalog JSON: {e}")))?;
+
+        let data = catalog
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| Error::CommonError("OpenRouter catalog missing `data` array".into()))?;
+        Ok(data.clone())
+    }
+
+    /// Suggestion/auto path. Join the supplied `hf_id` — taken from the
+    /// request/form, NOT the DB row, because on a first listing the row has no HF id
+    /// yet (the ordering fix) — against the OpenRouter catalog and apply the
+    /// paid-over-`:free` tie-break. **Best-effort:** returns `None` on no
+    /// match / unresolved ambiguity / fetch failure so the editor never errors; the
+    /// submit-time `validate_openrouter_slug` is the gate, not the suggestion. Never
+    /// suggests a `:free` slug.
+    pub async fn suggest_openrouter_slug(&self, hf_id: &str) -> Option<String> {
+        let hf_id = hf_id.trim();
+        if hf_id.is_empty() {
+            return None;
+        }
+        let data = self.fetch_openrouter_catalog().await.ok()?;
+        let matches = JoinCatalogOnHfId(hf_id, &data);
+        // No-match / ambiguity → None (best-effort: never errors the dialog).
+        ResolveSlugFromMatches(hf_id, matches).ok().flatten()
+    }
+
+    /// Admin-edit path (§ Validation Rules). The hard gate before a changed slug is
+    /// persisted: `slug` must exactly match some OpenRouter catalog entry's **`id`**
+    /// field — a nonexistent slug (including a string that exists only as a
+    /// `canonical_slug`) is rejected. A real `id` is **accepted** even when `:free` or
+    /// HF-mismatched, but those two cases return a **non-blocking warning** (surfaced,
+    /// not rejected). Fetch failure → `Err` (fail closed; do not store). The endpoint's
+    /// own `hugging_face_id` is required (proposal rule 2) so the mismatch warning has a
+    /// reference and the listed row carries provenance.
+    pub async fn validate_openrouter_slug(
+        &self,
+        slug: &str,
+        endpoint_hf_id: Option<&str>,
+    ) -> Result<SlugValidation> {
+        let slug = slug.trim();
+        if slug.is_empty() {
+            return Err(Error::CommonError(
+                "openrouter_slug is empty; a listing requires a resolved catalog id".into(),
+            ));
+        }
+        let ep_hf = endpoint_hf_id.unwrap_or("").trim();
+        if ep_hf.is_empty() {
+            return Err(Error::CommonError(
+                "hugging_face_id is required before setting an openrouter_slug (provenance + join key)"
+                    .into(),
+            ));
+        }
+
+        let data = self.fetch_openrouter_catalog().await?;
+        ValidateSlugInCatalog(slug, ep_hf, &data)
+    }
+
+    pub(crate) fn EnsurePlatformEndpointAdmin(&self, token: &Arc<AccessToken>) -> Result<()> {
         if !token.IsNamespaceAdmin(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE) {
             return Err(Error::NoPermission);
         }
@@ -2227,5 +2481,648 @@ fn IsCasConflictError(err: &Error) -> bool {
         Error::UpdateRevNotMatchErr(_) => true,
         Error::CommonError(msg) => msg.contains("UpdateRevNotMatchErr"),
         _ => false,
+    }
+}
+
+/// One pricing tier must carry per-token `prompt` and `completion` as strings.
+fn IsValidPricingTier(tier: &Value) -> bool {
+    let obj = match tier.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+    obj.get("prompt").and_then(|v| v.as_str()).is_some()
+        && obj.get("completion").and_then(|v| v.as_str()).is_some()
+}
+
+/// `pricing` must be a single tier object or an array of up to 2 tiers,
+/// each carrying string `prompt`/`completion`.
+fn IsValidPricing(pricing: &Value) -> bool {
+    match pricing {
+        Value::Object(_) => IsValidPricingTier(pricing),
+        Value::Array(tiers) => {
+            !tiers.is_empty() && tiers.len() <= 2 && tiers.iter().all(IsValidPricingTier)
+        }
+        _ => false,
+    }
+}
+
+/// Outcome of validating an admin-edited `openrouter_slug` against the live catalog
+/// (§ Validation Rules). A real catalog `id` is accepted; `warnings` carries the
+/// non-blocking signals (HF-id mismatch, `:free` pin) the admin should see and may
+/// proceed past knowingly. A hard rejection (nonexistent slug, fetch failure, missing
+/// HF id) is an `Err`, not a warning.
+#[derive(Debug, Clone, Default)]
+pub struct SlugValidation {
+    pub warnings: Vec<String>,
+}
+
+/// Enforce the "don't ship incomplete/guessed metadata" rule: every
+/// OpenRouter-required field must be present and well-formed before listing.
+/// Returns a single error naming all missing/invalid fields.
+pub fn ValidateOpenRouterListing(row: &ListedEndpoint) -> Result<()> {
+    let mut problems: Vec<String> = Vec::new();
+
+    let nonempty_vec = |v: &Option<Vec<String>>| matches!(v, Some(items) if !items.is_empty());
+
+    // hugging_face_id is required on every listed endpoint (proposal rule 2): it is the
+    // auto-discovery join key AND required provenance. A manual slug edit does not
+    // exempt the row from carrying it.
+    if row
+        .hugging_face_id
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        problems.push("hugging_face_id (required — provenance + auto-discovery join key)".into());
+    }
+    if !nonempty_vec(&row.input_modalities) {
+        problems.push("input_modalities (null/empty — set real values)".into());
+    }
+    if !nonempty_vec(&row.output_modalities) {
+        problems.push("output_modalities (null/empty — set real values)".into());
+    }
+    if row
+        .quantization
+        .as_ref()
+        .map(|q| q.trim().is_empty())
+        .unwrap_or(true)
+    {
+        problems.push("quantization (documented enum value required)".into());
+    }
+    if row.context_length.is_none() {
+        problems.push("context_length".into());
+    }
+    if row.max_output_length.is_none() {
+        problems.push("max_output_length".into());
+    }
+    match &row.pricing {
+        Some(p) if IsValidPricing(p) => {}
+        Some(_) => problems.push("pricing (must be a tier object/array with string prompt+completion)".into()),
+        None => problems.push("pricing".into()),
+    }
+    // supported_* are required fields; an empty list is allowed (genuinely none),
+    // but the column must be set (not null) so it isn't silently synthesized.
+    if row.supported_sampling_parameters.is_none() {
+        problems.push("supported_sampling_parameters".into());
+    }
+    if row.supported_features.is_none() {
+        problems.push("supported_features".into());
+    }
+    // NOTE: `last_published_at` is intentionally NOT required. OpenRouter serving is
+    // decoupled from publish; `created` falls back to listing time (`or_listed_at`),
+    // which `SetEndpointListed` stamps the instant a row becomes listed (§ created fix).
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::CommonError(format!(
+            "endpoint {} is missing/invalid OpenRouter-required fields: {}",
+            row.slug,
+            problems.join(", ")
+        )))
+    }
+}
+
+/// Map a listed endpoint row to one OpenRouter `/v1/models` catalog entry.
+/// `id` = slug (the callback identity); `openrouter.slug` attaches to the canonical
+/// page (always present for a listed row under the attach-or-fail model); `created` =
+/// `last_published_at` if published, else `or_listed_at` (listing time), as a Unix
+/// epoch; `name` falls back to `"<slug> (InferX)"`. Optional fields are only emitted
+/// when set.
+pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
+    let name = row
+        .or_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{} (InferX)", row.slug));
+
+    let created = row
+        .last_published_at
+        .or(row.or_listed_at)
+        .map(|t| t.timestamp())
+        .unwrap_or(0);
+
+    let mut entry = serde_json::json!({
+        "id": row.slug,
+        "hugging_face_id": row.hugging_face_id.clone().unwrap_or_default(),
+        "name": name,
+        "created": created,
+        "input_modalities": row.input_modalities.clone().unwrap_or_default(),
+        "output_modalities": row.output_modalities.clone().unwrap_or_default(),
+        "quantization": row.quantization.clone().unwrap_or_default(),
+        "context_length": row.context_length.unwrap_or(0),
+        "max_output_length": row.max_output_length.unwrap_or(0),
+        "pricing": row.pricing.clone().unwrap_or(Value::Null),
+        "supported_sampling_parameters": row.supported_sampling_parameters.clone().unwrap_or_default(),
+        "supported_features": row.supported_features.clone().unwrap_or_default(),
+    });
+
+    let obj = entry.as_object_mut().unwrap();
+    if let Some(slug) = &row.openrouter_slug {
+        if !slug.trim().is_empty() {
+            obj.insert("openrouter".into(), serde_json::json!({ "slug": slug }));
+        }
+    }
+    if let Some(d) = row.discount_to_user {
+        obj.insert("discount_to_user".into(), serde_json::json!(d));
+    }
+    if let Some(ready) = row.or_is_ready {
+        obj.insert("is_ready".into(), serde_json::json!(ready));
+    }
+    if let Some(dep) = row.or_deprecation_date {
+        // RFC 3339 / ISO 8601 with the UTC hour, matching OpenRouter's documented
+        // `deprecation_date` shape (e.g. 2025-06-01T15:00:00Z) — not date-only.
+        obj.insert(
+            "deprecation_date".into(),
+            serde_json::json!(dep.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+        );
+    }
+    if let Some(cap) = row.capacity_tpm {
+        obj.insert("capacity_tpm".into(), serde_json::json!(cap));
+    }
+    if let Some(dc) = &row.datacenters {
+        if !dc.is_null() {
+            obj.insert("datacenters".into(), dc.clone());
+        }
+    }
+
+    entry
+}
+
+/// True when `s` has the Hugging Face `author/name` repo-id shape: exactly one `/`,
+/// both sides non-empty, and no whitespace. Used to decide whether the func's
+/// `--model` value is an HF id worth deriving (vs. a local mount path).
+pub fn looks_like_hf_repo_id(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() || s.contains(char::is_whitespace) {
+        return false;
+    }
+    let mut parts = s.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(author), Some(name), None) => !author.is_empty() && !name.is_empty(),
+        _ => false,
+    }
+}
+
+/// Pure join: collect the catalog `id`s whose `hugging_face_id` equals `hf_id`. Split
+/// out from the network fetch so the suggestion path is unit-testable.
+fn JoinCatalogOnHfId(hf_id: &str, data: &[Value]) -> Vec<String> {
+    let mut matches: Vec<String> = Vec::new();
+    for entry in data {
+        let entry_hf = entry
+            .get("hugging_face_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !entry_hf.is_empty() && entry_hf == hf_id {
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                matches.push(id.to_string());
+            }
+        }
+    }
+    matches
+}
+
+/// Pure admin-edit validation against a fetched catalog (§ Validation Rules). Hard
+/// gate: `slug` must match some entry's `id`. A real `id` is accepted; `:free` /
+/// HF-mismatch produce non-blocking warnings. Split out from the network fetch so it
+/// is unit-testable. `endpoint_hf_id` is the (already-non-empty) endpoint HF id.
+fn ValidateSlugInCatalog(
+    slug: &str,
+    endpoint_hf_id: &str,
+    data: &[Value],
+) -> Result<SlugValidation> {
+    let entry = data
+        .iter()
+        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(slug))
+        .ok_or_else(|| {
+            Error::CommonError(format!(
+                "openrouter_slug `{}` is not a valid OpenRouter catalog id (no such model page)",
+                slug
+            ))
+        })?;
+
+    let mut warnings: Vec<String> = Vec::new();
+    let entry_hf = entry
+        .get("hugging_face_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !entry_hf.is_empty() && entry_hf != endpoint_hf_id {
+        warnings.push(format!(
+            "openrouter_slug `{}` maps to hugging_face_id `{}`, which differs from this endpoint's `{}` — likely the wrong model's page",
+            slug, entry_hf, endpoint_hf_id
+        ));
+    }
+    if slug.ends_with(":free") {
+        warnings.push(format!(
+            "openrouter_slug `{}` is a :free page; InferX is a billed provider, so this is unusual — confirm it is intended",
+            slug
+        ));
+    }
+
+    Ok(SlugValidation { warnings })
+}
+
+/// Pure tie-break over the OpenRouter `id`s that joined on a single `hugging_face_id`
+/// 0 → None (no suggestion); 1 → that id; >1 → the single paid (non-`:free`)
+/// id, else fail closed. Split out from the network fetch so it is unit-testable.
+fn ResolveSlugFromMatches(hf_id: &str, matches: Vec<String>) -> Result<Option<String>> {
+    // De-dup while preserving the join result.
+    let mut unique: Vec<String> = Vec::new();
+    for m in matches {
+        if !unique.contains(&m) {
+            unique.push(m);
+        }
+    }
+
+    match unique.len() {
+        0 => Ok(None),
+        1 => Ok(Some(unique.into_iter().next().unwrap())),
+        _ => {
+            // Auto-pick ONLY when the candidates differ solely by a trailing `:free`
+            // on one shared base id (the paid + `:free` variant pair). One paid id
+            // plus an *unrelated* `:free` id is genuinely ambiguous → fail closed
+            // rather than mis-attaching. Never attach to `:free`.
+            let bases: BTreeSet<&str> = unique
+                .iter()
+                .map(|m| m.strip_suffix(":free").unwrap_or(m))
+                .collect();
+            let paid: Vec<&String> = unique.iter().filter(|m| !m.ends_with(":free")).collect();
+            if bases.len() == 1 && paid.len() == 1 {
+                Ok(Some(paid[0].clone()))
+            } else {
+                Err(Error::CommonError(format!(
+                    "OpenRouter slug ambiguous for hugging_face_id {}: {:?}; type a catalog id in the openrouter_slug field to pin one",
+                    hf_id, unique
+                )))
+            }
+        }
+    }
+}
+
+/// Build the prospective listed row from an existing row + an incoming editable
+/// metadata draft. The operator-authored fields — now including
+/// `context_length` and `openrouter_slug`, which the OpenRouter section edits — come
+/// from `meta`; only the listing/audit state (created/listing flags) comes from
+/// `existing`. Used to validate that a draft save won't break a live listing, so it
+/// MUST validate against the *incoming* edit, not the stale row value.
+fn MergeListingMetadata(
+    existing: &ListedEndpoint,
+    meta: &EndpointOpenRouterMetadata,
+) -> ListedEndpoint {
+    ListedEndpoint {
+        slug: existing.slug.clone(),
+        or_name: meta.or_name.clone(),
+        hugging_face_id: meta.hugging_face_id.clone(),
+        quantization: meta.quantization.clone(),
+        input_modalities: meta.input_modalities.clone(),
+        output_modalities: meta.output_modalities.clone(),
+        context_length: meta.context_length,
+        max_output_length: meta.max_output_length,
+        pricing: meta.pricing.clone(),
+        discount_to_user: meta.discount_to_user,
+        supported_sampling_parameters: meta.supported_sampling_parameters.clone(),
+        supported_features: meta.supported_features.clone(),
+        openrouter_slug: meta.openrouter_slug.clone(),
+        capacity_tpm: meta.capacity_tpm,
+        datacenters: meta.datacenters.clone(),
+        or_deprecation_date: meta.or_deprecation_date,
+        or_listed: existing.or_listed,
+        or_is_ready: existing.or_is_ready,
+        last_published_at: existing.last_published_at,
+        or_listed_at: existing.or_listed_at,
+    }
+}
+
+#[cfg(test)]
+mod openrouter_tests {
+    use super::*;
+
+    fn complete_row() -> ListedEndpoint {
+        ListedEndpoint {
+            slug: "qwq-32b".into(),
+            or_name: Some("Qwen QwQ 32B (InferX)".into()),
+            hugging_face_id: Some("Qwen/QwQ-32B".into()),
+            quantization: Some("bf16".into()),
+            input_modalities: Some(vec!["text".into()]),
+            output_modalities: Some(vec!["text".into()]),
+            context_length: Some(32768),
+            max_output_length: Some(8192),
+            pricing: Some(serde_json::json!({"prompt": "0.0000004", "completion": "0.0000012"})),
+            discount_to_user: None,
+            supported_sampling_parameters: Some(vec!["temperature".into()]),
+            supported_features: Some(vec![]),
+            openrouter_slug: Some("qwen/qwq-32b".into()),
+            capacity_tpm: None,
+            datacenters: None,
+            or_listed: false,
+            or_is_ready: None,
+            or_deprecation_date: None,
+            last_published_at: Some(chrono::Utc::now()),
+            or_listed_at: None,
+        }
+    }
+
+    #[test]
+    fn complete_row_validates() {
+        // Empty (but Some) supported_features is a valid "genuinely none" value.
+        assert!(ValidateOpenRouterListing(&complete_row()).is_ok());
+    }
+
+    #[test]
+    fn null_modality_is_rejected() {
+        let mut row = complete_row();
+        row.input_modalities = None;
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn empty_modality_is_rejected() {
+        let mut row = complete_row();
+        row.input_modalities = Some(vec![]);
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn missing_pricing_is_rejected() {
+        let mut row = complete_row();
+        row.pricing = None;
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn pricing_without_completion_is_rejected() {
+        let mut row = complete_row();
+        row.pricing = Some(serde_json::json!({"prompt": "0.0000004"}));
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn tiered_pricing_is_valid() {
+        let mut row = complete_row();
+        row.pricing = Some(serde_json::json!([
+            {"prompt": "0.0000004", "completion": "0.0000012"},
+            {"min_context": 16384, "prompt": "0.0000008", "completion": "0.0000024"}
+        ]));
+        assert!(ValidateOpenRouterListing(&row).is_ok());
+    }
+
+    #[test]
+    fn three_pricing_tiers_is_rejected() {
+        let mut row = complete_row();
+        row.pricing = Some(serde_json::json!([
+            {"prompt": "1", "completion": "1"},
+            {"prompt": "2", "completion": "2"},
+            {"prompt": "3", "completion": "3"}
+        ]));
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn slug_resolution_no_match_is_none() {
+        // No match → None (no suggestion). The "new page" success path is removed; the
+        // list op fails closed on an empty slug rather than listing without one.
+        assert_eq!(ResolveSlugFromMatches("hf", vec![]).unwrap(), None);
+    }
+
+    #[test]
+    fn slug_resolution_single_match() {
+        assert_eq!(
+            ResolveSlugFromMatches("hf", vec!["qwen/qwq-32b".into()]).unwrap(),
+            Some("qwen/qwq-32b".into())
+        );
+    }
+
+    #[test]
+    fn slug_resolution_paid_over_free() {
+        let got = ResolveSlugFromMatches(
+            "hf",
+            vec!["qwen/qwq-32b".into(), "qwen/qwq-32b:free".into()],
+        )
+        .unwrap();
+        assert_eq!(got, Some("qwen/qwq-32b".into()));
+    }
+
+    #[test]
+    fn slug_resolution_ambiguous_fails_closed() {
+        let res =
+            ResolveSlugFromMatches("hf", vec!["a/one".into(), "a/two".into()]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn slug_resolution_paid_plus_unrelated_free_fails_closed() {
+        // One paid id plus an UNRELATED `:free` id (different base) must NOT
+        // auto-pick the paid one — that would mis-attach. Fail closed instead.
+        let res = ResolveSlugFromMatches(
+            "hf",
+            vec!["a/one".into(), "b/two:free".into()],
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn slug_resolution_dedups_identical_matches() {
+        // Duplicate join hits on the same id resolve as a single match.
+        assert_eq!(
+            ResolveSlugFromMatches("hf", vec!["a/one".into(), "a/one".into()]).unwrap(),
+            Some("a/one".into())
+        );
+    }
+
+    fn complete_meta() -> EndpointOpenRouterMetadata {
+        EndpointOpenRouterMetadata {
+            or_name: Some("Qwen QwQ 32B (InferX)".into()),
+            hugging_face_id: Some("Qwen/QwQ-32B".into()),
+            quantization: Some("bf16".into()),
+            input_modalities: Some(vec!["text".into()]),
+            output_modalities: Some(vec!["text".into()]),
+            max_output_length: Some(8192),
+            pricing: Some(serde_json::json!({"prompt": "0.0000004", "completion": "0.0000012"})),
+            discount_to_user: None,
+            supported_sampling_parameters: Some(vec!["temperature".into()]),
+            supported_features: Some(vec![]),
+            context_length: Some(32768),
+            openrouter_slug: Some("qwen/qwq-32b".into()),
+            capacity_tpm: None,
+            datacenters: None,
+            or_deprecation_date: None,
+        }
+    }
+
+    fn catalog() -> Vec<Value> {
+        vec![
+            serde_json::json!({"id": "qwen/qwq-32b", "hugging_face_id": "Qwen/QwQ-32B"}),
+            serde_json::json!({"id": "qwen/qwq-32b:free", "hugging_face_id": "Qwen/QwQ-32B"}),
+            serde_json::json!({"id": "meta/llama-3", "hugging_face_id": "meta-llama/Llama-3"}),
+            // `canonical_slug`-only entry: present as canonical_slug, NOT as an `id`.
+            serde_json::json!({"id": "vendor/real-id", "canonical_slug": "vendor/canonical-only", "hugging_face_id": "vendor/model"}),
+        ]
+    }
+
+    #[test]
+    fn save_guard_blocks_breaking_a_live_listing() {
+        // The save-guard logic: a draft that clears a required field on a live
+        // listing must be rejected (checklist "save draft incomplete -> List blocked"
+        // applied to an already-listed row).
+        let mut existing = complete_row();
+        existing.or_listed = true;
+        let mut meta = complete_meta();
+        meta.input_modalities = None;
+        let prospective = MergeListingMetadata(&existing, &meta);
+        assert!(ValidateOpenRouterListing(&prospective).is_err());
+    }
+
+    #[test]
+    fn save_guard_allows_valid_edit_on_live_listing() {
+        let mut existing = complete_row();
+        existing.or_listed = true;
+        let mut meta = complete_meta();
+        meta.or_name = Some("Renamed (InferX)".into());
+        let prospective = MergeListingMetadata(&existing, &meta);
+        assert!(ValidateOpenRouterListing(&prospective).is_ok());
+    }
+
+    #[test]
+    fn merge_takes_editable_fields_from_incoming_edit() {
+        // context_length and openrouter_slug are now OR-editable, so the prospective
+        // row must take them from the *incoming* edit (meta), not the stale row — else
+        // the live-listing guard would validate against a value the Save is changing.
+        let mut existing = complete_row();
+        existing.or_listed = true;
+        existing.context_length = Some(131072);
+        existing.openrouter_slug = Some("stale/slug".into());
+        let mut meta = complete_meta();
+        meta.context_length = Some(8192);
+        meta.openrouter_slug = Some("qwen/qwq-32b".into());
+        let merged = MergeListingMetadata(&existing, &meta);
+        assert_eq!(merged.context_length, Some(8192));
+        assert_eq!(merged.openrouter_slug, Some("qwen/qwq-32b".into()));
+        // Only listing/audit state comes from the existing row.
+        assert!(merged.or_listed);
+    }
+
+    #[test]
+    fn merge_clearing_context_length_on_live_listing_is_rejected() {
+        // The context_length case from the live-listing guard: clearing it via an edit
+        // must be caught by validating the prospective (incoming) row.
+        let mut existing = complete_row();
+        existing.or_listed = true;
+        let mut meta = complete_meta();
+        meta.context_length = None;
+        let prospective = MergeListingMetadata(&existing, &meta);
+        assert!(ValidateOpenRouterListing(&prospective).is_err());
+    }
+
+    #[test]
+    fn validate_listing_requires_hugging_face_id() {
+        let mut row = complete_row();
+        row.hugging_face_id = None;
+        assert!(ValidateOpenRouterListing(&row).is_err());
+    }
+
+    #[test]
+    fn validate_listing_no_longer_requires_last_published_at() {
+        // created falls back to or_listed_at; an unpublished listing is valid.
+        let mut row = complete_row();
+        row.last_published_at = None;
+        row.or_listed_at = Some(chrono::Utc::now());
+        assert!(ValidateOpenRouterListing(&row).is_ok());
+    }
+
+    #[test]
+    fn created_falls_back_to_listing_time_when_unpublished() {
+        let mut row = complete_row();
+        row.last_published_at = None;
+        row.or_listed_at = Some(chrono::Utc::now());
+        let entry = BuildOpenRouterModelEntry(&row);
+        assert!(entry["created"].as_i64().unwrap() > 0);
+    }
+
+    #[test]
+    fn validate_slug_accepts_real_id_with_matching_hf() {
+        let v = ValidateSlugInCatalog("qwen/qwq-32b", "Qwen/QwQ-32B", &catalog()).unwrap();
+        assert!(v.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_slug_rejects_nonexistent() {
+        assert!(ValidateSlugInCatalog("no/such-id", "Qwen/QwQ-32B", &catalog()).is_err());
+    }
+
+    #[test]
+    fn validate_slug_rejects_canonical_slug_only() {
+        // A string that exists only as a `canonical_slug`, not as an `id`, is rejected.
+        assert!(ValidateSlugInCatalog("vendor/canonical-only", "vendor/model", &catalog()).is_err());
+    }
+
+    #[test]
+    fn validate_slug_warns_on_hf_mismatch() {
+        let v = ValidateSlugInCatalog("meta/llama-3", "Qwen/QwQ-32B", &catalog()).unwrap();
+        assert_eq!(v.warnings.len(), 1);
+        assert!(v.warnings[0].contains("differs"));
+    }
+
+    #[test]
+    fn validate_slug_warns_on_free_page() {
+        let v = ValidateSlugInCatalog("qwen/qwq-32b:free", "Qwen/QwQ-32B", &catalog()).unwrap();
+        assert!(v.warnings.iter().any(|w| w.contains(":free")));
+    }
+
+    #[test]
+    fn suggest_join_single_match() {
+        let matches = JoinCatalogOnHfId("meta-llama/Llama-3", &catalog());
+        assert_eq!(
+            ResolveSlugFromMatches("hf", matches).unwrap(),
+            Some("meta/llama-3".into())
+        );
+    }
+
+    #[test]
+    fn suggest_join_paid_over_free() {
+        let matches = JoinCatalogOnHfId("Qwen/QwQ-32B", &catalog());
+        assert_eq!(
+            ResolveSlugFromMatches("hf", matches).unwrap(),
+            Some("qwen/qwq-32b".into())
+        );
+    }
+
+    #[test]
+    fn suggest_join_no_match_is_none() {
+        let matches = JoinCatalogOnHfId("nobody/nothing", &catalog());
+        assert_eq!(ResolveSlugFromMatches("hf", matches).unwrap(), None);
+    }
+
+    #[test]
+    fn hf_repo_id_shape() {
+        assert!(looks_like_hf_repo_id("Qwen/QwQ-32B"));
+        assert!(looks_like_hf_repo_id("meta-llama/Llama-3.1-8B"));
+        assert!(!looks_like_hf_repo_id("/models/local/path/weights")); // local mount
+        assert!(!looks_like_hf_repo_id("just-a-name"));
+        assert!(!looks_like_hf_repo_id("a/b/c"));
+        assert!(!looks_like_hf_repo_id("has space/name"));
+        assert!(!looks_like_hf_repo_id(""));
+    }
+
+    #[test]
+    fn model_entry_shape() {
+        let mut row = complete_row();
+        row.openrouter_slug = Some("qwen/qwq-32b".into());
+        let entry = BuildOpenRouterModelEntry(&row);
+        assert_eq!(entry["id"], serde_json::json!("qwq-32b"));
+        assert_eq!(entry["openrouter"]["slug"], serde_json::json!("qwen/qwq-32b"));
+        assert_eq!(entry["hugging_face_id"], serde_json::json!("Qwen/QwQ-32B"));
+        assert!(entry["created"].as_i64().unwrap() > 0);
+    }
+
+    #[test]
+    fn model_entry_name_fallback() {
+        let mut row = complete_row();
+        row.or_name = None;
+        let entry = BuildOpenRouterModelEntry(&row);
+        assert_eq!(entry["name"], serde_json::json!("qwq-32b (InferX)"));
+        // A listed row always carries openrouter.slug under the attach-or-fail model.
+        assert_eq!(entry["openrouter"]["slug"], serde_json::json!("qwen/qwq-32b"));
     }
 }

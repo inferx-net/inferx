@@ -1,0 +1,357 @@
+{#
+  OpenRouter listing panel — fields + Save / List / Delist / Take offline.
+  Self-contained: expects `endpoint_slug` and `orp` (the openrouter prefill dict)
+  in the render context. The CSS classes it relies on (.endpoint-panel,
+  .endpoint-form-grid, .endpoint-message, .endpoint-actions, .endpoint-hint)
+  are provided by whichever page includes this partial.
+#}
+<div class="endpoint-panel">
+    <div>
+        <h2 style="margin: 0;">OpenRouter Listing</h2>
+        <p style="margin: 6px 0 0 0; color: #64748b;">
+            Publish this endpoint into the flat <code>/v1/models</code> provider catalog.
+            Separate from the InferX publish controls &mdash; the <strong>List</strong>
+            button validates every required field server-side before going live.
+        </p>
+    </div>
+    <table class="ix-table ix-table-compact" style="margin-top: 12px; width: 100%;">
+        <thead>
+            <tr>
+                <th>Listed</th>
+                {% if orp.get('or_listed') %}
+                <th>is_ready</th>
+                <th>OpenRouter slug</th>
+                {% if orp.get('or_listed_at_display') %}<th>Listed at</th>{% endif %}
+                {% if orp.get('or_listed_by') %}<th>By</th>{% endif %}
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>{{ 'yes' if orp.get('or_listed') else 'no' }}</strong></td>
+                {% if orp.get('or_listed') %}
+                <td><strong>{{ 'true' if orp.get('or_is_ready') else 'false' }}</strong></td>
+                <td><strong>{{ orp.get('openrouter_slug') or '(unset)' }}</strong></td>
+                {% if orp.get('or_listed_at_display') %}<td>{{ orp.get('or_listed_at_display') }}</td>{% endif %}
+                {% if orp.get('or_listed_by') %}<td>{{ orp.get('or_listed_by') }}</td>{% endif %}
+                {% endif %}
+            </tr>
+        </tbody>
+    </table>
+
+    <p class="endpoint-hint" style="margin-top: 12px; color: #64748b;">
+        OpenRouter serving is gated on <strong>List</strong> (<code>or_listed</code>),
+        decoupled from InferX publish &mdash; a deployed endpoint can be listed and
+        served to OpenRouter without being published to InferX tenants.
+    </p>
+
+    <div id="or-editor-message" class="endpoint-message" style="margin-top: 12px;"></div>
+    <form id="or-editor-form">
+        <fieldset style="border: 0; padding: 0; margin: 0;">
+        <div class="endpoint-form-grid">
+            <label for="or_name">Display Name</label>
+            <div>
+                <input id="or_name" type="text" value="{{ orp.get('or_name', '') }}" placeholder="Anthropic: Claude Sonnet 4">
+                <div class="endpoint-hint"><strong>Required</strong> (OpenRouter <code>name</code>). Blank &rarr; defaults to <code>"{{ endpoint_slug }} (InferX)"</code>. Example: <code>Anthropic: Claude Sonnet 4</code>.</div>
+            </div>
+
+            <label for="hugging_face_id">Hugging Face ID</label>
+            <div>
+                <input id="hugging_face_id" type="text" value="{{ orp.get('hugging_face_id', '') }}" placeholder="e.g. Qwen/QwQ-32B">
+                <div class="endpoint-hint"><strong>Required if the model is on Hugging Face</strong> (OpenRouter <code>hugging_face_id</code>). Provenance + the join key for "Suggest from HF ID". Pre-filled from the func's <code>--model</code> when it has the <code>author/name</code> shape. Example: <code>Qwen/QwQ-32B</code>.</div>
+            </div>
+
+            <label for="quantization">Quantization</label>
+            <div>
+                <input id="quantization" type="text" value="{{ orp.get('quantization', '') }}" placeholder="bf16 / fp8 / int4">
+                <div class="endpoint-hint"><strong>Required.</strong> Documented OpenRouter enum value only &mdash; never guess. One of: <code>fp8</code>, <code>bf16</code>, <code>fp16</code>, <code>int8</code>, <code>int4</code>.</div>
+            </div>
+
+            <label for="input_modalities">Input Modalities</label>
+            <div>
+                <input id="input_modalities" type="text" value="{{ orp.get('input_modalities', '') }}" placeholder="text, image">
+                <div class="endpoint-hint"><strong>Required.</strong> Comma-separated &mdash; leaving blank blocks listing (no silent default). Enum: <code>text</code>, <code>image</code>, <code>file</code>. Example: <code>text, image</code>.</div>
+            </div>
+
+            <label for="output_modalities">Output Modalities</label>
+            <div>
+                <input id="output_modalities" type="text" value="{{ orp.get('output_modalities', '') }}" placeholder="text">
+                <div class="endpoint-hint"><strong>Required.</strong> Comma-separated. Enum: <code>text</code>. Example: <code>text</code>.</div>
+            </div>
+
+            <label for="or_context_length">Context Length</label>
+            <div>
+                <input id="or_context_length" type="number" step="1" value="{{ orp.get('context_length', '') }}" placeholder="32768">
+                <div class="endpoint-hint"><strong>Required.</strong> Total context window in tokens. Pre-filled from the func's <code>--max-model-len</code>; writes the base <code>context_length</code> column. Confirm or override. Example: <code>1000000</code>.</div>
+            </div>
+
+            <label for="max_output_length">Max Output Length</label>
+            <div>
+                <input id="max_output_length" type="number" step="1" value="{{ orp.get('max_output_length', '') }}" placeholder="8192">
+                <div class="endpoint-hint"><strong>Required.</strong> Max output tokens per request. Example: <code>128000</code>.</div>
+            </div>
+
+            <label for="pricing">Pricing (JSON)</label>
+            <div>
+                <textarea id="pricing" placeholder='{ "prompt": "0.000008", "completion": "0.000024" }'>{{ orp.get('pricing', '') }}</textarea>
+                <div class="endpoint-hint"><strong>Required.</strong> USD-per-<em>token</em> strings. Single object or array of up to 2 tiers. Keys: <code>prompt</code>, <code>completion</code> (required); optional <code>image</code>, <code>request</code>, <code>input_cache_read</code>. Example: <code>{ "prompt": "0.000008", "completion": "0.000024" }</code>.</div>
+            </div>
+
+            <label for="discount_to_user">Discount to User</label>
+            <div>
+                <input id="discount_to_user" type="number" step="0.0001" value="{{ orp.get('discount_to_user', '') }}" placeholder="0">
+                <div class="endpoint-hint"><strong>Optional</strong> (fractional, <code>0</code> = none). <code>user_price = base &times; (1 &minus; discount)</code>. Example: <code>0.1</code> for 10% off.</div>
+            </div>
+
+            <label for="supported_sampling_parameters">Sampling Parameters</label>
+            <div>
+                <input id="supported_sampling_parameters" type="text" value="{{ orp.get('supported_sampling_parameters', '') }}" placeholder="temperature, top_p, stop, max_tokens, seed">
+                <div class="endpoint-hint"><strong>Required.</strong> Comma-separated. Common values: <code>temperature</code>, <code>top_p</code>, <code>stop</code>, <code>max_tokens</code>, <code>seed</code>. Example: <code>temperature, stop</code>.</div>
+            </div>
+
+            <label for="supported_features">Supported Features</label>
+            <div>
+                <input id="supported_features" type="text" value="{{ orp.get('supported_features', '') }}" placeholder="tools, json_mode">
+                <div class="endpoint-hint"><strong>Required</strong> (empty list allowed if genuinely none). Comma-separated. Enum: <code>tools</code>, <code>json_mode</code>, <code>structured_outputs</code>, <code>web_search</code>, <code>reasoning</code>.</div>
+            </div>
+
+            <label for="capacity_tpm">Capacity (TPM)</label>
+            <div>
+                <input id="capacity_tpm" type="number" step="1" value="{{ orp.get('capacity_tpm', '') }}" placeholder="1000000">
+                <div class="endpoint-hint"><strong>Optional</strong> (OpenRouter <code>capacity_tpm</code>). Input tokens-per-minute capacity for this model. Distinct from request concurrency. Example: <code>1000000</code>.</div>
+            </div>
+
+            <label for="datacenters">Datacenters (JSON)</label>
+            <div>
+                <textarea id="datacenters" placeholder='[ { "country_code": "US" } ]'>{{ orp.get('datacenters', '') }}</textarea>
+                <div class="endpoint-hint"><strong>Optional</strong> (OpenRouter <code>datacenters</code>). JSON array of <code>{ "country_code": ".." }</code>, ISO 3166-1 alpha-2. Example: <code>[ { "country_code": "US" } ]</code>.</div>
+            </div>
+
+            <label for="openrouter_slug">OpenRouter Slug</label>
+            <div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <input id="openrouter_slug" type="text" value="{{ orp.get('openrouter_slug', '') }}" placeholder="qwen/qwq-32b" style="flex: 1;">
+                    <button type="button" class="ix-btn secondary" onclick="suggestOpenRouterSlug()">Suggest from HF ID</button>
+                </div>
+                <div class="endpoint-hint">The catalog <code>id</code> this listing attaches to. A <em>changed</em> value is validated against the live OpenRouter catalog on Save (must be a real id). "Suggest from HF ID" auto-resolves it from the HF id above; clear it to re-suggest.</div>
+                <div id="or-slug-warnings" class="endpoint-hint" style="display: none; color: #b45309; margin-top: 6px;"></div>
+            </div>
+
+            <label for="or_deprecation_date">Deprecation Date</label>
+            <div>
+                <input id="or_deprecation_date" type="datetime-local" data-utc="{{ orp.get('or_deprecation_date', '') }}">
+                <div class="endpoint-hint"><strong>Optional</strong> (OpenRouter <code>deprecation_date</code>). Declared planned-sunset instant, independent of <code>is_ready</code> &mdash; a live model can announce a future sunset. Saved with <strong>Save listing fields</strong>; the lifecycle buttons never change it. ISO 8601 with the UTC hour, e.g. <code>2025-06-01T15:00:00Z</code>. The picker shows your <strong>local</strong> time; converted to UTC on submit.</div>
+            </div>
+        </div>
+
+        <div class="endpoint-actions">
+            <button type="button" class="ix-btn secondary" onclick="submitOpenRouter('save')">Save listing fields</button>
+            {% if not orp.get('or_listed') %}
+            <button type="button" class="ix-btn" onclick="submitOpenRouter('list')">List on OpenRouter</button>
+            {% elif orp.get('or_is_ready') == false %}
+            {# Offline: re-list to bring it back online (sets is_ready=true again,
+               clears any planned deprecation date), or delist now that it can drain. #}
+            <button type="button" class="ix-btn" onclick="submitOpenRouter('list')">Bring back online</button>
+            <button type="button" class="ix-btn secondary" onclick="submitOpenRouter('unlist')">Delist</button>
+            {% else %}
+            {# Step 1: live → only Take offline is offered (no hard delist). #}
+            <button type="button" class="ix-btn" onclick="submitOpenRouter('offline')">Take offline</button>
+            {% endif %}
+        </div>
+        {% if orp.get('or_listed') and orp.get('or_is_ready') == false %}
+        <p class="endpoint-hint" style="margin-top: 8px; color: #b45309;">
+            This model is <strong>offline</strong> (is_ready=false) and still listed for draining.
+            <strong>Bring back online</strong> to resume serving, or <strong>Delist</strong> once
+            OpenRouter has confirmed traffic has drained.
+        </p>
+        {% endif %}
+        </fieldset>
+    </form>
+</div>
+
+<script>
+    function splitCommaList(value) {
+        return (value || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s !== '');
+    }
+
+    function openRouterPayload() {
+        return {
+            or_name: (document.getElementById('or_name')?.value || '').trim(),
+            hugging_face_id: (document.getElementById('hugging_face_id')?.value || '').trim(),
+            quantization: (document.getElementById('quantization')?.value || '').trim(),
+            input_modalities: splitCommaList(document.getElementById('input_modalities')?.value),
+            output_modalities: splitCommaList(document.getElementById('output_modalities')?.value),
+            context_length: (document.getElementById('or_context_length')?.value || '').trim(),
+            max_output_length: (document.getElementById('max_output_length')?.value || '').trim(),
+            // raw JSON text; the server parses and validates it
+            pricing: (document.getElementById('pricing')?.value || '').trim(),
+            discount_to_user: (document.getElementById('discount_to_user')?.value || '').trim(),
+            supported_sampling_parameters: splitCommaList(document.getElementById('supported_sampling_parameters')?.value),
+            supported_features: splitCommaList(document.getElementById('supported_features')?.value),
+            openrouter_slug: (document.getElementById('openrouter_slug')?.value || '').trim(),
+            capacity_tpm: (document.getElementById('capacity_tpm')?.value || '').trim(),
+            // raw JSON text; the server parses and validates it
+            datacenters: (document.getElementById('datacenters')?.value || '').trim(),
+            // local picker -> UTC instant
+            or_deprecation_date: deprecationDateToUtcIso(document.getElementById('or_deprecation_date')?.value),
+        };
+    }
+
+    // `datetime-local` yields a naive `YYYY-MM-DDTHH:MM` shown in the operator's LOCAL
+    // clock. Convert that local wall-clock time to a true UTC instant (don't just append
+    // `Z`, which would mislabel the local digits as UTC and offset by the admin's zone).
+    // Empty stays empty; an already-zoned value the user typed is passed through.
+    function deprecationDateToUtcIso(value) {
+        const v = (value || '').trim();
+        if (v === '') return '';
+        if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(v)) return v;
+        const dt = new Date(v); // parsed as local time for the datetime-local shape
+        if (isNaN(dt.getTime())) return v;
+        return dt.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    }
+
+    // Populate the datetime-local picker from the stored UTC instant (data-utc),
+    // converting UTC -> the operator's local clock so the displayed value round-trips
+    // back to the same UTC instant on submit. Mirror of deprecationDateToUtcIso.
+    (function initDeprecationPicker() {
+        const el = document.getElementById('or_deprecation_date');
+        if (!el) return;
+        const utc = (el.getAttribute('data-utc') || '').trim();
+        if (utc === '') return;
+        const dt = new Date(utc);
+        if (isNaN(dt.getTime())) return;
+        // Local Y-M-DTH:M for the input value (no zone), padded.
+        const p = (n) => String(n).padStart(2, '0');
+        el.value = `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}` +
+            `T${p(dt.getHours())}:${p(dt.getMinutes())}`;
+    })();
+
+    function renderSlugWarnings(warnings) {
+        const el = document.getElementById('or-slug-warnings');
+        if (!el) return;
+        // Warnings echo the (admin-supplied) slug / HF id, so build them as text nodes —
+        // never innerHTML — to avoid injecting markup into the admin page.
+        el.textContent = '';
+        if (!warnings || warnings.length === 0) {
+            el.style.display = 'none';
+            return;
+        }
+        el.style.display = 'block';
+        warnings.forEach((w) => {
+            const line = document.createElement('div');
+            line.textContent = '⚠ ' + String(w);
+            el.appendChild(line);
+        });
+    }
+
+    async function suggestOpenRouterSlug() {
+        const hfId = (document.getElementById('hugging_face_id')?.value || '').trim();
+        if (hfId === '') {
+            setOpenRouterMessage('error', 'Enter a Hugging Face ID first, then Suggest.');
+            return;
+        }
+        setOpenRouterMessage('', '');
+        try {
+            const resp = await fetch(
+                {{ url_for('prefix.EndpointAdminSuggestOpenRouter', slug=endpoint_slug)|tojson }},
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hugging_face_id: hfId }),
+                },
+            );
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+            const slug = body.openrouter_slug;
+            if (slug) {
+                document.getElementById('openrouter_slug').value = slug;
+                setOpenRouterMessage('success', `Suggested slug: ${slug}. Review, then Save / List.`);
+            } else {
+                setOpenRouterMessage('error', "Couldn't auto-suggest a slug (no unambiguous catalog match). Type a catalog id.");
+            }
+        } catch (err) {
+            setOpenRouterMessage('error', err.message || String(err));
+        }
+    }
+
+    function setOpenRouterMessage(kind, text) {
+        const el = document.getElementById('or-editor-message');
+        if (!el) return;
+        el.className = `endpoint-message ${kind}`;
+        el.textContent = text || '';
+    }
+
+    const openRouterUrls = {
+        save: {{ url_for('prefix.EndpointAdminSaveOpenRouter', slug=endpoint_slug)|tojson }},
+        list: {{ url_for('prefix.EndpointAdminListOpenRouter', slug=endpoint_slug)|tojson }},
+        offline: {{ url_for('prefix.EndpointAdminTakeOfflineOpenRouter', slug=endpoint_slug)|tojson }},
+        unlist: {{ url_for('prefix.EndpointAdminUnlistOpenRouter', slug=endpoint_slug)|tojson }},
+    };
+
+    async function submitOpenRouter(mode, confirm) {
+        setOpenRouterMessage('', '');
+        renderSlugWarnings([]);
+        let url = openRouterUrls[mode];
+        let method = mode === 'save' ? 'PUT' : 'POST';
+        let payload;
+        if (mode === 'save' || mode === 'list') {
+            payload = openRouterPayload();
+            if (mode === 'list' && confirm) {
+                payload.confirm = true;
+            }
+        } else {
+            // offline / unlist are bodyless
+            payload = {};
+        }
+        try {
+            const resp = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+
+            const warnings = body.warnings || [];
+            renderSlugWarnings(warnings);
+
+            // Warning gate: a save-then-list whose Save returned a non-blocking warning
+            // stops before List and asks for an explicit "List anyway".
+            if (mode === 'list' && body.needs_confirm) {
+                setOpenRouterMessage('error', 'Slug warning — review below, then confirm to list.');
+                showListAnywayPrompt();
+                return;
+            }
+
+            const messages = {
+                save: warnings.length ? 'Saved with warnings (see below).' : 'OpenRouter listing fields saved.',
+                list: 'Endpoint listed on OpenRouter.',
+                offline: 'Endpoint taken offline (is_ready=false).',
+                unlist: 'Endpoint delisted from OpenRouter.',
+            };
+            setOpenRouterMessage(warnings.length && mode === 'save' ? 'error' : 'success', messages[mode] || 'Done.');
+            if (mode !== 'save') {
+                window.setTimeout(() => { window.location.reload(); }, 600);
+            }
+        } catch (err) {
+            setOpenRouterMessage('error', err.message || String(err));
+        }
+    }
+
+    function showListAnywayPrompt() {
+        const el = document.getElementById('or-slug-warnings');
+        if (!el || document.getElementById('or-list-anyway-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'or-list-anyway-btn';
+        btn.className = 'ix-btn';
+        btn.style.marginTop = '8px';
+        btn.textContent = 'List anyway';
+        btn.onclick = () => { btn.remove(); submitOpenRouter('list', true); };
+        el.appendChild(document.createElement('br'));
+        el.appendChild(btn);
+    }
+</script>

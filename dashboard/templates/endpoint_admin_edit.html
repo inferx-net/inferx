@@ -142,6 +142,30 @@
             </div>
         </form>
     </div>
+
+    {% set orp = endpoint_prefill.get('openrouter', {}) %}
+    <div class="endpoint-panel">
+        <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
+            <div>
+                <h2 style="margin: 0;">OpenRouter Listing</h2>
+                <p style="margin: 6px 0 0 0; color: #64748b;">
+                    Listing this endpoint into the flat <code>/v1/models</code> provider catalog is a
+                    separate flow with its own fields. Manage it on its own page &mdash; decoupled from
+                    the InferX publish controls above.
+                </p>
+            </div>
+            <div style="text-align: right; color: #475569; font-size: 13px;">
+                <div>Listed: <strong>{{ 'yes' if orp.get('or_listed') else 'no' }}</strong></div>
+                {% if orp.get('or_listed') %}
+                <div>is_ready: <strong>{{ 'true' if orp.get('or_is_ready') else 'false' }}</strong></div>
+                <div>OpenRouter slug: <strong>{{ orp.get('openrouter_slug') or '(unset)' }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="endpoint-actions">
+            <a class="ix-btn" href="{{ endpoint_openrouter_href }}">Manage OpenRouter listing</a>
+        </div>
+    </div>
 </section>
 
 {% include '_metadata_picker_script.html' %}
