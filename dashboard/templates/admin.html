@@ -447,12 +447,23 @@
         margin-top: 5px;
     }
 
+    :root {
+        --billing-color-inference: #4CAF50;
+        --billing-color-inference-hover: #45a049;
+        --billing-color-standby: #cc79a7;
+        --billing-color-standby-hover: #b05f8d;
+        --billing-color-token: #0072b2;
+        --billing-color-token-hover: #005b90;
+        --billing-color-status-active: green;
+        --billing-color-status-exceeded: red;
+    }
+
     .status-active {
-        color: green;
+        color: var(--billing-color-status-active);
     }
 
     .status-exceeded {
-        color: red;
+        color: var(--billing-color-status-exceeded);
     }
 
     .status-exempted {
@@ -482,32 +493,60 @@
         transition: height 0.3s ease;
     }
 
+    .usage-legend-swatch {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border: 1px solid rgba(15, 23, 42, 0.35);
+        vertical-align: -1px;
+    }
+
+    .usage-legend-swatch-inference {
+        background: var(--billing-color-inference);
+    }
+
+    .usage-legend-swatch-standby {
+        background: var(--billing-color-standby);
+    }
+
+    .usage-legend-swatch-token {
+        background: var(--billing-color-token);
+    }
+
     .usage-bar-inference {
-        background-color: #4CAF50;
+        background-color: var(--billing-color-inference);
     }
 
     .usage-bar-inference:hover {
-        background-color: #45a049;
+        background-color: var(--billing-color-inference-hover);
     }
 
     .usage-bar-standby {
-        background-color: #2196F3;
+        background-color: var(--billing-color-standby);
     }
 
     .usage-bar-standby:hover {
-        background-color: #1976D2;
+        background-color: var(--billing-color-standby-hover);
+    }
+
+    .usage-bar-token {
+        background-color: var(--billing-color-token);
+    }
+
+    .usage-bar-token:hover {
+        background-color: var(--billing-color-token-hover);
     }
 
     /* Single bar for analytics */
     .usage-bar {
-        background-color: #4CAF50;
+        background-color: var(--billing-color-inference);
         min-width: 8px;
         flex: 1;
         transition: height 0.3s ease;
     }
 
     .usage-bar:hover {
-        background-color: #45a049;
+        background-color: var(--billing-color-inference-hover);
     }
 
     #billing-pagination-controls,
@@ -1036,7 +1075,8 @@
                 <div id="used-value">--</div>
                 <div id="used-breakdown" class="subtext">
                     <span id="used-inference">--</span> |
-                    <span id="used-standby">--</span>
+                    <span id="used-standby">--</span> |
+                    <span id="used-token">--</span>
                 </div>
             </div>
             <div class="summary-card">
@@ -1053,7 +1093,7 @@
         <!-- Usage Chart -->
         <div id="usage-chart-container" style="margin-bottom: 20px;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
-                <h3 style="margin: 0;">Usage</h3>
+                <h3 style="margin: 0;">Dedicated GPU, Snapshot Retention, and Token-Based Usage</h3>
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <div id="usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                         <button type="button" onclick="setUsageRangeHours(24)" id="usage-range-24h">Last 24h</button>
@@ -1090,9 +1130,12 @@
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 4px;">
                     <div>
-                        <span style="display: inline-block; width: 10px; height: 10px; background: #4CAF50;"></span> Inference
+                        <span class="usage-legend-swatch usage-legend-swatch-inference"></span> Dedicated GPU
                         <span id="usage-legend-standby" style="display: inline;">
-                            <span style="display: inline-block; width: 10px; height: 10px; background: #2196F3; margin-left: 10px;"></span> Snapshot Retention
+                            <span class="usage-legend-swatch usage-legend-swatch-standby" style="margin-left: 10px;"></span> Snapshot Retention
+                        </span>
+                        <span id="usage-legend-token" style="display: none;">
+                            <span class="usage-legend-swatch usage-legend-swatch-token" style="margin-left: 10px;"></span> Token-Based
                         </span>
                     </div>
                     <div>(Local)</div>
@@ -1110,13 +1153,13 @@
                                     Period <span id="usage-sort-period-icon">▼</span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
-                                    Inference GPU time <span id="usage-sort-inf-hours-icon"></span>
+                                    Dedicated GPU time <span id="usage-sort-inf-hours-icon"></span>
                                 </th>
                                 <th class="usage-standby-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
                                     Snapshot Retention time <span id="usage-sort-sby-hours-icon"></span>
                                 </th>
                                 <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
-                                    Inference (USD) <span id="usage-sort-inf-cost-icon"></span>
+                                    Dedicated GPU (USD) <span id="usage-sort-inf-cost-icon"></span>
                                 </th>
                                 <th class="usage-standby-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
                                     Snapshot Retention (USD) <span id="usage-sort-sby-cost-icon"></span>
@@ -1140,6 +1183,44 @@
                     </table>
                 </div>
             </div>
+            <div id="billing-token-usage-container" style="display: none; margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 14px;">
+                <h4 style="margin: 0 0 6px 0;">Token-Based Usage</h4>
+                <p style="margin: 0 0 12px 0; font-size: 12px; color: #666;">
+                    Shared-endpoint token billing for the same selected time range.
+                </p>
+                <div id="billing-token-usage-loading" style="display: none; color: #888; font-size: 12px; margin-bottom: 8px;">
+                    Loading token usage...
+                </div>
+                <div id="billing-token-usage-empty" style="display: none; color: #888; padding: 12px 0;">
+                    No token-based usage data for the selected period.
+                </div>
+                <div id="billing-token-usage-error" style="display: none; color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 10px; margin-bottom: 8px;"></div>
+                <div id="billing-token-usage-content" style="display: none; overflow-x: auto;">
+                    <table id="billing-token-usage-table" class="billing-analytics-table" style="min-width: 860px;">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('period')">Period (<span id="billing-token-usage-period-granularity">Hourly</span>, Local) <span id="billing-token-sort-period-icon">▼</span></th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('requests')">Requests <span id="billing-token-sort-requests-icon"></span></th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('input')">Input Tokens <span id="billing-token-sort-input-icon"></span></th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('cached')">Cached Tokens <span id="billing-token-sort-cached-icon"></span></th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('output')">Output Tokens <span id="billing-token-sort-output-icon"></span></th>
+                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('spend')">Spend (USD) <span id="billing-token-sort-spend-icon"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot>
+                            <tr>
+                                <td style="padding: 8px;">Total</td>
+                                <td id="billing-token-usage-total-requests" style="text-align: right; padding: 8px;">--</td>
+                                <td id="billing-token-usage-total-input" style="text-align: right; padding: 8px;">--</td>
+                                <td id="billing-token-usage-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                <td id="billing-token-usage-total-output" style="text-align: right; padding: 8px;">--</td>
+                                <td id="billing-token-usage-total-spend" style="text-align: right; padding: 8px;">--</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- Usage Analytics Section -->
@@ -1157,6 +1238,8 @@
                     <button type="button" onclick="applyCustomUsageRange()">Apply</button>
                 </div>
                 <!-- Summary cards hidden by request -->
+
+                <h4 style="margin: 0 0 10px 0;">Shared Time Range</h4>
 
                 <!-- Time Range Selector -->
                 <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -1178,47 +1261,50 @@
                     </span>
                 </div>
 
-                <!-- View Mode Selector -->
-                <div style="margin-bottom: 15px;">
-                    <label>View By:</label>
-                    <input type="radio" name="analytics-view" value="tenant" onchange="loadAnalyticsView()"> Tenant
-                    <input type="radio" name="analytics-view" value="model" checked onchange="loadAnalyticsView()"> Model
-                    <input type="radio" name="analytics-view" value="namespace" onchange="loadAnalyticsView()"> Namespace
-                </div>
+                <div id="gpu-analytics-section" style="margin-top: 16px; border: 1px solid #d8e2ec; padding: 12px; background: #fafcff;">
+                    <h4 style="margin: 0 0 10px 0;">Dedicated GPU and Snapshot Usage</h4>
 
-                <div id="analytics-hourly-view-controls" style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
-                    <span style="font-size: 12px; color: #666;">Hourly View:</span>
-                    <button type="button" onclick="setAnalyticsHourlyViewMode('chart')" id="analytics-hourly-view-chart">Chart</button>
-                    <button type="button" onclick="setAnalyticsHourlyViewMode('table')" id="analytics-hourly-view-table">Table</button>
-                </div>
+                    <!-- View Mode Selector -->
+                    <div style="margin-bottom: 15px;">
+                        <label>View By:</label>
+                        <input type="radio" name="analytics-view" value="tenant"> Tenant
+                        <input type="radio" name="analytics-view" value="model" checked> Model
+                        <input type="radio" name="analytics-view" value="namespace"> Namespace
+                    </div>
 
-                <!-- Results Area -->
-                <div id="analytics-chart-area" style="display: none;">
-                    <!-- Chart rendered here -->
-                </div>
+                    <div id="analytics-hourly-view-controls" style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                        <span style="font-size: 12px; color: #666;">Hourly View:</span>
+                        <button type="button" onclick="setAnalyticsHourlyViewMode('chart')" id="analytics-hourly-view-chart">Chart</button>
+                        <button type="button" onclick="setAnalyticsHourlyViewMode('table')" id="analytics-hourly-view-table">Table</button>
+                    </div>
 
-                <div id="analytics-hourly-table-area" style="display: none;">
-                    <h4 style="margin: 0 0 8px 0;">
-                        Hourly Table View (<span id="analytics-hourly-table-granularity">Hourly</span>, Local)
-                    </h4>
-                    <table id="analytics-hourly-table" class="billing-analytics-table">
-                        <thead>
+                    <!-- Results Area -->
+                    <div id="analytics-chart-area" style="display: none;">
+                        <!-- Chart rendered here -->
+                    </div>
+
+                    <div id="analytics-hourly-table-area" style="display: none;">
+                        <h4 style="margin: 0 0 8px 0;">
+                            Hourly Table View (<span id="analytics-hourly-table-granularity">Hourly</span>, Local)
+                        </h4>
+                        <table id="analytics-hourly-table" class="billing-analytics-table">
+                            <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 8px;">Period</th>
+                                        <th style="text-align: right; padding: 8px;">GPU time</th>
+                                    </tr>
+                            </thead>
+                            <tbody></tbody>
+                            <tfoot>
                                 <tr>
-                                    <th style="text-align: left; padding: 8px;">Period</th>
-                                    <th style="text-align: right; padding: 8px;">GPU time</th>
+                                    <td style="padding: 8px;">Total</td>
+                                    <td id="analytics-hourly-table-total" style="text-align: right; padding: 8px;">--</td>
                                 </tr>
-                        </thead>
-                        <tbody></tbody>
-                        <tfoot>
-                            <tr>
-                                <td style="padding: 8px;">Total</td>
-                                <td id="analytics-hourly-table-total" style="text-align: right; padding: 8px;">--</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
+                            </tfoot>
+                        </table>
+                    </div>
 
-                <div id="analytics-table-area" style="display: none;">
+                    <div id="analytics-table-area" style="display: none;">
                     <div id="analytics-model-split-area" style="display: none;">
                         <div id="analytics-regular-model-section" style="display: none; margin-bottom: 16px;">
                             <h4 id="analytics-regular-model-title" style="margin: 0 0 8px 0;">Deployed Model Usage</h4>
@@ -1230,13 +1316,13 @@
                                                 Model <span id="regular-sort-name-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                                Inference GPU time <span id="regular-sort-inf-hours-icon"></span>
+                                                Dedicated GPU time <span id="regular-sort-inf-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
                                                 Snapshot Retention time <span id="regular-sort-sby-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
-                                                Inference (USD) <span id="regular-sort-inf-cost-icon"></span>
+                                                Dedicated GPU (USD) <span id="regular-sort-inf-cost-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
                                                 Snapshot Retention (USD) <span id="regular-sort-sby-cost-icon"></span>
@@ -1275,10 +1361,10 @@
                                                 Endpoint <span id="endpoint-sort-name-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                                Inference GPU time <span id="endpoint-sort-inf-hours-icon"></span>
+                                                Dedicated GPU time <span id="endpoint-sort-inf-hours-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
-                                                Inference (USD) <span id="endpoint-sort-inf-cost-icon"></span>
+                                                Dedicated GPU (USD) <span id="endpoint-sort-inf-cost-icon"></span>
                                             </th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('total_cost')">
                                                 Total (USD) <span id="endpoint-sort-total-cost-icon"></span>
@@ -1311,13 +1397,13 @@
                                         Group <span id="sort-name-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_hours')">
-                                        Inference GPU time <span id="sort-inf-hours-icon"></span>
+                                        Dedicated GPU time <span id="sort-inf-hours-icon"></span>
                                     </th>
                                     <th class="analytics-summary-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_hours')">
                                         Snapshot Retention time <span id="sort-sby-hours-icon"></span>
                                     </th>
                                     <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('inf_cost')">
-                                        Inference (USD) <span id="sort-inf-cost-icon"></span>
+                                        Dedicated GPU (USD) <span id="sort-inf-cost-icon"></span>
                                     </th>
                                     <th class="analytics-summary-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsTable('sby_cost')">
                                         Snapshot Retention (USD) <span id="sort-sby-cost-icon"></span>
@@ -1344,62 +1430,149 @@
                             </tfoot>
                         </table>
                     </div>
+                    </div>
+
+                    <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                            <h4 id="analytics-group-detail-title" style="margin: 0;">Breakdown</h4>
+                            <div id="analytics-group-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 12px; color: #666;">Granularity:</span>
+                                <button type="button" onclick="setAnalyticsDetailGranularity('hourly')" id="analytics-detail-granularity-hourly">Hourly</button>
+                                <button type="button" onclick="setAnalyticsDetailGranularity('daily')" id="analytics-detail-granularity-daily">Daily</button>
+                                <button type="button" onclick="setAnalyticsDetailGranularity('weekly')" id="analytics-detail-granularity-weekly">Weekly</button>
+                            </div>
+                            <span id="analytics-group-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                        </div>
+                        <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
+                        <div style="overflow-x: auto;">
+                            <table id="analytics-group-detail-table" class="billing-analytics-table">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
+                                            Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
+                                        </th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
+                                            Dedicated GPU time <span id="detail-sort-inf-hours-icon"></span>
+                                        </th>
+                                        <th class="analytics-detail-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
+                                            Snapshot Retention time <span id="detail-sort-sby-hours-icon"></span>
+                                        </th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
+                                            Dedicated GPU (USD) <span id="detail-sort-inf-cost-icon"></span>
+                                        </th>
+                                        <th class="analytics-detail-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
+                                            Snapshot Retention (USD) <span id="detail-sort-sby-cost-icon"></span>
+                                        </th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
+                                            Total (USD) <span id="detail-sort-total-cost-icon"></span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td style="padding: 8px;">Total</td>
+                                        <td id="analytics-group-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="analytics-group-total-sby-hours" class="analytics-detail-standby-col" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="analytics-group-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="analytics-group-total-sby-cost" class="analytics-detail-standby-col" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="analytics-group-total-cost" style="text-align: right; padding: 8px;">--</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
                 </div>
 
-                <div id="analytics-group-detail-area" style="display: none; margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
-                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
-                        <h4 id="analytics-group-detail-title" style="margin: 0;">Breakdown</h4>
-                        <div id="analytics-group-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
-                            <span style="font-size: 12px; color: #666;">Granularity:</span>
-                            <button type="button" onclick="setAnalyticsDetailGranularity('hourly')" id="analytics-detail-granularity-hourly">Hourly</button>
-                            <button type="button" onclick="setAnalyticsDetailGranularity('daily')" id="analytics-detail-granularity-daily">Daily</button>
-                            <button type="button" onclick="setAnalyticsDetailGranularity('weekly')" id="analytics-detail-granularity-weekly">Weekly</button>
-                        </div>
-                        <span id="analytics-group-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                <div id="token-analytics-section" style="margin-top: 16px; border: 1px solid #d8e2ec; padding: 12px; background: #fafcff;">
+                    <h4 style="margin: 0 0 6px 0;">Token-Based Usage</h4>
+                    <p style="margin: 0 0 12px 0; font-size: 12px; color: #666;">
+                        Shared-endpoint token billing for the selected tenant and time range.
+                    </p>
+                    <div id="token-analytics-view-controls" style="display: flex; gap: 16px; margin: 0 0 12px 0; align-items: center; flex-wrap: wrap;">
+                        <span style="font-size: 12px; color: #666;">View By:</span>
+                        <label><input type="radio" name="token-analytics-view" value="tenant" onchange="setTokenAnalyticsViewMode('tenant')"> Tenant</label>
+                        <label><input type="radio" name="token-analytics-view" value="model" checked onchange="setTokenAnalyticsViewMode('model')"> Model</label>
                     </div>
-                    <div id="analytics-group-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
-                    <div style="overflow-x: auto;">
-                        <table id="analytics-group-detail-table" class="billing-analytics-table">
-                            <thead>
-                                <tr>
-                                    <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('period')">
-                                        Period (<span id="analytics-group-detail-period-granularity">Hourly</span>, Local) <span id="detail-sort-period-icon">▼</span>
-                                    </th>
-                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_hours')">
-                                        Inference GPU time <span id="detail-sort-inf-hours-icon"></span>
-                                    </th>
-                                    <th class="analytics-detail-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_hours')">
-                                        Snapshot Retention time <span id="detail-sort-sby-hours-icon"></span>
-                                    </th>
-                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('inf_cost')">
-                                        Inference (USD) <span id="detail-sort-inf-cost-icon"></span>
-                                    </th>
-                                    <th class="analytics-detail-standby-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('sby_cost')">
-                                        Snapshot Retention (USD) <span id="detail-sort-sby-cost-icon"></span>
-                                    </th>
-                                    <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortAnalyticsGroupDetailTable('total_cost')">
-                                        Total (USD) <span id="detail-sort-total-cost-icon"></span>
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                            <tfoot>
-                                <tr>
-                                    <td style="padding: 8px;">Total</td>
-                                    <td id="analytics-group-total-inf-hours" style="text-align: right; padding: 8px;">--</td>
-                                    <td id="analytics-group-total-sby-hours" class="analytics-detail-standby-col" style="text-align: right; padding: 8px;">--</td>
-                                    <td id="analytics-group-total-inf-cost" style="text-align: right; padding: 8px;">--</td>
-                                    <td id="analytics-group-total-sby-cost" class="analytics-detail-standby-col" style="text-align: right; padding: 8px;">--</td>
-                                    <td id="analytics-group-total-cost" style="text-align: right; padding: 8px;">--</td>
-                                </tr>
-                            </tfoot>
-                        </table>
+                    <div id="token-analytics-loading" style="display: none; color: #888; font-size: 12px; margin-bottom: 8px;">
+                        Loading token usage...
+                    </div>
+                    <div id="token-analytics-empty" style="display: none; color: #888; padding: 12px 0;">
+                        No token-based usage data for the selected period.
+                    </div>
+                    <div id="token-analytics-error" style="display: none; color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 10px; margin-bottom: 8px;"></div>
+                    <div id="token-analytics-content" style="display: none;">
+                        <div style="overflow-x: auto; margin-bottom: 14px;">
+                            <table id="token-analytics-model-table" class="billing-analytics-table" style="min-width: 860px;">
+                                <thead>
+                                    <tr>
+                                        <th id="token-analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('group')">Model <span id="token-sort-group-icon"></span></th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('requests')">Requests <span id="token-sort-requests-icon"></span></th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('input')">Input Tokens <span id="token-sort-input-icon"></span></th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('cached')">Cached Tokens <span id="token-sort-cached-icon"></span></th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('output')">Output Tokens <span id="token-sort-output-icon"></span></th>
+                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('spend')">Spend (USD) <span id="token-sort-spend-icon">▼</span></th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td style="padding: 8px;">Total</td>
+                                        <td id="token-analytics-model-total-requests" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="token-analytics-model-total-input" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="token-analytics-model-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="token-analytics-model-total-output" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="token-analytics-model-total-spend" style="text-align: right; padding: 8px;">--</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+
+                        <div id="token-analytics-detail" style="margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                                <h4 id="token-analytics-detail-title" style="margin: 0;">Breakdown</h4>
+                                <div id="token-analytics-detail-granularity-controls" style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 12px; color: #666;">Granularity:</span>
+                                    <button type="button" onclick="setTokenAnalyticsDetailGranularity('hourly')" id="token-detail-granularity-hourly">Hourly</button>
+                                    <button type="button" onclick="setTokenAnalyticsDetailGranularity('daily')" id="token-detail-granularity-daily">Daily</button>
+                                    <button type="button" onclick="setTokenAnalyticsDetailGranularity('weekly')" id="token-detail-granularity-weekly">Weekly</button>
+                                </div>
+                            </div>
+                            <div id="token-analytics-detail-prompt" style="color: #888; margin-bottom: 8px;">
+                                Select a row above to view hourly breakdown.
+                            </div>
+                            <div id="token-analytics-hourly-table-wrap" style="display: none; overflow-x: auto;">
+                                <table id="token-analytics-hourly-table" class="billing-analytics-table" style="min-width: 860px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('period')">Period (<span id="token-analytics-period-granularity">Hourly</span>, Local) <span id="token-detail-sort-period-icon">▼</span></th>
+                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('requests')">Requests <span id="token-detail-sort-requests-icon"></span></th>
+                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('input')">Input Tokens <span id="token-detail-sort-input-icon"></span></th>
+                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('cached')">Cached Tokens <span id="token-detail-sort-cached-icon"></span></th>
+                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('output')">Output Tokens <span id="token-detail-sort-output-icon"></span></th>
+                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('spend')">Spend (USD) <span id="token-detail-sort-spend-icon"></span></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td style="padding: 8px;">Total</td>
+                                            <td id="token-analytics-hourly-total-requests" style="text-align: right; padding: 8px;">--</td>
+                                            <td id="token-analytics-hourly-total-input" style="text-align: right; padding: 8px;">--</td>
+                                            <td id="token-analytics-hourly-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                            <td id="token-analytics-hourly-total-output" style="text-align: right; padding: 8px;">--</td>
+                                            <td id="token-analytics-hourly-total-spend" style="text-align: right; padding: 8px;">--</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Empty State -->
                 <div id="analytics-empty" style="display: none; text-align: center; padding: 40px; color: #888;">
-                    <p>No usage data for the selected period.</p>
+                    <p>No dedicated GPU or snapshot usage data for the selected period.</p>
                 </div>
 
                 <!-- Error State -->
@@ -1899,15 +2072,21 @@
         if (!dropdown) return;
 
         const desiredTenant = String(preferredTenant || '').trim();
+        const availableTenantCount = billingAllTenants.length;
+        const soleTenant = availableTenantCount === 1 ? billingAllTenants[0].value : '';
         const hasExplicitChoice = desiredTenant !== '';
         if (hasExplicitChoice) {
             const exists = Array.from(dropdown.options || []).some((opt) => opt.value === desiredTenant);
             if (exists) {
                 dropdown.value = desiredTenant;
-            } else if (dropdown.options.length > 1) {
+            } else if (soleTenant) {
+                dropdown.value = soleTenant;
+            } else if (availableTenantCount > 1) {
                 dropdown.value = '';
             }
-        } else if (dropdown.options.length > 1) {
+        } else if (soleTenant) {
+            dropdown.value = soleTenant;
+        } else if (availableTenantCount > 1) {
             dropdown.value = '';
         }
         syncBillingTenantComboLabel();
@@ -1943,7 +2122,7 @@
         localStorage.setItem('currentTab', tabName);
         if (options.updateHistory !== false) {
             updateAdminUrlState(tabName, {
-                tenant: tabName === 'Billing' ? (document.getElementById('billing_tenant_select')?.value || '') : '',
+                tenant: tabName === 'Billing' ? getActiveBillingTenant({ syncHidden: true }) : '',
                 historyMode: options.historyMode === 'replace' ? 'replace' : 'push',
             });
         }
@@ -2048,6 +2227,10 @@
     let billingUsageTableGranularity = 'hourly';
     let billingUsageSortColumn = 'period';
     let billingUsageSortDirection = 'desc';
+    let billingTokenUsageRows = [];
+    let billingTokenUsageTableRows = [];
+    let billingTokenUsageSortColumn = 'period';
+    let billingTokenUsageSortDirection = 'desc';
     let billingCreditHistoryRows = [];
     let billingCreditSortColumn = 'date';
     let billingCreditSortDirection = 'desc';
@@ -2257,6 +2440,40 @@
         const val = hiddenSelect.value;
         const match = billingAllTenants.find(t => t.value === val);
         input.value = match ? match.label : '';
+    }
+
+    function getBillingTenantFromComboInput() {
+        const input = document.getElementById('billing_tenant_combo_input');
+        const rawValue = String(input?.value || '').trim();
+        if (rawValue === '') return '';
+
+        const exactLabelMatch = billingAllTenants.find((tenantOption) => tenantOption.label === rawValue);
+        if (exactLabelMatch) return exactLabelMatch.value;
+
+        const exactValueMatch = billingAllTenants.find((tenantOption) => tenantOption.value === rawValue);
+        return exactValueMatch ? exactValueMatch.value : '';
+    }
+
+    function getActiveBillingTenant({ syncHidden = false } = {}) {
+        const hiddenSelect = document.getElementById('billing_tenant_select');
+        let tenant = String(hiddenSelect?.value || '').trim();
+
+        if (tenant === '') {
+            tenant = String(getAdminUrlState().tenant || '').trim();
+        }
+        if (tenant === '') {
+            tenant = getBillingTenantFromComboInput();
+        }
+
+        if (tenant !== '' && syncHidden && hiddenSelect) {
+            const optionExists = Array.from(hiddenSelect.options || []).some((opt) => opt.value === tenant);
+            if (optionExists && hiddenSelect.value !== tenant) {
+                hiddenSelect.value = tenant;
+                syncBillingTenantComboLabel();
+            }
+        }
+
+        return tenant;
     }
 
     function showBillingAdminMessage(message, isError) {
@@ -2838,9 +3055,10 @@
         }
         updateUsageRangeButtons();
         updateAnalyticsRangeButtons();
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (tenant) {
             loadUsageChart(tenant);
+            loadBillingTokenUsage(tenant);
         }
     }
 
@@ -2911,9 +3129,10 @@
             customEl.style.display = 'flex';
         }
         updateUsageRangeButtons();
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (tenant) {
             loadUsageChart(tenant);
+            loadBillingTokenUsage(tenant);
         }
     }
 
@@ -2929,11 +3148,13 @@
     function applyUsageViewVisibility() {
         const chartViewEl = document.getElementById('usage-chart-view');
         const tableViewEl = document.getElementById('usage-table-container');
-        if (!chartViewEl || !tableViewEl) return;
+        const tokenTableEl = document.getElementById('billing-token-usage-container');
+        if (!chartViewEl || !tableViewEl || !tokenTableEl) return;
 
-        const showTable = billingUsageViewMode === 'table' && billingUsageTableReady;
-        chartViewEl.style.display = showTable ? 'none' : 'block';
-        tableViewEl.style.display = showTable ? 'block' : 'none';
+        const showTableMode = billingUsageViewMode === 'table';
+        chartViewEl.style.display = showTableMode ? 'none' : 'block';
+        tableViewEl.style.display = showTableMode && billingUsageTableReady ? 'block' : 'none';
+        tokenTableEl.style.display = showTableMode ? 'block' : 'none';
     }
 
     function setUsageViewMode(mode) {
@@ -3765,7 +3986,7 @@
             return;
         }
 
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (tenant) loadUsageChart(tenant);
     }
 
@@ -3851,7 +4072,7 @@
             customEl.style.display = 'flex';
         }
         updateAnalyticsRangeButtons();
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (tenant && analyticsExpanded) {
             loadAnalytics();
         }
@@ -3881,7 +4102,7 @@
 
     // Called when tenant selection changes
     async function loadBillingData(options = {}) {
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
 
         // Handle no selection
         if (!tenant) {
@@ -3916,6 +4137,7 @@
         await Promise.all([
             loadBillingSummary(tenant),
             loadUsageChart(tenant),
+            loadBillingTokenUsage(tenant),
             loadCreditHistory(tenant, 0)
         ]);
 
@@ -3971,6 +4193,13 @@
 
     function rowsHaveStandbyUsage(rows) {
         return Array.isArray(rows) && rows.some(rowHasStandbyUsage);
+    }
+
+    function analyticsUsageRowHasUsage(row) {
+        return getAnalyticsUsageMs(row) > 0 ||
+            getAnalyticsInferenceCents(row) > 0 ||
+            getAnalyticsStandbyCents(row) > 0 ||
+            getAnalyticsChargeCents(row) > 0;
     }
 
     function setBillingStatus(statusEl, quotaExceeded, quotaExempt) {
@@ -4072,9 +4301,15 @@
 
                 const infCents = data.period?.inference_cents || 0;
                 const sbyCents = data.period?.standby_cents || 0;
-                document.getElementById('used-breakdown').innerHTML = sbyCents > 0
-                    ? `<span>Inference: ${formatUsd(infCents)}</span> | <span>Snapshot Retention: ${formatUsd(sbyCents)}</span>`
-                    : `<span>Inference: ${formatUsd(infCents)}</span>`;
+                const tokenCents = data.period?.token_cents || 0;
+                const breakdownParts = [];
+                if (infCents > 0) breakdownParts.push(`<span>Dedicated GPU: ${formatUsd(infCents)}</span>`);
+                if (sbyCents > 0) breakdownParts.push(`<span>Snapshot Retention: ${formatUsd(sbyCents)}</span>`);
+                if (tokenCents > 0) breakdownParts.push(`<span>Token-Based: ${formatUsd(tokenCents)}</span>`);
+                if (breakdownParts.length === 0) {
+                    breakdownParts.push('<span>--</span>');
+                }
+                document.getElementById('used-breakdown').innerHTML = breakdownParts.join(' | ');
 
                 const thresholdCents = data.threshold_cents || 0;
                 document.getElementById('threshold-value').textContent = formatUsd(thresholdCents);
@@ -4085,7 +4320,11 @@
             } else {
                 // Fallback: use existing /credits endpoint + tenant object for status
                 document.getElementById('used-value').textContent = '--';
-                document.getElementById('used-breakdown').textContent = '';
+                document.getElementById('used-breakdown').innerHTML = [
+                    '<span>Dedicated GPU: --</span>',
+                    '<span>Snapshot Retention: --</span>',
+                    '<span>Token-Based: --</span>',
+                ].join(' | ');
                 document.getElementById('threshold-value').textContent = '--';
 
                 // Get status from tenant object
@@ -4148,43 +4387,171 @@
         });
     }
 
+    function buildBillingUsageParams() {
+        const params = new URLSearchParams();
+        if (billingUsageRange.mode === 'custom') {
+            if (!billingUsageRange.start || !billingUsageRange.end) {
+                if (!syncBillingCustomRangeFromInputs(false)) {
+                    params.set('hours', '24');
+                } else {
+                    params.set('start', billingUsageRange.start);
+                    params.set('end', billingUsageRange.end);
+                }
+            } else {
+                params.set('start', billingUsageRange.start);
+                params.set('end', billingUsageRange.end);
+            }
+        } else {
+            params.set('hours', String(billingUsageRange.hours || 24));
+        }
+        return params;
+    }
+
+    function aggregateBillingTokenUsageByGranularity(rows, granularity) {
+        const usageRows = aggregateTokenUsageByHour(Array.isArray(rows) ? rows : []);
+        if (granularity === 'hourly') {
+            return [...usageRows].sort((a, b) => (a.hour || '').localeCompare(b.hour || ''));
+        }
+
+        const bucketMap = new Map();
+        usageRows.forEach((row) => {
+            const rawDate = new Date(row.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            let bucketEnd = null;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+                bucketEnd = new Date(bucketStart.getTime());
+                bucketEnd.setDate(bucketEnd.getDate() + 6);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: bucketEnd ? bucketEnd.toISOString() : null,
+                    request_count: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    output_tokens: 0,
+                    charge_cents: 0,
+                });
+            }
+
+            const bucket = bucketMap.get(key);
+            bucket.request_count += row.request_count || 0;
+            bucket.input_tokens += row.input_tokens || 0;
+            bucket.cached_tokens += row.cached_tokens || 0;
+            bucket.output_tokens += row.output_tokens || 0;
+            bucket.charge_cents += row.charge_cents || 0;
+        });
+
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function mergeBillingChartRows(gpuRows, tokenRows) {
+        const merged = new Map();
+
+        (Array.isArray(gpuRows) ? gpuRows : []).forEach((row) => {
+            const key = String(row.hour || '').trim();
+            if (key === '') return;
+            merged.set(key, {
+                ...row,
+                token_cents: 0,
+                token_requests: 0,
+                input_tokens: 0,
+                cached_tokens: 0,
+                output_tokens: 0,
+            });
+        });
+
+        (Array.isArray(tokenRows) ? tokenRows : []).forEach((row) => {
+            const key = String(row.hour || '').trim();
+            if (key === '') return;
+            const current = merged.get(key) || {
+                hour: key,
+                week_end: row.week_end || null,
+                inference_cents: 0,
+                standby_cents: 0,
+                inference_ms: 0,
+                standby_ms: 0,
+                usage_ms: 0,
+                token_cents: 0,
+                token_requests: 0,
+                input_tokens: 0,
+                cached_tokens: 0,
+                output_tokens: 0,
+            };
+            current.week_end = current.week_end || row.week_end || null;
+            current.token_cents += row.charge_cents || 0;
+            current.token_requests += row.request_count || 0;
+            current.input_tokens += row.input_tokens || 0;
+            current.cached_tokens += row.cached_tokens || 0;
+            current.output_tokens += row.output_tokens || 0;
+            merged.set(key, current);
+        });
+
+        return Array.from(merged.values()).sort((a, b) => (a.hour || '').localeCompare(b.hour || ''));
+    }
+
     function renderBillingUsageFromRawRows() {
         const chartEl = document.getElementById('usage-chart');
         const labelsEl = document.getElementById('usage-chart-labels');
         if (!chartEl || !labelsEl) return;
-        if (!Array.isArray(billingUsageRawRows) || billingUsageRawRows.length === 0) return;
 
         const granularity = billingUsageGranularity;
-        const displayData = granularity === 'hourly'
-            ? [...billingUsageRawRows]
-            : aggregateHourlyUsageByGranularity(billingUsageRawRows, granularity);
-        const showStandby = rowsHaveStandbyUsage(displayData);
+        const gpuDisplayData = aggregateHourlyUsageByGranularity(billingUsageRawRows, granularity);
+        const tokenDisplayData = aggregateBillingTokenUsageByGranularity(billingTokenUsageRows, granularity);
+        const displayData = mergeBillingChartRows(gpuDisplayData, tokenDisplayData);
+        if (displayData.length === 0) return;
+
+        const showStandby = rowsHaveStandbyUsage(gpuDisplayData);
+        const showToken = displayData.some((u) => (u.token_cents || 0) > 0);
         setUsageStandbyVisibility(showStandby);
+        const tokenLegendEl = document.getElementById('usage-legend-token');
+        if (tokenLegendEl) tokenLegendEl.style.display = showToken ? 'inline' : 'none';
 
         const maxCents = Math.max(...displayData.map(u =>
-            (u.inference_cents || 0) + (u.standby_cents || 0)
+            (u.inference_cents || 0) + (u.standby_cents || 0) + (u.token_cents || 0)
         ), 1);
 
         chartEl.innerHTML = displayData.map(u => {
             const infCents = u.inference_cents || 0;
             const sbyCents = u.standby_cents || 0;
+            const tokenCents = u.token_cents || 0;
             const infMs = u.inference_ms || 0;
             const sbyMs = u.standby_ms || 0;
-            const totalCents = infCents + sbyCents;
+            const tokenRequests = u.token_requests || 0;
+            const totalCents = infCents + sbyCents + tokenCents;
             const totalHeight = Math.max(2, (totalCents / maxCents) * 100);
 
             const infPct = totalCents > 0 ? (infCents / totalCents) * 100 : 0;
             const sbyPct = totalCents > 0 ? (sbyCents / totalCents) * 100 : 0;
+            const tokenPct = totalCents > 0 ? (tokenCents / totalCents) * 100 : 0;
             const infTime = formatGpuTimeMs(infMs);
             const sbyTime = formatGpuTimeMs(sbyMs);
             const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
-            const tooltip = showStandby
-                ? `${periodLabel} | Inference: ${formatUsd(infCents)} (${infTime}) | Snapshot Retention: ${formatUsd(sbyCents)} (${sbyTime}) | Total: ${formatUsd(totalCents)}`
-                : `${periodLabel} | Inference: ${formatUsd(infCents)} (${infTime}) | Total: ${formatUsd(totalCents)}`;
+            const tooltipParts = [
+                `${periodLabel}`,
+                `Dedicated GPU: ${formatUsd(infCents)} (${infTime})`,
+            ];
+            if (showStandby) {
+                tooltipParts.push(`Snapshot Retention: ${formatUsd(sbyCents)} (${sbyTime})`);
+            }
+            if (showToken) {
+                tooltipParts.push(`Token-Based: ${formatUsd(tokenCents)} (${formatCount(tokenRequests)} req)`);
+            }
+            tooltipParts.push(`Total: ${formatUsd(totalCents)}`);
+            const tooltip = tooltipParts.join(' | ');
 
             return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
                 `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
                 (showStandby ? `<div class="usage-bar-standby" style="height: ${sbyPct}%"></div>` : '') +
+                (showToken ? `<div class="usage-bar-token" style="height: ${tokenPct}%"></div>` : '') +
                 `</div>`;
         }).join('');
 
@@ -4196,8 +4563,9 @@
             return `<div style="flex: 1; text-align: center;">${label}</div>`;
         }).join('');
 
-        renderUsageTable(displayData, granularity);
-        billingUsageTableReady = true;
+        renderUsageTable(gpuDisplayData, granularity);
+        renderBillingTokenUsage(billingTokenUsageRows);
+        billingUsageTableReady = billingUsageTableRows.length > 0;
         applyUsageViewVisibility();
     }
 
@@ -4206,34 +4574,20 @@
         const labelsEl = document.getElementById('usage-chart-labels');
 
         try {
-            const params = new URLSearchParams();
-            if (billingUsageRange.mode === 'custom') {
-                if (
-                    !billingUsageRange.start ||
-                    !billingUsageRange.end
-                ) {
-                    if (!syncBillingCustomRangeFromInputs(false)) {
-                        params.set('hours', '24');
-                    } else {
-                        params.set('start', billingUsageRange.start);
-                        params.set('end', billingUsageRange.end);
-                    }
-                } else {
-                    params.set('start', billingUsageRange.start);
-                    params.set('end', billingUsageRange.end);
-                }
-            } else {
-                params.set('hours', String(billingUsageRange.hours || 24));
-            }
+            const params = buildBillingUsageParams();
             const resp = await fetchWithAuth(`/proxy1/tenant/${tenant}/usage/hourly?${params.toString()}`);
 
             if (resp.status === 404) {
                 billingUsageRawRows = [];
                 billingUsageTableRows = [];
-                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart available in Phase 3</div>';
-                labelsEl.innerHTML = '';
-                billingUsageTableReady = false;
-                applyUsageViewVisibility();
+                if (billingTokenUsageRows.length > 0) {
+                    renderBillingUsageFromRawRows();
+                } else {
+                    chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart available in Phase 3</div>';
+                    labelsEl.innerHTML = '';
+                    billingUsageTableReady = false;
+                    applyUsageViewVisibility();
+                }
                 return;
             }
 
@@ -4243,10 +4597,14 @@
             if (!data.usage || data.usage.length === 0) {
                 billingUsageRawRows = [];
                 billingUsageTableRows = [];
-                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">No usage data</div>';
-                labelsEl.innerHTML = '';
-                billingUsageTableReady = false;
-                applyUsageViewVisibility();
+                if (billingTokenUsageRows.length > 0) {
+                    renderBillingUsageFromRawRows();
+                } else {
+                    chartEl.innerHTML = '<div style="color: #888; padding: 20px;">No usage data</div>';
+                    labelsEl.innerHTML = '';
+                    billingUsageTableReady = false;
+                    applyUsageViewVisibility();
+                }
                 return;
             }
 
@@ -4256,10 +4614,194 @@
             console.error('Failed to load usage chart:', error);
             billingUsageRawRows = [];
             billingUsageTableRows = [];
-            chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart unavailable</div>';
-            labelsEl.innerHTML = '';
-            billingUsageTableReady = false;
-            applyUsageViewVisibility();
+            if (billingTokenUsageRows.length > 0) {
+                renderBillingUsageFromRawRows();
+            } else {
+                chartEl.innerHTML = '<div style="color: #888; padding: 20px;">Usage chart unavailable</div>';
+                labelsEl.innerHTML = '';
+                billingUsageTableReady = false;
+                applyUsageViewVisibility();
+            }
+        }
+    }
+
+    function setBillingTokenUsageLoading(show) {
+        const el = document.getElementById('billing-token-usage-loading');
+        if (el) el.style.display = show ? 'block' : 'none';
+    }
+
+    function showBillingTokenUsageEmpty(message = 'No token-based usage data for the selected period.') {
+        const contentEl = document.getElementById('billing-token-usage-content');
+        const emptyEl = document.getElementById('billing-token-usage-empty');
+        const errorEl = document.getElementById('billing-token-usage-error');
+        if (contentEl) contentEl.style.display = 'none';
+        if (errorEl) {
+            errorEl.style.display = 'none';
+            errorEl.textContent = '';
+        }
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.textContent = message;
+        }
+    }
+
+    function showBillingTokenUsageError(message) {
+        const contentEl = document.getElementById('billing-token-usage-content');
+        const emptyEl = document.getElementById('billing-token-usage-empty');
+        const errorEl = document.getElementById('billing-token-usage-error');
+        if (contentEl) contentEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (errorEl) {
+            errorEl.style.display = 'block';
+            errorEl.textContent = message || 'Failed to load token usage.';
+        }
+    }
+
+    function billingTokenUsageRowHasUsage(row) {
+        return (row?.request_count || 0) > 0 ||
+            (row?.input_tokens || 0) > 0 ||
+            (row?.cached_tokens || 0) > 0 ||
+            (row?.output_tokens || 0) > 0 ||
+            (row?.charge_cents || 0) > 0;
+    }
+
+    function updateBillingTokenUsageSortIcons() {
+        const setIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = billingTokenUsageSortColumn === column
+                ? (billingTokenUsageSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setIcon('billing-token-sort-period-icon', 'period');
+        setIcon('billing-token-sort-requests-icon', 'requests');
+        setIcon('billing-token-sort-input-icon', 'input');
+        setIcon('billing-token-sort-cached-icon', 'cached');
+        setIcon('billing-token-sort-output-icon', 'output');
+        setIcon('billing-token-sort-spend-icon', 'spend');
+    }
+
+    function renderBillingTokenUsage(rows) {
+        const contentEl = document.getElementById('billing-token-usage-content');
+        const emptyEl = document.getElementById('billing-token-usage-empty');
+        const errorEl = document.getElementById('billing-token-usage-error');
+        const bodyEl = document.querySelector('#billing-token-usage-table tbody');
+        const granularityEl = document.getElementById('billing-token-usage-period-granularity');
+        if (!contentEl || !emptyEl || !errorEl || !bodyEl || !granularityEl) return;
+
+        const periodRows = aggregateBillingTokenUsageByGranularity(rows, billingUsageGranularity)
+            .filter(billingTokenUsageRowHasUsage);
+        if (periodRows.length === 0) {
+            showBillingTokenUsageEmpty();
+            return;
+        }
+
+        emptyEl.style.display = 'none';
+        errorEl.style.display = 'none';
+        contentEl.style.display = 'block';
+        granularityEl.textContent = getBillingUsageGranularityLabel(billingUsageGranularity);
+
+        billingTokenUsageTableRows = periodRows;
+        const sortedRows = [...billingTokenUsageTableRows].sort((a, b) => {
+            let aVal;
+            let bVal;
+            switch (billingTokenUsageSortColumn) {
+                case 'requests':
+                    aVal = a.request_count || 0;
+                    bVal = b.request_count || 0;
+                    break;
+                case 'input':
+                    aVal = a.input_tokens || 0;
+                    bVal = b.input_tokens || 0;
+                    break;
+                case 'cached':
+                    aVal = a.cached_tokens || 0;
+                    bVal = b.cached_tokens || 0;
+                    break;
+                case 'output':
+                    aVal = a.output_tokens || 0;
+                    bVal = b.output_tokens || 0;
+                    break;
+                case 'spend':
+                    aVal = a.charge_cents || 0;
+                    bVal = b.charge_cents || 0;
+                    break;
+                case 'period':
+                default:
+                    aVal = Date.parse(a.hour) || 0;
+                    bVal = Date.parse(b.hour) || 0;
+                    break;
+            }
+            return billingTokenUsageSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+        });
+
+        bodyEl.innerHTML = sortedRows.map((row) => {
+            return `
+                <tr>
+                    <td style="padding: 8px; text-align: left;">${formatBillingUsagePeriodLabel(row, billingUsageGranularity, 'table')}</td>
+                    <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
+                    <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
+                </tr>
+            `;
+        }).join('');
+        updateBillingTokenUsageSortIcons();
+
+        const totalRequests = periodRows.reduce((sum, row) => sum + (row.request_count || 0), 0);
+        const totalInput = periodRows.reduce((sum, row) => sum + (row.input_tokens || 0), 0);
+        const totalCached = periodRows.reduce((sum, row) => sum + (row.cached_tokens || 0), 0);
+        const totalOutput = periodRows.reduce((sum, row) => sum + (row.output_tokens || 0), 0);
+        const totalSpend = periodRows.reduce((sum, row) => sum + (row.charge_cents || 0), 0);
+
+        document.getElementById('billing-token-usage-total-requests').textContent = formatCount(totalRequests);
+        document.getElementById('billing-token-usage-total-input').textContent = formatCount(totalInput);
+        document.getElementById('billing-token-usage-total-cached').textContent = formatCount(totalCached);
+        document.getElementById('billing-token-usage-total-output').textContent = formatCount(totalOutput);
+        document.getElementById('billing-token-usage-total-spend').textContent = formatUsd(totalSpend);
+    }
+
+    function sortBillingTokenUsageTable(column) {
+        if (billingTokenUsageSortColumn === column) {
+            billingTokenUsageSortDirection = billingTokenUsageSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            billingTokenUsageSortColumn = column;
+            billingTokenUsageSortDirection = column === 'period' ? 'desc' : 'desc';
+        }
+        renderBillingTokenUsage(billingTokenUsageRows);
+    }
+
+    async function loadBillingTokenUsage(tenant) {
+        if (!tenant) {
+            billingTokenUsageRows = [];
+            showBillingTokenUsageEmpty('Select a tenant to view token-based usage.');
+            if (billingUsageRawRows.length > 0) renderBillingUsageFromRawRows();
+            return;
+        }
+
+        setBillingTokenUsageLoading(true);
+        try {
+            const params = buildBillingUsageParams();
+            const resp = await fetchWithAuth(`/proxy1/usage/tokens/${tenant}?${params.toString()}&limit=10000`);
+            if (resp.status === 404) {
+                billingTokenUsageRows = [];
+                showBillingTokenUsageEmpty('Token usage endpoint is not available yet.');
+                if (billingUsageRawRows.length > 0) renderBillingUsageFromRawRows();
+                return;
+            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            billingTokenUsageRows = Array.isArray(data.usage) ? data.usage : [];
+            renderBillingTokenUsage(billingTokenUsageRows);
+            renderBillingUsageFromRawRows();
+        } catch (error) {
+            console.error('Failed to load billing token usage:', error);
+            billingTokenUsageRows = [];
+            showBillingTokenUsageError(`Failed to load token usage: ${error.message || error}`);
+            if (billingUsageRawRows.length > 0) renderBillingUsageFromRawRows();
+        } finally {
+            setBillingTokenUsageLoading(false);
         }
     }
 
@@ -4268,7 +4810,12 @@
         const usageTableBodyEl = document.querySelector('#usage-table tbody');
         if (!usageTableGranularityEl || !usageTableBodyEl) return;
 
-        billingUsageTableRows = Array.isArray(displayData) ? displayData : [];
+        billingUsageTableRows = (Array.isArray(displayData) ? displayData : []).filter((row) => {
+            return (row?.inference_cents || 0) > 0 ||
+                (row?.standby_cents || 0) > 0 ||
+                (row?.inference_ms || 0) > 0 ||
+                (row?.standby_ms || 0) > 0;
+        });
         billingUsageTableGranularity = granularity || 'hourly';
         usageTableGranularityEl.textContent = getBillingUsageGranularityLabel(billingUsageTableGranularity);
         setUsageStandbyVisibility(rowsHaveStandbyUsage(billingUsageTableRows));
@@ -4510,14 +5057,14 @@
 
     function billingPrevPage() {
         if (billingCurrentPage > 0) {
-            const tenant = document.getElementById('billing_tenant_select').value;
+            const tenant = getActiveBillingTenant({ syncHidden: true });
             loadCreditHistory(tenant, billingCurrentPage - 1);
         }
     }
 
     function billingNextPage() {
         if (billingCurrentPage < billingTotalPages - 1) {
-            const tenant = document.getElementById('billing_tenant_select').value;
+            const tenant = getActiveBillingTenant({ syncHidden: true });
             loadCreditHistory(tenant, billingCurrentPage + 1);
         }
     }
@@ -4766,7 +5313,7 @@
                     await loadBillingAdminCreditHistory(0);
                 }
 
-                const billingTenant = document.getElementById('billing_tenant_select').value;
+                const billingTenant = getActiveBillingTenant({ syncHidden: true });
                 if (billingTenant === tenant) {
                     loadBillingData();
                 }
@@ -4893,6 +5440,10 @@
         return sign + formatUsd(cents);
     }
 
+    function formatCount(value) {
+        return Number(value || 0).toLocaleString();
+    }
+
     // Hook into tab switching to populate tenant lists when Billing tabs open
     const originalOpenTab = openTab;
     openTab = function(evt, tabName, options = {}) {
@@ -4922,6 +5473,7 @@
     let analyticsHourlyViewMode = 'chart';
     let analyticsHourlyTableReady = false;
     let analyticsSelectedGroupKey = null;
+    let analyticsViewRequestId = 0;
     let analyticsGroupDetailRequestId = 0;
     let analyticsGroupDetailRawRows = [];
     let analyticsGroupDetailRows = [];
@@ -4930,8 +5482,35 @@
     let analyticsDetailSortColumn = 'period';
     let analyticsDetailSortDirection = 'desc';
     let analyticsInitialViewApplied = false;
+    let tokenAnalyticsRows = [];
+    let tokenAnalyticsSelectedGroupKey = null;
+    let tokenAnalyticsViewMode = 'model';
+    let tokenAnalyticsDetailGranularity = 'hourly';
+    let tokenAnalyticsDetailRawRows = [];
+    let tokenAnalyticsRangeStart = '';
+    let tokenAnalyticsRangeEnd = '';
+    let tokenAnalyticsSortColumn = 'spend';
+    let tokenAnalyticsSortDirection = 'desc';
+    let tokenAnalyticsDetailSortColumn = 'period';
+    let tokenAnalyticsDetailSortDirection = 'desc';
+    let analyticsViewControlsBound = false;
+
+    function bindAnalyticsViewControls() {
+        if (analyticsViewControlsBound) return;
+        const radios = Array.from(document.querySelectorAll('input[name="analytics-view"]'));
+        if (radios.length === 0) return;
+        radios.forEach((radio) => {
+            radio.addEventListener('change', () => {
+                if (radio.checked) {
+                    loadAnalyticsView();
+                }
+            });
+        });
+        analyticsViewControlsBound = true;
+    }
 
     function ensureAnalyticsDefaultViewMode() {
+        bindAnalyticsViewControls();
         if (analyticsInitialViewApplied) return;
 
         const modelRadio = document.querySelector('input[name="analytics-view"][value="model"]');
@@ -4999,6 +5578,548 @@
 
     function getAnalyticsViewMode() {
         return document.querySelector('input[name="analytics-view"]:checked').value;
+    }
+
+    function setTokenAnalyticsLoading(show) {
+        const el = document.getElementById('token-analytics-loading');
+        if (el) el.style.display = show ? 'block' : 'none';
+    }
+
+    function showTokenAnalyticsEmpty(message = 'No token-based usage data for the selected period.') {
+        const contentEl = document.getElementById('token-analytics-content');
+        const emptyEl = document.getElementById('token-analytics-empty');
+        const errorEl = document.getElementById('token-analytics-error');
+        if (contentEl) contentEl.style.display = 'none';
+        updateTokenAnalyticsSortIcons();
+        if (errorEl) {
+            errorEl.style.display = 'none';
+            errorEl.textContent = '';
+        }
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.textContent = message;
+        }
+    }
+
+    function showTokenAnalyticsError(message) {
+        const contentEl = document.getElementById('token-analytics-content');
+        const emptyEl = document.getElementById('token-analytics-empty');
+        const errorEl = document.getElementById('token-analytics-error');
+        if (contentEl) contentEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (errorEl) {
+            errorEl.style.display = 'block';
+            errorEl.textContent = message || 'Failed to load token usage.';
+        }
+    }
+
+    function getTokenAnalyticsViewMode() {
+        const selected = document.querySelector('input[name="token-analytics-view"]:checked');
+        return selected ? selected.value : tokenAnalyticsViewMode;
+    }
+
+    function setTokenAnalyticsViewMode(viewMode) {
+        tokenAnalyticsViewMode = viewMode;
+        tokenAnalyticsSelectedGroupKey = null;
+        tokenAnalyticsDetailRawRows = [];
+        renderTokenAnalytics(tokenAnalyticsRows);
+    }
+
+    function compareTokenAnalyticsRows(a, b) {
+        let aVal;
+        let bVal;
+        switch (tokenAnalyticsSortColumn) {
+            case 'group':
+                aVal = String(a.group_label || a.group_key || '').toLowerCase();
+                bVal = String(b.group_label || b.group_key || '').toLowerCase();
+                return tokenAnalyticsSortDirection === 'asc'
+                    ? aVal.localeCompare(bVal)
+                    : bVal.localeCompare(aVal);
+            case 'requests':
+                aVal = a.request_count || 0;
+                bVal = b.request_count || 0;
+                break;
+            case 'input':
+                aVal = a.input_tokens || 0;
+                bVal = b.input_tokens || 0;
+                break;
+            case 'cached':
+                aVal = a.cached_tokens || 0;
+                bVal = b.cached_tokens || 0;
+                break;
+            case 'output':
+                aVal = a.output_tokens || 0;
+                bVal = b.output_tokens || 0;
+                break;
+            case 'spend':
+            default:
+                aVal = a.charge_cents || 0;
+                bVal = b.charge_cents || 0;
+                break;
+        }
+        return tokenAnalyticsSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+    }
+
+    function updateTokenAnalyticsSortIcons() {
+        const setIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = tokenAnalyticsSortColumn === column
+                ? (tokenAnalyticsSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setIcon('token-sort-group-icon', 'group');
+        setIcon('token-sort-requests-icon', 'requests');
+        setIcon('token-sort-input-icon', 'input');
+        setIcon('token-sort-cached-icon', 'cached');
+        setIcon('token-sort-output-icon', 'output');
+        setIcon('token-sort-spend-icon', 'spend');
+    }
+
+    function sortTokenAnalyticsTable(column) {
+        if (tokenAnalyticsSortColumn === column) {
+            tokenAnalyticsSortDirection = tokenAnalyticsSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            tokenAnalyticsSortColumn = column;
+            tokenAnalyticsSortDirection = column === 'group' ? 'asc' : 'desc';
+        }
+        renderTokenAnalytics(tokenAnalyticsRows);
+    }
+
+    function compareTokenAnalyticsDetailRows(a, b) {
+        let aVal;
+        let bVal;
+        switch (tokenAnalyticsDetailSortColumn) {
+            case 'requests':
+                aVal = a.request_count || 0;
+                bVal = b.request_count || 0;
+                break;
+            case 'input':
+                aVal = a.input_tokens || 0;
+                bVal = b.input_tokens || 0;
+                break;
+            case 'cached':
+                aVal = a.cached_tokens || 0;
+                bVal = b.cached_tokens || 0;
+                break;
+            case 'output':
+                aVal = a.output_tokens || 0;
+                bVal = b.output_tokens || 0;
+                break;
+            case 'spend':
+                aVal = a.charge_cents || 0;
+                bVal = b.charge_cents || 0;
+                break;
+            case 'period':
+            default:
+                aVal = Date.parse(a.hour) || 0;
+                bVal = Date.parse(b.hour) || 0;
+                break;
+        }
+        return tokenAnalyticsDetailSortDirection === 'asc' ? (aVal - bVal) : (bVal - aVal);
+    }
+
+    function updateTokenAnalyticsDetailSortIcons() {
+        const setIcon = (id, column) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = tokenAnalyticsDetailSortColumn === column
+                ? (tokenAnalyticsDetailSortDirection === 'asc' ? '▲' : '▼')
+                : '';
+        };
+        setIcon('token-detail-sort-period-icon', 'period');
+        setIcon('token-detail-sort-requests-icon', 'requests');
+        setIcon('token-detail-sort-input-icon', 'input');
+        setIcon('token-detail-sort-cached-icon', 'cached');
+        setIcon('token-detail-sort-output-icon', 'output');
+        setIcon('token-detail-sort-spend-icon', 'spend');
+    }
+
+    function sortTokenAnalyticsDetailTable(column) {
+        if (tokenAnalyticsDetailSortColumn === column) {
+            tokenAnalyticsDetailSortDirection = tokenAnalyticsDetailSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            tokenAnalyticsDetailSortColumn = column;
+            tokenAnalyticsDetailSortDirection = column === 'period' ? 'desc' : 'desc';
+        }
+        if (tokenAnalyticsDetailRawRows.length > 0) {
+            renderTokenAnalyticsBreakdownRows(tokenAnalyticsDetailRawRows);
+        } else {
+            updateTokenAnalyticsDetailSortIcons();
+        }
+    }
+
+    function updateTokenAnalyticsDetailGranularityButtons() {
+        const hourlyBtn = document.getElementById('token-detail-granularity-hourly');
+        const dailyBtn = document.getElementById('token-detail-granularity-daily');
+        const weeklyBtn = document.getElementById('token-detail-granularity-weekly');
+        if (!hourlyBtn || !dailyBtn || !weeklyBtn) return;
+
+        hourlyBtn.classList.toggle('active-range', tokenAnalyticsDetailGranularity === 'hourly');
+        dailyBtn.classList.toggle('active-range', tokenAnalyticsDetailGranularity === 'daily');
+        weeklyBtn.classList.toggle('active-range', tokenAnalyticsDetailGranularity === 'weekly');
+    }
+
+    function aggregateTokenUsageByGranularity(rows, granularity) {
+        const usageRows = buildDenseTokenHourlyRows(rows);
+        if (granularity === 'hourly') {
+            return usageRows;
+        }
+
+        const bucketMap = new Map();
+        usageRows.forEach((row) => {
+            const rawDate = new Date(row.hour);
+            if (Number.isNaN(rawDate.getTime())) return;
+
+            let bucketStart;
+            if (granularity === 'weekly') {
+                bucketStart = getLocalWeekStart(rawDate);
+            } else {
+                bucketStart = new Date(rawDate.getTime());
+                bucketStart.setHours(0, 0, 0, 0);
+            }
+
+            const key = String(bucketStart.getTime());
+            if (!bucketMap.has(key)) {
+                const bucketEnd = new Date(bucketStart.getTime());
+                if (granularity === 'weekly') {
+                    bucketEnd.setDate(bucketEnd.getDate() + 6);
+                }
+                bucketMap.set(key, {
+                    hour: bucketStart.toISOString(),
+                    week_end: granularity === 'weekly' ? bucketEnd.toISOString() : null,
+                    request_count: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    output_tokens: 0,
+                    charge_cents: 0,
+                });
+            }
+
+            const bucket = bucketMap.get(key);
+            bucket.request_count += row.request_count || 0;
+            bucket.input_tokens += row.input_tokens || 0;
+            bucket.cached_tokens += row.cached_tokens || 0;
+            bucket.output_tokens += row.output_tokens || 0;
+            bucket.charge_cents += row.charge_cents || 0;
+        });
+
+        return Array.from(bucketMap.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    }
+
+    function buildDenseTokenHourlyRows(rows) {
+        const usageRows = aggregateTokenUsageByHour(Array.isArray(rows) ? rows : []);
+        if (!tokenAnalyticsRangeStart || !tokenAnalyticsRangeEnd) {
+            return usageRows;
+        }
+
+        const start = new Date(tokenAnalyticsRangeStart);
+        const end = new Date(tokenAnalyticsRangeEnd);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+            return usageRows;
+        }
+
+        const usageMap = new Map(
+            usageRows.map((row) => [String(row.hour || '').trim(), row])
+        );
+        const denseRows = [];
+        for (let currentMs = start.getTime(); currentMs < end.getTime(); currentMs += 60 * 60 * 1000) {
+            const hour = new Date(currentMs).toISOString().slice(0, 13) + ':00:00Z';
+            denseRows.push(usageMap.get(hour) || {
+                hour,
+                request_count: 0,
+                input_tokens: 0,
+                cached_tokens: 0,
+                output_tokens: 0,
+                charge_cents: 0,
+            });
+        }
+        return denseRows;
+    }
+
+    function formatTokenAnalyticsPeriodLabel(row) {
+        if (tokenAnalyticsDetailGranularity === 'weekly') {
+            const start = new Date(row.hour);
+            const end = row.week_end ? new Date(row.week_end) : new Date(start.getTime());
+            if (!row.week_end) end.setDate(end.getDate() + 6);
+            const startLabel = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const endLabel = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${startLabel} - ${endLabel}`;
+        }
+        if (tokenAnalyticsDetailGranularity === 'daily') {
+            return new Date(row.hour).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+        return new Date(row.hour).toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+    }
+
+    function renderTokenAnalyticsBreakdownRows(rows) {
+        const hourlyBody = document.querySelector('#token-analytics-hourly-table tbody');
+        const granularityEl = document.getElementById('token-analytics-period-granularity');
+        if (!hourlyBody) return;
+        if (granularityEl) granularityEl.textContent = getAnalyticsDetailGranularityLabel(tokenAnalyticsDetailGranularity);
+
+        const breakdownRows = aggregateTokenUsageByGranularity(rows, tokenAnalyticsDetailGranularity)
+            .filter(billingTokenUsageRowHasUsage);
+        const sortedRows = [...breakdownRows].sort(compareTokenAnalyticsDetailRows);
+        hourlyBody.innerHTML = sortedRows.map(row => `
+            <tr>
+                <td style="padding: 8px; text-align: left;">${formatTokenAnalyticsPeriodLabel(row)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
+            </tr>
+        `).join('');
+        updateTokenAnalyticsDetailSortIcons();
+    }
+
+    function setTokenAnalyticsDetailGranularity(granularity) {
+        if (granularity !== 'hourly' && granularity !== 'daily' && granularity !== 'weekly') return;
+        tokenAnalyticsDetailGranularity = granularity;
+        updateTokenAnalyticsDetailGranularityButtons();
+        if (tokenAnalyticsDetailRawRows.length > 0) {
+            renderTokenAnalyticsBreakdownRows(tokenAnalyticsDetailRawRows);
+        }
+    }
+
+    function showTokenAnalyticsBreakdownPrompt(message = 'Select a row above to view hourly breakdown.') {
+        const detailEl = document.getElementById('token-analytics-detail');
+        const promptEl = document.getElementById('token-analytics-detail-prompt');
+        const titleEl = document.getElementById('token-analytics-detail-title');
+        const tableWrapEl = document.getElementById('token-analytics-hourly-table-wrap');
+        const hourlyBody = document.querySelector('#token-analytics-hourly-table tbody');
+        const granularityEl = document.getElementById('token-analytics-period-granularity');
+
+        if (detailEl) detailEl.style.display = 'block';
+        if (titleEl) titleEl.textContent = 'Breakdown';
+        updateTokenAnalyticsDetailGranularityButtons();
+        if (promptEl) {
+            promptEl.style.display = 'block';
+            promptEl.textContent = message;
+        }
+        if (tableWrapEl) tableWrapEl.style.display = 'none';
+        if (hourlyBody) hourlyBody.innerHTML = '';
+        if (granularityEl) granularityEl.textContent = getAnalyticsDetailGranularityLabel(tokenAnalyticsDetailGranularity);
+        tokenAnalyticsDetailRawRows = [];
+        updateTokenAnalyticsDetailSortIcons();
+
+        document.getElementById('token-analytics-hourly-total-requests').textContent = '--';
+        document.getElementById('token-analytics-hourly-total-input').textContent = '--';
+        document.getElementById('token-analytics-hourly-total-cached').textContent = '--';
+        document.getElementById('token-analytics-hourly-total-output').textContent = '--';
+        document.getElementById('token-analytics-hourly-total-spend').textContent = '--';
+    }
+
+    function aggregateTokenUsage(rows, viewMode) {
+        const grouped = new Map();
+        (rows || []).forEach(row => {
+            const key = viewMode === 'tenant'
+                ? (String(row.tenant || '').trim() || '--')
+                : (String(row.model_slug || '').trim() || '--');
+            const label = viewMode === 'tenant'
+                ? billingAnalyticsTenantLabel(key)
+                : key;
+            const current = grouped.get(key) || {
+                group_key: key,
+                group_label: label,
+                request_count: 0,
+                input_tokens: 0,
+                cached_tokens: 0,
+                output_tokens: 0,
+                charge_cents: 0,
+            };
+            current.request_count += row.request_count || 0;
+            current.input_tokens += row.input_tokens || 0;
+            current.cached_tokens += row.cached_tokens || 0;
+            current.output_tokens += row.output_tokens || 0;
+            current.charge_cents += row.charge_cents || 0;
+            grouped.set(key, current);
+        });
+        return Array.from(grouped.values()).sort((a, b) => {
+            if ((b.charge_cents || 0) !== (a.charge_cents || 0)) {
+                return (b.charge_cents || 0) - (a.charge_cents || 0);
+            }
+            return (b.output_tokens || 0) - (a.output_tokens || 0);
+        });
+    }
+
+    function aggregateTokenUsageByHour(rows) {
+        const grouped = new Map();
+        (rows || []).forEach(row => {
+            const key = String(row.hour || '').trim();
+            const current = grouped.get(key) || {
+                hour: key,
+                request_count: 0,
+                input_tokens: 0,
+                cached_tokens: 0,
+                output_tokens: 0,
+                charge_cents: 0,
+            };
+            current.request_count += row.request_count || 0;
+            current.input_tokens += row.input_tokens || 0;
+            current.cached_tokens += row.cached_tokens || 0;
+            current.output_tokens += row.output_tokens || 0;
+            current.charge_cents += row.charge_cents || 0;
+            grouped.set(key, current);
+        });
+        return Array.from(grouped.values()).sort((a, b) => {
+            return (Date.parse(b.hour) || 0) - (Date.parse(a.hour) || 0);
+        });
+    }
+
+    function renderTokenAnalytics(rows) {
+        const contentEl = document.getElementById('token-analytics-content');
+        const emptyEl = document.getElementById('token-analytics-empty');
+        const errorEl = document.getElementById('token-analytics-error');
+        const modelBody = document.querySelector('#token-analytics-model-table tbody');
+        const hourlyBody = document.querySelector('#token-analytics-hourly-table tbody');
+        const detailEl = document.getElementById('token-analytics-detail');
+        const promptEl = document.getElementById('token-analytics-detail-prompt');
+        const titleEl = document.getElementById('token-analytics-detail-title');
+        const tableWrapEl = document.getElementById('token-analytics-hourly-table-wrap');
+        const groupHeaderEl = document.getElementById('token-analytics-group-header');
+        if (!contentEl || !emptyEl || !errorEl || !modelBody || !hourlyBody || !detailEl || !promptEl || !titleEl || !tableWrapEl || !groupHeaderEl) return;
+
+        const viewMode = getTokenAnalyticsViewMode();
+        tokenAnalyticsViewMode = viewMode;
+        const groupedRows = aggregateTokenUsage(rows, viewMode);
+        const sortedGroupedRows = [...groupedRows].sort(compareTokenAnalyticsRows);
+        groupHeaderEl.innerHTML = (viewMode === 'tenant' ? 'Tenant' : 'Model') +
+            ' <span id="token-sort-group-icon">' +
+            (tokenAnalyticsSortColumn === 'group' ? (tokenAnalyticsSortDirection === 'asc' ? '▲' : '▼') : '') +
+            '</span>';
+
+        if (sortedGroupedRows.length === 0) {
+            tokenAnalyticsSelectedGroupKey = null;
+            showTokenAnalyticsEmpty();
+            return;
+        }
+
+        emptyEl.style.display = 'none';
+        errorEl.style.display = 'none';
+        contentEl.style.display = 'block';
+
+        modelBody.innerHTML = '';
+        let selectedGroup = null;
+        sortedGroupedRows.forEach(row => {
+            const groupKey = String(row.group_key || '').trim() || '--';
+            const tr = document.createElement('tr');
+            tr.style.cursor = 'pointer';
+            if (groupKey === tokenAnalyticsSelectedGroupKey) {
+                tr.style.background = '#f0f7ff';
+                selectedGroup = row;
+            }
+            tr.onclick = () => {
+                tokenAnalyticsSelectedGroupKey = groupKey;
+                renderTokenAnalytics(tokenAnalyticsRows);
+            };
+            tr.innerHTML = `
+                <td style="padding: 8px; text-align: left;">${escapeAnalyticsHtml(row.group_label || groupKey)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
+                <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
+            `;
+            modelBody.appendChild(tr);
+        });
+        updateTokenAnalyticsSortIcons();
+
+        const totalRequests = groupedRows.reduce((sum, row) => sum + (row.request_count || 0), 0);
+        const totalInput = groupedRows.reduce((sum, row) => sum + (row.input_tokens || 0), 0);
+        const totalCached = groupedRows.reduce((sum, row) => sum + (row.cached_tokens || 0), 0);
+        const totalOutput = groupedRows.reduce((sum, row) => sum + (row.output_tokens || 0), 0);
+        const totalSpend = groupedRows.reduce((sum, row) => sum + (row.charge_cents || 0), 0);
+
+        document.getElementById('token-analytics-model-total-requests').textContent = formatCount(totalRequests);
+        document.getElementById('token-analytics-model-total-input').textContent = formatCount(totalInput);
+        document.getElementById('token-analytics-model-total-cached').textContent = formatCount(totalCached);
+        document.getElementById('token-analytics-model-total-output').textContent = formatCount(totalOutput);
+        document.getElementById('token-analytics-model-total-spend').textContent = formatUsd(totalSpend);
+
+        if (!selectedGroup) {
+            showTokenAnalyticsBreakdownPrompt(
+                viewMode === 'tenant'
+                    ? 'Select the tenant row above to view hourly breakdown.'
+                    : 'Select a model row above to view hourly breakdown.'
+            );
+            return;
+        }
+
+        const selectedKey = String(selectedGroup.group_key || '').trim() || '--';
+        const filteredRows = (rows || []).filter(row => {
+            const rowKey = viewMode === 'tenant'
+                ? (String(row.tenant || '').trim() || '--')
+                : (String(row.model_slug || '').trim() || '--');
+            return rowKey === selectedKey;
+        });
+        tokenAnalyticsDetailRawRows = filteredRows;
+        const selectedRequests = selectedGroup.request_count || 0;
+        const selectedInput = selectedGroup.input_tokens || 0;
+        const selectedCached = selectedGroup.cached_tokens || 0;
+        const selectedOutput = selectedGroup.output_tokens || 0;
+        const selectedSpend = selectedGroup.charge_cents || 0;
+
+        detailEl.style.display = 'block';
+        promptEl.style.display = 'none';
+        tableWrapEl.style.display = 'block';
+        titleEl.textContent = `Breakdown: ${selectedGroup.group_label || selectedKey}`;
+        updateTokenAnalyticsDetailGranularityButtons();
+        renderTokenAnalyticsBreakdownRows(tokenAnalyticsDetailRawRows);
+
+        document.getElementById('token-analytics-hourly-total-requests').textContent = formatCount(selectedRequests);
+        document.getElementById('token-analytics-hourly-total-input').textContent = formatCount(selectedInput);
+        document.getElementById('token-analytics-hourly-total-cached').textContent = formatCount(selectedCached);
+        document.getElementById('token-analytics-hourly-total-output').textContent = formatCount(selectedOutput);
+        document.getElementById('token-analytics-hourly-total-spend').textContent = formatUsd(selectedSpend);
+    }
+
+    async function loadTokenAnalytics() {
+        const tenant = getActiveBillingTenant({ syncHidden: true });
+        if (!tenant) {
+            showTokenAnalyticsEmpty('Select a tenant to view token-based usage.');
+            return;
+        }
+
+        const timeParams = getAnalyticsTimeParams();
+        if (!timeParams) return;
+
+        setTokenAnalyticsLoading(true);
+        try {
+            const resp = await fetchWithAuth(`/proxy1/usage/tokens/${tenant}?${timeParams}&limit=10000`);
+            if (resp.status === 404) {
+                tokenAnalyticsRows = [];
+                tokenAnalyticsSelectedGroupKey = null;
+                tokenAnalyticsRangeStart = '';
+                tokenAnalyticsRangeEnd = '';
+                showTokenAnalyticsEmpty('Token usage endpoint is not available yet.');
+                return;
+            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            tokenAnalyticsRows = Array.isArray(data.usage) ? data.usage : [];
+            tokenAnalyticsRangeStart = String(data.start || '').trim();
+            tokenAnalyticsRangeEnd = String(data.end || '').trim();
+            renderTokenAnalytics(tokenAnalyticsRows);
+        } catch (error) {
+            console.error('Failed to load token analytics:', error);
+            tokenAnalyticsRangeStart = '';
+            tokenAnalyticsRangeEnd = '';
+            showTokenAnalyticsError(`Failed to load token usage: ${error.message || error}`);
+        } finally {
+            setTokenAnalyticsLoading(false);
+        }
     }
 
     function getAnalyticsUsageMs(entry) {
@@ -5197,7 +6318,11 @@
             analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
                 analyticsGroupDetailRawRows,
                 analyticsDetailGranularity
-            );
+            ).filter(analyticsUsageRowHasUsage);
+            if (analyticsGroupDetailRows.length === 0) {
+                showAnalyticsGroupDetailPrompt('No detail data for the selected group.');
+                return;
+            }
             renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
         }
     }
@@ -5241,7 +6366,7 @@
     }
 
     async function loadAnalyticsGroupDetail(viewMode, item) {
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (!tenant || !item) return;
 
         const timeParams = getAnalyticsTimeParams();
@@ -5309,8 +6434,14 @@
             analyticsGroupDetailRows = aggregateAnalyticsDetailRows(
                 analyticsGroupDetailRawRows,
                 analyticsDetailGranularity
-            );
+            ).filter(analyticsUsageRowHasUsage);
             updateAnalyticsDetailGranularityButtons();
+            if (analyticsGroupDetailRows.length === 0) {
+                tableEl.style.display = 'none';
+                messageEl.style.display = 'block';
+                messageEl.textContent = 'No detail data for the selected group.';
+                return;
+            }
             renderAnalyticsGroupDetailTable(analyticsGroupDetailRows);
 
             tableEl.style.display = 'table';
@@ -5469,7 +6600,7 @@
     }
 
     async function loadAnalytics() {
-        const tenant = document.getElementById('billing_tenant_select').value;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
         if (!tenant) return;
 
         const timeParams = getAnalyticsTimeParams();
@@ -5480,8 +6611,10 @@
         document.getElementById('analytics-empty').style.display = 'none';
 
         try {
-            // Load current view
-            await loadAnalyticsView();
+            await Promise.all([
+                loadAnalyticsView(),
+                loadTokenAnalytics(),
+            ]);
         } catch (error) {
             console.error('Failed to load analytics:', error);
             showAnalyticsError(error.message);
@@ -5491,19 +6624,30 @@
     }
 
     async function loadAnalyticsView() {
-        const tenant = document.getElementById('billing_tenant_select').value;
-        if (!tenant) return;
+        const tenant = getActiveBillingTenant({ syncHidden: true });
+        if (!tenant) {
+            return;
+        }
 
         const timeParams = getAnalyticsTimeParams();
-        if (!timeParams) return;
+        if (!timeParams) {
+            return;
+        }
 
         const viewMode = getAnalyticsViewMode();
         updateAnalyticsHourlyViewButtons();
         updateAnalyticsHourlyViewControls();
         hideAnalyticsGroupDetail(true);
         analyticsHourlyTableReady = false;
+        document.getElementById('analytics-table-area').style.display = 'none';
         document.getElementById('analytics-hourly-table-area').style.display = 'none';
         document.getElementById('analytics-chart-area').style.display = 'none';
+        const splitEl = document.getElementById('analytics-model-split-area');
+        const regularSectionEl = document.getElementById('analytics-regular-model-section');
+        const endpointSectionEl = document.getElementById('analytics-endpoint-model-section');
+        if (splitEl) splitEl.style.display = 'none';
+        if (regularSectionEl) regularSectionEl.style.display = 'none';
+        if (endpointSectionEl) endpointSectionEl.style.display = 'none';
         let endpoint;
 
         switch (viewMode) {
@@ -5522,9 +6666,11 @@
         }
 
         showAnalyticsLoading(true);
+        const reqId = ++analyticsViewRequestId;
 
         try {
             const resp = await fetchWithAuth(endpoint);
+            if (reqId !== analyticsViewRequestId) return;
 
             if (resp.status === 404) {
                 showAnalyticsError('This endpoint is not yet implemented');
@@ -5533,6 +6679,7 @@
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
+            if (reqId !== analyticsViewRequestId) return;
 
             if (viewMode === 'tenant') {
                 renderTenantGroupedTable(data, tenant);
@@ -5541,10 +6688,13 @@
                 renderGroupedTable(data, viewMode);
             }
         } catch (error) {
+            if (reqId !== analyticsViewRequestId) return;
             console.error('Failed to load analytics view:', error);
             showAnalyticsError(error.message);
         } finally {
-            showAnalyticsLoading(false);
+            if (reqId === analyticsViewRequestId) {
+                showAnalyticsLoading(false);
+            }
         }
     }
 
@@ -5626,13 +6776,13 @@
     }
 
     function analyticsModelHref(item) {
-        const tenant = String(item?.tenant || document.getElementById('billing_tenant_select')?.value || '').trim();
+        const tenant = String(item?.tenant || getActiveBillingTenant({ syncHidden: true }) || '').trim();
         const namespace = String(item?.namespace || '').trim();
         const funcname = String(item?.funcname || '').trim();
         if (!tenant || !namespace || !funcname) return '';
 
         if (isEndpointNamespace(namespace)) {
-            return `{{ hosturl }}endpoints/${encodeURIComponent(funcname)}?tenant=${encodeURIComponent(tenant)}`;
+            return `{{ hosturl }}catalog/endpoints/${encodeURIComponent(funcname)}?tenant=${encodeURIComponent(tenant)}`;
         }
 
         return `{{ hosturl }}func?tenant=${encodeURIComponent(tenant)}&namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(funcname)}`;
@@ -5768,7 +6918,7 @@
                 ? `<a href="${modelHref}" onclick="event.stopPropagation();">${safeGroupLabel}</a>`
                 : safeGroupLabel;
             const barWidth = Math.min(Number(percent), 100);
-            const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+            const bar = `<div style="background: var(--billing-color-inference); width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
 
             row.innerHTML = kind === 'endpoint'
                 ? `
@@ -5945,7 +7095,7 @@
             const safeGroupTitle = escapeAnalyticsHtml(groupLabel);
 
             const barWidth = Math.min(percent, 100);
-            const bar = `<div style="background: #4CAF50; width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
+            const bar = `<div style="background: var(--billing-color-inference); width: ${barWidth}%; height: 12px; display: inline-block; margin-right: 5px;"></div>`;
             const rowKey = getAnalyticsGroupKey(viewMode, item);
             if (rowKey === analyticsSelectedGroupKey) {
                 row.style.background = '#f0f7ff';
@@ -6078,6 +7228,11 @@
         if (aggregateToDaily) {
             displayData = aggregateHourlyUsageToDays(data.usage);
         }
+        displayData = displayData.filter(analyticsUsageRowHasUsage);
+        if (displayData.length === 0) {
+            showAnalyticsEmpty();
+            return;
+        }
 
         const maxUsageMs = Math.max(...displayData.map(u => getAnalyticsUsageMs(u)), 1);
 
@@ -6128,7 +7283,9 @@
 
         granularityEl.textContent = aggregateToDaily ? 'Daily' : 'Hourly';
 
-        const sortedRows = [...displayData].sort((a, b) => b.hour.localeCompare(a.hour));
+        const sortedRows = (Array.isArray(displayData) ? displayData : [])
+            .filter(analyticsUsageRowHasUsage)
+            .sort((a, b) => b.hour.localeCompare(a.hour));
         let totalMs = 0;
 
         tableBodyEl.innerHTML = sortedRows.map(u => {

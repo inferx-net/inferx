@@ -89,6 +89,10 @@ spec:
                   # upgraded aggregation SQL.
                   psql -v ON_ERROR_STOP=1 -f /scripts/migrate-usage-hourly-by-func-numer.sql
                   psql -v ON_ERROR_STOP=1 -f /scripts/hourly-aggregate.sql
+                  # Token billing rollup + no-rate alert. Schema is applied once by
+                  # the billing-token-billing-migrate Job, not here.
+                  psql -v ON_ERROR_STOP=1 -f /scripts/token-hourly-aggregate.sql
+                  psql -v ON_ERROR_STOP=1 -f /scripts/token-no-rate-alert.sql
               env:
                 - name: PGHOST
                   value: billingdb

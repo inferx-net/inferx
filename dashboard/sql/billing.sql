@@ -36,8 +36,10 @@ CREATE TABLE TenantQuota (
     used_cents             BIGINT DEFAULT 0,          -- Cumulative usage in cents
     inference_used_cents   BIGINT NOT NULL DEFAULT 0, -- Cumulative inference usage in cents
     standby_used_cents     BIGINT NOT NULL DEFAULT 0, -- Cumulative standby usage in cents
+    token_used_cents       BIGINT NOT NULL DEFAULT 0, -- Cumulative token usage in cents
     inference_carry_numer  BIGINT NOT NULL DEFAULT 0, -- Exact inference numerator remainder / 3600000
     standby_carry_numer    BIGINT NOT NULL DEFAULT 0, -- Exact standby numerator remainder / 3600000
+    token_carry_numer      BIGINT NOT NULL DEFAULT 0, -- Exact token numerator remainder / 1000000
     threshold_cents        BIGINT DEFAULT 0,          -- Disable when remaining < this
     quota_exceeded         BOOLEAN DEFAULT FALSE,
     currency               VARCHAR(3) DEFAULT 'USD'
@@ -137,3 +139,93 @@ WHERE NOT EXISTS (
       AND tenant IS NULL
       AND effective_from = '2025-01-01'::timestamptz
 );
+
+-- ===========================================================================
+-- Token-based billing for shared instances. These parallel the GPU-time tables
+-- above, but token-shaped: per-request events priced per-million-tokens, keyed
+-- on endpoint slug.
+-- ===========================================================================
+
+-- Raw per-request token usage. Append-only; PK gives idempotency.
+CREATE TABLE TokenUsageEvent (
+    gateway_request_id VARCHAR(128) PRIMARY KEY,  -- gateway-minted UUID (dedup key)
+    client_request_id  VARCHAR(128),              -- caller X-Request-Id, for support only
+    caller_tenant      VARCHAR NOT NULL,          -- paying tenant (direct or OpenRouter)
+    model_slug         VARCHAR NOT NULL,          -- inferx/endpoint func name (= request `model`)
+    source             VARCHAR(16) NOT NULL,      -- 'direct' | 'openrouter'
+    prompt_tokens      BIGINT NOT NULL DEFAULT 0,
+    completion_tokens  BIGINT NOT NULL DEFAULT 0,
+    cached_tokens      BIGINT NOT NULL DEFAULT 0, -- subset of prompt_tokens
+    ts                 TIMESTAMPTZ NOT NULL,      -- gateway request time; picks the rate (no DEFAULT: never insert time)
+    gateway_id         BIGINT,
+    processed_at       TIMESTAMPTZ                -- NULL until billed; no-rate rows stay NULL and self-heal
+);
+
+CREATE INDEX idx_tokenevent_tenant      ON TokenUsageEvent(caller_tenant, ts);
+CREATE INDEX idx_tokenevent_model       ON TokenUsageEvent(model_slug, ts);
+CREATE INDEX idx_tokenevent_unprocessed ON TokenUsageEvent(ts) WHERE processed_at IS NULL;
+
+-- Per-token price book, keyed on endpoint slug. Effective-dated like BillingRate.
+CREATE TABLE TokenRate (
+    id                        SERIAL PRIMARY KEY,
+    model_slug                VARCHAR,               -- NULL = global default
+    cents_per_million_input   BIGINT NOT NULL,
+    cents_per_million_output  BIGINT NOT NULL,
+    cents_per_million_cached  BIGINT NOT NULL DEFAULT 0,
+    effective_from            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    effective_to              TIMESTAMPTZ,           -- NULL = currently active
+    tenant                    VARCHAR,               -- NULL = default; set = per-tenant override
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    added_by                  VARCHAR NOT NULL
+);
+
+CREATE INDEX idx_tokenrate_lookup ON TokenRate(model_slug, effective_from);
+
+-- Hourly rollup per tenant x endpoint. Reporting only; the *_numer columns hold
+-- exact undivided numerators so invoices sum then divide once.
+CREATE TABLE TokenUsageHourly (
+    id                 SERIAL PRIMARY KEY,
+    tenant             VARCHAR NOT NULL,
+    model_slug         VARCHAR NOT NULL,
+    hour               TIMESTAMPTZ NOT NULL,
+    input_tokens       BIGINT NOT NULL DEFAULT 0,   -- billable input = prompt - cached
+    cached_tokens      BIGINT NOT NULL DEFAULT 0,
+    output_tokens      BIGINT NOT NULL DEFAULT 0,
+    request_count      BIGINT NOT NULL DEFAULT 0,
+    input_numer        BIGINT NOT NULL DEFAULT 0,
+    output_numer       BIGINT NOT NULL DEFAULT 0,
+    cached_numer       BIGINT NOT NULL DEFAULT 0,
+    charge_cents       BIGINT NOT NULL DEFAULT 0,   -- display only
+    UNIQUE(tenant, model_slug, hour)
+);
+
+CREATE INDEX idx_tokenhourly_tenant ON TokenUsageHourly(tenant, hour);
+
+-- Event-time-bound rate lookup, mirroring GetBillingRateCents. Returns the three
+-- cents-per-million values, or no row when no rate is active (caller: skip + alert).
+CREATE OR REPLACE FUNCTION GetTokenRateCents(
+    p_model_slug VARCHAR,
+    p_ts TIMESTAMPTZ,
+    p_tenant VARCHAR
+) RETURNS TABLE (
+    cents_per_million_input  BIGINT,
+    cents_per_million_output BIGINT,
+    cents_per_million_cached BIGINT
+)
+LANGUAGE SQL
+STABLE
+AS $$
+    SELECT
+        r.cents_per_million_input,
+        r.cents_per_million_output,
+        r.cents_per_million_cached
+    FROM TokenRate r
+    WHERE (r.model_slug = p_model_slug OR r.model_slug IS NULL)
+      AND (r.tenant     = p_tenant     OR r.tenant IS NULL)
+      AND r.effective_from <= p_ts
+      AND (r.effective_to IS NULL OR p_ts < r.effective_to)
+    ORDER BY (r.tenant IS NOT NULL) DESC,
+             (r.model_slug IS NOT NULL) DESC,
+             r.effective_from DESC
+    LIMIT 1;
+$$;

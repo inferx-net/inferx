@@ -101,6 +101,7 @@ use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::http_gw::BuildOpenRouterModelEntry;
+use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
 use super::skill_chain::{
     extract_is_child_request, handle_skill_call_chain, SkillChatCompletionsWireRequest,
@@ -1156,6 +1157,11 @@ impl HttpGateway {
             .route("/v1/models", get(OpenRouterModels))
             .route("/v1/chat/completions", post(OpenRouterChatCompletions))
             .route("/v1/completions", post(OpenRouterChatCompletions))
+            .route("/endpoints/v1/models", get(SharedEndpointModels))
+            .route(
+                "/endpoints/v1/chat/completions",
+                post(SharedEndpointCompletions),
+            )
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -1293,6 +1299,9 @@ impl HttpGateway {
             )
             .route("/billing/rates", post(AddBillingRate))
             .route("/billing/rates", get(GetBillingRateHistory))
+            .route("/billing/token-rates", post(AddTokenRate))
+            .route("/billing/token-rates", get(GetTokenRateHistory))
+            .route("/billing/token-rate/:slug", get(GetActiveTokenRateForSlug))
             .route("/billing/credits/history", get(GetBillingCreditHistory))
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route(
@@ -1319,6 +1328,8 @@ impl HttpGateway {
             )
             .route("/tenant/:tenant/usage/summary", get(GetTenantUsageSummary))
             .route("/admin/usage/endpoints", get(GetAdminEndpointUsage))
+            .route("/admin/usage/tokens", get(GetAdminTokenUsage))
+            .route("/usage/tokens/:tenant", get(GetTenantTokenUsage))
             .route(
                 "/admin/usage/endpoints/:tenant/:endpoint_slug",
                 get(GetAdminEndpointTenantUsageByPeriod),
@@ -2068,7 +2079,6 @@ pub async fn FuncCall1(
 
     let tenant = parts[2].to_owned();
     let namespace = parts[3].to_owned();
-    let funcname = parts[4].to_owned();
     if is_blocked_public_endpoint_inference(&tenant, &namespace) {
         let body = Body::from("service failure: unsupported");
         let resp = Response::builder()
@@ -2095,6 +2105,52 @@ pub async fn FuncCall1(
             .unwrap();
 
         return Ok(resp);
+    }
+
+    funccall_dispatch_route(gw, req).await
+}
+
+/// Post-auth funccall dispatch: parse the `/funccall/{tenant}/{ns}/{func}/...`
+/// path, resolve the route, and dispatch. Does NOT perform namespace RBAC — the
+/// caller is responsible for authorization. Kept private and only reachable via
+/// `FuncCall1` (normal RBAC) or the shared-endpoint dispatch (its own gate), so
+/// generic `/funccall/*` auth is unchanged. Still enforces the
+/// blocked-public-endpoint rule.
+async fn funccall_dispatch_route(
+    gw: &HttpGateway,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    let path = req.uri().path();
+    let parts = path.split("/").collect::<Vec<&str>>();
+    let partsCount = parts.len();
+    if partsCount < 5 {
+        let body = Body::from(format!("service failure: Invalid input"));
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body)
+            .unwrap());
+    }
+
+    if partsCount > 5 {
+        let p5 = parts[5];
+        if p5.starts_with("sleep") || p5.starts_with("wake_up") {
+            let body = Body::from(format!("service failure: unsupported"));
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(body)
+                .unwrap());
+        }
+    }
+
+    let tenant = parts[2].to_owned();
+    let namespace = parts[3].to_owned();
+    let funcname = parts[4].to_owned();
+    if is_blocked_public_endpoint_inference(&tenant, &namespace) {
+        let body = Body::from("service failure: unsupported");
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(body)
+            .unwrap());
     }
 
     let mut remainPath = "".to_string();
@@ -4243,15 +4299,69 @@ async fn OpenRouterModels(
         .unwrap())
 }
 
-/// Root OpenRouter inference entrypoint. Pulls `model` from the JSON body, gates on
-/// `or_listed`, and rewrites to `/funccall/inferx/endpoint/{model}{remainPath}` before
-/// delegating to `FuncCall1`.
-async fn OpenRouterChatCompletions(
-    Extension(token): Extension<Arc<AccessToken>>,
-    State(gw): State<HttpGateway>,
+/// Which shared-serving surface a request came in on. Recorded on the usage
+/// event (reporting only); it does not fork the billing logic.
+#[derive(Clone, Copy, PartialEq)]
+enum SharedSource {
+    Direct,
+    OpenRouter,
+}
+
+impl SharedSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            SharedSource::Direct => "direct",
+            SharedSource::OpenRouter => "openrouter",
+        }
+    }
+}
+
+/// Resolve the paying tenant for a shared-endpoint request from the token alone
+/// (the URL carries no tenant). `restrictTenant` wins, else a resolvable
+/// `defaultTenant`, else reject. Shared by both the direct and OpenRouter wrappers.
+fn resolve_caller_tenant(token: &AccessToken, gw: &HttpGateway) -> Result<String> {
+    let tenant_exists = |t: &str| gw.objRepo.tenantMgr.Get("system", "system", t).is_ok();
+    resolve_skill_calling_tenant(token, &tenant_exists)
+}
+
+fn no_tenant_context_response() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::from(
+            "service failure: no tenant context: set a default tenant or use a tenant-restricted API key",
+        ))
+        .unwrap()
+}
+
+/// Shared dispatch core for both token-billed entry points. Pulls `model` from
+/// the JSON body, rewrites to the physical `inferx/endpoint/{model}` func so both
+/// sources pool on the same instance, dispatches, and meters the response into a
+/// `TokenUsageEvent`. `caller_tenant` is the billing subject; `source` is
+/// recorded for reporting only.
+async fn shared_endpoint_dispatch(
+    token: &Arc<AccessToken>,
+    gw: &HttpGateway,
     req: Request,
+    caller_tenant: String,
+    source: SharedSource,
 ) -> SResult<Response, StatusCode> {
-    let remainPath = req.uri().path().to_string();
+    // Capture request time BEFORE dispatch: it selects the rate, and must not be
+    // the (async, retryable) insert time.
+    let request_ts = Utc::now();
+    let client_request_id = req
+        .headers()
+        .get("X-Request-Id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Upstream path after the shared func. OpenRouter comes in as `/v1/...` and is
+    // forwarded verbatim; the direct surface comes in as `/endpoints/v1/...`, so the
+    // `/endpoints` prefix is stripped to reach the same `/v1/...` upstream.
+    let incoming_path = req.uri().path().to_string();
+    let remainPath = incoming_path
+        .strip_prefix("/endpoints")
+        .unwrap_or(&incoming_path)
+        .to_string();
 
     let (mut reqParts, body) = req.into_parts();
     reqParts.headers.remove(hyper::header::CONTENT_LENGTH);
@@ -4268,24 +4378,25 @@ async fn OpenRouterChatCompletions(
         .and_then(|val| val.as_str().map(|s| s.to_string()))
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let bytes = serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Serve only `or_listed` endpoints (regardless of `published`).
-    let or_listed = match gw.sqlSecret.GetEndpointForListing(&modelName).await {
-        Ok(Some(row)) => row.or_listed,
-        _ => false,
-    };
-    if !or_listed {
-        let body = Body::from("service failure: endpoint not found");
-        let resp = Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(body)
-            .unwrap();
-        return Ok(resp);
+    // Direct callers reach the shared surface only for a published endpoint. OR is
+    // trusted and does not gate on `published` (usage is metered regardless).
+    if source == SharedSource::Direct {
+        let published = gw
+            .objRepo
+            .funcstatusMgr
+            .Get(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE, &modelName)
+            .map(|s| s.object.published)
+            .unwrap_or(false);
+        if !published {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("service failure: endpoint not found"))
+                .unwrap());
+        }
     }
 
-    // Route to the physical `inferx/endpoint` namespace so RBAC matches a provider key
-    // restricted to it.
+    let bytes = serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let finalPath = format!(
         "/funccall/{}/{}/{}{}",
         PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE, modelName, remainPath
@@ -4300,7 +4411,144 @@ async fn OpenRouterChatCompletions(
         .headers_mut()
         .insert("X-Inferx-Model-Call", HeaderValue::from_static("true"));
 
-    FuncCall1(&token, &gw, newReq).await
+    // Ensure the upstream emits a final `usage` object (inject include_usage when
+    // streaming without it), remembering whether the caller actually asked for it.
+    let (newReq, is_streaming, usage_requested) = inject_usage_options(newReq).await?;
+
+    // Direct calls are already authorized by the wrapper (tenant + inference scope
+    // + published) so they bypass the normal `inferx/endpoint` namespace RBAC.
+    // OpenRouter keys are RBAC-scoped to `inferx/endpoint`, so they go through the
+    // normal FuncCall1 auth.
+    let response = match source {
+        SharedSource::Direct => funccall_dispatch_route(gw, newReq).await?,
+        SharedSource::OpenRouter => FuncCall1(token, gw, newReq).await?,
+    };
+
+    let meter = TokenMeterCtx {
+        gateway_request_id: uuid::Uuid::new_v4().to_string(),
+        client_request_id,
+        caller_tenant,
+        model_slug: modelName,
+        source: source.as_str().to_string(),
+        request_ts,
+    };
+
+    Ok(process_usage_response(response, is_streaming, !usage_requested, Some(meter)).await)
+}
+
+/// Root OpenRouter inference entrypoint (`/v1/chat/completions`). Attributes to
+/// the tenant the provider key resolves to, meters, and dispatches to the shared
+/// `inferx/endpoint` func. The old per-request `or_listed` serving gate is
+/// dropped; `or_listed` still governs only the `/v1/models` catalog.
+async fn OpenRouterChatCompletions(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    let caller_tenant = match resolve_caller_tenant(&token, &gw) {
+        Ok(t) => t,
+        Err(_) => return Ok(no_tenant_context_response()),
+    };
+
+    // This wrapper is not a `/funccall/*` path, but quota enforcement still
+    // blocks quota-exceeded tenants here because POST on a non-read path falls
+    // through to `quota_exceeded_response`.
+    if let Some(resp) =
+        enforce_tenant_quota_for_request(&token, &gw, &caller_tenant, req.method(), req.uri().path())
+    {
+        return Ok(resp);
+    }
+
+    shared_endpoint_dispatch(&token, &gw, req, caller_tenant, SharedSource::OpenRouter).await
+}
+
+/// Direct token-billed entry point (`/endpoints/v1/chat/completions`). Resolves
+/// the caller tenant, prechecks quota, and hands off to the shared dispatch core
+/// which gates on `published` and meters the response.
+async fn SharedEndpointCompletions(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    req: Request,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("inference") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
+    let caller_tenant = match resolve_caller_tenant(&token, &gw) {
+        Ok(t) => t,
+        Err(_) => return Ok(no_tenant_context_response()),
+    };
+
+    // This shared surface is also not a `/funccall/*` path. The precheck still
+    // blocks quota-exceeded tenants because non-read methods are rejected even
+    // when `is_funccall_path(...)` is false.
+    if let Some(resp) =
+        enforce_tenant_quota_for_request(&token, &gw, &caller_tenant, req.method(), req.uri().path())
+    {
+        return Ok(resp);
+    }
+
+    shared_endpoint_dispatch(&token, &gw, req, caller_tenant, SharedSource::Direct).await
+}
+
+/// Direct-API model list (`/endpoints/v1/models`). Enumerates published shared
+/// funcs under `inferx/endpoint` and emits the plain OpenAI models shape (NOT the
+/// OpenRouter provider schema).
+async fn SharedEndpointModels(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("inference") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+    if resolve_caller_tenant(&token, &gw).is_err() {
+        return Ok(no_tenant_context_response());
+    }
+
+    let funcs = match gw.objRepo.funcMgr.GetObjects(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE) {
+        Ok(funcs) => funcs,
+        Err(e) => {
+            return Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(format!("service failure: list models failed {:?}", e)))
+                .unwrap());
+        }
+    };
+
+    let created = Utc::now().timestamp();
+    let data: Vec<Value> = funcs
+        .iter()
+        .filter(|func| {
+            gw.objRepo
+                .funcstatusMgr
+                .Get(&func.tenant, &func.namespace, &func.name)
+                .map(|s| s.object.published)
+                .unwrap_or(false)
+        })
+        .map(|func| {
+            serde_json::json!({
+                "id": func.name,
+                "object": "model",
+                "created": created,
+                "owned_by": "inferx",
+            })
+        })
+        .collect();
+
+    let response_body = serde_json::json!({ "object": "list", "data": data });
+    let bytes = serde_json::to_vec(&response_body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(bytes))
+        .unwrap())
 }
 
 fn error_response_for_endpoint_admin_action(err: Error) -> Response {
@@ -4610,6 +4858,43 @@ struct AddBillingRateResponse {
     tenant: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct AddTokenRateRequest {
+    model_slug: Option<String>, // None/empty = global default
+    cents_per_million_input: i64,
+    cents_per_million_output: i64,
+    cents_per_million_cached: Option<i64>,
+    effective_from: Option<String>,
+    effective_to: Option<String>,
+    tenant: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AddTokenRateResponse {
+    success: bool,
+    rate_id: i64,
+    model_slug: Option<String>,
+    cents_per_million_input: i64,
+    cents_per_million_output: i64,
+    cents_per_million_cached: i64,
+    effective_from: String,
+    effective_to: Option<String>,
+    tenant: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TokenRateHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    model_slug: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TokenRateHistoryResponse {
+    records: Vec<crate::audit::TokenRateHistoryRecord>,
+    total: i64,
+}
+
 #[derive(Serialize)]
 struct BillingRateHistoryResponse {
     records: Vec<BillingRateHistoryRecord>,
@@ -4626,6 +4911,7 @@ struct BillingCreditHistoryResponse {
 struct BillingSummaryPeriod {
     inference_cents: i64,
     standby_cents: i64,
+    token_cents: i64,
     inference_hours: f64,
     standby_hours: f64,
 }
@@ -4707,6 +4993,17 @@ struct AdminEndpointUsageQuery {
     offset: Option<i64>,
     group_by: Option<String>,
     tenant: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TokenUsageQuery {
+    hours: Option<i32>,
+    start: Option<String>,
+    end: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    tenant: Option<String>,
+    model_slug: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -5526,6 +5823,209 @@ async fn GetBillingRateHistory(
     }
 }
 
+/// Add a per-token rate (per model_slug, optional tenant override), effective-dated.
+/// InferxAdmin only. Mirrors AddBillingRate but keyed on model_slug.
+async fn AddTokenRate(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Json(req): Json<AddTokenRateRequest>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Body::from(
+                "Permission denied: Only InferxAdmin can add token rates",
+            ))
+            .unwrap());
+    }
+
+    let cached = req.cents_per_million_cached.unwrap_or(0);
+    if req.cents_per_million_input < 0 || req.cents_per_million_output < 0 || cached < 0 {
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("token rates must be >= 0"))
+            .unwrap());
+    }
+
+    let effective_from = match req.effective_from.as_deref() {
+        Some(v) => match DateTime::parse_from_rfc3339(v) {
+            Ok(dt) => dt.with_timezone(&Utc),
+            Err(_) => {
+                return Ok(Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::from("Invalid effective_from format (use RFC3339)"))
+                    .unwrap())
+            }
+        },
+        None => Utc::now(),
+    };
+
+    let effective_to = match req.effective_to.as_deref() {
+        Some(v) => match DateTime::parse_from_rfc3339(v) {
+            Ok(dt) => Some(dt.with_timezone(&Utc)),
+            Err(_) => {
+                return Ok(Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::from("Invalid effective_to format (use RFC3339)"))
+                    .unwrap())
+            }
+        },
+        None => None,
+    };
+
+    if let Some(to) = effective_to.as_ref() {
+        if *to <= effective_from {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(
+                    "Invalid range: effective_to must be after effective_from",
+                ))
+                .unwrap());
+        }
+    }
+
+    let model_slug = req
+        .model_slug
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let tenant = req
+        .tenant
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let added_by = Some(token.username.as_str());
+    let effective_to_resp = effective_to.as_ref().map(|v| v.to_rfc3339());
+
+    match gw
+        .sqlBilling
+        .AddTokenRate(
+            model_slug.as_deref(),
+            req.cents_per_million_input,
+            req.cents_per_million_output,
+            cached,
+            effective_from,
+            effective_to,
+            tenant.as_deref(),
+            added_by,
+        )
+        .await
+    {
+        Ok(id) => {
+            let resp_body = AddTokenRateResponse {
+                success: true,
+                rate_id: id,
+                model_slug,
+                cents_per_million_input: req.cents_per_million_input,
+                cents_per_million_output: req.cents_per_million_output,
+                cents_per_million_cached: cached,
+                effective_from: effective_from.to_rfc3339(),
+                effective_to: effective_to_resp,
+                tenant,
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from(data))
+                .unwrap())
+        }
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!("Failed to add token rate: {:?}", e)))
+            .unwrap()),
+    }
+}
+
+/// Currently-active token rate for one endpoint slug. Readable by any
+/// authenticated caller (pricing of a published endpoint is not admin-only), so
+/// the endpoint page can show the price. 404 when no rate is active.
+async fn GetActiveTokenRateForSlug(
+    Extension(_token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+) -> SResult<Response, StatusCode> {
+    match gw.sqlBilling.GetActiveTokenRate(&slug, None).await {
+        Ok(Some(r)) => {
+            let body = serde_json::json!({
+                "model_slug": r.model_slug,
+                "cents_per_million_input": r.cents_per_million_input,
+                "cents_per_million_output": r.cents_per_million_output,
+                "cents_per_million_cached": r.cents_per_million_cached,
+                "effective_from": r.effective_from.to_rfc3339(),
+                "tenant": r.tenant,
+            });
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap())
+        }
+        Ok(None) => Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("no active token rate"))
+            .unwrap()),
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!("Failed to get token rate: {:?}", e)))
+            .unwrap()),
+    }
+}
+
+async fn GetTokenRateHistory(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Query(params): Query<TokenRateHistoryQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Body::from(
+                "Permission denied: Only InferxAdmin can read token rate history",
+            ))
+            .unwrap());
+    }
+
+    let mut limit = params.limit.unwrap_or(20);
+    let mut offset = params.offset.unwrap_or(0);
+    if limit < 0 {
+        limit = 0;
+    }
+    if limit > 200 {
+        limit = 200;
+    }
+    if offset < 0 {
+        offset = 0;
+    }
+
+    let model_slug = params
+        .model_slug
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    match gw
+        .sqlBilling
+        .ListTokenRateHistory(model_slug.as_deref(), limit, offset)
+        .await
+    {
+        Ok((records, total)) => {
+            let resp_body = TokenRateHistoryResponse { records, total };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from(data))
+                .unwrap())
+        }
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!(
+                "Failed to get token rate history: {:?}",
+                e
+            )))
+            .unwrap()),
+    }
+}
+
 async fn GetTenantCredits(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -5548,6 +6048,7 @@ async fn GetTenantCredits(
             quota_exceeded,
             _total_credits,
             currency,
+            _,
             _,
             _,
             _,
@@ -5726,6 +6227,7 @@ async fn GetTenantBillingSummary(
             currency,
             inference_cents,
             standby_cents,
+            token_cents,
             inference_ms,
             standby_ms,
         )) => {
@@ -5746,6 +6248,7 @@ async fn GetTenantBillingSummary(
                 period: BillingSummaryPeriod {
                     inference_cents,
                     standby_cents,
+                    token_cents,
                     inference_hours: inference_ms as f64 / 3600000.0,
                     standby_hours: standby_ms as f64 / 3600000.0,
                 },
@@ -6313,6 +6816,125 @@ async fn GetAdminEndpointUsage(
                 .unwrap();
             return Ok(resp);
         }
+    }
+}
+
+/// Serialize TokenUsageHourly rows to the shared JSON response shape.
+fn token_usage_response(
+    rows: Vec<crate::audit::TokenUsageHourlyRecord>,
+    total: i64,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Response {
+    let usage: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "tenant": r.tenant,
+                "model_slug": r.model_slug,
+                "hour": r.hour.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                "input_tokens": r.input_tokens,
+                "cached_tokens": r.cached_tokens,
+                "output_tokens": r.output_tokens,
+                "request_count": r.request_count,
+                "charge_cents": r.charge_cents,
+            })
+        })
+        .collect();
+    let resp_body = serde_json::json!({
+        "usage": usage,
+        "total": total,
+        "start": start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "end": end.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::from(serde_json::to_string(&resp_body).unwrap()))
+        .unwrap()
+}
+
+/// Admin cross-tenant token usage/spend over TokenUsageHourly.
+async fn GetAdminTokenUsage(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Query(params): Query<TokenUsageQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsInferxAdmin() {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("Admin access required"))
+            .unwrap());
+    }
+
+    let (start_hour, end_hour, _total) =
+        match ParseAdminEndpointRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    let limit = params.limit.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+
+    match gw
+        .sqlBilling
+        .ListTokenUsageHourly(
+            params.tenant.as_deref(),
+            params.model_slug.as_deref(),
+            start_hour,
+            end_hour,
+            limit,
+            offset,
+        )
+        .await
+    {
+        Ok((rows, total)) => Ok(token_usage_response(rows, total, start_hour, end_hour)),
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!("Failed to get token usage: {:?}", e)))
+            .unwrap()),
+    }
+}
+
+/// Per-tenant token usage/spend. Any user of the tenant may read its own usage.
+async fn GetTenantTokenUsage(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(tenant): Path<String>,
+    Query(params): Query<TokenUsageQuery>,
+) -> SResult<Response, StatusCode> {
+    if !token.IsTenantUser(&tenant) {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("No permission to access this tenant"))
+            .unwrap());
+    }
+
+    let (start_hour, end_hour, _total) =
+        match ParseAdminEndpointRange(params.hours, params.start.clone(), params.end.clone()) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+
+    let limit = params.limit.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+
+    match gw
+        .sqlBilling
+        .ListTokenUsageHourly(
+            Some(tenant.as_str()),
+            params.model_slug.as_deref(),
+            start_hour,
+            end_hour,
+            limit,
+            offset,
+        )
+        .await
+    {
+        Ok((rows, total)) => Ok(token_usage_response(rows, total, start_hour, end_hour)),
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!("Failed to get token usage: {:?}", e)))
+            .unwrap()),
     }
 }
 

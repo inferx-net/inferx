@@ -7790,7 +7790,7 @@ def generate_namespaceuser():
     return users
 
 
-@prefix_bp.route("/endpoints", methods=["GET"])
+@prefix_bp.route("/catalog/endpoints", methods=["GET"])
 @not_require_login
 def EndpointList():
     is_authenticated = session.get('access_token', '') != ''
@@ -7881,7 +7881,7 @@ def EndpointList():
     )
 
 
-@prefix_bp.route("/endpoints/<slug>", methods=["GET"])
+@prefix_bp.route("/catalog/endpoints/<slug>", methods=["GET"])
 @not_require_login
 def EndpointDetail(slug):
     is_authenticated = session.get('access_token', '') != ''
@@ -7890,8 +7890,10 @@ def EndpointDetail(slug):
     if is_authenticated:
         roles = listroles()
         active_tenant = resolve_active_tenant_name(roles)
+        tenant_options = accessible_endpoint_tenant_names(roles)
+        if selected_tenant != "" and selected_tenant not in tenant_options:
+            selected_tenant = ""
         if selected_tenant == "":
-            tenant_options = accessible_endpoint_tenant_names(roles)
             selected_tenant = tenant_options[0] if tenant_options else ""
 
         try:
@@ -8012,6 +8014,9 @@ def EndpointDetail(slug):
     except Exception:
         endpoint_funcspec = ""
 
+    token_rate = fetch_active_token_rate(slug) if is_authenticated else None
+    shared_api_base_url = f"{normalize_public_api_base_url()}/endpoints/v1"
+
     return render_template(
         "endpoint_detail.html",
         endpoint_entry=entry,
@@ -8019,6 +8024,8 @@ def EndpointDetail(slug):
         is_authenticated=is_authenticated,
         selected_tenant=selected_tenant,
         client_setup=client_setup,
+        token_rate=token_rate,
+        shared_api_base_url=shared_api_base_url,
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=selected_tenant)
             if is_authenticated and selected_tenant
@@ -8168,6 +8175,8 @@ def EndpointAdminDetail(slug):
         is_authenticated=True,
         selected_tenant=active_tenant,
         client_setup=client_setup,
+        token_rate=fetch_active_token_rate(slug),
+        shared_api_base_url=f"{normalize_public_api_base_url()}/endpoints/v1",
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=active_tenant)
             if active_tenant
@@ -8220,6 +8229,7 @@ def EndpointAdminEdit(slug):
         endpoint_slug=slug,
         endpoint_prefill=prefill,
         endpoint_catalog_entry=catalog_entry,
+        token_rate=fetch_active_token_rate(slug),
         endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
         endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
         endpoint_state=endpoint_state,
@@ -10266,6 +10276,107 @@ def admin_endpoint_usage_by_period(tenant, endpoint_slug):
         
     except Exception as e:
         return json_error(f"failed to get endpoint usage by period: {e}", 500)
+
+
+@prefix_bp.route("/admin/billing/token-rates", methods=["GET", "POST"])
+@require_admin
+def admin_token_rates():
+    """Proxy the per-endpoint token price book (InferxAdmin only)."""
+    try:
+        gateway_url = get_gateway_url()
+        if request.method == "POST":
+            url = f"{gateway_url}/billing/token-rates"
+            return proxy_request_to_gateway(url, method="POST", json_data=request.get_json(silent=True))
+        params = {
+            "limit": request.args.get("limit"),
+            "offset": request.args.get("offset"),
+            "model_slug": request.args.get("model_slug"),
+        }
+        query = urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
+        url = f"{gateway_url}/billing/token-rates?{query}"
+        return proxy_request_to_gateway(url, method="GET")
+    except Exception as e:
+        return json_error(f"failed to proxy token rates: {e}", 500)
+
+
+@prefix_bp.route("/billing/token-rate/<slug>", methods=["GET"])
+@require_login
+def endpoint_token_rate(slug):
+    """Active token rate for one endpoint slug (readable by any logged-in user)."""
+    try:
+        url = f"{get_gateway_url()}/billing/token-rate/{quote(str(slug), safe='')}"
+        return proxy_request_to_gateway(url, method="GET")
+    except Exception as e:
+        return json_error(f"failed to get token rate: {e}", 500)
+
+
+def fetch_active_token_rate(slug):
+    """Server-side fetch of the active token rate for `slug` (dict) or None.
+
+    Returns cents-per-million as stored plus dollars-per-million for display.
+    """
+    try:
+        access_token = str(session.get("access_token", "") or "")
+        if access_token == "":
+            return None
+        url = f"{get_gateway_url()}/billing/token-rate/{quote(str(slug), safe='')}"
+        resp = requests.get(
+            url, headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        for src, dst in (
+            ("cents_per_million_input", "dollars_per_million_input"),
+            ("cents_per_million_output", "dollars_per_million_output"),
+            ("cents_per_million_cached", "dollars_per_million_cached"),
+        ):
+            cents = data.get(src)
+            data[dst] = round(cents / 100.0, 4) if cents is not None else None
+        return data
+    except Exception:
+        return None
+
+
+@prefix_bp.route("/admin/usage/tokens", methods=["GET"])
+@require_admin
+def admin_token_usage():
+    """Admin cross-tenant token usage/spend over TokenUsageHourly."""
+    try:
+        params = {
+            "hours": request.args.get("hours"),
+            "start": request.args.get("start"),
+            "end": request.args.get("end"),
+            "limit": request.args.get("limit"),
+            "offset": request.args.get("offset"),
+            "tenant": request.args.get("tenant"),
+            "model_slug": request.args.get("model_slug"),
+        }
+        query = urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
+        url = f"{get_gateway_url()}/admin/usage/tokens?{query}"
+        return proxy_request_to_gateway(url, method="GET")
+    except Exception as e:
+        return json_error(f"failed to get admin token usage: {e}", 500)
+
+
+@prefix_bp.route("/usage/tokens/<tenant>", methods=["GET"])
+@require_login
+def tenant_token_usage(tenant):
+    """Per-tenant token usage/spend."""
+    try:
+        params = {
+            "hours": request.args.get("hours"),
+            "start": request.args.get("start"),
+            "end": request.args.get("end"),
+            "limit": request.args.get("limit"),
+            "offset": request.args.get("offset"),
+            "model_slug": request.args.get("model_slug"),
+        }
+        query = urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
+        url = f"{get_gateway_url()}/usage/tokens/{quote(str(tenant), safe='')}?{query}"
+        return proxy_request_to_gateway(url, method="GET")
+    except Exception as e:
+        return json_error(f"failed to get tenant token usage: {e}", 500)
 
 
 def get_gateway_url():

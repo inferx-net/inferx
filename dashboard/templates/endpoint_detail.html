@@ -141,6 +141,32 @@
         align-items: center;
         gap: 10px;
     }
+    .playground-mode-card {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #f8fafc;
+        padding: 10px 12px;
+        display: grid;
+        gap: 8px;
+    }
+    .playground-mode-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+    }
+    .playground-mode-options label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #334155;
+        font-size: var(--ix-font-size-body);
+    }
+    .playground-mode-note {
+        margin: 0;
+        color: #64748b;
+        font-size: var(--ix-font-size-caption);
+    }
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -255,6 +281,24 @@
         <h3>Inference Playground</h3>
         <div class="playground-state-hint" id="playground-state-note"></div>
         <div class="playground-grid">
+            {% if shared_api_base_url %}
+            <div class="playground-mode-card">
+                <strong>Serving Mode</strong>
+                <div class="playground-mode-options">
+                    <label>
+                        <input type="radio" name="endpointPlaygroundMode" value="token" checked>
+                        <span>Token-Based</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="endpointPlaygroundMode" value="dedicated">
+                        <span>Dedicated GPU</span>
+                    </label>
+                </div>
+                <p class="playground-mode-note" id="endpoint-playground-mode-note">
+                    Token-Based runs against the shared endpoint and bills per token.
+                </p>
+            </div>
+            {% endif %}
             {% if interactive_api_type == "image2text" %}
             {% set image_sample_url = endpoint_entry.get('sample_query', {}).get('dataUrl', '') %}
             <div>
@@ -380,7 +424,7 @@
     </section>
     {% endif %}
 
-    {% if sample_rest_call %}
+    {% if sample_rest_call and not shared_api_base_url %}
     <section class="model-user-section">
         <h3>Sample REST Call</h3>
         <div class="copyable-area">
@@ -446,6 +490,8 @@
     const endpointTenant = {{ ('inferx' if is_admin_view else selected_tenant) | tojson }};
     const endpointNamespace = {{ ('endpoint' if is_admin_view else 'endpoints') | tojson }};
     const proxyBasePath = {{ (hosturl ~ 'proxy') | tojson }};
+    const sharedEndpointProxyBase = {{ (hosturl ~ 'proxy/endpoints/v1') | tojson }};
+    const sharedEndpointSlug = {{ endpoint_entry.get('slug', '') | tojson }};
     const text2imgPath = {{ (hosturl ~ 'text2img') | tojson }};
     const text2audioPath = {{ (hosturl ~ 'text2audio') | tojson }};
     const remoteImageFetchPath = {{ (hosturl ~ 'image2text/fetch-remote') | tojson }};
@@ -469,8 +515,53 @@
     window.loadImage = endpointController.loadImage;
     window.loadAudio = endpointController.loadAudio;
     window.cancel = endpointController.cancel;
+    function getEndpointPlaygroundMode() {
+        const selected = document.querySelector('input[name="endpointPlaygroundMode"]:checked');
+        return selected ? String(selected.value || 'dedicated') : 'dedicated';
+    }
+
+    function normalizeSharedEndpointPath(path, apiType) {
+        const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+        if (apiType === 'text2text' || apiType === 'knowledgebase' || normalizedPath === '') {
+            return 'chat/completions';
+        }
+        return normalizedPath.replace(/^v1\/+/, '');
+    }
+
+    function updateEndpointPlaygroundModeNote() {
+        const noteEl = document.getElementById('endpoint-playground-mode-note');
+        if (!noteEl) {
+            return;
+        }
+        noteEl.textContent = getEndpointPlaygroundMode() === 'token'
+            ? 'Token-Based runs against the shared endpoint and bills per token.'
+            : 'Dedicated GPU runs against your tenant-scoped deployed endpoint.';
+    }
+
+    function buildEndpointPlaygroundOverrides() {
+        if (getEndpointPlaygroundMode() !== 'token') {
+            return undefined;
+        }
+
+        const sharedPath = normalizeSharedEndpointPath(endpointInteractivePath, endpointInteractiveApiType);
+        const requestUrl = `${String(sharedEndpointProxyBase).replace(/\/+$/, '')}/${sharedPath}`;
+        return {
+            requestUrl: requestUrl,
+            mapTransform: function (requestMap) {
+                const nextMap = requestMap && typeof requestMap === 'object' ? requestMap : {};
+                nextMap.model = sharedEndpointSlug;
+                return nextMap;
+            },
+        };
+    }
+
+    document.querySelectorAll('input[name="endpointPlaygroundMode"]').forEach(function (input) {
+        input.addEventListener('change', updateEndpointPlaygroundModeNote);
+    });
+    updateEndpointPlaygroundModeNote();
+
     window.streamOutput = function () {
-        return endpointController.streamOutput();
+        return endpointController.streamOutput(buildEndpointPlaygroundOverrides());
     };
 </script>
 {% endif %}
@@ -490,5 +581,6 @@
         }
         window.location.reload();
     }
+
 </script>
 {% endblock %}

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::response::Response;
+use chrono::{DateTime, Utc};
 use http_body_util::BodyExt;
 use hyper::body::Bytes;
 use serde::{Deserialize, Serialize};
@@ -14,8 +15,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::audit::{TokenUsageEvent, TOKEN_USAGE_AGENT};
 use crate::gateway::auth_layer::AccessToken;
-use crate::gateway::http_gateway::HttpGateway;
+use crate::gateway::http_gateway::{GatewayId, HttpGateway};
 
 use super::http_gateway::FuncCall1;
 
@@ -31,52 +33,230 @@ pub struct StreamOptions {
 pub struct UsageInfo {
     pub promptTokens: u32,
     pub completionTokens: u32,
+    pub cachedTokens: u32,
     pub totalTokens: u32,
 }
 
-/// Wrapper endpoint for FuncCall that handles token usage tracking
-pub async fn FuncCallWithTokenTracking(
-    token: &Arc<AccessToken>,
-    gw: &HttpGateway,
-    req: Request,
-) -> Result<Response, StatusCode> {
-    let path = req.uri().path().to_string();
+/// Per-request context needed to emit a billed token-usage event. When present,
+/// the response processor emits a `TokenUsageEvent` on the final `usage`; when
+/// absent (e.g. the legacy `/modelcall` path), usage is only logged.
+#[derive(Debug, Clone)]
+pub struct TokenMeterCtx {
+    pub gateway_request_id: String,
+    pub client_request_id: Option<String>,
+    pub caller_tenant: String,
+    pub model_slug: String,
+    pub source: String,
+    pub request_ts: DateTime<Utc>,
+}
 
-    let pathParts: Vec<&str> = path.split('/').collect();
-    if pathParts.len() < 5 {
-        return Err(StatusCode::BAD_REQUEST);
+/// Extract token counts from a `usage` object (prompt/completion/total plus the
+/// cached-prompt subset from `prompt_tokens_details.cached_tokens`).
+fn parse_usage(usage_obj: &serde_json::Map<String, Value>) -> UsageInfo {
+    let prompt_tokens = usage_obj
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let completion_tokens = usage_obj
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let total_tokens = usage_obj
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let cached_tokens = usage_obj
+        .get("prompt_tokens_details")
+        .and_then(|v| v.as_object())
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    UsageInfo {
+        promptTokens: prompt_tokens,
+        completionTokens: completion_tokens,
+        cachedTokens: cached_tokens,
+        totalTokens: total_tokens,
     }
+}
 
+/// Emit a billed event, or log when there is no meter context.
+fn record_usage(meter: &Option<TokenMeterCtx>, usage: &UsageInfo, streaming: bool) {
+    match meter {
+        Some(ctx) => {
+            TOKEN_USAGE_AGENT.Audit(TokenUsageEvent {
+                gateway_request_id: ctx.gateway_request_id.clone(),
+                client_request_id: ctx.client_request_id.clone(),
+                caller_tenant: ctx.caller_tenant.clone(),
+                model_slug: ctx.model_slug.clone(),
+                source: ctx.source.clone(),
+                prompt_tokens: usage.promptTokens as i64,
+                completion_tokens: usage.completionTokens as i64,
+                cached_tokens: usage.cachedTokens as i64,
+                ts: ctx.request_ts,
+                gateway_id: Some(GatewayId()),
+            });
+        }
+        None => {
+            let kind = if streaming { "stream" } else { "non-streaming" };
+            error!("Token usage ({}): {:?}", kind, usage);
+        }
+    }
+}
+
+/// Process an upstream OpenAI-shaped response: tee/parse the `usage` object,
+/// emit or log it, and (when the caller did not ask for usage) strip the
+/// injected usage line from the streamed body. Shared by the legacy
+/// `/modelcall` path and the shared-endpoint dispatch.
+pub async fn process_usage_response(
+    response: Response,
+    is_streaming: bool,
+    should_filter_usage: bool,
+    meter: Option<TokenMeterCtx>,
+) -> Response {
+    let status = response.status();
+    let headers: Vec<_> = response
+        .headers()
+        .iter()
+        .filter(|(k, _)| *k != hyper::header::CONTENT_LENGTH)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let bodyStream = if is_streaming {
+        let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
+        let responseBodyBody = response.into_body();
+
+        tokio::spawn(async move {
+            let mut body = responseBodyBody;
+            // Track the latest `usage` seen and bill it only when the stream ends
+            // normally. With stream_options.continuous_usage_stats, intermediate
+            // chunks carry partial counts, so the FINAL one (last seen) is the total.
+            let mut last_usage: Option<UsageInfo> = None;
+
+            loop {
+                let frame = body.frame().await;
+                let bytes = match frame {
+                    None => {
+                        // Stream completed: bill the final usage total.
+                        if let Some(usage) = last_usage.as_ref() {
+                            record_usage(&meter, usage, true);
+                        }
+                        return;
+                    }
+                    Some(b) => match b {
+                        Ok(b) => b,
+                        Err(e) => {
+                            // Truncated/errored stream: no reliable final total, do not bill.
+                            error!("Stream frame error: {:?}", e);
+                            return;
+                        }
+                    },
+                };
+                let bytes: Bytes = bytes.into_data().unwrap_or_default();
+
+                let outputBytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+                    let mut filteredLines = String::new();
+
+                    for line in text.lines() {
+                        if let Some(json_str) = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))
+                        {
+                            if json_str.trim() == "[DONE]" {
+                                filteredLines.push_str(line);
+                                filteredLines.push('\n');
+                                continue;
+                            }
+
+                            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(json_str) {
+                                if let Some(Value::Object(usage_obj)) = obj.get("usage") {
+                                    last_usage = Some(parse_usage(usage_obj));
+                                    if should_filter_usage {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        filteredLines.push_str(line);
+                        filteredLines.push('\n');
+                    }
+
+                    Bytes::from(filteredLines)
+                } else {
+                    bytes
+                };
+
+                if tx.send(Ok(outputBytes)).await.is_err() {
+                    // Client half went away before the stream finished: not billed
+                    // (aborted). TODO: to bill aborted/disconnected requests, record
+                    // `last_usage` here (requires stream_options.continuous_usage_stats).
+                    return;
+                }
+            }
+        });
+
+        let stream = ReceiverStream::new(rx);
+        axum::body::Body::from_stream(http_body_util::StreamBody::new(stream))
+    } else {
+        // Collect the whole non-streaming body so we can parse `usage` and bill it.
+        let responseBody = response
+            .into_body()
+            .collect()
+            .await
+            .map(|b| b.to_bytes())
+            .unwrap_or_default();
+
+        if let Ok(text) = std::str::from_utf8(&responseBody) {
+            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) {
+                if let Some(Value::Object(usage_obj)) = obj.get("usage") {
+                    record_usage(&meter, &parse_usage(usage_obj), false);
+                }
+            }
+        }
+
+        axum::body::Body::from(responseBody)
+    };
+
+    let mut newResponse = Response::new(bodyStream);
+    *newResponse.status_mut() = status;
+    for (key, value) in headers {
+        if key != hyper::header::CONTENT_LENGTH {
+            newResponse.headers_mut().insert(key.clone(), value.clone());
+        }
+    }
+    newResponse
+}
+
+/// Parse the request body to determine streaming/usage settings and inject
+/// `stream_options.include_usage` when streaming without it. Returns the
+/// possibly-rewritten request plus `(is_streaming, usage_requested)`.
+pub async fn inject_usage_options(req: Request) -> SResult<(Request, bool, bool), StatusCode> {
     let (mut reqParts, body) = req.into_parts();
     let bodyBytes = match axum::body::to_bytes(body, 20 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
 
-    // Parse JSON once to check streaming and usage settings
     let (isStreaming, usageEnabled, requestBodyBytes) =
         if let Ok(mut value) = serde_json::from_slice::<Value>(&bodyBytes) {
-            let isStreaming = if let Value::Object(ref obj) = value {
-                obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
-            } else {
-                false
-            };
+            let isStreaming = value
+                .as_object()
+                .and_then(|obj| obj.get("stream"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let usageEnabled = if isStreaming {
-                if let Value::Object(ref obj) = value {
-                    obj.get("stream_options")
-                        .and_then(|v| v.as_object())
-                        .and_then(|opts| opts.get("include_usage"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
+                value
+                    .as_object()
+                    .and_then(|obj| obj.get("stream_options"))
+                    .and_then(|v| v.as_object())
+                    .and_then(|opts| opts.get("include_usage"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
             } else {
                 true
             };
 
-            // If streaming and usage is not enabled, add stream_options.include_usage
             let requestBodyBytes = if isStreaming && !usageEnabled {
                 if let Value::Object(ref mut obj) = value {
                     let stream_options = obj
@@ -103,156 +283,24 @@ pub async fn FuncCallWithTokenTracking(
         };
 
     let req = Request::from_parts(reqParts, axum::body::Body::from(requestBodyBytes));
-    let response = FuncCall1(token, gw, req).await?;
+    Ok((req, isStreaming, usageEnabled))
+}
 
-    let status = response.status();
-    let headers: Vec<_> = response
-        .headers()
-        .iter()
-        .filter(|(k, _)| *k != hyper::header::CONTENT_LENGTH)
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    let bodyStream = if isStreaming {
-        let (tx, rx) = mpsc::channel::<SResult<Bytes, Infallible>>(128);
-        let responseBodyBody = response.into_body();
-        let shouldFilterUsage = !usageEnabled;
-
-        tokio::spawn(async move {
-            let mut body = responseBodyBody;
-
-            loop {
-                let frame = body.frame().await;
-                let bytes = match frame {
-                    None => return,
-                    Some(b) => match b {
-                        Ok(b) => b,
-                        Err(e) => {
-                            error!("Stream frame error: {:?}", e);
-                            return;
-                        }
-                    },
-                };
-                let bytes: Bytes = bytes.into_data().unwrap_or_default();
-
-                // Process lines - filter usage if needed and log if present
-                let outputBytes = if let Ok(text) = std::str::from_utf8(&bytes) {
-                    let mut filteredLines = String::new();
-                    let mut usageLogged = false;
-
-                    for line in text.lines() {
-                        if let Some(json_str) = line
-                            .strip_prefix("data: ")
-                            .or_else(|| line.strip_prefix("data:"))
-                        {
-                            if json_str.trim() == "[DONE]" {
-                                filteredLines.push_str(line);
-                                filteredLines.push('\n');
-                                continue;
-                            }
-
-                            // Check if this line contains usage
-                            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(json_str)
-                            {
-                                if obj.get("usage").is_some() {
-                                    // Log usage if we haven't yet
-                                    if !usageLogged {
-                                        if let Some(Value::Object(usage_obj)) = obj.get("usage") {
-                                            let prompt_tokens = usage_obj
-                                                .get("prompt_tokens")
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(0)
-                                                as u32;
-                                            let completion_tokens = usage_obj
-                                                .get("completion_tokens")
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(0)
-                                                as u32;
-                                            let total_tokens = usage_obj
-                                                .get("total_tokens")
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(0)
-                                                as u32;
-
-                                            let usage_info = UsageInfo {
-                                                promptTokens: prompt_tokens,
-                                                completionTokens: completion_tokens,
-                                                totalTokens: total_tokens,
-                                            };
-                                            error!("Token usage (stream): {:?}", usage_info);
-                                            usageLogged = true;
-                                        }
-                                    }
-                                    // Skip this line if filtering usage
-                                    if shouldFilterUsage {
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        filteredLines.push_str(line);
-                        filteredLines.push('\n');
-                    }
-
-                    Bytes::from(filteredLines)
-                } else {
-                    bytes
-                };
-
-                if tx.send(Ok(outputBytes)).await.is_err() {
-                    return;
-                }
-            }
-        });
-
-        let stream = ReceiverStream::new(rx);
-        axum::body::Body::from_stream(http_body_util::StreamBody::new(stream))
-    } else {
-        let responseBody = response
-            .into_body()
-            .collect()
-            .await
-            .map(|b| b.to_bytes())
-            .unwrap_or_default();
-
-        // Log usage for non-streaming if present
-        if let Ok(text) = std::str::from_utf8(&responseBody) {
-            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) {
-                if let Some(Value::Object(usage_obj)) = obj.get("usage") {
-                    let prompt_tokens = usage_obj
-                        .get("prompt_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    let completion_tokens = usage_obj
-                        .get("completion_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    let total_tokens = usage_obj
-                        .get("total_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-
-                    let usage_info = UsageInfo {
-                        promptTokens: prompt_tokens,
-                        completionTokens: completion_tokens,
-                        totalTokens: total_tokens,
-                    };
-                    error!("Token usage (non-streaming): {:?}", usage_info);
-                }
-            }
-        }
-
-        axum::body::Body::from(responseBody)
-    };
-
-    let mut newResponse = Response::new(bodyStream);
-    *newResponse.status_mut() = status;
-
-    for (key, value) in headers {
-        if key != hyper::header::CONTENT_LENGTH {
-            newResponse.headers_mut().insert(key.clone(), value.clone());
-        }
+/// Wrapper endpoint for FuncCall that handles token usage tracking
+pub async fn FuncCallWithTokenTracking(
+    token: &Arc<AccessToken>,
+    gw: &HttpGateway,
+    req: Request,
+) -> Result<Response, StatusCode> {
+    let path = req.uri().path().to_string();
+    let pathParts: Vec<&str> = path.split('/').collect();
+    if pathParts.len() < 5 {
+        return Err(StatusCode::BAD_REQUEST);
     }
 
-    Ok(newResponse)
+    let (req, isStreaming, usageEnabled) = inject_usage_options(req).await?;
+    let response = FuncCall1(token, gw, req).await?;
+
+    // No meter context on the legacy /modelcall path: usage is logged only.
+    Ok(process_usage_response(response, isStreaming, !usageEnabled, None).await)
 }

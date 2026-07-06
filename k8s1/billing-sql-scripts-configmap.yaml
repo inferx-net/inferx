@@ -8,13 +8,16 @@ data:
   update-and-check-quota.sql: |
     \set ON_ERROR_STOP on
 
-    -- Step 1: Insert any new tenants found in ticks or credits
+    -- Step 1: Insert any new tenants found in ticks, credits, or token events.
+    -- A token-only caller has no other row, so include it or its debit is dropped.
     INSERT INTO TenantQuota (tenant)
     SELECT DISTINCT tenant
     FROM (
       SELECT tenant FROM UsageTick WHERE processed_at IS NULL
       UNION
       SELECT tenant FROM TenantCreditHistory
+      UNION
+      SELECT caller_tenant FROM TokenUsageEvent WHERE processed_at IS NULL
     ) all_tenants
     ON CONFLICT (tenant) DO NOTHING;
 
@@ -73,13 +76,71 @@ data:
       GROUP BY t.tenant
     ),
 
+    -- 3t) Claim a batch of unprocessed token events that HAVE an active rate.
+    -- Price lookup happens inline here so each claimed row evaluates
+    -- GetTokenRateCents(...) only once. No-rate rows are skipped (left
+    -- unprocessed) so they self-heal once priced.
+    token_batch AS (
+      SELECT
+        e.gateway_request_id,
+        e.caller_tenant AS tenant,
+        e.model_slug,
+        e.prompt_tokens,
+        e.completion_tokens,
+        e.cached_tokens,
+        e.ts,
+        r.cents_per_million_input,
+        r.cents_per_million_output,
+        r.cents_per_million_cached
+      FROM TokenUsageEvent e
+      CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+      WHERE e.processed_at IS NULL
+      ORDER BY e.gateway_request_id
+      LIMIT 10000
+      FOR UPDATE SKIP LOCKED
+    ),
+
+    -- Billable input is prompt minus the cached subset; clamp at zero so a
+    -- malformed upstream payload cannot produce a negative charge.
+    token_with_rate AS (
+      SELECT
+        b.tenant,
+        GREATEST(b.prompt_tokens - b.cached_tokens, 0::bigint) AS input_tokens,
+        b.cached_tokens,
+        b.completion_tokens AS output_tokens,
+        b.cents_per_million_input,
+        b.cents_per_million_output,
+        b.cents_per_million_cached
+      FROM token_batch b
+    ),
+
+    -- Exact token numerator per tenant (divide by 1_000_000 later, with carry).
+    token_agg AS (
+      SELECT
+        t.tenant,
+        COALESCE(SUM(
+          t.input_tokens  * t.cents_per_million_input
+          + t.cached_tokens * t.cents_per_million_cached
+          + t.output_tokens * t.cents_per_million_output
+        ), 0)::bigint AS token_batch_numer
+      FROM token_with_rate t
+      GROUP BY t.tenant
+    ),
+
+    -- Tenants touched by either usage type this run.
+    affected AS (
+      SELECT tenant FROM agg
+      UNION
+      SELECT tenant FROM token_agg
+    ),
+
     -- 4) Snapshot old quota_exceeded for ONLY affected tenants
     old_state AS (
       SELECT
         q.tenant,
         q.quota_exceeded AS old_exceeded
       FROM TenantQuota q
-      WHERE q.tenant IN (SELECT tenant FROM agg)
+      WHERE q.tenant IN (SELECT tenant FROM affected)
     ),
 
     -- 5) Sum credits per tenant (source of truth)
@@ -91,45 +152,57 @@ data:
       GROUP BY h.tenant
     ),
 
-    -- 6) Apply carry-aware deltas for tenants in the current locked batch only.
+    -- 6) Apply carry-aware deltas for tenants touched in this run. GPU numerators
+    -- divide by 3_600_000 (per-hour), token numerators by 1_000_000 (per-million).
     calc AS (
       SELECT
         q.tenant,
         q.threshold_cents,
         q.inference_used_cents,
         q.standby_used_cents,
+        q.token_used_cents,
         q.inference_carry_numer,
         q.standby_carry_numer,
-        a.inference_batch_numer,
-        a.standby_batch_numer,
-        (q.inference_carry_numer + a.inference_batch_numer) / 3600000 AS delta_inference_cents,
-        (q.standby_carry_numer + a.standby_batch_numer) / 3600000 AS delta_standby_cents,
-        (q.inference_carry_numer + a.inference_batch_numer) % 3600000 AS next_inference_carry_numer,
-        (q.standby_carry_numer + a.standby_batch_numer) % 3600000 AS next_standby_carry_numer
+        q.token_carry_numer,
+        COALESCE(a.inference_batch_numer, 0) AS inference_batch_numer,
+        COALESCE(a.standby_batch_numer, 0) AS standby_batch_numer,
+        COALESCE(tk.token_batch_numer, 0) AS token_batch_numer,
+        (q.inference_carry_numer + COALESCE(a.inference_batch_numer, 0)) / 3600000 AS delta_inference_cents,
+        (q.standby_carry_numer + COALESCE(a.standby_batch_numer, 0)) / 3600000 AS delta_standby_cents,
+        (q.token_carry_numer + COALESCE(tk.token_batch_numer, 0)) / 1000000 AS delta_token_cents,
+        (q.inference_carry_numer + COALESCE(a.inference_batch_numer, 0)) % 3600000 AS next_inference_carry_numer,
+        (q.standby_carry_numer + COALESCE(a.standby_batch_numer, 0)) % 3600000 AS next_standby_carry_numer,
+        (q.token_carry_numer + COALESCE(tk.token_batch_numer, 0)) % 1000000 AS next_token_carry_numer
       FROM TenantQuota q
-      JOIN agg a ON a.tenant = q.tenant
+      JOIN affected aff ON aff.tenant = q.tenant
+      LEFT JOIN agg a ON a.tenant = q.tenant
+      LEFT JOIN token_agg tk ON tk.tenant = q.tenant
     ),
 
-    -- 7) Update usage split + balance + quota_exceeded for affected tenants
+    -- 7) Update usage split + balance + quota_exceeded for affected tenants.
+    -- used_cents / balance / quota_exceeded include the token term alongside
+    -- inference + standby, so token spend actually enforces quota.
     updated AS (
       UPDATE TenantQuota q
       SET
         inference_used_cents = c2.inference_used_cents + c2.delta_inference_cents,
         standby_used_cents = c2.standby_used_cents + c2.delta_standby_cents,
+        token_used_cents = c2.token_used_cents + c2.delta_token_cents,
         used_cents =
-          c2.inference_used_cents + c2.standby_used_cents
-          + c2.delta_inference_cents + c2.delta_standby_cents,
+          c2.inference_used_cents + c2.standby_used_cents + c2.token_used_cents
+          + c2.delta_inference_cents + c2.delta_standby_cents + c2.delta_token_cents,
         inference_carry_numer = c2.next_inference_carry_numer,
         standby_carry_numer = c2.next_standby_carry_numer,
+        token_carry_numer = c2.next_token_carry_numer,
         balance_cents = COALESCE(c.total_credits, 0) - (
-          c2.inference_used_cents + c2.standby_used_cents
-          + c2.delta_inference_cents + c2.delta_standby_cents
+          c2.inference_used_cents + c2.standby_used_cents + c2.token_used_cents
+          + c2.delta_inference_cents + c2.delta_standby_cents + c2.delta_token_cents
         ),
         quota_exceeded =
           (
             COALESCE(c.total_credits, 0) - (
-              c2.inference_used_cents + c2.standby_used_cents
-              + c2.delta_inference_cents + c2.delta_standby_cents
+              c2.inference_used_cents + c2.standby_used_cents + c2.token_used_cents
+              + c2.delta_inference_cents + c2.delta_standby_cents + c2.delta_token_cents
             )
           ) <= c2.threshold_cents
       FROM calc c2
@@ -143,15 +216,22 @@ data:
         COALESCE(c.total_credits, 0) AS credits_cents
     ),
 
-    -- 8) Mark exactly the locked batch rows as processed
+    -- 8) Mark exactly the locked batch rows as processed (GPU ticks + token events)
     mark_processed AS (
       UPDATE UsageTick t
       SET processed_at = now()
       WHERE t.id IN (SELECT id FROM batch)
       RETURNING t.id
+    ),
+    mark_token_processed AS (
+      UPDATE TokenUsageEvent e
+      SET processed_at = now()
+      WHERE e.gateway_request_id IN (SELECT gateway_request_id FROM token_batch)
+      RETURNING e.gateway_request_id
     )
 
-    -- 9) Return only tenants where quota_exceeded changed
+    -- 9) Return only tenants where quota_exceeded changed. The EXISTS forces both
+    -- mark CTEs to run and suppresses output when nothing was processed.
     SELECT
       u.tenant,
       u.credits_cents,
@@ -161,8 +241,10 @@ data:
     FROM updated u
     JOIN old_state o ON o.tenant = u.tenant
     WHERE u.quota_exceeded <> o.old_exceeded
-      -- ensures mark_processed executes; also prevents output when batch is empty
-      AND EXISTS (SELECT 1 FROM mark_processed);
+      AND (
+        EXISTS (SELECT 1 FROM mark_processed)
+        OR EXISTS (SELECT 1 FROM mark_token_processed)
+      );
 
   # Shell script to check quotas and update etcd via gateway API
   quota-check.sh: |
@@ -175,6 +257,10 @@ data:
     trap 'rm -f "${TMPFILE}"' EXIT INT TERM
 
     echo "Checking tenant quotas (incremental)..."
+
+    # NOTE: this script does NOT self-migrate. Like the carry-column migration,
+    # apply migrate-token-billing.sql once (job/runbook) before resuming this
+    # suspended CronJob, so the token-referencing quota SQL always has its schema.
 
     # Update usage and quota_exceeded atomically in SQL, then sync only tenants
     # whose state changed in this batch.
@@ -246,6 +332,93 @@ data:
     ALTER TABLE TenantQuota
       ADD COLUMN IF NOT EXISTS inference_carry_numer BIGINT NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS standby_carry_numer BIGINT NOT NULL DEFAULT 0;
+
+  # Token-billing schema for existing DBs. Idempotent; applied by the billing jobs
+  # before the token-referencing SQL runs.
+  migrate-token-billing.sql: |
+    \set ON_ERROR_STOP on
+
+    ALTER TABLE TenantQuota
+      ADD COLUMN IF NOT EXISTS token_used_cents  BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS token_carry_numer BIGINT NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS TokenUsageEvent (
+        gateway_request_id VARCHAR(128) PRIMARY KEY,
+        client_request_id  VARCHAR(128),
+        caller_tenant      VARCHAR NOT NULL,
+        model_slug         VARCHAR NOT NULL,
+        source             VARCHAR(16) NOT NULL,
+        prompt_tokens      BIGINT NOT NULL DEFAULT 0,
+        completion_tokens  BIGINT NOT NULL DEFAULT 0,
+        cached_tokens      BIGINT NOT NULL DEFAULT 0,
+        ts                 TIMESTAMPTZ NOT NULL,
+        gateway_id         BIGINT,
+        processed_at       TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tokenevent_tenant      ON TokenUsageEvent(caller_tenant, ts);
+    CREATE INDEX IF NOT EXISTS idx_tokenevent_model       ON TokenUsageEvent(model_slug, ts);
+    CREATE INDEX IF NOT EXISTS idx_tokenevent_unprocessed ON TokenUsageEvent(ts) WHERE processed_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS TokenRate (
+        id                        SERIAL PRIMARY KEY,
+        model_slug                VARCHAR,
+        cents_per_million_input   BIGINT NOT NULL,
+        cents_per_million_output  BIGINT NOT NULL,
+        cents_per_million_cached  BIGINT NOT NULL DEFAULT 0,
+        effective_from            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        effective_to              TIMESTAMPTZ,
+        tenant                    VARCHAR,
+        created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        added_by                  VARCHAR NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tokenrate_lookup ON TokenRate(model_slug, effective_from);
+
+    CREATE TABLE IF NOT EXISTS TokenUsageHourly (
+        id                 SERIAL PRIMARY KEY,
+        tenant             VARCHAR NOT NULL,
+        model_slug         VARCHAR NOT NULL,
+        hour               TIMESTAMPTZ NOT NULL,
+        input_tokens       BIGINT NOT NULL DEFAULT 0,
+        cached_tokens      BIGINT NOT NULL DEFAULT 0,
+        output_tokens      BIGINT NOT NULL DEFAULT 0,
+        request_count      BIGINT NOT NULL DEFAULT 0,
+        input_numer        BIGINT NOT NULL DEFAULT 0,
+        output_numer       BIGINT NOT NULL DEFAULT 0,
+        cached_numer       BIGINT NOT NULL DEFAULT 0,
+        charge_cents       BIGINT NOT NULL DEFAULT 0,
+        UNIQUE(tenant, model_slug, hour)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tokenhourly_tenant ON TokenUsageHourly(tenant, hour);
+
+    CREATE OR REPLACE FUNCTION GetTokenRateCents(
+        p_model_slug VARCHAR,
+        p_ts TIMESTAMPTZ,
+        p_tenant VARCHAR
+    ) RETURNS TABLE (
+        cents_per_million_input  BIGINT,
+        cents_per_million_output BIGINT,
+        cents_per_million_cached BIGINT
+    )
+    LANGUAGE SQL
+    STABLE
+    AS $$
+        SELECT
+            r.cents_per_million_input,
+            r.cents_per_million_output,
+            r.cents_per_million_cached
+        FROM TokenRate r
+        WHERE (r.model_slug = p_model_slug OR r.model_slug IS NULL)
+          AND (r.tenant     = p_tenant     OR r.tenant IS NULL)
+          AND r.effective_from <= p_ts
+          AND (r.effective_to IS NULL OR p_ts < r.effective_to)
+        ORDER BY (r.tenant IS NOT NULL) DESC,
+                 (r.model_slug IS NOT NULL) DESC,
+                 r.effective_from DESC
+        LIMIT 1;
+    $$;
 
   backfill-tenant-quota-carry.sql: |
     \set ON_ERROR_STOP on
@@ -411,6 +584,7 @@ data:
         q.used_cents,
         q.inference_used_cents,
         q.standby_used_cents,
+        q.token_used_cents,
         q.inference_carry_numer,
         q.standby_carry_numer,
         q.balance_cents,
@@ -427,12 +601,15 @@ data:
     )
     SELECT
       e.*,
-      e.expected_inference_used_cents + e.expected_standby_used_cents AS expected_used_cents,
-      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents) AS expected_balance_cents,
+      -- token_used_cents is taken as the trusted stored value (these scripts verify
+      -- GPU carry math and do not re-derive token spend), so used/balance/quota
+      -- expectations include it and match the live values for token-billed tenants.
+      e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents AS expected_used_cents,
+      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents) AS expected_balance_cents,
       (
-        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents)
       ) <= e.threshold_cents AS expected_quota_exceeded,
-      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents) AS split_mismatch,
+      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents + e.token_used_cents) AS split_mismatch,
       e.inference_carry_numer < 0
         OR e.inference_carry_numer >= 3600000
         OR e.standby_carry_numer < 0
@@ -442,10 +619,10 @@ data:
         OR e.inference_carry_numer IS DISTINCT FROM e.expected_inference_carry_numer
         OR e.standby_carry_numer IS DISTINCT FROM e.expected_standby_carry_numer AS exact_usage_mismatch,
       e.balance_cents IS DISTINCT FROM (
-        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents)
       ) AS balance_mismatch,
       e.quota_exceeded IS DISTINCT FROM (
-        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents))
+        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents))
         <= e.threshold_cents
       ) AS quota_exceeded_mismatch
     FROM expected e;
@@ -553,6 +730,7 @@ data:
         q.used_cents,
         q.inference_used_cents,
         q.standby_used_cents,
+        q.token_used_cents,
         q.inference_carry_numer,
         q.standby_carry_numer,
         q.balance_cents,
@@ -569,12 +747,15 @@ data:
     )
     SELECT
       e.*,
-      e.expected_inference_used_cents + e.expected_standby_used_cents AS expected_used_cents,
-      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents) AS expected_balance_cents,
+      -- token_used_cents is taken as the trusted stored value (these scripts verify
+      -- GPU carry math and do not re-derive token spend), so used/balance/quota
+      -- expectations include it and match the live values for token-billed tenants.
+      e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents AS expected_used_cents,
+      e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents) AS expected_balance_cents,
       (
-        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents)
       ) <= e.threshold_cents AS expected_quota_exceeded,
-      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents) AS split_mismatch,
+      e.used_cents IS DISTINCT FROM (e.inference_used_cents + e.standby_used_cents + e.token_used_cents) AS split_mismatch,
       e.inference_carry_numer < 0
         OR e.inference_carry_numer >= 3600000
         OR e.standby_carry_numer < 0
@@ -584,10 +765,10 @@ data:
         OR e.inference_carry_numer IS DISTINCT FROM e.expected_inference_carry_numer
         OR e.standby_carry_numer IS DISTINCT FROM e.expected_standby_carry_numer AS exact_usage_mismatch,
       e.balance_cents IS DISTINCT FROM (
-        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents)
+        e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents)
       ) AS balance_mismatch,
       e.quota_exceeded IS DISTINCT FROM (
-        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents))
+        (e.total_credits - (e.expected_inference_used_cents + e.expected_standby_used_cents + e.token_used_cents))
         <= e.threshold_cents
       ) AS quota_exceeded_mismatch
     FROM expected e;
@@ -999,6 +1180,87 @@ data:
     FROM params p
     LEFT JOIN upserted u ON TRUE
     GROUP BY p.start_hour, p.end_hour;
+
+  # Pass 2 for token billing: hourly reporting rollup. Reads raw TokenUsageEvent
+  # and recomputes from GetTokenRateCents itself (does NOT read the debit output).
+  # 3-hour self-healing window on ts; REPLACE-on-conflict makes overlap idempotent.
+  # No-rate events yield no rate row and are simply absent until priced.
+  token-hourly-aggregate.sql: |
+    \set ON_ERROR_STOP on
+
+    WITH event_with_rate AS (
+      SELECT
+        e.caller_tenant AS tenant,
+        e.model_slug,
+        date_trunc('hour', e.ts) AS hour,
+        GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint) AS input_tokens,
+        e.cached_tokens,
+        e.completion_tokens AS output_tokens,
+        r.cents_per_million_input,
+        r.cents_per_million_output,
+        r.cents_per_million_cached
+      FROM TokenUsageEvent e
+      CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+      WHERE e.ts >= date_trunc('hour', NOW() - INTERVAL '3 hours')
+        AND e.ts < date_trunc('hour', NOW())
+    ),
+    hourly AS (
+      SELECT
+        t.tenant,
+        t.model_slug,
+        t.hour,
+        SUM(t.input_tokens)::bigint AS input_tokens,
+        SUM(t.cached_tokens)::bigint AS cached_tokens,
+        SUM(t.output_tokens)::bigint AS output_tokens,
+        COUNT(*)::bigint AS request_count,
+        COALESCE(SUM(t.input_tokens * t.cents_per_million_input), 0)::bigint AS input_numer,
+        COALESCE(SUM(t.output_tokens * t.cents_per_million_output), 0)::bigint AS output_numer,
+        COALESCE(SUM(t.cached_tokens * t.cents_per_million_cached), 0)::bigint AS cached_numer
+      FROM event_with_rate t
+      GROUP BY t.tenant, t.model_slug, t.hour
+    )
+    INSERT INTO TokenUsageHourly
+      (tenant, model_slug, hour, input_tokens, cached_tokens, output_tokens,
+       request_count, input_numer, output_numer, cached_numer, charge_cents)
+    SELECT
+      h.tenant,
+      h.model_slug,
+      h.hour,
+      h.input_tokens,
+      h.cached_tokens,
+      h.output_tokens,
+      h.request_count,
+      h.input_numer,
+      h.output_numer,
+      h.cached_numer,
+      (h.input_numer + h.output_numer + h.cached_numer) / 1000000
+    FROM hourly h
+    ON CONFLICT (tenant, model_slug, hour)
+    DO UPDATE SET
+      input_tokens = EXCLUDED.input_tokens,
+      cached_tokens = EXCLUDED.cached_tokens,
+      output_tokens = EXCLUDED.output_tokens,
+      request_count = EXCLUDED.request_count,
+      input_numer = EXCLUDED.input_numer,
+      output_numer = EXCLUDED.output_numer,
+      cached_numer = EXCLUDED.cached_numer,
+      charge_cents = EXCLUDED.charge_cents;
+
+  # Alert query: unprocessed token events with no active rate at their ts. These
+  # are a should-never-happen misconfiguration; they stay unbilled and self-heal
+  # once a rate is added. A non-zero count should page ops.
+  token-no-rate-alert.sql: |
+    SELECT
+      e.model_slug,
+      COUNT(*)::bigint AS unpriced_events,
+      MIN(e.ts) AS oldest_ts
+    FROM TokenUsageEvent e
+    WHERE e.processed_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant)
+      )
+    GROUP BY e.model_slug
+    ORDER BY unpriced_events DESC;
 
   tick-cleanup.sql: |
     -- Delete tick records older than 7 days
