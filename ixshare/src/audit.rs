@@ -43,6 +43,7 @@ lazy_static::lazy_static! {
     pub static ref POD_AUDIT_AGENT: PodAuditAgent = PodAuditAgent::New();
     pub static ref REQ_AUDIT_AGENT: ReqAuditAgent = ReqAuditAgent::New();
     pub static ref USAGE_TICK_AGENT: UsageTickAuditAgent = UsageTickAuditAgent::New();
+    pub static ref TOKEN_USAGE_AGENT: TokenUsageAuditAgent = TokenUsageAuditAgent::New();
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +493,121 @@ impl UsageTickAuditAgent {
     }
 }
 
+// ============================================================================
+// Token Usage Audit Agent (shared-instance token billing)
+// ============================================================================
+
+/// One completed shared-endpoint request's token usage. Emitted per request;
+/// `gateway_request_id` is the idempotency key.
+#[derive(Debug, Clone)]
+pub struct TokenUsageEvent {
+    pub gateway_request_id: String,
+    pub client_request_id: Option<String>,
+    pub caller_tenant: String,
+    pub model_slug: String,
+    pub source: String, // "direct" | "openrouter"
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub ts: DateTime<Utc>, // gateway request time; picks the rate
+    pub gateway_id: Option<i64>,
+}
+
+#[derive(Debug)]
+pub struct TokenUsageAuditAgentInner {
+    pub closeNotify: Arc<Notify>,
+    pub stop: AtomicBool,
+    pub tx: mpsc::Sender<TokenUsageEvent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TokenUsageAuditAgent(Arc<TokenUsageAuditAgentInner>);
+
+impl Deref for TokenUsageAuditAgent {
+    type Target = Arc<TokenUsageAuditAgentInner>;
+
+    fn deref(&self) -> &Arc<TokenUsageAuditAgentInner> {
+        &self.0
+    }
+}
+
+impl TokenUsageAuditAgent {
+    pub fn New() -> Self {
+        let (tx, rx) = mpsc::channel::<TokenUsageEvent>(1000);
+
+        let inner = TokenUsageAuditAgentInner {
+            closeNotify: Arc::new(Notify::new()),
+            stop: AtomicBool::new(false),
+            tx: tx,
+        };
+
+        let agent = TokenUsageAuditAgent(Arc::new(inner));
+        let agent1 = agent.clone();
+
+        tokio::spawn(async move {
+            agent1.Process(rx).await.unwrap();
+        });
+
+        return agent;
+    }
+
+    pub fn Close(&self) -> Result<()> {
+        self.closeNotify.notify_one();
+        return Ok(());
+    }
+
+    pub fn Audit(&self, event: TokenUsageEvent) {
+        if !Self::Enable() {
+            return;
+        }
+        match self.tx.try_send(event) {
+            Ok(()) => (),
+            Err(e) => {
+                error!("TokenUsageAuditAgent: fail to send event {:?}", &e);
+            }
+        }
+    }
+
+    pub fn Enable() -> bool {
+        return NA_CONFIG.billingdbAddr.len() > 0;
+    }
+
+    pub async fn Process(&self, mut rx: mpsc::Receiver<TokenUsageEvent>) -> Result<()> {
+        let addr = NA_CONFIG.billingdbAddr.clone();
+        if addr.len() == 0 {
+            info!("TokenUsageAuditAgent: billingdb is not enabled");
+            return Ok(());
+        }
+        let sqlaudit = SqlAudit::New(&addr).await?;
+
+        loop {
+            tokio::select! {
+                _ = self.closeNotify.notified() => {
+                    // Drain what is already buffered before exiting so a graceful
+                    // shutdown does not drop metered usage.
+                    while let Ok(event) = rx.try_recv() {
+                        if let Err(e) = sqlaudit.CreateTokenUsageEvent(&event).await {
+                            error!("TokenUsageAuditAgent: fail to flush event {:?}", &e);
+                        }
+                    }
+                    self.stop.store(true, Ordering::SeqCst);
+                    break;
+                }
+                msg = rx.recv() => {
+                    if let Some(event) = msg {
+                        if let Err(e) = sqlaudit.CreateTokenUsageEvent(&event).await {
+                            error!("TokenUsageAuditAgent: fail to create event {:?}", &e);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SqlAudit {
     pub pool: PgPool,
@@ -537,6 +653,32 @@ pub struct TenantBillingAdminSummary {
     pub tenant: String,
     pub balance_cents: i64,
     pub used_cents: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct TokenUsageHourlyRecord {
+    pub tenant: String,
+    pub model_slug: String,
+    pub hour: DateTime<Utc>,
+    pub input_tokens: i64,
+    pub cached_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+    pub charge_cents: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct TokenRateHistoryRecord {
+    pub id: i64,
+    pub model_slug: Option<String>,
+    pub cents_per_million_input: i64,
+    pub cents_per_million_output: i64,
+    pub cents_per_million_cached: i64,
+    pub effective_from: DateTime<Utc>,
+    pub effective_to: Option<DateTime<Utc>>,
+    pub tenant: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub added_by: Option<String>,
 }
 
 impl SqlAudit {
@@ -912,6 +1054,203 @@ impl SqlAudit {
         Ok(row.0 as i64)
     }
 
+    /// Insert one completed request's token usage. Idempotent on gateway_request_id.
+    pub async fn CreateTokenUsageEvent(&self, event: &TokenUsageEvent) -> Result<()> {
+        let query = r#"
+            INSERT INTO TokenUsageEvent (
+                gateway_request_id, client_request_id, caller_tenant, model_slug, source,
+                prompt_tokens, completion_tokens, cached_tokens, ts, gateway_id
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            )
+            ON CONFLICT (gateway_request_id) DO NOTHING
+        "#;
+        sqlx::query(query)
+            .bind(&event.gateway_request_id)
+            .bind(&event.client_request_id)
+            .bind(&event.caller_tenant)
+            .bind(&event.model_slug)
+            .bind(&event.source)
+            .bind(event.prompt_tokens)
+            .bind(event.completion_tokens)
+            .bind(event.cached_tokens)
+            .bind(event.ts)
+            .bind(event.gateway_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Add a per-token rate row (per model_slug, optional tenant override).
+    pub async fn AddTokenRate(
+        &self,
+        model_slug: Option<&str>,
+        cents_per_million_input: i64,
+        cents_per_million_output: i64,
+        cents_per_million_cached: i64,
+        effective_from: DateTime<Utc>,
+        effective_to: Option<DateTime<Utc>>,
+        tenant: Option<&str>,
+        added_by: Option<&str>,
+    ) -> Result<i64> {
+        let query = r#"
+            INSERT INTO TokenRate (
+                model_slug, cents_per_million_input, cents_per_million_output,
+                cents_per_million_cached, effective_from, effective_to, tenant, added_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+        "#;
+        let row: (i32,) = sqlx::query_as(query)
+            .bind(model_slug)
+            .bind(cents_per_million_input)
+            .bind(cents_per_million_output)
+            .bind(cents_per_million_cached)
+            .bind(effective_from)
+            .bind(effective_to)
+            .bind(tenant)
+            .bind(added_by)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.0 as i64)
+    }
+
+    /// Currently-active token rate for a slug, or None. Used by the publish guard.
+    pub async fn GetActiveTokenRate(
+        &self,
+        model_slug: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<TokenRateHistoryRecord>> {
+        let record: Option<TokenRateHistoryRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                id::bigint as id,
+                model_slug,
+                cents_per_million_input,
+                cents_per_million_output,
+                cents_per_million_cached,
+                effective_from,
+                effective_to,
+                tenant,
+                created_at,
+                added_by
+            FROM TokenRate
+            WHERE (model_slug = $1 OR model_slug IS NULL)
+              AND (tenant = $2 OR tenant IS NULL)
+              AND effective_from <= NOW()
+              AND (effective_to IS NULL OR NOW() < effective_to)
+            ORDER BY (tenant IS NOT NULL) DESC,
+                     (model_slug IS NOT NULL) DESC,
+                     effective_from DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(model_slug)
+        .bind(tenant)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(record)
+    }
+
+    /// List token rate history for a slug (all rows, newest first).
+    pub async fn ListTokenRateHistory(
+        &self,
+        model_slug: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<TokenRateHistoryRecord>, i64)> {
+        let records: Vec<TokenRateHistoryRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                id::bigint as id,
+                model_slug,
+                cents_per_million_input,
+                cents_per_million_output,
+                cents_per_million_cached,
+                effective_from,
+                effective_to,
+                tenant,
+                created_at,
+                added_by
+            FROM TokenRate
+            WHERE ($1::varchar IS NULL OR model_slug = $1)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(model_slug)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM TokenRate
+            WHERE ($1::varchar IS NULL OR model_slug = $1)
+            "#,
+        )
+        .bind(model_slug)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((records, total.0))
+    }
+
+    /// Token usage/spend rollup over a time window, optionally filtered by tenant
+    /// and/or model_slug. Used by the admin cross-tenant and per-tenant spend views.
+    pub async fn ListTokenUsageHourly(
+        &self,
+        tenant: Option<&str>,
+        model_slug: Option<&str>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<TokenUsageHourlyRecord>, i64)> {
+        let records: Vec<TokenUsageHourlyRecord> = sqlx::query_as(
+            r#"
+            SELECT
+                tenant, model_slug, hour,
+                input_tokens, cached_tokens, output_tokens,
+                request_count, charge_cents
+            FROM TokenUsageHourly
+            WHERE hour >= $3 AND hour < $4
+              AND ($1::varchar IS NULL OR tenant = $1)
+              AND ($2::varchar IS NULL OR model_slug = $2)
+            ORDER BY hour DESC, tenant, model_slug
+            LIMIT $5 OFFSET $6
+            "#,
+        )
+        .bind(tenant)
+        .bind(model_slug)
+        .bind(start)
+        .bind(end)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM TokenUsageHourly
+            WHERE hour >= $3 AND hour < $4
+              AND ($1::varchar IS NULL OR tenant = $1)
+              AND ($2::varchar IS NULL OR model_slug = $2)
+            "#,
+        )
+        .bind(tenant)
+        .bind(model_slug)
+        .bind(start)
+        .bind(end)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((records, total.0))
+    }
+
     /// List billing rate history with optional scope/tenant filtering and pagination.
     pub async fn ListBillingRateHistory(
         &self,
@@ -1181,12 +1520,12 @@ impl SqlAudit {
     }
 
     /// Get tenant billing summary in cents
-    /// Returns: (balance, used, threshold, quota_exceeded, total_credits, currency, inference_cents, standby_cents, inference_ms, standby_ms)
+    /// Returns: (balance, used, threshold, quota_exceeded, total_credits, currency, inference_cents, standby_cents, token_cents, inference_ms, standby_ms)
     pub async fn GetTenantBillingSummary(
         &self,
         tenant: &str,
-    ) -> Result<(i64, i64, i64, bool, i64, String, i64, i64, i64, i64)> {
-        let row: (i64, i64, i64, bool, String, i64, i64) = sqlx::query_as(
+    ) -> Result<(i64, i64, i64, bool, i64, String, i64, i64, i64, i64, i64)> {
+        let row: (i64, i64, i64, bool, String, i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
                 COALESCE((SELECT SUM(amount_cents) FROM TenantCreditHistory WHERE tenant = $1), 0)::bigint AS total_credits,
@@ -1195,7 +1534,8 @@ impl SqlAudit {
                 COALESCE(q.quota_exceeded, false) AS quota_exceeded,
                 COALESCE(q.currency, 'USD') AS currency,
                 COALESCE(q.inference_used_cents, 0)::bigint AS inference_used_cents,
-                COALESCE(q.standby_used_cents, 0)::bigint AS standby_used_cents
+                COALESCE(q.standby_used_cents, 0)::bigint AS standby_used_cents,
+                COALESCE(q.token_used_cents, 0)::bigint AS token_used_cents
             FROM TenantQuota q
             WHERE q.tenant = $1
             "#,
@@ -1203,7 +1543,7 @@ impl SqlAudit {
             .bind(tenant)
             .fetch_optional(&self.pool)
             .await?
-            .unwrap_or((0, 0, 0, false, "USD".to_string(), 0, 0));
+            .unwrap_or((0, 0, 0, false, "USD".to_string(), 0, 0, 0));
 
         let total_credits_cents = row.0;
         let used_cents = row.1;
@@ -1212,6 +1552,7 @@ impl SqlAudit {
         let currency = row.4;
         let inference_used_cents = row.5;
         let standby_used_cents = row.6;
+        let token_used_cents = row.7;
         let balance_cents = total_credits_cents - used_cents;
 
         // Keep cost split aligned with used_cents from TenantQuota.
@@ -1239,6 +1580,7 @@ impl SqlAudit {
             currency,
             inference_used_cents,
             standby_used_cents,
+            token_used_cents,
             period_ms.0,
             period_ms.1,
         ))

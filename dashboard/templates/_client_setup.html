@@ -1,5 +1,35 @@
 {% if client_setup %}
 <style>
+    .client-setup-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+    .client-setup-header h3 {
+        margin: 0;
+    }
+    .client-setup-toggle-btn {
+        min-height: 32px;
+        padding: 6px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .client-setup-toggle-btn:hover {
+        border-color: #afc2db;
+        background: #f6faff;
+    }
+    .client-setup-toggle-btn:focus-visible {
+        outline: 2px solid #cbd5e1;
+        outline-offset: 2px;
+    }
     .client-setup-value-shell {
         width: 100%;
         box-sizing: border-box;
@@ -161,6 +191,70 @@
     .client-setup-toolbar .client-setup-guidance {
         flex: 0 0 auto;
     }
+    .client-setup-section-stack {
+        display: grid;
+        gap: 12px;
+    }
+    .client-setup-subsection {
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        background: #fcfdff;
+        padding: 12px;
+    }
+    .client-setup-subsection-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+    }
+    .client-setup-subsection-header h4 {
+        margin: 0;
+        font-size: 15px;
+        color: #1f2937;
+    }
+    .client-setup-subsection-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .client-setup-subsection-body {
+        display: grid;
+        gap: 12px;
+    }
+    .client-setup-subsection-copy {
+        margin-top: 2px;
+    }
+    .client-setup-code-shell {
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        background: #ffffff;
+        overflow: visible;
+    }
+    .client-setup-code-header {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 8px 8px 0 8px;
+    }
+    .client-setup-code-header-title {
+        margin-right: auto;
+        font-size: 12px;
+        font-weight: 600;
+        color: #64748b;
+    }
+    .client-setup-code {
+        margin: 0;
+        padding: 8px 10px 10px 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #334155;
+        font-size: 13px;
+        line-height: 1.45;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
 </style>
 {% macro client_setup_value_field(label, display_value, copy_value, tooltip='Copy', value_class='') -%}
 <div style="display: flex; align-items: center; gap: 10px;">
@@ -182,26 +276,34 @@
     </div>
 </div>
 {%- endmacro %}
+{% macro client_setup_display_field(label, display_value, value_class='') -%}
+<div style="display: flex; align-items: center; gap: 10px;">
+    <label style="flex: 0 0 110px; font-size: 13px; color: #374151;">{{ label }}</label>
+    <div class="client-setup-value-shell" style="flex: 1 1 auto; min-width: 0;">
+        <span class="client-setup-value{% if value_class %} {{ value_class }}{% endif %}">{{ display_value }}</span>
+    </div>
+</div>
+{%- endmacro %}
 
 {% if not client_setup_inline %}
+{% set resolved_client_setup_toggle_id = client_setup_toggle_id if client_setup_toggle_id is defined and client_setup_toggle_id else 'client-setup-toggle' %}
+{% set resolved_client_setup_body_id = client_setup_body_id if client_setup_body_id is defined and client_setup_body_id else 'client-setup-body' %}
+{% set resolved_client_setup_toggle_default_visible = client_setup_toggle_default_visible if client_setup_toggle_default_visible is defined else true %}
 <section{% if section_class %} class="{{ section_class }}"{% else %} style="margin: 18px 0; padding: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff;"{% endif %}>
-    {% if client_setup_toggle_id %}
-    <div class="skill-panel-header">
+    <div class="client-setup-header">
         <h3 style="margin: 0;">Integration</h3>
         <button
-            id="{{ client_setup_toggle_id }}"
-            class="playground-toggle-btn"
+            id="{{ resolved_client_setup_toggle_id }}"
+            class="client-setup-toggle-btn"
             type="button"
-            aria-expanded="{{ 'true' if client_setup_toggle_default_visible else 'false' }}"
-            aria-controls="{{ client_setup_body_id }}"
+            aria-expanded="{{ 'true' if resolved_client_setup_toggle_default_visible else 'false' }}"
+            aria-controls="{{ resolved_client_setup_body_id }}"
+            onclick="toggleClientSetupSection(this)"
         >
-            {{ 'Hide' if client_setup_toggle_default_visible else 'Show' }}
+            {{ 'Hide' if resolved_client_setup_toggle_default_visible else 'Show' }}
         </button>
     </div>
-    <div id="{{ client_setup_body_id }}"{% if not client_setup_toggle_default_visible %} hidden{% endif %}>
-    {% else %}
-    <h3>Integration</h3>
-    {% endif %}
+    <div id="{{ resolved_client_setup_body_id }}"{% if not resolved_client_setup_toggle_default_visible %} hidden{% endif %}>
 {% endif %}
     {% if client_setup.integration_kind == 'skill_mcp' %}
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
@@ -235,6 +337,158 @@
         An API key is typically required for MCP access. Until one is available, the field above keeps the expected token shape with a placeholder value.
         {% endif %}
     </p>
+    {% else %}
+    {% set has_endpoint_modes = shared_api_base_url is defined and shared_api_base_url %}
+    {% if has_endpoint_modes %}
+    {% set shared_model_name = endpoint_entry.get('slug', '') if endpoint_entry is defined else client_setup.model_name %}
+    {% set shared_api_key_copy_value = client_setup.api_key if client_setup.api_key_copyable else '$INFERX_API_KEY' %}
+    {% set shared_api_key_display = client_setup.api_key_display if client_setup.api_key_copyable else '$INFERX_API_KEY' %}
+    <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+        Start with the shared setup below, then choose the endpoint mode that fits your workload: token-based shared serving or a tenant-scoped dedicated GPU endpoint.
+    </p>
+    <div class="client-setup-toolbar">
+        <details class="client-setup-guidance">
+            <summary></summary>
+            <div class="client-setup-guidance-body">
+                <ol class="client-setup-steps">
+                    <li>Choose either the token-based shared endpoint or the dedicated GPU endpoint below.</li>
+                    <li>Copy that section's base URL into your client endpoint field.</li>
+                    <li>{% if client_setup.auth_required %}Copy the shared inference API key once and reuse it for either mode.{% else %}No API key is required for this endpoint. Run a sample request below to confirm the setup.{% endif %}</li>
+                    <li>Use the model name shown in the selected section.</li>
+                </ol>
+            </div>
+        </details>
+    </div>
+    <div style="display: grid; gap: 12px; margin-bottom: 12px;">
+        {{ client_setup_value_field(
+            'API Key',
+            client_setup.api_key_display,
+            client_setup.api_key if client_setup.api_key_copyable else client_setup.api_key_display,
+            'Copy key' if client_setup.api_key_copyable else 'Copy',
+            'mono' if client_setup.api_key_copyable else ''
+        ) }}
+    </div>
+    {% if client_setup.auth_required %}
+    <p class="client-setup-note" style="margin-bottom: 12px;">
+        {% if client_setup.api_key_copyable %}
+        {% if client_setup.api_key_name %}Onboarding key `{{ client_setup.api_key_name }}` is ready for endpoint use.{% else %}Your onboarding inference key is ready for endpoint use.{% endif %} The visible value stays masked, but the copy button returns the full token.
+        {% else %}
+        An inference API key is required for both endpoint modes. Until one is available, the fields below keep the correct request shape and use a placeholder token.
+        {% endif %}
+    </p>
+    {% endif %}
+    <div class="client-setup-section-stack">
+        <div class="client-setup-subsection">
+            <div class="client-setup-subsection-header">
+                <h4>Token-Based</h4>
+            </div>
+            <div class="client-setup-subsection-body">
+                <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+                    Use the shared OpenAI-compatible endpoint. The base URL is shared across published endpoints, and usage is billed per token.
+                </p>
+                <div style="display: grid; gap: 12px;">
+                    {{ client_setup_value_field(
+                        'API Base URL',
+                        shared_api_base_url,
+                        shared_api_base_url
+                    ) }}
+                    {{ client_setup_value_field(
+                        'Model Name',
+                        shared_model_name,
+                        shared_model_name
+                    ) }}
+                    {% if token_rate %}
+                    {{ client_setup_display_field(
+                        'Price',
+                        '$%.2f input / $%.2f output per 1M tokens%s'|format(
+                            token_rate.dollars_per_million_input,
+                            token_rate.dollars_per_million_output,
+                            ' · cached input $%.2f/1M'|format(token_rate.dollars_per_million_cached) if token_rate.cents_per_million_cached else ''
+                        )
+                    ) }}
+                    {% endif %}
+                </div>
+                <div class="client-setup-code-shell">
+                    <div class="client-setup-code-header">
+                        <span class="client-setup-code-header-title">Sample REST Call</span>
+                        <button
+                            type="button"
+                            class="client-setup-copy-btn client-setup-subsection-copy"
+                            data-tooltip="Copy"
+                            aria-label="Copy"
+                            onclick="copyClientSetupBlock(this)"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="10" height="10"></rect>
+                                <rect x="5" y="5" width="10" height="10"></rect>
+                            </svg>
+                        </button>
+                    </div>
+                    <pre class="client-setup-code" data-copy-value="curl {{ shared_api_base_url }}/chat/completions \
+  -H &quot;Authorization: Bearer {{ shared_api_key_copy_value }}&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;model&quot;: &quot;{{ shared_model_name }}&quot;, &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Hello&quot;}]}'">curl {{ shared_api_base_url }}/chat/completions \
+  -H "Authorization: Bearer {{ shared_api_key_display }}" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "{{ shared_model_name }}", "messages": [{"role": "user", "content": "Hello"}]}'</pre>
+                </div>
+            </div>
+        </div>
+        <div class="client-setup-subsection">
+            <div class="client-setup-subsection-header">
+                <h4>Dedicated GPU</h4>
+                {% if opencode_download_href and client_setup.api_base_url %}
+                <div class="client-setup-subsection-actions">
+                    <a class="client-setup-download-btn" href="{{ opencode_download_href }}">Download OpenCode config</a>
+                </div>
+                {% endif %}
+            </div>
+            <div class="client-setup-subsection-body">
+                <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+                    Use the tenant-scoped endpoint URL for this published endpoint when you want dedicated GPU serving instead of shared token-based routing.
+                </p>
+                <div style="display: grid; gap: 12px;">
+                    {% if client_setup.api_base_url %}
+                    {{ client_setup_value_field(
+                        'API Base URL',
+                        client_setup.api_base_url,
+                        client_setup.api_base_url
+                    ) }}
+                    {% endif %}
+                    {{ client_setup_value_field(
+                        'Model Name',
+                        client_setup.model_name,
+                        client_setup.model_name
+                    ) }}
+                </div>
+                {% if sample_rest_call %}
+                <div class="client-setup-code-shell">
+                    <div class="client-setup-code-header">
+                        <span class="client-setup-code-header-title">Sample REST Call</span>
+                        <button
+                            type="button"
+                            class="client-setup-copy-btn client-setup-subsection-copy"
+                            data-tooltip="Copy"
+                            aria-label="Copy"
+                            onclick="copyClientSetupBlock(this)"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="9" width="10" height="10"></rect>
+                                <rect x="5" y="5" width="10" height="10"></rect>
+                            </svg>
+                        </button>
+                    </div>
+                    <pre class="client-setup-code" data-copy-value="{{ sample_rest_call }}">{{ sample_rest_call_display or sample_rest_call }}</pre>
+                </div>
+                {% endif %}
+                {% if opencode_download_href and client_setup.api_base_url %}
+                <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle); line-height: 1.5;">
+                    For OpenCode, download the config and place it at <code>~/.config/opencode/opencode.config</code>.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
     {% else %}
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
         Use these values in Dify, OpenWebUI, Continue, OpenCode, or any OpenAI-compatible client that asks for a base URL, API key, and model name.
@@ -297,7 +551,8 @@
     </p>
     {% endif %}
     {% endif %}
-    {% if not client_setup_inline and client_setup_toggle_id %}
+    {% endif %}
+    {% if not client_setup_inline %}
     </div>
     {% endif %}
 {% if not client_setup_inline %}
@@ -380,6 +635,75 @@
                 button.setAttribute('aria-label', defaultTooltip);
                 delete button.dataset.resetTimer;
             }, 1400));
+        };
+
+        window.copyClientSetupBlock = async function (button) {
+            const block = button ? button.closest('.client-setup-code-shell') : null;
+            if (!block) {
+                return;
+            }
+
+            const valueEl = block.querySelector('.client-setup-code');
+            if (!valueEl) {
+                return;
+            }
+
+            const rawValue = valueEl.getAttribute('data-copy-value') || valueEl.textContent || '';
+            const copied = await copyClientSetupText(rawValue);
+
+            const existingTimer = Number(button.dataset.resetTimer || 0);
+            if (existingTimer) {
+                window.clearTimeout(existingTimer);
+            }
+
+            const defaultTooltip = button.getAttribute('data-default-tooltip') || button.getAttribute('data-tooltip') || 'Copy';
+            if (!button.getAttribute('data-default-tooltip')) {
+                button.setAttribute('data-default-tooltip', defaultTooltip);
+            }
+
+            if (!copied) {
+                button.classList.remove('copied');
+                button.setAttribute('data-tooltip', 'Copy failed');
+                button.setAttribute('aria-label', 'Copy failed');
+                button.dataset.resetTimer = String(window.setTimeout(() => {
+                    button.setAttribute('data-tooltip', defaultTooltip);
+                    button.setAttribute('aria-label', defaultTooltip);
+                    delete button.dataset.resetTimer;
+                }, 1400));
+                return;
+            }
+
+            button.classList.add('copied');
+            button.setAttribute('data-tooltip', 'Copied');
+            button.setAttribute('aria-label', 'Copied');
+            button.dataset.resetTimer = String(window.setTimeout(() => {
+                button.classList.remove('copied');
+                button.setAttribute('data-tooltip', defaultTooltip);
+                button.setAttribute('aria-label', defaultTooltip);
+                delete button.dataset.resetTimer;
+            }, 1400));
+        };
+
+        window.toggleClientSetupSection = function (button) {
+            if (!button) {
+                return;
+            }
+
+            const targetId = button.getAttribute('aria-controls') || '';
+            if (!targetId) {
+                return;
+            }
+
+            const body = document.getElementById(targetId);
+            if (!body) {
+                return;
+            }
+
+            const expanded = button.getAttribute('aria-expanded') === 'true';
+            const nextExpanded = !expanded;
+            button.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+            button.textContent = nextExpanded ? 'Hide' : 'Show';
+            body.hidden = !nextExpanded;
         };
     })();
 </script>

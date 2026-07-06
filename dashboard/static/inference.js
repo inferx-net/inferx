@@ -1099,6 +1099,17 @@
             return chatRequest;
         }
 
+        function resolveRequestMap(overrides) {
+            let requestMap = normalizeOpenAIRequestMap(context.map);
+            if (overrides && typeof overrides.mapTransform === 'function') {
+                const transformed = overrides.mapTransform(cloneMapValue(requestMap));
+                if (transformed && typeof transformed === 'object') {
+                    requestMap = normalizeOpenAIRequestMap(transformed);
+                }
+            }
+            return requestMap;
+        }
+
         function updateLatencyDisplays(response) {
             const startDiv = getElement('startDiv');
             const ttftDiv = getElement('ttftDiv');
@@ -1224,7 +1235,7 @@
             resetVisualOutputs();
 
             try {
-                const requestMap = normalizeOpenAIRequestMap(context.map);
+                const requestMap = resolveRequestMap(overrides);
                 let body = '';
                 let requestHeaders = {
                     'Accept': 'application/json',
@@ -1443,6 +1454,7 @@
                     'Content-Type': 'application/json',
                     'X-Inferx-Timeout': '60',
                 };
+                const requestMap = resolveRequestMap(overrides);
                 let requestBody = JSON.stringify({
                     prompt: prompt,
                     tenant: context.tenant,
@@ -1453,7 +1465,7 @@
                 if (overrides && overrides.requestUrl) {
                     requestUrl = buildFunccallUrl(overrides);
                     requestHeaders = mergeHeaders(requestHeaders, overrides.extraHeaders);
-                    requestBody = JSON.stringify(applyPromptToRequestMap(context.map, prompt));
+                    requestBody = JSON.stringify(applyPromptToRequestMap(requestMap, prompt));
                 }
 
                 const response = await fetch(requestUrl, {
@@ -1522,6 +1534,7 @@
 
                 let requestUrl = new URL(context.text2audioPath, window.location.origin).toString();
                 let requestHeaders = { 'Content-Type': 'application/json', 'X-Inferx-Timeout': '60', 'X-Accel-Buffering': 'no' };
+                const requestMap = resolveRequestMap(overrides);
                 let requestBody = JSON.stringify({
                     prompt: prompt,
                     tenant: context.tenant,
@@ -1535,7 +1548,7 @@
                 if (overrides && overrides.requestUrl) {
                     requestUrl = buildFunccallUrl(overrides);
                     requestHeaders = mergeHeaders(requestHeaders, overrides.extraHeaders);
-                    requestBody = JSON.stringify(applyPromptToRequestMap(context.map, prompt));
+                    requestBody = JSON.stringify(applyPromptToRequestMap(requestMap, prompt));
                 }
 
                 const response = await fetch(requestUrl, {

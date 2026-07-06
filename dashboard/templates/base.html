@@ -647,13 +647,13 @@
     {% set request_path = request.path if request is defined and request.path is defined else '' %}
     {% set request_path_no_slash = request_path.rstrip('/') %}
     {% set is_public_visitor = (not is_logged_in) and (not is_gateway_aligned_anonymous_active) %}
-    {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active or '/catalog' in request_path or '/help' in request_path or '/endpoints' in request_path %}
+    {% set show_public_nav = is_logged_in or is_gateway_aligned_anonymous_active or request_path.startswith('/catalog') or '/help' in request_path or '/endpoints' in request_path %}
     {% set nav_is_inferx_admin = dashboard_is_inferx_admin | default(false) %}
     {% set nav_models_active = request_path_no_slash in ('/listfunc', '/func_create', '/func', '/funclog') %}
     {% set nav_skills_active = request_path.startswith('/listskills') or request_path.startswith('/skill_create') or request_path.startswith('/skill') %}
     {% set nav_agent_active = request_path.startswith('/agent') %}
-    {% set nav_catalog_active = '/catalog' in request_path %}
-    {% set nav_endpoints_active = request_path_no_slash in ('',) or '/endpoints' in request_path %}
+    {% set nav_endpoints_active = request_path.startswith('/catalog/endpoints') %}
+    {% set nav_catalog_active = request_path.startswith('/catalog') and not nav_endpoints_active %}
     {% set nav_pods_active = '/listpod' in request_path or '/pod' in request_path %}
     {% set nav_snapshots_active = '/listsnapshot' in request_path or '/snapshot' in request_path %}
     {% set nav_nodes_active = '/listnode' in request_path or '/node' in request_path %}
@@ -685,7 +685,7 @@
     </table>
     {% if show_public_nav %}
     <nav>
-        <a href="{{ hosturl }}endpoints" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
+        <a href="{{ url_for('prefix.EndpointList') }}" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
         {% if not is_public_visitor %}
         <a href="{{ hosturl }}listskills/myskills" class="{% if nav_skills_active %}active{% endif %}"> Skills <sup class="nav-preview-badge">Preview</sup></a>
         <a href="{{ hosturl }}agent" class="{% if nav_agent_active %}active{% endif %}"> Agent <sup class="nav-preview-badge">Preview</sup></a>

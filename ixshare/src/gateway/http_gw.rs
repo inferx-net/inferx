@@ -238,6 +238,17 @@ impl HttpGateway {
     ) -> Result<i64> {
         self.EnsurePlatformEndpointAdmin(token)?;
 
+        // Safety net: a published endpoint is token-billed on the shared surface, so
+        // it must have a price. Checked BEFORE any write so a rateless publish leaves
+        // no partial side effects. The catalog publish form supplies the rate first,
+        // so the normal path passes; this blocks only a rateless publish.
+        if self.sqlBilling.GetActiveTokenRate(slug, None).await?.is_none() {
+            return Err(Error::CommonError(format!(
+                "cannot publish endpoint {}: no token price set (set a token rate before publishing)",
+                slug
+            )));
+        }
+
         let mut attempts = 0;
         loop {
             attempts += 1;
