@@ -100,7 +100,7 @@ use super::metrics::Status;
 use super::metrics::GATEWAY_METRICS;
 use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
-use super::http_gw::BuildOpenRouterModelEntry;
+use super::http_gw::{BuildProviderModelEntry, ProviderModelsAdapter};
 use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
 use super::skill_chain::{
@@ -516,10 +516,11 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
-        provider_api_tenant_allowed, resolve_skill_calling_tenant, resolve_subscription_tenant,
-        summarize_funccall_body_for_log,
+        provider_api_tenant_allowed, provider_models_adapter_for_tenant,
+        resolve_skill_calling_tenant, resolve_subscription_tenant, summarize_funccall_body_for_log,
     };
     use crate::common::Error;
+    use crate::gateway::http_gw::ProviderModelsAdapter;
     use crate::gateway::auth_layer::AccessToken;
     use crate::gateway::log_admin::verbose_categories_mask_from_request;
     use axum::http::StatusCode;
@@ -746,6 +747,25 @@ mod tests {
         assert!(provider_api_tenant_allowed("openrouter", &allowed));
         assert!(!provider_api_tenant_allowed("tenant-a", &allowed));
         assert!(!provider_api_tenant_allowed("openrouter", &BTreeSet::new()));
+    }
+
+    #[test]
+    fn provider_models_adapter_is_selected_from_provider_tenant() {
+        assert_eq!(
+            provider_models_adapter_for_tenant("tenant-openrouter"),
+            Some(ProviderModelsAdapter::OpenRouter)
+        );
+        assert_eq!(
+            provider_models_adapter_for_tenant("tenant-infron"),
+            Some(ProviderModelsAdapter::Infron)
+        );
+        assert_eq!(provider_models_adapter_for_tenant("openrouter"), None);
+    }
+
+    #[test]
+    fn unknown_provider_tenant_adapter_is_server_error() {
+        let resp = super::provider_api_tenant_unknown_adapter_response("tenant-other");
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
 
@@ -4297,6 +4317,11 @@ async fn OpenRouterModels(
         return Ok(provider_api_tenant_not_allowed_response(&caller_tenant));
     }
 
+    let adapter = match provider_models_adapter_for_tenant(&caller_tenant) {
+        Some(adapter) => adapter,
+        None => return Ok(provider_api_tenant_unknown_adapter_response(&caller_tenant)),
+    };
+
     let rows = match gw.sqlSecret.ListListedEndpoints().await {
         Ok(rows) => rows,
         Err(e) => {
@@ -4307,7 +4332,10 @@ async fn OpenRouterModels(
         }
     };
 
-    let data: Vec<Value> = rows.iter().map(BuildOpenRouterModelEntry).collect();
+    let data: Vec<Value> = rows
+        .iter()
+        .map(|row| BuildProviderModelEntry(adapter, row))
+        .collect();
 
     let response_body = serde_json::json!({ "data": data });
     let bytes = match serde_json::to_vec(&response_body) {
@@ -4358,6 +4386,14 @@ fn provider_api_tenant_allowed_by_config(caller_tenant: &str) -> bool {
     provider_api_tenant_allowed(caller_tenant, &GATEWAY_CONFIG.providerApiAllowedTenants)
 }
 
+fn provider_models_adapter_for_tenant(caller_tenant: &str) -> Option<ProviderModelsAdapter> {
+    match caller_tenant {
+        "tenant-openrouter" => Some(ProviderModelsAdapter::OpenRouter),
+        "tenant-infron" => Some(ProviderModelsAdapter::Infron),
+        _ => None,
+    }
+}
+
 fn no_tenant_context_response() -> Response {
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
@@ -4372,6 +4408,16 @@ fn provider_api_tenant_not_allowed_response(caller_tenant: &str) -> Response {
         .status(StatusCode::UNAUTHORIZED)
         .body(Body::from(format!(
             "service failure: tenant {} is not allowed on provider API",
+            caller_tenant
+        )))
+        .unwrap()
+}
+
+fn provider_api_tenant_unknown_adapter_response(caller_tenant: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(format!(
+            "service failure: tenant {} has no provider models adapter",
             caller_tenant
         )))
         .unwrap()

@@ -2527,6 +2527,12 @@ pub struct SlugValidation {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderModelsAdapter {
+    OpenRouter,
+    Infron,
+}
+
 /// Enforce the "don't ship incomplete/guessed metadata" rule: every
 /// OpenRouter-required field must be present and well-formed before listing.
 /// Returns a single error naming all missing/invalid fields.
@@ -2594,13 +2600,7 @@ pub fn ValidateOpenRouterListing(row: &ListedEndpoint) -> Result<()> {
     }
 }
 
-/// Map a listed endpoint row to one OpenRouter `/v1/models` catalog entry.
-/// `id` = slug (the callback identity); `openrouter.slug` attaches to the canonical
-/// page (always present for a listed row under the attach-or-fail model); `created` =
-/// `last_published_at` if published, else `or_listed_at` (listing time), as a Unix
-/// epoch; `name` falls back to `"<slug> (InferX)"`. Optional fields are only emitted
-/// when set.
-pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
+fn base_provider_model_entry(row: &ListedEndpoint) -> serde_json::Map<String, Value> {
     let name = row
         .or_name
         .as_ref()
@@ -2615,36 +2615,51 @@ pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
         .map(|t| t.timestamp())
         .unwrap_or(0);
 
-    let mut entry = serde_json::json!({
-        "id": row.slug,
-        "hugging_face_id": row.hugging_face_id.clone().unwrap_or_default(),
-        "name": name,
-        "created": created,
-        "input_modalities": row.input_modalities.clone().unwrap_or_default(),
-        "output_modalities": row.output_modalities.clone().unwrap_or_default(),
-        "quantization": row.quantization.clone().unwrap_or_default(),
-        "context_length": row.context_length.unwrap_or(0),
-        "max_output_length": row.max_output_length.unwrap_or(0),
-        "pricing": row.pricing.clone().unwrap_or(Value::Null),
-        "supported_sampling_parameters": row.supported_sampling_parameters.clone().unwrap_or_default(),
-        "supported_features": row.supported_features.clone().unwrap_or_default(),
-    });
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), serde_json::json!(row.slug));
+    obj.insert(
+        "hugging_face_id".into(),
+        serde_json::json!(row.hugging_face_id.clone().unwrap_or_default()),
+    );
+    obj.insert("name".into(), serde_json::json!(name));
+    obj.insert("created".into(), serde_json::json!(created));
+    obj.insert(
+        "input_modalities".into(),
+        serde_json::json!(row.input_modalities.clone().unwrap_or_default()),
+    );
+    obj.insert(
+        "output_modalities".into(),
+        serde_json::json!(row.output_modalities.clone().unwrap_or_default()),
+    );
+    obj.insert(
+        "quantization".into(),
+        serde_json::json!(row.quantization.clone().unwrap_or_default()),
+    );
+    obj.insert(
+        "context_length".into(),
+        serde_json::json!(row.context_length.unwrap_or(0)),
+    );
+    obj.insert(
+        "max_output_length".into(),
+        serde_json::json!(row.max_output_length.unwrap_or(0)),
+    );
+    obj.insert(
+        "pricing".into(),
+        row.pricing.clone().unwrap_or(Value::Null),
+    );
+    obj.insert(
+        "supported_sampling_parameters".into(),
+        serde_json::json!(row.supported_sampling_parameters.clone().unwrap_or_default()),
+    );
+    obj.insert(
+        "supported_features".into(),
+        serde_json::json!(row.supported_features.clone().unwrap_or_default()),
+    );
 
-    let obj = entry.as_object_mut().unwrap();
-    if let Some(slug) = &row.openrouter_slug {
-        if !slug.trim().is_empty() {
-            obj.insert("openrouter".into(), serde_json::json!({ "slug": slug }));
-        }
-    }
-    if let Some(d) = row.discount_to_user {
-        obj.insert("discount_to_user".into(), serde_json::json!(d));
-    }
     if let Some(ready) = row.or_is_ready {
         obj.insert("is_ready".into(), serde_json::json!(ready));
     }
     if let Some(dep) = row.or_deprecation_date {
-        // RFC 3339 / ISO 8601 with the UTC hour, matching OpenRouter's documented
-        // `deprecation_date` shape (e.g. 2025-06-01T15:00:00Z) — not date-only.
         obj.insert(
             "deprecation_date".into(),
             serde_json::json!(dep.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
@@ -2659,7 +2674,48 @@ pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
         }
     }
 
-    entry
+    obj
+}
+
+/// Map a listed endpoint row to one OpenRouter `/v1/models` catalog entry.
+/// `id` = slug (the callback identity); `openrouter.slug` attaches to the canonical
+/// page (always present for a listed row under the attach-or-fail model); `created` =
+/// `last_published_at` if published, else `or_listed_at` (listing time), as a Unix
+/// epoch; `name` falls back to `"<slug> (InferX)"`. Optional fields are only emitted
+/// when set.
+pub fn BuildOpenRouterModelEntry(row: &ListedEndpoint) -> Value {
+    let mut obj = base_provider_model_entry(row);
+    if let Some(slug) = &row.openrouter_slug {
+        if !slug.trim().is_empty() {
+            obj.insert("openrouter".into(), serde_json::json!({ "slug": slug }));
+        }
+    }
+    if let Some(d) = row.discount_to_user {
+        obj.insert("discount_to_user".into(), serde_json::json!(d));
+    }
+
+    Value::Object(obj)
+}
+
+/// Map a listed endpoint row to one Infron `/v1/models` catalog entry. This reuses
+/// the same internal listing metadata as OpenRouter, but emits Infron's provider
+/// attachment object (`infron.slug`) instead of `openrouter.slug`.
+pub fn BuildInfronModelEntry(row: &ListedEndpoint) -> Value {
+    let mut obj = base_provider_model_entry(row);
+    if let Some(slug) = &row.openrouter_slug {
+        if !slug.trim().is_empty() {
+            obj.insert("infron".into(), serde_json::json!({ "slug": slug }));
+        }
+    }
+
+    Value::Object(obj)
+}
+
+pub fn BuildProviderModelEntry(adapter: ProviderModelsAdapter, row: &ListedEndpoint) -> Value {
+    match adapter {
+        ProviderModelsAdapter::OpenRouter => BuildOpenRouterModelEntry(row),
+        ProviderModelsAdapter::Infron => BuildInfronModelEntry(row),
+    }
 }
 
 /// True when `s` has the Hugging Face `author/name` repo-id shape: exactly one `/`,
@@ -3135,5 +3191,14 @@ mod openrouter_tests {
         assert_eq!(entry["name"], serde_json::json!("qwq-32b (InferX)"));
         // A listed row always carries openrouter.slug under the attach-or-fail model.
         assert_eq!(entry["openrouter"]["slug"], serde_json::json!("qwen/qwq-32b"));
+    }
+
+    #[test]
+    fn infron_model_entry_shape() {
+        let entry = BuildInfronModelEntry(&complete_row());
+        assert_eq!(entry["id"], serde_json::json!("qwq-32b"));
+        assert_eq!(entry["infron"]["slug"], serde_json::json!("qwen/qwq-32b"));
+        assert_eq!(entry["hugging_face_id"], serde_json::json!("Qwen/QwQ-32B"));
+        assert!(entry.get("openrouter").is_none());
     }
 }
