@@ -667,6 +667,19 @@ pub struct TokenUsageHourlyRecord {
     pub charge_cents: i64,
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct TokenUsageWindowRow {
+    pub tenant: String,
+    pub model_slug: String,
+    pub hour: DateTime<Utc>,
+    pub input_tokens: i64,
+    pub cached_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+    pub charge_cents: i64,
+    pub total_count: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct TokenRateHistoryRecord {
     pub id: i64,
@@ -1198,8 +1211,10 @@ impl SqlAudit {
         Ok((records, total.0))
     }
 
-    /// Token usage/spend rollup over a time window, optionally filtered by tenant
-    /// and/or model_slug. Used by the admin cross-tenant and per-tenant spend views.
+    /// Token usage/spend over a time window, optionally filtered by tenant and/or
+    /// model_slug. Historical hours come from TokenUsageHourly; the recent window
+    /// is recomputed directly from TokenUsageEvent so the billing UI reflects
+    /// usage before the hourly rollup cron runs.
     pub async fn ListTokenUsageHourly(
         &self,
         tenant: Option<&str>,
@@ -1209,16 +1224,82 @@ impl SqlAudit {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<TokenUsageHourlyRecord>, i64)> {
-        let records: Vec<TokenUsageHourlyRecord> = sqlx::query_as(
+        let rows: Vec<TokenUsageWindowRow> = sqlx::query_as(
             r#"
+            WITH
+            params AS (
+                SELECT
+                    $1::varchar AS tenant,
+                    $2::varchar AS model_slug,
+                    $3::timestamptz AS start_hour,
+                    $4::timestamptz AS end_hour,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT
+                    h.tenant,
+                    h.model_slug,
+                    h.hour,
+                    h.input_tokens,
+                    h.cached_tokens,
+                    h.output_tokens,
+                    h.request_count,
+                    h.charge_cents
+                FROM TokenUsageHourly h
+                JOIN params p ON true
+                WHERE h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
+                  AND h.hour < p.recent_start
+                  AND (p.tenant IS NULL OR h.tenant = p.tenant)
+                  AND (p.model_slug IS NULL OR h.model_slug = p.model_slug)
+            ),
+            recent AS (
+                SELECT
+                    e.caller_tenant AS tenant,
+                    e.model_slug,
+                    date_trunc('hour', e.ts) AS hour,
+                    SUM(GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint))::bigint AS input_tokens,
+                    SUM(e.cached_tokens)::bigint AS cached_tokens,
+                    SUM(e.completion_tokens)::bigint AS output_tokens,
+                    COUNT(*)::bigint AS request_count,
+                    (
+                        COALESCE(
+                            SUM(
+                                GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+                                * r.cents_per_million_input
+                            ),
+                            0
+                        )
+                        + COALESCE(SUM(e.cached_tokens * r.cents_per_million_cached), 0)
+                        + COALESCE(SUM(e.completion_tokens * r.cents_per_million_output), 0)
+                    )::bigint / 1000000 AS charge_cents
+                FROM TokenUsageEvent e
+                JOIN params p ON true
+                CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+                WHERE e.ts >= GREATEST(p.start_hour, p.recent_start)
+                  AND e.ts < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
+                  AND (p.tenant IS NULL OR e.caller_tenant = p.tenant)
+                  AND (p.model_slug IS NULL OR e.model_slug = p.model_slug)
+                GROUP BY e.caller_tenant, e.model_slug, date_trunc('hour', e.ts)
+            ),
+            combined AS (
+                SELECT tenant, model_slug, hour, input_tokens, cached_tokens,
+                       output_tokens, request_count, charge_cents
+                FROM historical
+                UNION ALL
+                SELECT tenant, model_slug, hour, input_tokens, cached_tokens,
+                       output_tokens, request_count, charge_cents
+                FROM recent
+            )
             SELECT
-                tenant, model_slug, hour,
+                tenant,
+                model_slug,
+                hour,
                 input_tokens, cached_tokens, output_tokens,
-                request_count, charge_cents
-            FROM TokenUsageHourly
-            WHERE hour >= $3 AND hour < $4
-              AND ($1::varchar IS NULL OR tenant = $1)
-              AND ($2::varchar IS NULL OR model_slug = $2)
+                request_count,
+                charge_cents,
+                COUNT(*) OVER()::bigint AS total_count
+            FROM combined
             ORDER BY hour DESC, tenant, model_slug
             LIMIT $5 OFFSET $6
             "#,
@@ -1232,23 +1313,22 @@ impl SqlAudit {
         .fetch_all(&self.pool)
         .await?;
 
-        let total: (i64,) = sqlx::query_as(
-            r#"
-            SELECT COUNT(*)::bigint
-            FROM TokenUsageHourly
-            WHERE hour >= $3 AND hour < $4
-              AND ($1::varchar IS NULL OR tenant = $1)
-              AND ($2::varchar IS NULL OR model_slug = $2)
-            "#,
-        )
-        .bind(tenant)
-        .bind(model_slug)
-        .bind(start)
-        .bind(end)
-        .fetch_one(&self.pool)
-        .await?;
+        let total = rows.first().map(|r| r.total_count).unwrap_or(0);
+        let records = rows
+            .into_iter()
+            .map(|r| TokenUsageHourlyRecord {
+                tenant: r.tenant,
+                model_slug: r.model_slug,
+                hour: r.hour,
+                input_tokens: r.input_tokens,
+                cached_tokens: r.cached_tokens,
+                output_tokens: r.output_tokens,
+                request_count: r.request_count,
+                charge_cents: r.charge_cents,
+            })
+            .collect();
 
-        Ok((records, total.0))
+        Ok((records, total))
     }
 
     /// List billing rate history with optional scope/tenant filtering and pagination.

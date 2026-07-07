@@ -516,7 +516,8 @@ fn funccall_route_error_response(namespace: &str, err: &Error) -> (StatusCode, &
 mod tests {
     use super::{
         funccall_route_error_response, is_blocked_public_endpoint_inference,
-        resolve_skill_calling_tenant, resolve_subscription_tenant, summarize_funccall_body_for_log,
+        provider_api_tenant_allowed, resolve_skill_calling_tenant, resolve_subscription_tenant,
+        summarize_funccall_body_for_log,
     };
     use crate::common::Error;
     use crate::gateway::auth_layer::AccessToken;
@@ -733,6 +734,18 @@ mod tests {
             .insert(AccessToken::TenantUserRole("deleted-tenant"));
         let result = resolve_subscription_tenant(&token, &|t| t != "deleted-tenant");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn provider_api_tenant_allowlist_requires_explicit_match() {
+        let allowed = BTreeSet::from([
+            "gateway-a".to_owned(),
+            "openrouter".to_owned(),
+        ]);
+
+        assert!(provider_api_tenant_allowed("openrouter", &allowed));
+        assert!(!provider_api_tenant_allowed("tenant-a", &allowed));
+        assert!(!provider_api_tenant_allowed("openrouter", &BTreeSet::new()));
     }
 }
 
@@ -4258,20 +4271,30 @@ async fn UnlistFromOpenRouter(
 }
 
 /// Flat provider catalog. Emits the OpenRouter-required schema for every endpoint
-/// with `or_listed = true`, read from Postgres (not etcd). Requires a key with
-/// inference access to `inferx/endpoint`. `or_listed` is the source of truth: rows
-/// are emitted verbatim and only leave the catalog through the offline/delist
-/// lifecycle — `ListOnOpenRouter` and the save guard keep a
-/// listed row valid, so the read path does not silently drop entries.
+/// with `or_listed = true`, read from Postgres (not etcd). Admission is by
+/// `inference` scope + resolved caller tenant + provider allowlist, not by
+/// direct RBAC on `inferx/endpoint`. `or_listed` is the source of truth: rows are
+/// emitted verbatim and only leave the catalog through the offline/delist
+/// lifecycle — `ListOnOpenRouter` and the save guard keep a listed row valid, so
+/// the read path does not silently drop entries.
 async fn OpenRouterModels(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
 ) -> SResult<Response, StatusCode> {
-    if !token.IsNamespaceInferenceUser(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE) {
+    if !token.CheckScope("inference") {
         return Ok(Response::builder()
             .status(StatusCode::UNAUTHORIZED)
-            .body(Body::from("unauthorized"))
+            .body(Body::from("service failure: insufficient scope"))
             .unwrap());
+    }
+
+    let caller_tenant = match resolve_caller_tenant(&token, &gw) {
+        Ok(t) => t,
+        Err(_) => return Ok(no_tenant_context_response()),
+    };
+
+    if !provider_api_tenant_allowed_by_config(&caller_tenant) {
+        return Ok(provider_api_tenant_not_allowed_response(&caller_tenant));
     }
 
     let rows = match gw.sqlSecret.ListListedEndpoints().await {
@@ -4324,6 +4347,17 @@ fn resolve_caller_tenant(token: &AccessToken, gw: &HttpGateway) -> Result<String
     resolve_skill_calling_tenant(token, &tenant_exists)
 }
 
+fn provider_api_tenant_allowed(
+    caller_tenant: &str,
+    allowed_tenants: &std::collections::BTreeSet<String>,
+) -> bool {
+    allowed_tenants.contains(caller_tenant)
+}
+
+fn provider_api_tenant_allowed_by_config(caller_tenant: &str) -> bool {
+    provider_api_tenant_allowed(caller_tenant, &GATEWAY_CONFIG.providerApiAllowedTenants)
+}
+
 fn no_tenant_context_response() -> Response {
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
@@ -4333,13 +4367,22 @@ fn no_tenant_context_response() -> Response {
         .unwrap()
 }
 
+fn provider_api_tenant_not_allowed_response(caller_tenant: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::from(format!(
+            "service failure: tenant {} is not allowed on provider API",
+            caller_tenant
+        )))
+        .unwrap()
+}
+
 /// Shared dispatch core for both token-billed entry points. Pulls `model` from
 /// the JSON body, rewrites to the physical `inferx/endpoint/{model}` func so both
 /// sources pool on the same instance, dispatches, and meters the response into a
 /// `TokenUsageEvent`. `caller_tenant` is the billing subject; `source` is
 /// recorded for reporting only.
 async fn shared_endpoint_dispatch(
-    token: &Arc<AccessToken>,
     gw: &HttpGateway,
     req: Request,
     caller_tenant: String,
@@ -4415,14 +4458,10 @@ async fn shared_endpoint_dispatch(
     // streaming without it), remembering whether the caller actually asked for it.
     let (newReq, is_streaming, usage_requested) = inject_usage_options(newReq).await?;
 
-    // Direct calls are already authorized by the wrapper (tenant + inference scope
-    // + published) so they bypass the normal `inferx/endpoint` namespace RBAC.
-    // OpenRouter keys are RBAC-scoped to `inferx/endpoint`, so they go through the
-    // normal FuncCall1 auth.
-    let response = match source {
-        SharedSource::Direct => funccall_dispatch_route(gw, newReq).await?,
-        SharedSource::OpenRouter => FuncCall1(token, gw, newReq).await?,
-    };
+    // Both shared-serving wrappers do external admission first, then use a trusted
+    // internal dispatch to the physical `inferx/endpoint` function without
+    // re-running namespace RBAC on that internal hop.
+    let response = funccall_dispatch_route(gw, newReq).await?;
 
     let meter = TokenMeterCtx {
         gateway_request_id: uuid::Uuid::new_v4().to_string(),
@@ -4438,17 +4477,29 @@ async fn shared_endpoint_dispatch(
 
 /// Root OpenRouter inference entrypoint (`/v1/chat/completions`). Attributes to
 /// the tenant the provider key resolves to, meters, and dispatches to the shared
-/// `inferx/endpoint` func. The old per-request `or_listed` serving gate is
+/// `inferx/endpoint` func. Admission is by `inference` scope + resolved caller
+/// tenant + provider allowlist. The old per-request `or_listed` serving gate is
 /// dropped; `or_listed` still governs only the `/v1/models` catalog.
 async fn OpenRouterChatCompletions(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
     req: Request,
 ) -> SResult<Response, StatusCode> {
+    if !token.CheckScope("inference") {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("service failure: insufficient scope"))
+            .unwrap());
+    }
+
     let caller_tenant = match resolve_caller_tenant(&token, &gw) {
         Ok(t) => t,
         Err(_) => return Ok(no_tenant_context_response()),
     };
+
+    if !provider_api_tenant_allowed_by_config(&caller_tenant) {
+        return Ok(provider_api_tenant_not_allowed_response(&caller_tenant));
+    }
 
     // This wrapper is not a `/funccall/*` path, but quota enforcement still
     // blocks quota-exceeded tenants here because POST on a non-read path falls
@@ -4459,7 +4510,7 @@ async fn OpenRouterChatCompletions(
         return Ok(resp);
     }
 
-    shared_endpoint_dispatch(&token, &gw, req, caller_tenant, SharedSource::OpenRouter).await
+    shared_endpoint_dispatch(&gw, req, caller_tenant, SharedSource::OpenRouter).await
 }
 
 /// Direct token-billed entry point (`/endpoints/v1/chat/completions`). Resolves
@@ -4491,7 +4542,7 @@ async fn SharedEndpointCompletions(
         return Ok(resp);
     }
 
-    shared_endpoint_dispatch(&token, &gw, req, caller_tenant, SharedSource::Direct).await
+    shared_endpoint_dispatch(&gw, req, caller_tenant, SharedSource::Direct).await
 }
 
 /// Direct-API model list (`/endpoints/v1/models`). Enumerates published shared
@@ -6819,7 +6870,7 @@ async fn GetAdminEndpointUsage(
     }
 }
 
-/// Serialize TokenUsageHourly rows to the shared JSON response shape.
+/// Serialize token-usage rows to the shared JSON response shape.
 fn token_usage_response(
     rows: Vec<crate::audit::TokenUsageHourlyRecord>,
     total: i64,
@@ -6853,7 +6904,7 @@ fn token_usage_response(
         .unwrap()
 }
 
-/// Admin cross-tenant token usage/spend over TokenUsageHourly.
+/// Admin cross-tenant token usage/spend with recent raw-event overlay.
 async fn GetAdminTokenUsage(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -6895,7 +6946,7 @@ async fn GetAdminTokenUsage(
     }
 }
 
-/// Per-tenant token usage/spend. Any user of the tenant may read its own usage.
+/// Per-tenant token usage/spend with recent raw-event overlay.
 async fn GetTenantTokenUsage(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,

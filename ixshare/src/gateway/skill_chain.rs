@@ -3332,6 +3332,7 @@ mod tests {
             object: FuncObject::default(),
         };
         let dummy_policy = FuncPolicySpec {
+            nvidiaReplica: 0,
             minReplica: 0,
             maxReplica: 1,
             standbyPerNode: 0,

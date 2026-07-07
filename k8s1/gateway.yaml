@@ -56,6 +56,8 @@ spec:
             value: "http://etcd:2379"
           - name: ONBOARD_INITIAL_CREDIT_CENTS
             value: "3000"
+          - name: PROVIDER_API_ALLOWED_TENANTS
+            value: "openrouter"
           - name: ENDPOINTS_DEFAULT_POLICY
             value: >-
               {"max_replica":1,"parallel":50,"queue_len":100,"queue_timeout":30.0,"scaleout_policy":{"WaitQueueRatio":{"wait_ratio":0.1}},"scalein_timeout":1.0}

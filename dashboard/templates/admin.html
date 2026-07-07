@@ -1093,7 +1093,7 @@
         <!-- Usage Chart -->
         <div id="usage-chart-container" style="margin-bottom: 20px;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
-                <h3 style="margin: 0;">Dedicated GPU, Snapshot Retention, and Token-Based Usage</h3>
+                <h3 id="usage-chart-title" style="margin: 0;">Dedicated GPU, Snapshot Retention, and Token-Based Usage</h3>
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <div id="usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                         <button type="button" onclick="setUsageRangeHours(24)" id="usage-range-24h">Last 24h</button>
@@ -1130,7 +1130,9 @@
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #888; margin-top: 4px;">
                     <div>
-                        <span class="usage-legend-swatch usage-legend-swatch-inference"></span> Dedicated GPU
+                        <span id="usage-legend-inference">
+                            <span class="usage-legend-swatch usage-legend-swatch-inference"></span> Dedicated GPU
+                        </span>
                         <span id="usage-legend-standby" style="display: inline;">
                             <span class="usage-legend-swatch usage-legend-swatch-standby" style="margin-left: 10px;"></span> Snapshot Retention
                         </span>
@@ -1152,13 +1154,13 @@
                                 <th style="text-align: left; cursor: pointer;" onclick="sortUsageTable('period')">
                                     Period <span id="usage-sort-period-icon">▼</span>
                                 </th>
-                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
+                                <th class="usage-inference-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_hours')">
                                     Dedicated GPU time <span id="usage-sort-inf-hours-icon"></span>
                                 </th>
                                 <th class="usage-standby-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_hours')">
                                     Snapshot Retention time <span id="usage-sort-sby-hours-icon"></span>
                                 </th>
-                                <th style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
+                                <th class="usage-inference-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('inf_cost')">
                                     Dedicated GPU (USD) <span id="usage-sort-inf-cost-icon"></span>
                                 </th>
                                 <th class="usage-standby-col" style="text-align: right; cursor: pointer;" onclick="sortUsageTable('sby_cost')">
@@ -1173,9 +1175,9 @@
                         <tfoot>
                             <tr>
                                 <td style="text-align: left;">Total</td>
-                                <td id="usage-table-total-inf-hours" style="text-align: right;">--</td>
+                                <td id="usage-table-total-inf-hours" class="usage-inference-col" style="text-align: right;">--</td>
                                 <td id="usage-table-total-sby-hours" class="usage-standby-col" style="text-align: right;">--</td>
-                                <td id="usage-table-total-inf-cost" style="text-align: right;">--</td>
+                                <td id="usage-table-total-inf-cost" class="usage-inference-col" style="text-align: right;">--</td>
                                 <td id="usage-table-total-sby-cost" class="usage-standby-col" style="text-align: right;">--</td>
                                 <td id="usage-table-total-cost" style="text-align: right;">--</td>
                             </tr>
@@ -4239,6 +4241,25 @@
         if (standbyLegendEl) standbyLegendEl.style.display = show ? 'inline' : 'none';
     }
 
+    function setUsageInferenceVisibility(show) {
+        setElementsVisibilityByClass('usage-inference-col', show);
+        const inferenceLegendEl = document.getElementById('usage-legend-inference');
+        if (inferenceLegendEl) inferenceLegendEl.style.display = show ? 'inline' : 'none';
+    }
+
+    function setUsageSectionTitle(showInference, showStandby, showToken) {
+        const titleEl = document.getElementById('usage-chart-title');
+        if (!titleEl) return;
+
+        const parts = [];
+        if (showInference) parts.push('Dedicated GPU');
+        if (showStandby) parts.push('Snapshot Retention');
+        if (showToken) parts.push('Token-Based');
+        titleEl.textContent = parts.length > 0
+            ? `${parts.join(', ')} Usage`
+            : 'Usage';
+    }
+
     function setAnalyticsSummaryStandbyVisibility(show) {
         setElementsVisibilityByClass('analytics-summary-standby-col', show);
     }
@@ -4509,9 +4530,12 @@
         const displayData = mergeBillingChartRows(gpuDisplayData, tokenDisplayData);
         if (displayData.length === 0) return;
 
+        const showInference = displayData.some((u) => (u.inference_cents || 0) > 0 || (u.inference_ms || 0) > 0);
         const showStandby = rowsHaveStandbyUsage(gpuDisplayData);
         const showToken = displayData.some((u) => (u.token_cents || 0) > 0);
+        setUsageInferenceVisibility(showInference);
         setUsageStandbyVisibility(showStandby);
+        setUsageSectionTitle(showInference, showStandby, showToken);
         const tokenLegendEl = document.getElementById('usage-legend-token');
         if (tokenLegendEl) tokenLegendEl.style.display = showToken ? 'inline' : 'none';
 
@@ -4535,10 +4559,10 @@
             const infTime = formatGpuTimeMs(infMs);
             const sbyTime = formatGpuTimeMs(sbyMs);
             const periodLabel = formatBillingUsagePeriodLabel(u, granularity, 'tooltip');
-            const tooltipParts = [
-                `${periodLabel}`,
-                `Dedicated GPU: ${formatUsd(infCents)} (${infTime})`,
-            ];
+            const tooltipParts = [`${periodLabel}`];
+            if (showInference) {
+                tooltipParts.push(`Dedicated GPU: ${formatUsd(infCents)} (${infTime})`);
+            }
             if (showStandby) {
                 tooltipParts.push(`Snapshot Retention: ${formatUsd(sbyCents)} (${sbyTime})`);
             }
@@ -4549,7 +4573,7 @@
             const tooltip = tooltipParts.join(' | ');
 
             return `<div class="usage-bar-stack" style="height: ${totalHeight}%" title="${tooltip}">` +
-                `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` +
+                (showInference ? `<div class="usage-bar-inference" style="height: ${infPct}%"></div>` : '') +
                 (showStandby ? `<div class="usage-bar-standby" style="height: ${sbyPct}%"></div>` : '') +
                 (showToken ? `<div class="usage-bar-token" style="height: ${tokenPct}%"></div>` : '') +
                 `</div>`;
@@ -4878,9 +4902,9 @@
             return `
                 <tr>
                     <td style="text-align: left;">${periodLabel}</td>
-                    <td style="text-align: right;">${formatGpuTimeMs(infMs)}</td>
+                    <td class="usage-inference-col" style="text-align: right;">${formatGpuTimeMs(infMs)}</td>
                     <td class="usage-standby-col" style="text-align: right;">${formatGpuTimeMs(sbyMs)}</td>
-                    <td style="text-align: right;">${formatUsd(infCents)}</td>
+                    <td class="usage-inference-col" style="text-align: right;">${formatUsd(infCents)}</td>
                     <td class="usage-standby-col" style="text-align: right;">${formatUsd(sbyCents)}</td>
                     <td style="text-align: right;">${formatUsd(totalCents)}</td>
                 </tr>
@@ -5823,7 +5847,9 @@
             usageRows.map((row) => [String(row.hour || '').trim(), row])
         );
         const denseRows = [];
-        for (let currentMs = start.getTime(); currentMs < end.getTime(); currentMs += 60 * 60 * 1000) {
+        // The token-usage API returns an inclusive hour range [start, end].
+        // Keep the terminal hour so the detail table matches the grouped totals.
+        for (let currentMs = start.getTime(); currentMs <= end.getTime(); currentMs += 60 * 60 * 1000) {
             const hour = new Date(currentMs).toISOString().slice(0, 13) + ':00:00Z';
             denseRows.push(usageMap.get(hour) || {
                 hour,
