@@ -142,6 +142,19 @@ fn resolve_inferx_tenant_policy(config: &NodeConfig) -> InferxTenantPolicy {
     }
 }
 
+fn resolve_provider_api_allowed_tenants(config: &NodeConfig) -> BTreeSet<String> {
+    let values: Vec<String> = match std::env::var("PROVIDER_API_ALLOWED_TENANTS") {
+        Ok(raw) => raw.split(',').map(str::to_owned).collect(),
+        Err(_) => config.providerApiAllowedTenants.clone(),
+    };
+
+    values
+        .into_iter()
+        .map(|tenant| tenant.trim().to_owned())
+        .filter(|tenant| !tenant.is_empty())
+        .collect()
+}
+
 lazy_static::lazy_static! {
     #[derive(Debug)]
     pub static ref NODE_CONFIG: NodeConfig = {
@@ -286,6 +299,7 @@ pub struct GatewayConfig {
     pub gatewayPort: u16,
     pub endpointsDefaultPolicy: EndpointGatewayPolicySpec,
     pub inferxTenantPolicy: InferxTenantPolicy,
+    pub providerApiAllowedTenants: BTreeSet<String>,
 }
 
 impl GatewayConfig {
@@ -430,6 +444,7 @@ impl GatewayConfig {
 
         let endpointsDefaultPolicy = resolve_endpoints_default_policy(config);
         let inferxTenantPolicy = resolve_inferx_tenant_policy(config);
+        let providerApiAllowedTenants = resolve_provider_api_allowed_tenants(config);
 
         let ret = Self {
             nodeName: nodeName,
@@ -451,6 +466,7 @@ impl GatewayConfig {
             gatewayPort: gatewayPort,
             endpointsDefaultPolicy,
             inferxTenantPolicy,
+            providerApiAllowedTenants,
         };
 
         info!("GatewayConfig is {:#?}", &ret);
@@ -1095,6 +1111,9 @@ pub struct NodeConfig {
     #[serde(default)]
     pub inferx_tenant_policy: InferxTenantPolicy,
 
+    #[serde(default, rename = "providerApiAllowedTenants")]
+    pub providerApiAllowedTenants: Vec<String>,
+
     /// Post-turn (reactive) compaction threshold, as a percentage of the model
     /// context window. Applied after a turn completes, against the provider's
     /// reported prompt_tokens — distinct from the preflight ratios, which run
@@ -1139,6 +1158,13 @@ impl NodeConfig {
 mod tests {
     use super::*;
 
+    // `PROVIDER_API_ALLOWED_TENANTS` is process-global, so tests that mutate it
+    // must serialize against each other or the parallel runner races their
+    // set/remove calls. Hold this lock for the whole set→resolve→remove window.
+    lazy_static::lazy_static! {
+        static ref PROVIDER_API_ENV_LOCK: Mutex<()> = Mutex::new(());
+    }
+
     fn test_node_config() -> NodeConfig {
         NodeConfig {
             nodeName: "node-a".to_owned(),
@@ -1171,6 +1197,7 @@ mod tests {
             endpoints_default_policy: default_endpoints_policy(),
             inferx_endpoint_func_default_policy: default_inferx_endpoint_func_default_policy(),
             inferx_tenant_policy: InferxTenantPolicy::default(),
+            providerApiAllowedTenants: Vec::new(),
             agent_postturn_compaction_ratio: default_agent_postturn_compaction_ratio(),
             agent_preflight_compaction_ratio: default_agent_preflight_compaction_ratio(),
             agent_first_call_compaction_ratio: default_agent_first_call_compaction_ratio(),
@@ -1237,6 +1264,66 @@ mod tests {
         assert_eq!(resolved.maxGpu, Some(6));
         assert_eq!(resolved.maxStandby, Some(2));
         assert_eq!(resolved.maxQueueLen, Some(1000));
+    }
+
+    #[test]
+    fn resolve_provider_api_allowed_tenants_uses_node_config() {
+        let _guard = PROVIDER_API_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("PROVIDER_API_ALLOWED_TENANTS");
+
+        let mut config = test_node_config();
+        config.providerApiAllowedTenants = vec![
+            " openrouter ".to_owned(),
+            "".to_owned(),
+            " gateway-a ".to_owned(),
+        ];
+
+        let resolved = resolve_provider_api_allowed_tenants(&config);
+        assert_eq!(
+            resolved,
+            BTreeSet::from([
+                "gateway-a".to_owned(),
+                "openrouter".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn resolve_provider_api_allowed_tenants_uses_env_csv() {
+        let _guard = PROVIDER_API_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(
+            "PROVIDER_API_ALLOWED_TENANTS",
+            " openrouter , gateway-a ,, gateway-b ",
+        );
+
+        let mut config = test_node_config();
+        config.providerApiAllowedTenants = vec!["ignored".to_owned()];
+
+        let resolved = resolve_provider_api_allowed_tenants(&config);
+        std::env::remove_var("PROVIDER_API_ALLOWED_TENANTS");
+
+        assert_eq!(
+            resolved,
+            BTreeSet::from([
+                "gateway-a".to_owned(),
+                "gateway-b".to_owned(),
+                "openrouter".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn resolve_provider_api_allowed_tenants_empty_env_disables_provider_api() {
+        let _guard = PROVIDER_API_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("PROVIDER_API_ALLOWED_TENANTS", "");
+
+        let mut config = test_node_config();
+        config.providerApiAllowedTenants = vec!["openrouter".to_owned()];
+
+        let resolved = resolve_provider_api_allowed_tenants(&config);
+        std::env::remove_var("PROVIDER_API_ALLOWED_TENANTS");
+
+        assert!(resolved.is_empty());
     }
 
     #[test]
