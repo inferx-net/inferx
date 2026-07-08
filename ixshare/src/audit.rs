@@ -1258,14 +1258,30 @@ impl SqlAudit {
                     e.caller_tenant AS tenant,
                     e.model_slug,
                     date_trunc('hour', e.ts) AS hour,
-                    SUM(GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint))::bigint AS input_tokens,
+                    -- When the cached rate is 0, cached tokens are billed as normal
+                    -- input, so the displayed input count includes them (matches the
+                    -- charge below and the hourly rollup in token-hourly-aggregate.sql).
+                    SUM(
+                        CASE
+                            WHEN r.cents_per_million_cached = 0
+                                THEN e.prompt_tokens
+                            ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+                        END
+                    )::bigint AS input_tokens,
                     SUM(e.cached_tokens)::bigint AS cached_tokens,
                     SUM(e.completion_tokens)::bigint AS output_tokens,
                     COUNT(*)::bigint AS request_count,
                     (
+                        -- A cached rate of 0 means "no cache discount": bill the full
+                        -- prompt at the input rate. A positive cached rate splits the
+                        -- prompt into non-cached (input rate) and cached (cached rate).
                         COALESCE(
                             SUM(
-                                GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+                                CASE
+                                    WHEN r.cents_per_million_cached = 0
+                                        THEN e.prompt_tokens
+                                    ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+                                END
                                 * r.cents_per_million_input
                             ),
                             0

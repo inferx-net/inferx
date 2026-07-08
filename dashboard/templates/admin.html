@@ -1204,7 +1204,7 @@
                                 <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('period')">Period (<span id="billing-token-usage-period-granularity">Hourly</span>, Local) <span id="billing-token-sort-period-icon">▼</span></th>
                                 <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('requests')">Requests <span id="billing-token-sort-requests-icon"></span></th>
                                 <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('input')">Input Tokens <span id="billing-token-sort-input-icon"></span></th>
-                                <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('cached')">Cached Tokens <span id="billing-token-sort-cached-icon"></span></th>
+                                <th class="cached-token-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('cached')">Cached Tokens <span id="billing-token-sort-cached-icon"></span></th>
                                 <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('output')">Output Tokens <span id="billing-token-sort-output-icon"></span></th>
                                 <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortBillingTokenUsageTable('spend')">Spend (USD) <span id="billing-token-sort-spend-icon"></span></th>
                             </tr>
@@ -1215,7 +1215,7 @@
                                 <td style="padding: 8px;">Total</td>
                                 <td id="billing-token-usage-total-requests" style="text-align: right; padding: 8px;">--</td>
                                 <td id="billing-token-usage-total-input" style="text-align: right; padding: 8px;">--</td>
-                                <td id="billing-token-usage-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                <td id="billing-token-usage-total-cached" class="cached-token-col" style="text-align: right; padding: 8px;">--</td>
                                 <td id="billing-token-usage-total-output" style="text-align: right; padding: 8px;">--</td>
                                 <td id="billing-token-usage-total-spend" style="text-align: right; padding: 8px;">--</td>
                             </tr>
@@ -1511,7 +1511,7 @@
                                         <th id="token-analytics-group-header" style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('group')">Model <span id="token-sort-group-icon"></span></th>
                                         <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('requests')">Requests <span id="token-sort-requests-icon"></span></th>
                                         <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('input')">Input Tokens <span id="token-sort-input-icon"></span></th>
-                                        <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('cached')">Cached Tokens <span id="token-sort-cached-icon"></span></th>
+                                        <th class="cached-token-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('cached')">Cached Tokens <span id="token-sort-cached-icon"></span></th>
                                         <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('output')">Output Tokens <span id="token-sort-output-icon"></span></th>
                                         <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsTable('spend')">Spend (USD) <span id="token-sort-spend-icon">▼</span></th>
                                     </tr>
@@ -1522,7 +1522,7 @@
                                         <td style="padding: 8px;">Total</td>
                                         <td id="token-analytics-model-total-requests" style="text-align: right; padding: 8px;">--</td>
                                         <td id="token-analytics-model-total-input" style="text-align: right; padding: 8px;">--</td>
-                                        <td id="token-analytics-model-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                        <td id="token-analytics-model-total-cached" class="cached-token-col" style="text-align: right; padding: 8px;">--</td>
                                         <td id="token-analytics-model-total-output" style="text-align: right; padding: 8px;">--</td>
                                         <td id="token-analytics-model-total-spend" style="text-align: right; padding: 8px;">--</td>
                                     </tr>
@@ -1550,7 +1550,7 @@
                                             <th style="text-align: left; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('period')">Period (<span id="token-analytics-period-granularity">Hourly</span>, Local) <span id="token-detail-sort-period-icon">▼</span></th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('requests')">Requests <span id="token-detail-sort-requests-icon"></span></th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('input')">Input Tokens <span id="token-detail-sort-input-icon"></span></th>
-                                            <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('cached')">Cached Tokens <span id="token-detail-sort-cached-icon"></span></th>
+                                            <th class="cached-token-col" style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('cached')">Cached Tokens <span id="token-detail-sort-cached-icon"></span></th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('output')">Output Tokens <span id="token-detail-sort-output-icon"></span></th>
                                             <th style="text-align: right; padding: 8px; cursor: pointer;" onclick="sortTokenAnalyticsDetailTable('spend')">Spend (USD) <span id="token-detail-sort-spend-icon"></span></th>
                                         </tr>
@@ -1561,7 +1561,7 @@
                                             <td style="padding: 8px;">Total</td>
                                             <td id="token-analytics-hourly-total-requests" style="text-align: right; padding: 8px;">--</td>
                                             <td id="token-analytics-hourly-total-input" style="text-align: right; padding: 8px;">--</td>
-                                            <td id="token-analytics-hourly-total-cached" style="text-align: right; padding: 8px;">--</td>
+                                            <td id="token-analytics-hourly-total-cached" class="cached-token-col" style="text-align: right; padding: 8px;">--</td>
                                             <td id="token-analytics-hourly-total-output" style="text-align: right; padding: 8px;">--</td>
                                             <td id="token-analytics-hourly-total-spend" style="text-align: right; padding: 8px;">--</td>
                                         </tr>
@@ -2233,6 +2233,35 @@
     let billingTokenUsageTableRows = [];
     let billingTokenUsageSortColumn = 'period';
     let billingTokenUsageSortDirection = 'desc';
+
+    // InferX admins always see the cached-token columns. For regular tenant users
+    // the cached column is hidden when the current view has no cached tokens.
+    //
+    // Note this keys off the cached-token COUNT, not the cached RATE: the usage API
+    // rows carry token counts but no per-model rate, and cached_tokens is reported
+    // as the true count regardless of how it is priced. So this only hides the
+    // column when there is genuinely no cached traffic in the window; it does NOT
+    // (and with the current API cannot) hide the column for a model whose cached
+    // rate is 0 but which still saw cached tokens. Exposing the rate per row would
+    // be required to hide purely on "cached rate is 0/null".
+    {% if dashboard_is_inferx_admin %}
+    const DASHBOARD_IS_INFERX_ADMIN = true;
+    {% else %}
+    const DASHBOARD_IS_INFERX_ADMIN = false;
+    {% endif %}
+
+    // Show/hide every `.cached-token-col` cell within the given table container.
+    // `rows` are the currently-displayed rows; the column shows when the viewer is
+    // an InferX admin or any row carries cached tokens.
+    function applyCachedTokenColumnVisibility(rootEl, rows) {
+        if (!rootEl) return;
+        const hasCached = Array.isArray(rows) &&
+            rows.some((row) => (row?.cached_tokens || 0) > 0);
+        const show = DASHBOARD_IS_INFERX_ADMIN || hasCached;
+        rootEl.querySelectorAll('.cached-token-col').forEach((el) => {
+            el.style.display = show ? '' : 'none';
+        });
+    }
     let billingCreditHistoryRows = [];
     let billingCreditSortColumn = 'date';
     let billingCreditSortDirection = 'desc';
@@ -4765,7 +4794,7 @@
                     <td style="padding: 8px; text-align: left;">${formatBillingUsagePeriodLabel(row, billingUsageGranularity, 'table')}</td>
                     <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
                     <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
-                    <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                    <td class="cached-token-col" style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
                     <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
                     <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
                 </tr>
@@ -4784,6 +4813,9 @@
         document.getElementById('billing-token-usage-total-cached').textContent = formatCount(totalCached);
         document.getElementById('billing-token-usage-total-output').textContent = formatCount(totalOutput);
         document.getElementById('billing-token-usage-total-spend').textContent = formatUsd(totalSpend);
+
+        applyCachedTokenColumnVisibility(
+            document.getElementById('billing-token-usage-table'), periodRows);
     }
 
     function sortBillingTokenUsageTable(column) {
@@ -5902,12 +5934,14 @@
                 <td style="padding: 8px; text-align: left;">${formatTokenAnalyticsPeriodLabel(row)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
-                <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                <td class="cached-token-col" style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
                 <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
             </tr>
         `).join('');
         updateTokenAnalyticsDetailSortIcons();
+        applyCachedTokenColumnVisibility(
+            document.getElementById('token-analytics-hourly-table'), breakdownRows);
     }
 
     function setTokenAnalyticsDetailGranularity(granularity) {
@@ -6054,7 +6088,7 @@
                 <td style="padding: 8px; text-align: left;">${escapeAnalyticsHtml(row.group_label || groupKey)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.request_count)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.input_tokens)}</td>
-                <td style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
+                <td class="cached-token-col" style="padding: 8px; text-align: right;">${formatCount(row.cached_tokens)}</td>
                 <td style="padding: 8px; text-align: right;">${formatCount(row.output_tokens)}</td>
                 <td style="padding: 8px; text-align: right;">${formatUsd(row.charge_cents || 0)}</td>
             `;
@@ -6073,6 +6107,9 @@
         document.getElementById('token-analytics-model-total-cached').textContent = formatCount(totalCached);
         document.getElementById('token-analytics-model-total-output').textContent = formatCount(totalOutput);
         document.getElementById('token-analytics-model-total-spend').textContent = formatUsd(totalSpend);
+
+        applyCachedTokenColumnVisibility(
+            document.getElementById('token-analytics-model-table'), groupedRows);
 
         if (!selectedGroup) {
             showTokenAnalyticsBreakdownPrompt(

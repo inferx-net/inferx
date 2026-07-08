@@ -101,11 +101,18 @@ data:
     ),
 
     -- Billable input is prompt minus the cached subset; clamp at zero so a
-    -- malformed upstream payload cannot produce a negative charge.
+    -- malformed upstream payload cannot produce a negative charge. A cached rate
+    -- of 0 means "no cache discount": bill the full prompt at the input rate
+    -- instead of carving out the cached subset (kept in sync with the live
+    -- overlay in audit.rs ListTokenUsageHourly).
     token_with_rate AS (
       SELECT
         b.tenant,
-        GREATEST(b.prompt_tokens - b.cached_tokens, 0::bigint) AS input_tokens,
+        CASE
+          WHEN b.cents_per_million_cached = 0
+            THEN b.prompt_tokens
+          ELSE GREATEST(b.prompt_tokens - b.cached_tokens, 0::bigint)
+        END AS input_tokens,
         b.cached_tokens,
         b.completion_tokens AS output_tokens,
         b.cents_per_million_input,
@@ -1193,7 +1200,14 @@ data:
         e.caller_tenant AS tenant,
         e.model_slug,
         date_trunc('hour', e.ts) AS hour,
-        GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint) AS input_tokens,
+        -- A cached rate of 0 means "no cache discount": bill the full prompt at
+        -- the input rate (kept in sync with the live overlay in audit.rs
+        -- ListTokenUsageHourly and the pass-1 debit rollup above).
+        CASE
+          WHEN r.cents_per_million_cached = 0
+            THEN e.prompt_tokens
+          ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+        END AS input_tokens,
         e.cached_tokens,
         e.completion_tokens AS output_tokens,
         r.cents_per_million_input,
@@ -1264,7 +1278,14 @@ data:
         e.caller_tenant AS tenant,
         e.model_slug,
         date_trunc('hour', e.ts) AS hour,
-        GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint) AS input_tokens,
+        -- A cached rate of 0 means "no cache discount": bill the full prompt at
+        -- the input rate (kept in sync with token-hourly-aggregate.sql and the
+        -- live overlay in audit.rs ListTokenUsageHourly).
+        CASE
+          WHEN r.cents_per_million_cached = 0
+            THEN e.prompt_tokens
+          ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+        END AS input_tokens,
         e.cached_tokens,
         e.completion_tokens AS output_tokens,
         r.cents_per_million_input,
@@ -1346,12 +1367,22 @@ data:
         e.caller_tenant AS tenant,
         e.model_slug,
         date_trunc('hour', e.ts) AS hour,
-        SUM(GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint))::bigint AS expected_input_tokens,
+        -- Mirror token-hourly-aggregate.sql: a cached rate of 0 bills the full
+        -- prompt as input, so the verifier must not carve out the cached subset.
+        SUM(CASE
+              WHEN r.cents_per_million_cached = 0
+                THEN e.prompt_tokens
+              ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+            END)::bigint AS expected_input_tokens,
         SUM(e.cached_tokens)::bigint AS expected_cached_tokens,
         SUM(e.completion_tokens)::bigint AS expected_output_tokens,
         COUNT(*)::bigint AS expected_request_count,
         COALESCE(SUM(
-          GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint) * r.cents_per_million_input
+          CASE
+            WHEN r.cents_per_million_cached = 0
+              THEN e.prompt_tokens
+            ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+          END * r.cents_per_million_input
         ), 0)::bigint AS expected_input_numer,
         COALESCE(SUM(
           e.completion_tokens * r.cents_per_million_output
