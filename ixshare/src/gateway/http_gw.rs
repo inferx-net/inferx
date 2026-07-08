@@ -313,10 +313,10 @@ impl HttpGateway {
 
     /// Persist the operator-authored OpenRouter listing metadata. This is the
     /// draft-save path for the admin "OpenRouter listing" section. It does NOT validate
-    /// listing completeness (`ListOnOpenRouter` is that chokepoint), but it IS the
-    /// single write gate for `openrouter_slug`: a *changed* slug is catalog-validated
-    /// before it is persisted, so the column never holds an invalid
-    /// value. Decoupled from publish — only the func must be deployed, not published.
+    /// listing completeness (`ListOnOpenRouter` is that chokepoint). A *changed* slug is
+    /// run through `validate_openrouter_slug`, but catalog membership is advisory: a slug
+    /// absent from the OpenRouter catalog is accepted (admin override) and surfaced as a
+    /// warning, not rejected. Decoupled from publish — only the func must be deployed.
     ///
     /// Returns the non-blocking slug warnings (HF-id mismatch / `:free` pin) so the
     /// caller can surface them and gate the auto-list on an explicit acknowledge.
@@ -335,8 +335,8 @@ impl HttpGateway {
 
         // Resolve the slug to persist under the one-column invariant:
         //   - unchanged      → keep the stored value, no catalog fetch / re-validation
-        //   - changed→value  → validate against the live catalog; store only if a real
-        //                      catalog `id` (warnings, not rejection, for :free/mismatch)
+        //   - changed→value  → run validation for warnings; stored regardless of catalog
+        //                      membership (admin override for slugs not in the catalog)
         //   - changed→empty  → cleared; go back to auto (re-suggested on next dialog open)
         let stored_slug = existing
             .as_ref()
@@ -521,14 +521,14 @@ impl HttpGateway {
         ResolveSlugFromMatches(hf_id, matches).ok().flatten()
     }
 
-    /// Admin-edit path (§ Validation Rules). The hard gate before a changed slug is
-    /// persisted: `slug` must exactly match some OpenRouter catalog entry's **`id`**
-    /// field — a nonexistent slug (including a string that exists only as a
-    /// `canonical_slug`) is rejected. A real `id` is **accepted** even when `:free` or
-    /// HF-mismatched, but those two cases return a **non-blocking warning** (surfaced,
-    /// not rejected). Fetch failure → `Err` (fail closed; do not store). The endpoint's
-    /// own `hugging_face_id` is required (proposal rule 2) so the mismatch warning has a
-    /// reference and the listed row carries provenance.
+    /// Admin-edit path (§ Validation Rules). Catalog membership is no longer a hard
+    /// gate: any non-empty `slug` is **accepted** so an admin can set a slug that is not
+    /// (yet) an OpenRouter catalog `id`. A slug that is not found, is `:free`, or is
+    /// HF-mismatched returns a **non-blocking warning** (surfaced, not rejected). A
+    /// catalog fetch failure is likewise non-fatal here — the slug is accepted with a
+    /// warning rather than failing closed. The endpoint's own `hugging_face_id` is still
+    /// required (proposal rule 2) so the listed row carries provenance and the mismatch
+    /// warning has a reference.
     pub async fn validate_openrouter_slug(
         &self,
         slug: &str,
@@ -548,8 +548,19 @@ impl HttpGateway {
             ));
         }
 
-        let data = self.fetch_openrouter_catalog().await?;
-        ValidateSlugInCatalog(slug, ep_hf, &data)
+        // Catalog membership is advisory now, so a fetch failure must not block an admin
+        // override. But we must NOT then claim the slug is "not a catalog id" — that is
+        // misleading during an outage, when the slug may well be valid. Emit an
+        // outage-specific warning instead and skip the membership check.
+        match self.fetch_openrouter_catalog().await {
+            Ok(data) => ValidateSlugInCatalog(slug, ep_hf, &data),
+            Err(e) => {
+                warn!("openrouter_slug validation: catalog fetch failed, accepting slug `{}` with warning: {:?}", slug, e);
+                Ok(SlugValidation {
+                    warnings: outage_slug_warnings(slug),
+                })
+            }
+        }
     }
 
     pub(crate) fn EnsurePlatformEndpointAdmin(&self, token: &Arc<AccessToken>) -> Result<()> {
@@ -2760,35 +2771,65 @@ fn ValidateSlugInCatalog(
     endpoint_hf_id: &str,
     data: &[Value],
 ) -> Result<SlugValidation> {
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Catalog membership is no longer a hard gate: an admin may set a slug that is not
+    // (yet) an OpenRouter catalog `id`. A missing entry is surfaced as a non-blocking
+    // warning instead of rejecting the save. The suggestion path
+    // (`suggest_openrouter_slug`) still joins the live catalog to prefill known ids.
     let entry = data
         .iter()
-        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(slug))
-        .ok_or_else(|| {
-            Error::CommonError(format!(
-                "openrouter_slug `{}` is not a valid OpenRouter catalog id (no such model page)",
-                slug
-            ))
-        })?;
+        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(slug));
 
-    let mut warnings: Vec<String> = Vec::new();
-    let entry_hf = entry
-        .get("hugging_face_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if !entry_hf.is_empty() && entry_hf != endpoint_hf_id {
-        warnings.push(format!(
-            "openrouter_slug `{}` maps to hugging_face_id `{}`, which differs from this endpoint's `{}` — likely the wrong model's page",
-            slug, entry_hf, endpoint_hf_id
-        ));
+    match entry {
+        Some(entry) => {
+            let entry_hf = entry
+                .get("hugging_face_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !entry_hf.is_empty() && entry_hf != endpoint_hf_id {
+                warnings.push(format!(
+                    "openrouter_slug `{}` maps to hugging_face_id `{}`, which differs from this endpoint's `{}` — likely the wrong model's page",
+                    slug, entry_hf, endpoint_hf_id
+                ));
+            }
+        }
+        None => {
+            warnings.push(format!(
+                "openrouter_slug `{}` is not an OpenRouter catalog id (no such model page) — accepted as an admin override; confirm it is intended",
+                slug
+            ));
+        }
     }
+
+    push_free_page_warning(slug, &mut warnings);
+
+    Ok(SlugValidation { warnings })
+}
+
+/// The `:free` string check is pure (no catalog needed), so it is shared between the
+/// catalog-available and catalog-outage paths.
+fn push_free_page_warning(slug: &str, warnings: &mut Vec<String>) {
     if slug.ends_with(":free") {
         warnings.push(format!(
             "openrouter_slug `{}` is a :free page; InferX is a billed provider, so this is unusual — confirm it is intended",
             slug
         ));
     }
+}
 
-    Ok(SlugValidation { warnings })
+/// Warnings for the catalog-outage path. Membership cannot be checked, so we emit an
+/// outage-specific message rather than the misleading "not a catalog id" one — a valid
+/// slug must not be flagged as bad just because OpenRouter was briefly unreachable.
+fn outage_slug_warnings(slug: &str) -> Vec<String> {
+    // Catalog unreachable: accept and save the slug, just surface a warning. No recovery
+    // flow is prescribed — membership is advisory, so an unverified slug is fine to keep.
+    let mut warnings = vec![format!(
+        "openrouter_slug `{}` could not be verified: the OpenRouter catalog is temporarily unreachable. Saved without a membership check.",
+        slug
+    )];
+    push_free_page_warning(slug, &mut warnings);
+    warnings
 }
 
 /// Pure tie-break over the OpenRouter `id`s that joined on a single `hugging_face_id`
@@ -3114,14 +3155,20 @@ mod openrouter_tests {
     }
 
     #[test]
-    fn validate_slug_rejects_nonexistent() {
-        assert!(ValidateSlugInCatalog("no/such-id", "Qwen/QwQ-32B", &catalog()).is_err());
+    fn validate_slug_accepts_nonexistent_with_warning() {
+        // Catalog membership is advisory: a slug absent from the catalog is accepted
+        // (admin override) and surfaced as a warning, not rejected.
+        let v = ValidateSlugInCatalog("no/such-id", "Qwen/QwQ-32B", &catalog()).unwrap();
+        assert!(v.warnings.iter().any(|w| w.contains("not an OpenRouter catalog id")));
     }
 
     #[test]
-    fn validate_slug_rejects_canonical_slug_only() {
-        // A string that exists only as a `canonical_slug`, not as an `id`, is rejected.
-        assert!(ValidateSlugInCatalog("vendor/canonical-only", "vendor/model", &catalog()).is_err());
+    fn validate_slug_accepts_canonical_slug_only_with_warning() {
+        // A string that exists only as a `canonical_slug`, not as an `id`, is treated as
+        // not-in-catalog: accepted with a warning rather than rejected.
+        let v =
+            ValidateSlugInCatalog("vendor/canonical-only", "vendor/model", &catalog()).unwrap();
+        assert!(v.warnings.iter().any(|w| w.contains("not an OpenRouter catalog id")));
     }
 
     #[test]
@@ -3135,6 +3182,24 @@ mod openrouter_tests {
     fn validate_slug_warns_on_free_page() {
         let v = ValidateSlugInCatalog("qwen/qwq-32b:free", "Qwen/QwQ-32B", &catalog()).unwrap();
         assert!(v.warnings.iter().any(|w| w.contains(":free")));
+    }
+
+    #[test]
+    fn outage_warning_does_not_claim_bad_slug() {
+        // On a catalog fetch failure the slug may well be valid, so the outage message
+        // must NOT reuse the "not an OpenRouter catalog id" wording.
+        let warnings = outage_slug_warnings("qwen/qwq-32b");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("temporarily unreachable"));
+        assert!(!warnings[0].contains("not an OpenRouter catalog id"));
+    }
+
+    #[test]
+    fn outage_warning_still_flags_free_page() {
+        // The `:free` check is pure string logic, so it survives a catalog outage.
+        let warnings = outage_slug_warnings("qwen/qwq-32b:free");
+        assert!(warnings.iter().any(|w| w.contains("temporarily unreachable")));
+        assert!(warnings.iter().any(|w| w.contains(":free")));
     }
 
     #[test]

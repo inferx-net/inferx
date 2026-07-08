@@ -101,11 +101,18 @@ data:
     ),
 
     -- Billable input is prompt minus the cached subset; clamp at zero so a
-    -- malformed upstream payload cannot produce a negative charge.
+    -- malformed upstream payload cannot produce a negative charge. A cached rate
+    -- of 0 means "no cache discount": bill the full prompt at the input rate
+    -- instead of carving out the cached subset (kept in sync with the live
+    -- overlay in audit.rs ListTokenUsageHourly).
     token_with_rate AS (
       SELECT
         b.tenant,
-        GREATEST(b.prompt_tokens - b.cached_tokens, 0::bigint) AS input_tokens,
+        CASE
+          WHEN b.cents_per_million_cached = 0
+            THEN b.prompt_tokens
+          ELSE GREATEST(b.prompt_tokens - b.cached_tokens, 0::bigint)
+        END AS input_tokens,
         b.cached_tokens,
         b.completion_tokens AS output_tokens,
         b.cents_per_million_input,
@@ -1193,7 +1200,14 @@ data:
         e.caller_tenant AS tenant,
         e.model_slug,
         date_trunc('hour', e.ts) AS hour,
-        GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint) AS input_tokens,
+        -- A cached rate of 0 means "no cache discount": bill the full prompt at
+        -- the input rate (kept in sync with the live overlay in audit.rs
+        -- ListTokenUsageHourly and the pass-1 debit rollup above).
+        CASE
+          WHEN r.cents_per_million_cached = 0
+            THEN e.prompt_tokens
+          ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+        END AS input_tokens,
         e.cached_tokens,
         e.completion_tokens AS output_tokens,
         r.cents_per_million_input,
