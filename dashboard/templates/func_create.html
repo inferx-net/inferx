@@ -573,7 +573,7 @@
                             <span class="field-help" tabindex="0" aria-label="Max replica help" data-tooltip="Upper bound on ready replicas for this model." title="Upper bound on ready replicas for this model.">i</span>
                         </label>
                         <div>
-                            <input id="max-replica-input" type="number" min="1" step="1" placeholder="1">
+                            <input id="max-replica-input" type="number" min="0" step="1" placeholder="1">
                         </div>
                     </div>
                     <div class="field-row">
@@ -1208,7 +1208,7 @@
 
             const obj = {
                 min_replica: parseIntegerPolicyInput(minReplicaInput, 'Min Replica', 0, DEFAULT_POLICY_MIN_REPLICA),
-                max_replica: parseIntegerPolicyInput(maxReplicaInput, 'Max Replica', 1, DEFAULT_POLICY_MAX_REPLICA),
+                max_replica: parseIntegerPolicyInput(maxReplicaInput, 'Max Replica', 0, DEFAULT_POLICY_MAX_REPLICA),
                 standby_per_node: parseIntegerPolicyInput(standbyPerNodeInput, 'Standby Per Node', 0, DEFAULT_POLICY_STANDBY_PER_NODE),
                 parallel: parseIntegerPolicyInput(parallelInput, 'Parallel', 1, DEFAULT_POLICY_PARALLEL),
                 queue_len: parseIntegerPolicyInput(queueLenInput, 'Queue Length', 1, DEFAULT_POLICY_QUEUE_LEN),

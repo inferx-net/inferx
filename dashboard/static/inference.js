@@ -1114,8 +1114,8 @@
             const startDiv = getElement('startDiv');
             const ttftDiv = getElement('ttftDiv');
             const tpsDiv = getElement('tpsDiv');
-            const restore = response.headers.get('tcpconn_latency_header');
-            const ttft = response.headers.get('ttft_latency_header');
+            const restore = response.headers.get('X-TcpConn-Latency');
+            const ttft = response.headers.get('X-Ttft-Latency');
 
             if (startDiv) {
                 startDiv.innerHTML = 'Start Latency: ' + formatLatencyValue(restore) + ' ms <br>';

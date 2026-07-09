@@ -2640,9 +2640,16 @@ def validate_image_value(
     return normalized
 
 
-def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`"):
+def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`", allow_nvidia_replica=False):
     if not isinstance(policy_obj, dict):
         raise ValueError(f"{label} must be an object")
+
+    # `nvidia_replica` is a backend-managed field. Only inferx admins may set it
+    # via the dashboard; for everyone else drop it silently so it is neither
+    # rejected as an unknown key nor accepted from user input (stored policies
+    # may already carry it).
+    if not allow_nvidia_replica:
+        policy_obj = {k: v for k, v in policy_obj.items() if k != "nvidia_replica"}
 
     allowed_policy_obj_keys = {
         "min_replica",
@@ -2655,6 +2662,8 @@ def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj
         "scalein_timeout",
         "runtime_config",
     }
+    if allow_nvidia_replica:
+        allowed_policy_obj_keys.add("nvidia_replica")
     unknown_policy_keys = set(policy_obj.keys()) - allowed_policy_obj_keys
     if unknown_policy_keys:
         raise ValueError(f"Unknown key in {label}: {sorted(unknown_policy_keys)[0]}")
@@ -2662,11 +2671,13 @@ def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj
     normalized_obj = {}
     integer_fields = {
         "min_replica": 0,
-        "max_replica": 1,
+        "max_replica": 0,
         "standby_per_node": 0,
         "parallel": 1,
         "queue_len": 1,
     }
+    if allow_nvidia_replica:
+        integer_fields = {"nvidia_replica": 0, **integer_fields}
     for field_name, minimum in integer_fields.items():
         if field_name not in policy_obj:
             continue
@@ -2722,12 +2733,16 @@ def normalize_partial_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj
     return normalized_obj
 
 
-def build_full_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`"):
+def build_full_embedded_policy_obj(policy_obj, *, label="`spec.policy.Obj`", allow_nvidia_replica=False):
     merged_policy_obj = clone_json_value(EMBEDDED_POLICY_DEFAULTS)
-    normalized_partial = normalize_partial_embedded_policy_obj(policy_obj or {}, label=label)
+    normalized_partial = normalize_partial_embedded_policy_obj(
+        policy_obj or {}, label=label, allow_nvidia_replica=allow_nvidia_replica
+    )
     for key, value in normalized_partial.items():
         merged_policy_obj[key] = clone_json_value(value)
-    return normalize_partial_embedded_policy_obj(merged_policy_obj, label=label)
+    return normalize_partial_embedded_policy_obj(
+        merged_policy_obj, label=label, allow_nvidia_replica=allow_nvidia_replica
+    )
 
 
 def validate_partial_spec(
@@ -2738,6 +2753,7 @@ def validate_partial_spec(
     *,
     require_image_whitelist=True,
     locked_image_name=None,
+    allow_nvidia_replica=False,
 ):
     if not isinstance(spec, dict):
         raise ValueError("`spec` must be an object")
@@ -2829,7 +2845,9 @@ def validate_partial_spec(
                 raise ValueError(f"Forbidden field in `spec.policy`: {forbidden[0]}")
             raise ValueError("`spec.policy.Obj` is required")
         obj = policy.get("Obj")
-        policy_obj = normalize_partial_embedded_policy_obj(obj, label="`spec.policy.Obj`")
+        policy_obj = normalize_partial_embedded_policy_obj(
+            obj, label="`spec.policy.Obj`", allow_nvidia_replica=allow_nvidia_replica
+        )
         normalized_policy = {"Obj": policy_obj} if policy_obj else None
 
     normalized_commands = [str(item) for item in commands] if editor_mode == "advanced" else strip_reserved_command_args(commands)
@@ -2949,7 +2967,7 @@ def build_resolved_sample_query(hf_model: str, sample_query):
     return resolved_sample_query
 
 
-def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
+def build_full_spec(hf_model: str, partial_spec, editor_mode="basic", *, allow_nvidia_replica=False):
     gpu_count = partial_spec["resources"]["GPU"]["Count"]
     gpu_vram = partial_spec["resources"]["GPU"]["vRam"]
     resource_row = GPU_RESOURCE_LOOKUP[gpu_count]
@@ -2995,6 +3013,7 @@ def build_full_spec(hf_model: str, partial_spec, editor_mode="basic"):
         full_policy_obj = build_full_embedded_policy_obj(
             policy["Obj"],
             label="`spec.policy.Obj`",
+            allow_nvidia_replica=allow_nvidia_replica,
         )
         spec["policy"] = {"Obj": full_policy_obj}
 
@@ -6355,9 +6374,13 @@ def validate_catalog_policy(policy):
         if not isinstance(obj, dict):
             raise ValueError("catalog `default_func_spec.policy.Obj` must be an object")
         normalized_obj = {}
+        # `nvidia_replica` is a backend-managed field that only inferx admins may
+        # set. Catalogs are admin-authored, so accept and validate it here (as an
+        # optional integer >= 0) rather than rejecting it as an unknown key.
         integer_fields = {
+            "nvidia_replica": 0,
             "min_replica": 0,
-            "max_replica": 1,
+            "max_replica": 0,
             "standby_per_node": 0,
             "parallel": 1,
             "queue_len": 1,
@@ -6601,6 +6624,7 @@ def build_updated_full_spec_from_saved_spec(
     protected_env_keys=None,
     require_image_whitelist=True,
     locked_image_name=None,
+    allow_nvidia_replica=False,
 ):
     partial_spec = validate_partial_spec(
         spec,
@@ -6609,8 +6633,11 @@ def build_updated_full_spec_from_saved_spec(
         editor_mode=editor_mode,
         require_image_whitelist=require_image_whitelist,
         locked_image_name=locked_image_name,
+        allow_nvidia_replica=allow_nvidia_replica,
     )
-    submitted_full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
+    submitted_full_spec = build_full_spec(
+        hf_model, partial_spec, editor_mode=editor_mode, allow_nvidia_replica=allow_nvidia_replica
+    )
     saved_spec_obj = clone_json_value(saved_spec) if isinstance(saved_spec, dict) else {}
     merged_spec = clone_json_value(saved_spec_obj)
     resolved_protected_env_keys = set(protected_env_keys or RESERVED_ENV_KEYS)
@@ -6666,9 +6693,13 @@ def build_updated_full_spec_from_saved_spec(
             resolved_policy_obj = clone_json_value(saved_policy["Obj"])
             resolved_policy_obj.update(clone_json_value(submitted_policy["Obj"]))
             merged_spec["policy"] = {
+                # The saved policy may hold an admin-set `nvidia_replica`; always
+                # preserve it through the merge so a non-admin edit does not reset
+                # it (the submitted overlay was already stripped for non-admins).
                 "Obj": build_full_embedded_policy_obj(
                     resolved_policy_obj,
                     label="merged `spec.policy.Obj`",
+                    allow_nvidia_replica=True,
                 )
             }
         elif isinstance(submitted_full_policy, dict):
@@ -6676,6 +6707,7 @@ def build_updated_full_spec_from_saved_spec(
                 "Obj": build_full_embedded_policy_obj(
                     submitted_full_policy.get("Obj", {}),
                     label="merged `spec.policy.Obj`",
+                    allow_nvidia_replica=allow_nvidia_replica,
                 )
             }
     elif editor_mode == "basic" and isinstance(saved_policy, dict) and isinstance(saved_policy.get("Obj"), dict):
@@ -6697,6 +6729,7 @@ def build_catalog_customized_full_spec(
     max_node_gpu_count=0,
     editor_mode="basic",
     catalog_source=None,
+    allow_nvidia_replica=False,
 ):
     base_spec_obj = clone_json_value(base_spec) if isinstance(base_spec, dict) else {}
     locked_image_name, locked_image_tag = split_image_name_and_tag(base_spec_obj.get("image"))
@@ -6712,6 +6745,7 @@ def build_catalog_customized_full_spec(
         editor_mode=editor_mode,
         require_image_whitelist=False,
         locked_image_name=locked_image_name,
+        allow_nvidia_replica=allow_nvidia_replica,
     )
     merged_spec = clone_json_value(base_spec_obj)
     merged_spec["image"] = partial_spec["image"]
@@ -6773,9 +6807,13 @@ def build_catalog_customized_full_spec(
             resolved_policy_obj = clone_json_value(base_policy["Obj"])
             resolved_policy_obj.update(clone_json_value(submitted_policy["Obj"]))
             merged_spec["policy"] = {
+                # The catalog base policy is admin-authored and may carry
+                # `nvidia_replica`; always preserve it through the merge (the
+                # submitted overlay was already stripped for non-admins).
                 "Obj": build_full_embedded_policy_obj(
                     resolved_policy_obj,
                     label="merged catalog `spec.policy.Obj`",
+                    allow_nvidia_replica=True,
                 )
             }
         else:
@@ -6783,6 +6821,7 @@ def build_catalog_customized_full_spec(
                 "Obj": build_full_embedded_policy_obj(
                     submitted_policy["Obj"],
                     label="merged catalog `spec.policy.Obj`",
+                    allow_nvidia_replica=allow_nvidia_replica,
                 )
             }
     elif editor_mode == "basic" and isinstance(base_policy, dict) and isinstance(base_policy.get("Obj"), dict):
@@ -6852,9 +6891,13 @@ def project_spec_for_editor(
     policy_obj = ((((spec.get("policy") or {}).get("Obj")) or {}))
     projected_policy_obj = {}
     if isinstance(policy_obj, dict) and policy_obj:
+        # Loading is read-only projection of stored state: always carry
+        # `nvidia_replica` through so an admin-set value survives an edit
+        # round-trip and non-admin edit loads don't reject it as unknown.
         projected_policy_obj = build_full_embedded_policy_obj(
             policy_obj,
             label="function `policy.Obj`",
+            allow_nvidia_replica=True,
         )
 
     resolved_hf_model = hf_model.strip() if isinstance(hf_model, str) else ""
@@ -6965,6 +7008,7 @@ def assess_basic_mode_compatibility_for_edit(
                 max_node_gpu_count=0,
                 editor_mode="basic",
                 catalog_source=catalog_source,
+                allow_nvidia_replica=True,
             )
         else:
             hf_model = str(projected_obj.get("hf_model", "")).strip()
@@ -6986,6 +7030,7 @@ def assess_basic_mode_compatibility_for_edit(
                 protected_env_keys=RESERVED_ENV_KEYS,
                 require_image_whitelist=True,
                 locked_image_name=None,
+                allow_nvidia_replica=True,
             )
     except Exception as e:
         return {
@@ -10075,17 +10120,9 @@ def proxy_delete_function(tenant, namespace, name):
     if access_token != "" and not has_client_auth:
         headers["Authorization"] = f'Bearer {access_token}'
 
-    function_row = find_function_row(tenant, namespace, name)
-    if function_row is not None:
-        try:
-            roles = listroles()
-        except Exception:
-            roles = []
-        if not has_admin_role_for_model(roles, tenant, namespace) and not can_view_public_tenant(roles):
-            return Response("No permission", status=403)
-        result = delete_function_via_dashboard(tenant, namespace, name)
-        return Response(result["message"], status=result["status"], mimetype='text/plain')
-
+    # `functions` is a deprecated feature: deletion no longer consults the
+    # `functions` table to decide on dashboard-side cleanup. Models are deleted
+    # directly against the backend object store.
     url = f"{apihostaddr}/object/function/{tenant}/{namespace}/{name}/"
     try:
         resp = requests.delete(url, headers=headers, timeout=60)
@@ -10577,6 +10614,10 @@ def func_save():
     if editor_mode not in ("basic", "advanced"):
         return json_error("`editor_mode` must be \"basic\" or \"advanced\"", 400)
 
+    # Only inferx admins may set the backend-managed `nvidia_replica` policy
+    # field; for everyone else it is stripped from submitted specs.
+    allow_nvidia_replica = is_inferx_admin_user()
+
     tenant = req.get("tenant")
     namespace = req.get("namespace")
     name = req.get("name")
@@ -10652,6 +10693,7 @@ def func_save():
                     max_node_gpu_count=max_node_gpu_count,
                     editor_mode=editor_mode,
                     catalog_source=existing_catalog_source,
+                    allow_nvidia_replica=allow_nvidia_replica,
                 )
             else:
                 if hf_model == "":
@@ -10672,6 +10714,7 @@ def func_save():
                     protected_env_keys=RESERVED_ENV_KEYS,
                     require_image_whitelist=True,
                     locked_image_name=None,
+                    allow_nvidia_replica=allow_nvidia_replica,
                 )
         elif catalog_id is not None:
             catalog_entry = fetch_catalog_entry_for_current_user(catalog_id)
@@ -10693,6 +10736,7 @@ def func_save():
                 max_node_gpu_count=max_node_gpu_count,
                 editor_mode=editor_mode,
                 catalog_source=catalog_source,
+                allow_nvidia_replica=allow_nvidia_replica,
             )
         else:
             partial_spec = validate_partial_spec(
@@ -10700,6 +10744,7 @@ def func_save():
                 max_node_vram,
                 max_node_gpu_count=max_node_gpu_count,
                 editor_mode=editor_mode,
+                allow_nvidia_replica=allow_nvidia_replica,
             )
             if hf_model == "":
                 hf_model = resolve_effective_model_target_from_spec(
@@ -10709,7 +10754,9 @@ def func_save():
                 ).strip()
             if editor_mode == "basic" and hf_model == "":
                 raise ValueError("`hf_model` is required in basic mode when the submitted spec does not encode a model target")
-            full_spec = build_full_spec(hf_model, partial_spec, editor_mode=editor_mode)
+            full_spec = build_full_spec(
+                hf_model, partial_spec, editor_mode=editor_mode, allow_nvidia_replica=allow_nvidia_replica
+            )
         app.logger.info(
             "func_save built spec model fields editor_mode=%r command_model=%r sample_model=%r catalog_source=%r",
             editor_mode,
@@ -11519,21 +11566,9 @@ def ListFunc():
         include_public=can_access_public_tenant_in_dashboard(roles),
     )
 
-    try:
-        function_keys = {
-            (str(r.get('tenant', '')), str(r.get('namespace', '')), str(r.get('name', '')))
-            for r in list_function_rows()
-        }
-    except Exception:
-        function_keys = set()
-    funcs = [
-        f for f in funcs
-        if (
-            str((f.get('func') or {}).get('tenant', '')),
-            str((f.get('func') or {}).get('namespace', '')),
-            str((f.get('func') or {}).get('name', '')),
-        ) not in function_keys
-    ]
+    # NOTE: `functions` is a deprecated feature. The Models page no longer filters
+    # against the `functions` table (it previously hid live functions that had a
+    # dashboard-side row), so this view never touches that table.
 
     count = 0
     gpucount = 0
