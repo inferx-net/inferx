@@ -102,7 +102,9 @@ FOR EACH ROW EXECUTE FUNCTION set_updatetime();
 
 CREATE TABLE Endpoints (
     slug                    VARCHAR PRIMARY KEY,
-    func_revision           BIGINT NOT NULL,
+    -- Nullable: external endpoints have no backing func, so they write NULL here
+    -- (dead provenance column; written/displayed, never read into logic).
+    func_revision           BIGINT,
     brief_intro             TEXT,
     detailed_intro          TEXT,
     cs_ttft                 TEXT,
@@ -145,6 +147,24 @@ CREATE INDEX idx_endpoints_tags ON Endpoints USING GIN (tags);
 CREATE INDEX idx_endpoints_or_listed ON Endpoints (or_listed) WHERE or_listed;
 
 CREATE TRIGGER endpoints_updatetime BEFORE UPDATE ON Endpoints
+FOR EACH ROW EXECUTE FUNCTION set_updatetime();
+
+-- External OpenAI-compatible endpoints proxied by the gateway. Small bounded
+-- operator-configured set, mirrored in full into gateway memory (write-through).
+CREATE TABLE ExternalEndpoint (
+    slug                VARCHAR PRIMARY KEY,             -- = model name on /endpoints/v1
+    base_url            VARCHAR NOT NULL,                -- e.g. https://api.provider.com/v1
+    upstream_model      VARCHAR NOT NULL,                -- model name sent to the provider
+    provider_api_key    VARCHAR NOT NULL,                -- outbound key gateway sends to provider (plaintext; matches Apikey posture)
+    published           BOOLEAN NOT NULL DEFAULT false,  -- direct-path gate (replaces funcstatus.published)
+    createtime          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updatetime          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_published_by   VARCHAR,
+    CHECK (btrim(slug) <> ''),
+    CHECK (btrim(base_url) <> '')
+);
+
+CREATE TRIGGER external_endpoint_updatetime BEFORE UPDATE ON ExternalEndpoint
 FOR EACH ROW EXECUTE FUNCTION set_updatetime();
 
 CREATE TABLE functions (

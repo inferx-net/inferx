@@ -289,10 +289,12 @@
                         <input type="radio" name="endpointPlaygroundMode" value="token" checked>
                         <span>Token-Based</span>
                     </label>
+                    {% if endpoint_entry.get('kind') != 'external' %}
                     <label>
                         <input type="radio" name="endpointPlaygroundMode" value="dedicated">
                         <span>Dedicated GPU</span>
                     </label>
+                    {% endif %}
                 </div>
                 <p class="playground-mode-note" id="endpoint-playground-mode-note">
                     Token-Based runs against the shared endpoint and bills per token.
@@ -457,6 +459,20 @@
         </p>
     </section>
 
+    {% if endpoint_entry.get('kind') == 'external' %}
+    <section class="model-user-section">
+        <h3>External Provider</h3>
+        <div class="endpoint-meta-grid">
+            <strong>Kind</strong><div>External (proxied to an OpenAI-compatible provider)</div>
+            <strong>Model (slug)</strong><div>{{ endpoint_entry.get('model_name', endpoint_entry.get('slug', '')) or '—' }}</div>
+            <strong>Upstream Model</strong><div>{{ endpoint_entry.get('upstream_model', '') or '—' }}</div>
+        </div>
+        <p class="status-note" style="margin: 12px 0 0 0;">
+            Requests are proxied to an external provider. The base URL and provider API key are
+            configured on the <strong>External Endpoints</strong> admin page and are never shown here.
+        </p>
+    </section>
+    {% else %}
     <section class="model-user-section">
         <h3>Platform Function</h3>
         <div class="endpoint-meta-grid">
@@ -467,6 +483,7 @@
             <strong>State</strong><div>{{ endpoint_entry.get('platform_detail', {}).get('func', {}).get('object', {}).get('status', {}).get('state', '') or '—' }}</div>
         </div>
     </section>
+    {% endif %}
     {% endif %}
 
     {% if endpoint_funcspec %}

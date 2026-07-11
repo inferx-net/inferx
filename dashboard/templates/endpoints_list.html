@@ -350,6 +350,9 @@
                 >
                     <td style="text-align: left;">
                         <a class="endpoint-slug-link" href="{{ detail_href }}">{{ slug }}</a>
+                        {% if entry.get('kind') == 'external' %}
+                        <span class="endpoint-state" style="margin-left:6px;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;" title="Proxied to an external OpenAI-compatible provider">External</span>
+                        {% endif %}
                     </td>
                     <td style="text-align: left;">{{ entry.get('brief_intro', '') or 'No summary yet.' }}</td>
                     <td style="text-align: left;">{% if entry.get('gpu_count') is not none %}{{ entry.get('gpu_count') }}{% else %}—{% endif %}</td>

@@ -813,6 +813,7 @@
     <button class="tablinks" id="endpoint-usage-tab-btn" onclick="openTab(event, 'EndpointUsage')">Endpoint Usage</button>
     {% if dashboard_is_inferx_admin %}
     <button class="tablinks" onclick="openTab(event, 'SkillTemplates')">Skill Templates</button>
+    <button class="tablinks" onclick="window.location.href='{{ url_for('prefix.admin_external_endpoints_page') }}'">External Endpoints</button>
     {% endif %}
 </div>
 

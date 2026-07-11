@@ -4842,6 +4842,33 @@ def query_endpoint_row_by_slug(slug: str):
     return normalize_endpoint_row(dict(row))
 
 
+def query_external_endpoints_via_sql():
+    """Read external endpoints (display fields only — NEVER `provider_api_key`) directly
+    from the secret DB for the shared endpoint list/kind detection.
+
+    Reads are safe: the serving-correctness rule constrains *writes* (they must go
+    through the gateway write-through so the in-memory mirror stays exact). Because every
+    write updates Postgres and the mirror together, `published` read here is consistent
+    with what the gateway serves. Returns a slug->row dict; empty on any failure so the
+    shared list never breaks."""
+    ensure_endpoint_db_available()
+    query = "SELECT slug, base_url, upstream_model, published FROM ExternalEndpoint"
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+    except Exception:
+        return {}
+    result = {}
+    for row in rows:
+        row = dict(row)
+        slug = str(row.get("slug", "") or "").strip()
+        if slug != "":
+            result[slug] = row
+    return result
+
+
 def gateway_request_headers(*, json_body=False):
     access_token = session.get('access_token', '')
     headers = {}
@@ -4908,6 +4935,32 @@ def proxy_gateway_endpoint_admin_action(method: str, slug: str, *, metadata=None
         return int(body)
     except Exception:
         return body
+
+
+def get_external_endpoint(slug: str):
+    """Return the `ExternalEndpoint` view dict from the gateway admin mirror, or None
+    ONLY when the slug is definitively not an external endpoint (gateway 404). Used to
+    make the shared endpoint pages kind-aware; `provider_api_key` is never returned.
+
+    Fail-closed: a transient failure (connection error, 5xx, auth error, malformed body)
+    **raises** instead of returning None, so callers surface a real error rather than
+    misclassifying an external slug as self-hosted and routing it into func-backed logic.
+    Only a clean 404 is treated as 'not external'."""
+    normalized_slug = str(slug or "").strip()
+    if normalized_slug == "":
+        return None
+    url = f"{apihostaddr}/admin/external-endpoints/{normalized_slug}"
+    resp = requests.get(url, headers=gateway_request_headers(), timeout=30)
+    if resp.status_code == 404:
+        return None  # definitively not an external endpoint
+    if not resp.ok:
+        raise RuntimeError(
+            f"external endpoint lookup for `{normalized_slug}` failed: HTTP {resp.status_code}"
+        )
+    payload = response_json_or_none(resp)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"invalid external endpoint response for `{normalized_slug}`")
+    return payload
 
 
 def list_admin_skill_templates():
@@ -5604,6 +5657,56 @@ def build_endpoint_client_setup_preview(tenant: str, slug: str, model_name: str,
     }
 
 
+def build_external_client_setup(slug: str, *, apikey: str = "", apikey_name: str = ""):
+    """Client setup for an external endpoint. External endpoints have NO dedicated
+    `/funccall/{tenant}/endpoints/{slug}/v1` URL — that raw path 404s by construction
+    (single-kind invariant). The only valid surface is the shared, metered
+    `/endpoints/v1` with `model = slug`. Returns a superset of the preview and detail
+    client-setup shapes so it can back both the list preview and the detail page."""
+    base_url = normalize_public_api_base_url()
+    api_base_url = f"{base_url}/endpoints/v1"
+    normalized_apikey = str(apikey or "").strip()
+    if normalized_apikey != "":
+        api_key_value = normalized_apikey
+        api_key_display = mask_apikey_for_ui(normalized_apikey)
+        api_key_copyable = True
+    else:
+        api_key_value = build_inference_apikey_placeholder()
+        api_key_display = api_key_value
+        api_key_copyable = False
+    return {
+        "api_base_url": api_base_url,
+        "api_base_url_display": api_base_url,
+        "auth_required": True,
+        "model_name": str(slug or "").strip(),
+        "api_key": api_key_value,
+        "api_key_display": api_key_display,
+        "api_key_copyable": api_key_copyable,
+        "api_key_name": str(apikey_name or "").strip(),
+        "path": "v1/chat/completions",
+    }
+
+
+def build_external_sample_rest_call(slug: str, apikey: str = ""):
+    """A REST sample for an external endpoint against the shared `/endpoints/v1` surface
+    (NOT the dedicated `/funccall/...` path, which 404s for external). Mirrors the
+    gateway's `sampleRestCall` DTO but with the real public base URL and a real/masked
+    key, matching how self-hosted samples are rendered."""
+    base_url = normalize_public_api_base_url()
+    key = str(apikey or "").strip() or build_inference_apikey_placeholder()
+    body = {
+        "model": str(slug or "").strip(),
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    }
+    return (
+        f"curl {base_url}/endpoints/v1/chat/completions \\\n"
+        f'  -H "Authorization: Bearer {key}" \\\n'
+        f'  -H "Content-Type: application/json" \\\n'
+        f"  -d '{json.dumps(body)}'"
+    )
+
+
 def build_endpoint_runtime_context(spec, sample_query, *, fallback_slug: str = ""):
     spec_obj = spec if isinstance(spec, dict) else {}
     sample_query_obj = sample_query if isinstance(sample_query, dict) else {}
@@ -5620,6 +5723,25 @@ def build_endpoint_runtime_context(spec, sample_query, *, fallback_slug: str = "
         "map": clone_json_value(body),
         "model_name": resolve_endpoint_model_name(sample_query_obj, spec_obj, fallback_slug=fallback_slug),
         "enabled": isinstance(sample_query_obj, dict) and bool(sample_query_obj) and isinstance(body, dict) and bool(body),
+    }
+
+
+def build_external_runtime_context(slug: str):
+    """Interactive-playground context for an external endpoint. External endpoints are
+    OpenAI chat/completions served on the shared /endpoints/v1 surface, so there is no
+    func `sample_query` to drive the playground — synthesize a default chat request. Only
+    token (shared) mode applies; the dedicated `/funccall/...` path 404s for external, so
+    the template hides that mode."""
+    prompt = "Write a simple python algorithm"
+    return {
+        "spec": {},
+        "sample_query": {},
+        "api_type": "text2text",
+        "path": "v1/chat/completions",
+        "prompt": prompt,
+        "map": {"messages": [{"role": "user", "content": prompt}], "stream": True},
+        "model_name": str(slug or "").strip(),
+        "enabled": True,
     }
 
 
@@ -5935,10 +6057,43 @@ def load_live_endpoint_detail(
     *,
     allow_missing_live_spec: bool = False,
     allow_missing_status: bool = False,
+    allow_external: bool = False,
 ):
     normalized_slug = str(slug or "").strip()
     if normalized_slug == "":
         raise ValueError("endpoint slug is required")
+
+    # Kind-aware branch: an external endpoint has no func / funcstatus, so source
+    # `published` from its own record and leave the func-shaped fields empty. Only the
+    # (admin) callers that opt in with allow_external take this path; everyone else
+    # keeps the self-hosted func lookup unchanged.
+    if allow_external:
+        external = get_external_endpoint(normalized_slug)
+        if external is not None:
+            metadata_entry = None
+            try:
+                metadata_entry = query_endpoint_row_by_slug(normalized_slug)
+            except LookupError:
+                metadata_entry = None
+            entry = enrich_endpoint_catalog_fallback(
+                metadata_entry if metadata_entry is not None else {"slug": normalized_slug}
+            )
+            published = bool(external.get("published"))
+            entry["published"] = published
+            entry["kind"] = "external"
+            entry["platform_detail"] = None
+            entry["upstream_model"] = external.get("upstream_model", "")
+            entry["model_name"] = resolve_endpoint_model_name(
+                entry.get("sample_query"), None, fallback_slug=normalized_slug
+            )
+            endpoint_state = external_endpoint_state(published, metadata_entry)
+            return {
+                "entry": entry,
+                "metadata_entry": metadata_entry,
+                "platform_detail": None,
+                "published": published,
+                "endpoint_state": endpoint_state,
+            }
 
     metadata_entry = None
     try:
@@ -6040,8 +6195,29 @@ def load_tenant_endpoint_detail(slug: str, tenant: str):
     if not isinstance(platform_detail_payload, dict):
         raise RuntimeError(f"invalid published endpoint response for `{normalized_slug}`")
 
+    # Kind-aware: the gateway returns an external detail DTO (kind="external", no func)
+    # for external endpoints. Consume its external-specific fields instead of reading a
+    # (nonexistent) func spec. base_url / provider_api_key are never in the DTO.
+    if str(platform_detail_payload.get("kind", "")).strip() == "external":
+        entry["kind"] = "external"
+        entry["published"] = True
+        entry["platform_detail"] = None
+        entry["upstream_model"] = platform_detail_payload.get("upstreamModel", "")
+        entry["gpu_count"] = None
+        entry["model_name"] = resolve_endpoint_model_name(
+            entry.get("sample_query"), None, fallback_slug=normalized_slug
+        )
+        return {
+            "entry": entry,
+            "metadata_entry": metadata_entry,
+            "platform_detail": None,
+            "published": True,
+            "endpoint_state": {"code": "published", "label": "Published"},
+        }
+
     platform_detail = platform_detail_payload
     entry["platform_detail"] = platform_detail
+    entry["kind"] = "self_hosted"
     entry["published"] = True
 
     platform_spec = (((platform_detail or {}).get("func") or {}).get("object") or {}).get("spec")
@@ -6076,9 +6252,34 @@ def build_endpoint_list_entries(*, include_unpublished: bool, tenant: str = ""):
         if name != "":
             platform_status[name] = status
 
-    slugs = sorted(set(metadata_rows.keys()) | set(platform_status.keys()))
+    external_rows = query_external_endpoints_via_sql()
+
+    slugs = sorted(set(metadata_rows.keys()) | set(platform_status.keys()) | set(external_rows.keys()))
     entries = []
     for slug in slugs:
+        # External endpoints have no funcstatus/func: source `published` from their own
+        # row and skip every func lookup below. Single-kind invariant → a slug is never
+        # both, so this branch is exclusive.
+        if slug in external_rows:
+            published = bool(external_rows[slug].get("published"))
+            if not include_unpublished and not published:
+                continue
+            entry = metadata_rows.get(slug)
+            if entry is None:
+                entry = {"slug": slug}
+            entry = enrich_endpoint_catalog_fallback(entry)
+            entry["published"] = published
+            entry["kind"] = "external"
+            entry["platform_detail"] = None
+            entry["upstream_model"] = external_rows[slug].get("upstream_model", "")
+            entry["gpu_count"] = None
+            entry["state"] = external_endpoint_state(published, metadata_rows.get(slug))
+            entry["model_name"] = resolve_endpoint_model_name(
+                entry.get("sample_query"), None, fallback_slug=slug
+            )
+            entries.append(entry)
+            continue
+
         published = bool((((platform_status.get(slug) or {}).get("object") or {}).get("published")))
         if not include_unpublished and not published:
             continue
@@ -6087,6 +6288,7 @@ def build_endpoint_list_entries(*, include_unpublished: bool, tenant: str = ""):
             entry = {"slug": slug}
         entry = enrich_endpoint_catalog_fallback(entry)
         entry["published"] = published
+        entry["kind"] = "self_hosted"
         platform_detail = None
         normalized_tenant = str(tenant or "").strip()
         if normalized_tenant != "":
@@ -6153,9 +6355,40 @@ def build_admin_endpoint_list_entries():
             metadata_entry=metadata_entry,
             platform_detail=platform_detail,
         )
+        entry["kind"] = "self_hosted"
+        entries.append(entry)
+
+    # External endpoints have no func, so the loop above misses them. Merge them in so
+    # operators can navigate into the shared kind-aware detail / edit / OpenRouter pages.
+    # The single-kind invariant guarantees an external slug is never also a func, so
+    # there is no overlap to dedupe.
+    for external in query_external_endpoints_via_sql().values():
+        slug = str(external.get("slug", "") or "").strip()
+        if slug == "":
+            continue
+        metadata_entry = metadata_rows.get(slug)
+        published = bool(external.get("published"))
+        entry = enrich_endpoint_catalog_fallback(
+            metadata_entry if metadata_entry is not None else {"slug": slug}
+        )
+        entry["platform_detail"] = None
+        entry["published"] = published
+        entry["kind"] = "external"
+        entry["upstream_model"] = external.get("upstream_model", "")
+        entry["base_url"] = external.get("base_url", "")
+        entry["gpu_count"] = None  # no GPU — renders "—", not "0"
+        entry["state"] = external_endpoint_state(published, metadata_entry)
         entries.append(entry)
 
     return entries
+
+
+def external_endpoint_state(published: bool, metadata_entry):
+    """State for an external endpoint: published, else unpublished. Never "deploying"
+    / "ready" — those are pod-lifecycle states an external endpoint has no pod for."""
+    if published:
+        return {"code": "published", "label": "Published"}
+    return {"code": "unpublished", "label": "Unpublished"}
 
 
 def resolve_case_insensitive_catalog_target_value(valid_values, requested_value: str):
@@ -7897,12 +8130,15 @@ def EndpointList():
         api_key_name = ""
 
     for entry in entries:
-        entry["client_setup_preview"] = build_endpoint_client_setup_preview(
-            preview_tenant,
-            entry.get("slug", ""),
-            entry.get("model_name", ""),
-            entry.get("provider", ""),
-        )
+        if entry.get("kind") == "external":
+            entry["client_setup_preview"] = build_external_client_setup(entry.get("slug", ""))
+        else:
+            entry["client_setup_preview"] = build_endpoint_client_setup_preview(
+                preview_tenant,
+                entry.get("slug", ""),
+                entry.get("model_name", ""),
+                entry.get("provider", ""),
+            )
 
     return render_template(
         "endpoints_list.html",
@@ -7979,23 +8215,32 @@ def EndpointDetail(slug):
             return json_error(f"failed to load endpoint `{slug}`: {e}", 500)
 
         onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or selected_tenant)
-        client_setup = build_client_setup_for_ui(
-            tenant=selected_tenant,
-            namespace="endpoints",
-            funcname=slug,
-            sample_query=entry.get("sample_query"),
-            apikey=onboarding_apikey,
-            apikey_name=onboarding_apikey_name,
-            spec=entry.get("spec"),
-        )
-        sample_rest_call = build_sample_rest_call_for_ui(
-            tenant=selected_tenant,
-            namespace="endpoints",
-            funcname=slug,
-            sample_query=entry.get("sample_query"),
-            apikey=onboarding_apikey,
-        )
-        sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey)
+        if entry.get("kind") == "external":
+            # No func → build client setup + sample against the shared /endpoints/v1
+            # surface, not a (nonexistent) dedicated func URL / sample_query.
+            client_setup = build_external_client_setup(
+                slug, apikey=onboarding_apikey, apikey_name=onboarding_apikey_name
+            )
+            sample_rest_call = build_external_sample_rest_call(slug, onboarding_apikey)
+            sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey)
+        else:
+            client_setup = build_client_setup_for_ui(
+                tenant=selected_tenant,
+                namespace="endpoints",
+                funcname=slug,
+                sample_query=entry.get("sample_query"),
+                apikey=onboarding_apikey,
+                apikey_name=onboarding_apikey_name,
+                spec=entry.get("spec"),
+            )
+            sample_rest_call = build_sample_rest_call_for_ui(
+                tenant=selected_tenant,
+                namespace="endpoints",
+                funcname=slug,
+                sample_query=entry.get("sample_query"),
+                apikey=onboarding_apikey,
+            )
+            sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey)
     else:
         selected_tenant = PUBLIC_TENANT_NAME
         try:
@@ -8033,26 +8278,33 @@ def EndpointDetail(slug):
         except Exception as e:
             return json_error(f"failed to load public endpoint `{slug}`: {e}", 500)
 
-        client_setup = build_endpoint_client_setup_preview(
-            "<tenant>",
-            slug,
-            entry.get("model_name", ""),
-            entry.get("provider", ""),
-        )
-        sample_rest_call = build_sample_rest_call_for_ui(
-            "<tenant>",
-            "endpoints",
-            slug,
-            entry.get("sample_query"),
-            "<INFERENCE_API_KEY>",
-        )
+        if entry.get("kind") == "external":
+            client_setup = build_external_client_setup(slug)
+            sample_rest_call = build_external_sample_rest_call(slug)
+        else:
+            client_setup = build_endpoint_client_setup_preview(
+                "<tenant>",
+                slug,
+                entry.get("model_name", ""),
+                entry.get("provider", ""),
+            )
+            sample_rest_call = build_sample_rest_call_for_ui(
+                "<tenant>",
+                "endpoints",
+                slug,
+                entry.get("sample_query"),
+                "<INFERENCE_API_KEY>",
+            )
         sample_rest_call_display = sample_rest_call
 
-    runtime_context = build_endpoint_runtime_context(
-        entry.get("spec"),
-        entry.get("sample_query"),
-        fallback_slug=slug,
-    )
+    if entry.get("kind") == "external":
+        runtime_context = build_external_runtime_context(slug)
+    else:
+        runtime_context = build_endpoint_runtime_context(
+            entry.get("spec"),
+            entry.get("sample_query"),
+            fallback_slug=slug,
+        )
     endpoint_funcspec = ""
     try:
         endpoint_funcspec = json.dumps(project_func_for_edit(entry.get("platform_detail"))["spec"], indent=4)
@@ -8119,15 +8371,21 @@ def DownloadEndpointOpenCodeConfig(slug):
             raise LookupError(f"endpoint `{slug}` not found")
 
         onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant or selected_tenant)
-        client_setup = build_client_setup_for_ui(
-            tenant=selected_tenant,
-            namespace="endpoints",
-            funcname=slug,
-            sample_query=entry.get("sample_query"),
-            apikey=onboarding_apikey,
-            apikey_name=onboarding_apikey_name,
-            spec=entry.get("spec"),
-        )
+        if entry.get("kind") == "external":
+            # No func spec → target the shared /endpoints/v1 surface with model = slug.
+            client_setup = build_external_client_setup(
+                slug, apikey=onboarding_apikey, apikey_name=onboarding_apikey_name
+            )
+        else:
+            client_setup = build_client_setup_for_ui(
+                tenant=selected_tenant,
+                namespace="endpoints",
+                funcname=slug,
+                sample_query=entry.get("sample_query"),
+                apikey=onboarding_apikey,
+                apikey_name=onboarding_apikey_name,
+                spec=entry.get("spec"),
+            )
         api_base_url = str(client_setup.get("api_base_url", "") or "").strip()
         model_name = str(client_setup.get("model_name", "") or "").strip()
         api_key = str(client_setup.get("api_key", "") or "").strip()
@@ -8156,7 +8414,7 @@ def DownloadEndpointOpenCodeConfig(slug):
 @require_admin
 def EndpointAdminDetail(slug):
     try:
-        detail = load_live_endpoint_detail(slug)
+        detail = load_live_endpoint_detail(slug, allow_external=True)
         entry = detail["entry"]
         endpoint_state = detail["endpoint_state"]
         metadata_entry = detail["metadata_entry"]
@@ -8181,28 +8439,38 @@ def EndpointAdminDetail(slug):
     roles = listroles()
     active_tenant = resolve_active_tenant_name(roles)
     onboarding_apikey, onboarding_apikey_name = resolve_onboarding_inference_apikey_for_ui(active_tenant)
-    client_setup = build_client_setup_for_ui(
-        tenant=active_tenant,
-        namespace="endpoints",
-        funcname=slug,
-        sample_query=entry.get("sample_query"),
-        apikey=onboarding_apikey,
-        apikey_name=onboarding_apikey_name,
-        spec=entry.get("spec"),
-    )
-    sample_rest_call = build_sample_rest_call_for_ui(
-        tenant=active_tenant,
-        namespace="endpoints",
-        funcname=slug,
-        sample_query=entry.get("sample_query"),
-        apikey=onboarding_apikey,
-    )
+    if entry.get("kind") == "external":
+        # No func → shared /endpoints/v1 surface for the integration block + sample.
+        client_setup = build_external_client_setup(
+            slug, apikey=onboarding_apikey, apikey_name=onboarding_apikey_name
+        )
+        sample_rest_call = build_external_sample_rest_call(slug, onboarding_apikey)
+    else:
+        client_setup = build_client_setup_for_ui(
+            tenant=active_tenant,
+            namespace="endpoints",
+            funcname=slug,
+            sample_query=entry.get("sample_query"),
+            apikey=onboarding_apikey,
+            apikey_name=onboarding_apikey_name,
+            spec=entry.get("spec"),
+        )
+        sample_rest_call = build_sample_rest_call_for_ui(
+            tenant=active_tenant,
+            namespace="endpoints",
+            funcname=slug,
+            sample_query=entry.get("sample_query"),
+            apikey=onboarding_apikey,
+        )
     sample_rest_call_display = mask_sample_rest_call_for_ui(sample_rest_call, onboarding_apikey)
-    runtime_context = build_endpoint_runtime_context(
-        entry.get("spec"),
-        entry.get("sample_query"),
-        fallback_slug=slug,
-    )
+    if entry.get("kind") == "external":
+        runtime_context = build_external_runtime_context(slug)
+    else:
+        runtime_context = build_endpoint_runtime_context(
+            entry.get("spec"),
+            entry.get("sample_query"),
+            fallback_slug=slug,
+        )
     endpoint_funcspec = ""
     try:
         endpoint_funcspec = json.dumps(project_func_for_edit(entry.get("platform_detail"))["spec"], indent=4)
@@ -8249,7 +8517,7 @@ def EndpointAdminDetail(slug):
 @require_admin
 def EndpointAdminEdit(slug):
     try:
-        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False)
+        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False, allow_external=True)
         existing_entry = detail["metadata_entry"]
         platform_detail = detail["platform_detail"]
         endpoint_state = detail["endpoint_state"]
@@ -8288,7 +8556,7 @@ def EndpointAdminEdit(slug):
 @require_admin
 def EndpointAdminOpenRouterEdit(slug):
     try:
-        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False)
+        detail = load_live_endpoint_detail(slug, allow_missing_live_spec=False, allow_missing_status=False, allow_external=True)
         existing_entry = detail["metadata_entry"]
         platform_detail = detail["platform_detail"]
     except LookupError:
@@ -8346,7 +8614,11 @@ def EndpointAdminPublish(slug):
         except LookupError:
             existing_entry = None
 
-        if existing_entry is None:
+        # External endpoints have no backing func, so the getfunc-derived metadata
+        # fallback does not apply — skip it. The gateway PublishEndpoint external branch
+        # persists the catalog row (func_revision NULL) and flips the endpoint's own
+        # published bit; the TokenRate gate still applies (slug-keyed).
+        if existing_entry is None and get_external_endpoint(slug) is None:
             platform_detail = getfunc("inferx", "endpoint", slug)
             catalog_entry = resolve_endpoint_catalog_entry(slug, platform_detail)
             payload = fill_missing_endpoint_metadata_from_source(payload, catalog_entry)
@@ -12056,6 +12328,16 @@ def GetFailPod():
     )
 
 #activate the BluePrint
+from external_endpoints_admin import register_external_endpoints_admin
+register_external_endpoints_admin(
+    prefix_bp,
+    apihostaddr=apihostaddr,
+    gateway_request_headers=gateway_request_headers,
+    response_json_or_none=response_json_or_none,
+    json_error=json_error,
+    require_login=require_login,
+    require_admin=require_admin,
+)
 app.register_blueprint(prefix_bp)
 
 def run_http():

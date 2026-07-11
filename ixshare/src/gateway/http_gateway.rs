@@ -102,6 +102,10 @@ use super::metrics::METRICS_REGISTRY;
 use super::scheduler_client::SCHEDULER_CLIENT;
 use super::http_gw::{BuildProviderModelEntry, ProviderModelsAdapter};
 use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
+use super::external_endpoint::{
+    endpoint_published_gate, external_model_entries, is_valid_slug, proxy_to_external,
+    ExternalEndpointMgr, ExternalTimeouts,
+};
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
 use super::skill_chain::{
     extract_is_child_request, handle_skill_call_chain, SkillChatCompletionsWireRequest,
@@ -942,6 +946,12 @@ pub fn validate_agent_endpoint_published(
     if slug.is_empty() {
         return Err("empty endpoint slug".to_string());
     }
+    // External endpoints have no func: gate on their own `published` bit. `None` means
+    // "not external" → fall through to self-hosted func resolution (which is what makes
+    // a raw external slug 404 on the func path).
+    if let Some(result) = endpoint_published_gate(gw.externalEndpointMgr.Get(slug).as_ref()) {
+        return result;
+    }
     resolve_funccall_target(gw, tenant, VIRTUAL_ENDPOINTS_NAMESPACE, slug)
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
@@ -1085,6 +1095,7 @@ pub struct HttpGateway {
     pub sqlAudit: SqlAudit,
     pub sqlBilling: SqlAudit,
     pub sqlSecret: SqlSecret,
+    pub externalEndpointMgr: ExternalEndpointMgr,
     pub client: CacherClient,
     pub sessions: SessionStore,
 }
@@ -1164,6 +1175,17 @@ impl HttpGateway {
             .route("/apikey/", delete(DeleteApikey))
             .route("/onboard", post(Onboard))
             .route("/admin/tenants", get(GetAdminTenants))
+            .route(
+                "/admin/external-endpoints/",
+                get(super::http_gw_external::ListExternalEndpoints)
+                    .post(super::http_gw_external::CreateExternalEndpoint),
+            )
+            .route(
+                "/admin/external-endpoints/:slug",
+                get(super::http_gw_external::GetExternalEndpoint)
+                    .put(super::http_gw_external::UpdateExternalEndpoint)
+                    .delete(super::http_gw_external::DeleteExternalEndpoint),
+            )
             .route("/admin/endpoints/:slug/metadata", put(SaveEndpointMetadata))
             .route("/admin/endpoints/:slug/publish", post(PublishEndpoint))
             .route("/admin/endpoints/:slug/unpublish", post(UnpublishEndpoint))
@@ -4467,6 +4489,82 @@ async fn shared_endpoint_dispatch(
         .and_then(|val| val.as_str().map(|s| s.to_string()))
         .ok_or(StatusCode::BAD_REQUEST)?;
 
+    // Sanitize before `modelName` is used as a mirror key or interpolated into a URI
+    // (the raw `Uri::try_from(...).unwrap()` below would otherwise panic).
+    if !is_valid_slug(&modelName) {
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("service failure: invalid model name"))
+            .unwrap());
+    }
+
+    // External endpoints are known only here (single-kind invariant), so this
+    // in-memory lookup fully decides the branch — no per-request DB.
+    if let Some(ext) = gw.externalEndpointMgr.Get(&modelName) {
+        // Direct callers gate on the endpoint's own `published`; OR is trusted.
+        if source == SharedSource::Direct && !ext.published {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("service failure: endpoint not found"))
+                .unwrap());
+        }
+
+        let is_streaming = jsonReq
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let usage_requested = if is_streaming {
+            jsonReq
+                .get("stream_options")
+                .and_then(|v| v.get("include_usage"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        } else {
+            true
+        };
+        if let Some(obj) = jsonReq.as_object_mut() {
+            // Ensure a final usage object (inject include_usage when streaming without it).
+            if is_streaming && !usage_requested {
+                let so = obj
+                    .entry("stream_options")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(m) = so.as_object_mut() {
+                    m.insert("include_usage".to_string(), Value::Bool(true));
+                }
+            }
+            // Rewrite to the provider-facing model name.
+            obj.insert("model".to_string(), Value::String(ext.upstream_model.clone()));
+        }
+        let body_bytes =
+            serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        // base_url carries the `/v1` root, so strip it from the incoming sub-path.
+        let sub_path = remainPath.strip_prefix("/v1").unwrap_or(&remainPath).to_string();
+        let response = proxy_to_external(
+            &ext,
+            &sub_path,
+            body_bytes,
+            ExternalTimeouts::from_gateway_config(),
+        )
+        .await;
+
+        // Bill only on 2xx; provider errors / transport failures pass through unbilled.
+        if response.status().is_success() {
+            let meter = TokenMeterCtx {
+                gateway_request_id: uuid::Uuid::new_v4().to_string(),
+                client_request_id,
+                caller_tenant,
+                model_slug: modelName,
+                source: source.as_str().to_string(),
+                request_ts,
+            };
+            return Ok(
+                process_usage_response(response, is_streaming, !usage_requested, Some(meter)).await,
+            );
+        }
+        return Ok(response);
+    }
+
     // Direct callers reach the shared surface only for a published endpoint. OR is
     // trusted and does not gate on `published` (usage is metered regardless).
     if source == SharedSource::Direct {
@@ -4619,7 +4717,7 @@ async fn SharedEndpointModels(
     };
 
     let created = Utc::now().timestamp();
-    let data: Vec<Value> = funcs
+    let mut data: Vec<Value> = funcs
         .iter()
         .filter(|func| {
             gw.objRepo
@@ -4637,6 +4735,10 @@ async fn SharedEndpointModels(
             })
         })
         .collect();
+
+    // Published external endpoints are invisible to the func enumeration above, so
+    // merge them in explicitly.
+    data.extend(external_model_entries(&gw.externalEndpointMgr.List(), created));
 
     let response_body = serde_json::json!({ "object": "list", "data": data });
     let bytes = serde_json::to_vec(&response_body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -7171,6 +7273,15 @@ async fn GetFuncDetail(
     }
 }
 
+// Sample call generated against the metered /endpoints/v1 surface (external
+// endpoints have no func image to derive one from).
+fn external_sample_rest_call(slug: &str) -> String {
+    format!(
+        "curl https://<gateway>/endpoints/v1/chat/completions \\\n  -H \"Authorization: Bearer $INFERX_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{{\"model\":\"{}\",\"messages\":[{{\"role\":\"user\",\"content\":\"Hello\"}}]}}'",
+        slug
+    )
+}
+
 async fn GetPublishedEndpointDetail(
     Extension(token): Extension<Arc<AccessToken>>,
     State(gw): State<HttpGateway>,
@@ -7192,6 +7303,32 @@ async fn GetPublishedEndpointDetail(
             .body(body)
             .unwrap();
         return Ok(resp);
+    }
+
+    // External endpoints have no backing func: return a purpose-built detail shape
+    // (never exposing base_url / provider_api_key).
+    if let Some(ext) = gw.externalEndpointMgr.Get(&slug) {
+        if !ext.published {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from("service failure: endpoint not found"))
+                .unwrap());
+        }
+        let metadata = gw.sqlSecret.GetEndpointMetadata(&slug).await.ok().flatten();
+        let pricing = gw.sqlBilling.GetActiveTokenRate(&slug, None).await.ok().flatten();
+        let detail = serde_json::json!({
+            "kind": "external",
+            "slug": ext.slug,
+            "published": ext.published,
+            "upstreamModel": ext.upstream_model,
+            "metadata": metadata,
+            "pricing": pricing,
+            "sampleRestCall": external_sample_rest_call(&ext.slug),
+        });
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(detail.to_string()))
+            .unwrap());
     }
 
     match resolve_funccall_target(&gw, &tenant, VIRTUAL_ENDPOINTS_NAMESPACE, &slug) {

@@ -1,0 +1,246 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    .external-ep-page {
+        max-width: 1100px;
+        margin: 0 auto 32px auto;
+        display: grid;
+        gap: 16px;
+    }
+
+    .external-ep-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .external-ep-header h2 {
+        margin: 0;
+        font-size: 22px;
+        color: #1f2937;
+    }
+
+    .external-ep-header .editor-subtitle {
+        color: #64748b;
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .external-ep-panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        background: #fff;
+    }
+
+    .external-ep-panel h3 {
+        margin: 0 0 4px 0;
+        font-size: 16px;
+        color: #1f2937;
+    }
+
+    .external-ep-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 12px;
+        max-width: 560px;
+    }
+
+    .external-ep-field label {
+        font-weight: 600;
+        font-size: 13px;
+        color: #334155;
+    }
+
+    .external-ep-field input {
+        padding: 6px 8px;
+    }
+
+    .external-ep-hint {
+        color: #64748b;
+        font-size: 12px;
+    }
+
+    .external-ep-message {
+        display: none;
+        border-radius: 4px;
+        padding: 8px 12px;
+        margin-top: 12px;
+        font-size: 13px;
+    }
+
+    .external-ep-message.error { display: block; border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; }
+    .external-ep-message.success { display: block; border: 1px solid #bbf7d0; background: #f0fdf4; color: #166534; }
+</style>
+
+<div class="external-ep-page">
+    <div class="external-ep-header">
+        <div>
+            <h2>External Endpoints</h2>
+            <div class="editor-subtitle">
+                Proxied OpenAI-compatible endpoints. The provider API key is write-only and never displayed.
+                After creating an endpoint here, publish it, set a token rate, and manage OpenRouter listing
+                from the <a href="{{ url_for('prefix.EndpointList', view='admin') }}">Endpoints admin page</a> —
+                external endpoints use the same publish / metadata / OpenRouter workflow as self-hosted models.
+            </div>
+        </div>
+        <a class="ix-btn secondary" href="{{ url_for('prefix.apikeys') }}">Back to Admin</a>
+    </div>
+
+    <div class="external-ep-panel">
+        <h3 id="form-title">Create endpoint</h3>
+        <input type="hidden" id="edit-slug" value="">
+        <div class="external-ep-field">
+            <label for="f-slug">Slug (model name on /endpoints/v1)</label>
+            <input id="f-slug" placeholder="my-provider-model">
+        </div>
+        <div class="external-ep-field">
+            <label for="f-base-url">Base URL</label>
+            <input id="f-base-url" placeholder="https://api.provider.com/v1">
+            <div class="external-ep-hint">Must be an https URL that includes the provider's /v1 root.</div>
+        </div>
+        <div class="external-ep-field">
+            <label for="f-upstream">Upstream model</label>
+            <input id="f-upstream" name="upstream_model" autocomplete="off" placeholder="provider-model-name">
+            <div class="external-ep-hint">Model name sent to the provider (may differ from the slug).</div>
+        </div>
+        <div class="external-ep-field">
+            <label for="f-key">Provider API key <span id="key-hint" class="external-ep-hint"></span></label>
+            <input id="f-key" name="provider_api_key" type="password" autocomplete="new-password" placeholder="sk-...">
+        </div>
+        <div style="margin-top:16px;display:flex;gap:8px;">
+            <button class="ix-btn secondary" onclick="submitForm()">Save</button>
+            <button class="ix-btn secondary" onclick="resetForm()">Clear</button>
+        </div>
+        <div id="form-msg" class="external-ep-message"></div>
+    </div>
+
+    <table class="ix-table">
+        <thead>
+            <tr>
+                <th>Slug</th>
+                <th>Base URL</th>
+                <th>Upstream Model</th>
+                <th>Key</th>
+                <th>Published</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="ext-rows"><tr><td colspan="6">Loading…</td></tr></tbody>
+    </table>
+    <div id="list-msg" class="external-ep-message"></div>
+</div>
+
+<script>
+const BASE = "{{ url_for('prefix.admin_external_endpoints_page') }}".replace(/\/admin\/external-endpoints$/, "");
+const ENDPOINT_ADMIN_BASE = "{{ url_for('prefix.EndpointAdminDetail', slug='__SLUG__') }}";
+
+function api(path) { return BASE + "/admin/external-endpoints" + path; }
+function endpointAdminHref(slug) { return ENDPOINT_ADMIN_BASE.replace("__SLUG__", encodeURIComponent(slug)); }
+
+async function jreq(method, path, body) {
+    const opt = { method, headers: {} };
+    if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+    const resp = await fetch(api(path), opt);
+    const text = await resp.text();
+    let data = null; try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+    if (!resp.ok) throw new Error((data && data.error) || text || ("HTTP " + resp.status));
+    return data;
+}
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function showMsg(id, text, ok) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = "external-ep-message " + (ok ? "success" : "error");
+    if (!text) el.className = "external-ep-message";
+}
+
+async function loadRows() {
+    const tbody = document.getElementById("ext-rows");
+    try {
+        const rows = await jreq("GET", "/list");
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6">No external endpoints.</td></tr>'; return; }
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td>${esc(r.slug)}</td>
+                <td>${esc(r.base_url)}</td>
+                <td>${esc(r.upstream_model)}</td>
+                <td>${r.has_api_key ? "set" : "not set"}</td>
+                <td>${r.published ? "yes" : "no"}</td>
+                <td>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <button class="ix-btn secondary" onclick='editRow(${JSON.stringify(r)})'>Edit</button>
+                        <a class="ix-btn secondary" href="${endpointAdminHref(r.slug)}">Manage &amp; publish</a>
+                        <button class="ix-btn danger" onclick="del('${esc(r.slug)}')">Delete</button>
+                    </div>
+                </td>
+            </tr>`).join("");
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" style="color:#991b1b;">${esc(e.message)}</td></tr>`;
+    }
+}
+
+function editRow(r) {
+    document.getElementById("edit-slug").value = r.slug;
+    const slugEl = document.getElementById("f-slug");
+    slugEl.value = r.slug; slugEl.disabled = true;
+    document.getElementById("f-base-url").value = r.base_url;
+    document.getElementById("f-upstream").value = r.upstream_model;
+    document.getElementById("f-key").value = "";
+    document.getElementById("key-hint").textContent = "(leave blank to keep existing)";
+    document.getElementById("form-title").textContent = "Edit " + r.slug;
+    window.scrollTo(0, 0);
+}
+
+function resetForm() {
+    document.getElementById("edit-slug").value = "";
+    const slugEl = document.getElementById("f-slug");
+    slugEl.value = ""; slugEl.disabled = false;
+    document.getElementById("f-base-url").value = "";
+    document.getElementById("f-upstream").value = "";
+    document.getElementById("f-key").value = "";
+    document.getElementById("key-hint").textContent = "";
+    document.getElementById("form-title").textContent = "Create endpoint";
+    showMsg("form-msg", "", false);
+}
+
+async function submitForm() {
+    showMsg("form-msg", "", false);
+    const editing = document.getElementById("edit-slug").value;
+    const base_url = document.getElementById("f-base-url").value.trim();
+    const upstream_model = document.getElementById("f-upstream").value.trim();
+    const key = document.getElementById("f-key").value;
+    try {
+        if (editing) {
+            const body = { base_url, upstream_model };
+            if (key) body.provider_api_key = key;
+            await jreq("PUT", "/item/" + encodeURIComponent(editing), body);
+        } else {
+            const slug = document.getElementById("f-slug").value.trim();
+            await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key });
+        }
+        showMsg("form-msg", "Saved.", true);
+        resetForm(); loadRows();
+    } catch (e) {
+        showMsg("form-msg", e.message, false);
+    }
+}
+
+async function del(slug) {
+    if (!confirm("Delete external endpoint " + slug + "?")) return;
+    showMsg("list-msg", "", false);
+    try {
+        await jreq("DELETE", "/item/" + encodeURIComponent(slug));
+        loadRows();
+    } catch (e) { showMsg("list-msg", e.message, false); }
+}
+
+loadRows();
+</script>
+{% endblock %}

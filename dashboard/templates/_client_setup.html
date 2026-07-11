@@ -343,18 +343,30 @@
     {% set shared_model_name = endpoint_entry.get('slug', '') if endpoint_entry is defined else client_setup.model_name %}
     {% set shared_api_key_copy_value = client_setup.api_key if client_setup.api_key_copyable else '$INFERX_API_KEY' %}
     {% set shared_api_key_display = client_setup.api_key_display if client_setup.api_key_copyable else '$INFERX_API_KEY' %}
+    {% set is_external_endpoint = endpoint_entry is defined and endpoint_entry.get('kind') == 'external' %}
     <p style="margin: 0 0 12px 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+        {% if is_external_endpoint %}
+        External endpoints are served on the shared, token-billed <code>/endpoints/v1</code> surface. Use the setup below — there is no dedicated-GPU endpoint.
+        {% else %}
         Start with the shared setup below, then choose the endpoint mode that fits your workload: token-based shared serving or a tenant-scoped dedicated GPU endpoint.
+        {% endif %}
     </p>
     <div class="client-setup-toolbar">
         <details class="client-setup-guidance">
             <summary></summary>
             <div class="client-setup-guidance-body">
                 <ol class="client-setup-steps">
+                    {% if is_external_endpoint %}
+                    <li>Use the token-based shared endpoint below (external endpoints have no dedicated-GPU URL).</li>
+                    <li>Copy that section's base URL into your client endpoint field.</li>
+                    <li>{% if client_setup.auth_required %}Copy the shared inference API key and use it for requests.{% else %}No API key is required for this endpoint. Run a sample request below to confirm the setup.{% endif %}</li>
+                    <li>Use the model name shown in the section below.</li>
+                    {% else %}
                     <li>Choose either the token-based shared endpoint or the dedicated GPU endpoint below.</li>
                     <li>Copy that section's base URL into your client endpoint field.</li>
                     <li>{% if client_setup.auth_required %}Copy the shared inference API key once and reuse it for either mode.{% else %}No API key is required for this endpoint. Run a sample request below to confirm the setup.{% endif %}</li>
                     <li>Use the model name shown in the selected section.</li>
+                    {% endif %}
                 </ol>
             </div>
         </details>
@@ -373,7 +385,7 @@
         {% if client_setup.api_key_copyable %}
         {% if client_setup.api_key_name %}Onboarding key `{{ client_setup.api_key_name }}` is ready for endpoint use.{% else %}Your onboarding inference key is ready for endpoint use.{% endif %} The visible value stays masked, but the copy button returns the full token.
         {% else %}
-        An inference API key is required for both endpoint modes. Until one is available, the fields below keep the correct request shape and use a placeholder token.
+        An inference API key is required{% if not is_external_endpoint %} for both endpoint modes{% endif %}. Until one is available, the fields below keep the correct request shape and use a placeholder token.
         {% endif %}
     </p>
     {% endif %}
@@ -436,7 +448,7 @@
         </div>
         <div class="client-setup-subsection">
             <div class="client-setup-subsection-header">
-                <h4>Dedicated GPU</h4>
+                <h4>{% if is_external_endpoint %}OpenCode &amp; REST{% else %}Dedicated GPU{% endif %}</h4>
                 {% if opencode_download_href and client_setup.api_base_url %}
                 <div class="client-setup-subsection-actions">
                     <a class="client-setup-download-btn" href="{{ opencode_download_href }}">Download OpenCode config</a>
@@ -445,8 +457,13 @@
             </div>
             <div class="client-setup-subsection-body">
                 <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle);">
+                    {% if is_external_endpoint %}
+                    External endpoints are proxied to an upstream provider and served on the shared, token-billed <code>/endpoints/v1</code> surface. There is no dedicated-GPU URL.
+                    {% else %}
                     Use the tenant-scoped endpoint URL for this published endpoint when you want dedicated GPU serving instead of shared token-based routing.
+                    {% endif %}
                 </p>
+                {% if not is_external_endpoint %}
                 <div style="display: grid; gap: 12px;">
                     {% if client_setup.api_base_url %}
                     {{ client_setup_value_field(
@@ -461,6 +478,7 @@
                         client_setup.model_name
                     ) }}
                 </div>
+                {% endif %}
                 {% if sample_rest_call %}
                 <div class="client-setup-code-shell">
                     <div class="client-setup-code-header">

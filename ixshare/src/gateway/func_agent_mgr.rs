@@ -172,6 +172,8 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     let sqlaudit = SqlAudit::New(&auditdbAddr).await?;
     let sqlbilling = SqlAudit::New(&billingdbAddr).await?;
     let sqlsecret = SqlSecret::New(&GATEWAY_CONFIG.secretStoreAddr).await?;
+    let externalEndpointMgr =
+        crate::gateway::external_endpoint::ExternalEndpointMgr::New(sqlsecret.clone()).await?;
     let client = GetClient().await?;
 
     let objRepo = GwObjRepo::New(GATEWAY_CONFIG.stateSvcAddrs.to_vec())
@@ -188,6 +190,7 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         sqlAudit: sqlaudit,
         sqlBilling: sqlbilling,
         sqlSecret: sqlsecret,
+        externalEndpointMgr: externalEndpointMgr,
         client: client,
         sessions: super::session::SessionStore::New(),
     };

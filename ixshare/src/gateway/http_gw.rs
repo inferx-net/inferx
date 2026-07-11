@@ -223,9 +223,16 @@ impl HttpGateway {
         metadata: &EndpointMetadata,
     ) -> Result<i64> {
         self.EnsurePlatformEndpointAdmin(token)?;
+        // External endpoints have no backing func: write NULL func_revision.
+        if self.externalEndpointMgr.Contains(slug) {
+            self.sqlSecret
+                .UpsertEndpointMetadata(slug, None, metadata)
+                .await?;
+            return Ok(0);
+        }
         let func = self.GetPlatformEndpointFunc(slug).await?;
         self.sqlSecret
-            .UpsertEndpointMetadata(slug, func.Version(), metadata)
+            .UpsertEndpointMetadata(slug, Some(func.Version()), metadata)
             .await?;
         Ok(func.Version())
     }
@@ -249,6 +256,18 @@ impl HttpGateway {
             )));
         }
 
+        // External endpoints: no func/funcstatus handshake, no HF-derive. Persist the
+        // catalog row (func_revision NULL) and flip the endpoint's own published bit.
+        if self.externalEndpointMgr.Contains(slug) {
+            self.sqlSecret
+                .PublishEndpoint(slug, None, metadata, &token.username)
+                .await?;
+            self.externalEndpointMgr
+                .SetPublished(slug, true, &token.username)
+                .await?;
+            return Ok(0);
+        }
+
         let mut attempts = 0;
         loop {
             attempts += 1;
@@ -265,7 +284,7 @@ impl HttpGateway {
             }
 
             self.sqlSecret
-                .PublishEndpoint(slug, func.Version(), metadata, &token.username)
+                .PublishEndpoint(slug, Some(func.Version()), metadata, &token.username)
                 .await?;
 
             // Derive hugging_face_id from the func's `--model` (the actual weights the
@@ -297,6 +316,14 @@ impl HttpGateway {
     ) -> Result<i64> {
         self.EnsurePlatformEndpointAdmin(token)?;
 
+        // External endpoints have no funcstatus: flip their own published bit.
+        if self.externalEndpointMgr.Contains(slug) {
+            self.externalEndpointMgr
+                .SetPublished(slug, false, &token.username)
+                .await?;
+            return Ok(0);
+        }
+
         let mut attempts = 0;
         loop {
             attempts += 1;
@@ -327,9 +354,14 @@ impl HttpGateway {
         metadata: &EndpointOpenRouterMetadata,
     ) -> Result<Vec<String>> {
         self.EnsurePlatformEndpointAdmin(token)?;
-        // The func must be deployed (proves it exists). This does NOT check `published`
-        // — OpenRouter serving is decoupled from publish (§ Publish decoupling).
-        let func = self.GetPlatformEndpointFunc(slug).await?;
+        // Self-hosted: the func must be deployed (proves it exists) and supplies the
+        // revision. External: no func — the record's existence is the precheck, NULL
+        // revision. This does NOT check `published` (listing is decoupled from publish).
+        let func_revision = if self.externalEndpointMgr.Contains(slug) {
+            None
+        } else {
+            Some(self.GetPlatformEndpointFunc(slug).await?.Version())
+        };
 
         let existing = self.sqlSecret.GetEndpointForListing(slug).await?;
 
@@ -383,7 +415,7 @@ impl HttpGateway {
         }
 
         self.sqlSecret
-            .SaveEndpointOpenRouterMetadata(slug, func.Version(), &to_store)
+            .SaveEndpointOpenRouterMetadata(slug, func_revision, &to_store)
             .await?;
         Ok(warnings)
     }
@@ -394,8 +426,10 @@ impl HttpGateway {
     /// canonical `openrouter_slug`, then flips `or_listed=true`.
     pub async fn ListOnOpenRouter(&self, token: &Arc<AccessToken>, slug: &str) -> Result<()> {
         self.EnsurePlatformEndpointAdmin(token)?;
-        // Endpoint must be published first (the func must exist).
-        self.GetPlatformEndpointFunc(slug).await?;
+        // Self-hosted requires a deployed func; external requires only its own record.
+        if !self.externalEndpointMgr.Contains(slug) {
+            self.GetPlatformEndpointFunc(slug).await?;
+        }
 
         let row = self
             .sqlSecret
