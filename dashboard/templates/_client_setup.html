@@ -223,6 +223,11 @@
         display: grid;
         gap: 12px;
     }
+    /* `display: grid` above outranks the UA stylesheet's `[hidden] { display: none }`,
+       so the hidden attribute needs to win back explicitly. */
+    .client-setup-subsection-body[hidden] {
+        display: none;
+    }
     .client-setup-subsection-copy {
         margin-top: 2px;
     }
@@ -451,13 +456,23 @@
         <div class="client-setup-subsection">
             <div class="client-setup-subsection-header">
                 <h4>Dedicated GPU</h4>
-                {% if opencode_download_href and client_setup.api_base_url %}
                 <div class="client-setup-subsection-actions">
+                    {% if opencode_download_href and client_setup.api_base_url %}
                     <a class="client-setup-download-btn" href="{{ opencode_download_href }}">Download OpenCode config</a>
+                    {% endif %}
+                    <button
+                        id="client-setup-dedicated-toggle"
+                        class="ix-btn secondary"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="client-setup-dedicated-body"
+                        onclick="toggleClientSetupSection(this)"
+                    >
+                        Show
+                    </button>
                 </div>
-                {% endif %}
             </div>
-            <div class="client-setup-subsection-body">
+            <div id="client-setup-dedicated-body" class="client-setup-subsection-body" hidden>
                 <p style="margin: 0; color: #475569; font-size: var(--ix-font-size-subtle);">
                     Use the tenant-scoped endpoint URL for this published endpoint when you want dedicated GPU serving instead of shared token-based routing.
                 </p>

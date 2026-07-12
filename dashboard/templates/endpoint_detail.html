@@ -282,7 +282,7 @@
         <div class="playground-state-hint" id="playground-state-note"></div>
         <div class="playground-grid">
             {% if shared_api_base_url %}
-            <div class="playground-mode-card">
+            <div class="playground-mode-card" style="display: none;">
                 <strong>Serving Mode</strong>
                 <div class="playground-mode-options">
                     <label>
@@ -543,8 +543,16 @@
     window.loadImage = endpointController.loadImage;
     window.loadAudio = endpointController.loadAudio;
     window.cancel = endpointController.cancel;
+    // Serving Mode selection is hidden: the playground always uses token-based
+    // serving when a shared endpoint is configured. The radio markup and the
+    // dedicated-GPU path below are kept so the choice can be re-enabled later.
+    const endpointPlaygroundForceTokenMode = true;
+
     function getEndpointPlaygroundMode() {
         const selected = document.querySelector('input[name="endpointPlaygroundMode"]:checked');
+        if (endpointPlaygroundForceTokenMode && selected) {
+            return 'token';
+        }
         return selected ? String(selected.value || 'dedicated') : 'dedicated';
     }
 
