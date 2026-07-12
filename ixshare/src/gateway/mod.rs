@@ -13,11 +13,13 @@
 // limitations under
 
 pub mod auth_layer;
+pub mod external_endpoint;
 pub mod func_agent_mgr;
 pub mod func_worker;
 pub mod gw_obj_repo;
 pub mod http_gateway;
 pub mod http_gw;
+pub mod http_gw_external;
 pub mod log_admin;
 pub mod mcp_stream_server;
 pub mod metrics;

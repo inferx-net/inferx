@@ -225,6 +225,19 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
     }
 }
 
+/// A proxied external OpenAI-compatible endpoint (table row + in-memory mirror
+/// value). `provider_api_key` is a serving secret: never serialized to any read API.
+#[derive(Deserialize, Debug, Clone, FromRow)]
+pub struct ExternalEndpoint {
+    pub slug: String,
+    pub base_url: String,
+    pub upstream_model: String,
+    pub provider_api_key: String,
+    pub published: bool,
+    #[serde(default)]
+    pub last_published_by: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct SkillTemplate {
     pub template_id: i64,
@@ -1040,7 +1053,7 @@ impl SqlSecret {
     pub async fn UpsertEndpointMetadata(
         &self,
         slug: &str,
-        func_revision: i64,
+        func_revision: Option<i64>,
         metadata: &EndpointMetadata,
     ) -> Result<()> {
         let query = r#"
@@ -1139,7 +1152,7 @@ impl SqlSecret {
     pub async fn PublishEndpoint(
         &self,
         slug: &str,
-        func_revision: i64,
+        func_revision: Option<i64>,
         metadata: &EndpointMetadata,
         last_published_by: &str,
     ) -> Result<()> {
@@ -1208,7 +1221,7 @@ impl SqlSecret {
     pub async fn SaveEndpointOpenRouterMetadata(
         &self,
         slug: &str,
-        func_revision: i64,
+        func_revision: Option<i64>,
         meta: &EndpointOpenRouterMetadata,
     ) -> Result<()> {
         let query = r#"
@@ -1395,6 +1408,106 @@ impl SqlSecret {
         if res.rows_affected() == 0 {
             return Err(Error::NotExist(format!("endpoint {} not found", slug)));
         }
+        Ok(())
+    }
+
+    /// Load the full ExternalEndpoint table (startup mirror hydration).
+    pub async fn LoadExternalEndpoints(&self) -> Result<Vec<ExternalEndpoint>> {
+        let query = r#"
+            SELECT slug, base_url, upstream_model, provider_api_key, published, last_published_by
+            FROM ExternalEndpoint ORDER BY slug ASC
+        "#;
+        Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    /// Insert a new, unpublished external endpoint. Fails on slug conflict.
+    pub async fn InsertExternalEndpoint(
+        &self,
+        slug: &str,
+        base_url: &str,
+        upstream_model: &str,
+        provider_api_key: &str,
+    ) -> Result<ExternalEndpoint> {
+        let query = r#"
+            INSERT INTO ExternalEndpoint (slug, base_url, upstream_model, provider_api_key)
+            VALUES ($1, $2, $3, $4)
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+        "#;
+        Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
+            .bind(slug)
+            .bind(base_url)
+            .bind(upstream_model)
+            .bind(provider_api_key)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
+    /// Edit base_url/upstream_model and (when `provider_api_key` is Some) rotate the key.
+    pub async fn UpdateExternalEndpoint(
+        &self,
+        slug: &str,
+        base_url: &str,
+        upstream_model: &str,
+        provider_api_key: Option<&str>,
+    ) -> Result<ExternalEndpoint> {
+        let query = r#"
+            UPDATE ExternalEndpoint SET
+                base_url = $2,
+                upstream_model = $3,
+                provider_api_key = COALESCE($4, provider_api_key)
+            WHERE slug = $1
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+        "#;
+        sqlx::query_as::<_, ExternalEndpoint>(query)
+            .bind(slug)
+            .bind(base_url)
+            .bind(upstream_model)
+            .bind(provider_api_key)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| Error::NotExist(format!("external endpoint {} not found", slug)))
+    }
+
+    /// Flip `published` (write-through publish/unpublish gate).
+    pub async fn SetExternalEndpointPublished(
+        &self,
+        slug: &str,
+        published: bool,
+        last_published_by: &str,
+    ) -> Result<ExternalEndpoint> {
+        let query = r#"
+            UPDATE ExternalEndpoint SET published = $2, last_published_by = $3
+            WHERE slug = $1
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+        "#;
+        sqlx::query_as::<_, ExternalEndpoint>(query)
+            .bind(slug)
+            .bind(published)
+            .bind(last_published_by)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| Error::NotExist(format!("external endpoint {} not found", slug)))
+    }
+
+    pub async fn DeleteExternalEndpoint(&self, slug: &str) -> Result<()> {
+        let res = sqlx::query("DELETE FROM ExternalEndpoint WHERE slug = $1")
+            .bind(slug)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotExist(format!("external endpoint {} not found", slug)));
+        }
+        Ok(())
+    }
+
+    /// Delete the catalog row (full-teardown delete step).
+    pub async fn DeleteEndpointRow(&self, slug: &str) -> Result<()> {
+        sqlx::query("DELETE FROM Endpoints WHERE slug = $1")
+            .bind(slug)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

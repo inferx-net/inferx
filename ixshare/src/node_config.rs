@@ -300,7 +300,27 @@ pub struct GatewayConfig {
     pub endpointsDefaultPolicy: EndpointGatewayPolicySpec,
     pub inferxTenantPolicy: InferxTenantPolicy,
     pub providerApiAllowedTenants: BTreeSet<String>,
+    // Upstream liveness deadlines for external-endpoint proxying (seconds). Global
+    // defaults; there are no per-endpoint override columns in v1. No total-request
+    // cap by design, so long streaming generations are never severed.
+    pub externalConnectTimeoutSecs: u64,
+    pub externalResponseHeaderTimeoutSecs: u64,
+    pub externalIdleTimeoutSecs: u64,
 }
+
+fn env_u64_or(key: &str, default: u64) -> u64 {
+    match std::env::var(key) {
+        Ok(s) => match s.parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                warn!("invalid {} value '{}', defaulting to {}", key, &s, default);
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
 
 impl GatewayConfig {
     pub fn New(config: &NodeConfig) -> Self {
@@ -446,6 +466,11 @@ impl GatewayConfig {
         let inferxTenantPolicy = resolve_inferx_tenant_policy(config);
         let providerApiAllowedTenants = resolve_provider_api_allowed_tenants(config);
 
+        let externalConnectTimeoutSecs = env_u64_or("EXTERNAL_CONNECT_TIMEOUT_SECS", 10);
+        let externalResponseHeaderTimeoutSecs =
+            env_u64_or("EXTERNAL_RESPONSE_HEADER_TIMEOUT_SECS", 600);
+        let externalIdleTimeoutSecs = env_u64_or("EXTERNAL_IDLE_TIMEOUT_SECS", 30);
+
         let ret = Self {
             nodeName: nodeName,
             etcdAddrs: etcdAddrs,
@@ -467,6 +492,9 @@ impl GatewayConfig {
             endpointsDefaultPolicy,
             inferxTenantPolicy,
             providerApiAllowedTenants,
+            externalConnectTimeoutSecs,
+            externalResponseHeaderTimeoutSecs,
+            externalIdleTimeoutSecs,
         };
 
         info!("GatewayConfig is {:#?}", &ret);
