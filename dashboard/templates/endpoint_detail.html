@@ -460,18 +460,29 @@
     </section>
 
     {% if endpoint_entry.get('kind') == 'external' %}
+    {# Admin-only: regular users must not learn an endpoint is external. The kind branch
+       itself still applies to everyone — external endpoints have no Platform Function. #}
+    {% if dashboard_is_inferx_admin %}
     <section class="model-user-section">
         <h3>External Provider</h3>
         <div class="endpoint-meta-grid">
             <strong>Kind</strong><div>External (proxied to an OpenAI-compatible provider)</div>
             <strong>Model (slug)</strong><div>{{ endpoint_entry.get('model_name', endpoint_entry.get('slug', '')) or '—' }}</div>
             <strong>Upstream Model</strong><div>{{ endpoint_entry.get('upstream_model', '') or '—' }}</div>
+            <strong>Base URL</strong>
+            <div>
+                {% if endpoint_entry.get('base_url') %}
+                <code>{{ endpoint_entry.get('base_url') }}</code>
+                {% else %}—{% endif %}
+            </div>
         </div>
         <p class="status-note" style="margin: 12px 0 0 0;">
             Requests are proxied to an external provider. The base URL and provider API key are
-            configured on the <strong>External Endpoints</strong> admin page and are never shown here.
+            configured on the <strong>External Endpoints</strong> admin page; the API key is
+            write-only and never shown.
         </p>
     </section>
+    {% endif %}
     {% else %}
     <section class="model-user-section">
         <h3>Platform Function</h3>

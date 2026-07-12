@@ -130,12 +130,37 @@
                 <div>
                     <input id="concurrency" type="number" step="0.01" value="{{ endpoint_prefill.get('concurrency', '') }}">
                 </div>
+            </div>
 
+            <div class="endpoint-actions">
+                <button type="button" class="ix-btn secondary" onclick="submitEndpointEditor('save')">Save Metadata</button>
+                {% if endpoint_state.code == 'published' %}
+                <a class="ix-btn" href="{{ endpoint_detail_href }}">Cancel</a>
+                {% else %}
+                <button type="button" class="ix-btn" onclick="submitEndpointEditor('publish')">Publish</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <div class="endpoint-panel">
+        <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
+            <div>
+                <h2 style="margin: 0;">Token Pricing</h2>
+                <p style="margin: 6px 0 0 0; color: #64748b;">
+                    Per-million-token prices for shared (token-billed) serving. A price is required to
+                    publish, and can be changed at any time while the endpoint is live.
+                </p>
+            </div>
+        </div>
+
+        <div id="endpoint-pricing-message" class="endpoint-message"></div>
+        <form id="endpoint-pricing-form" style="margin-top: 12px;">
+            <div class="endpoint-form-grid">
                 <label for="token_price_input">Token Price — Input ($ / 1M)</label>
                 <div>
                     <input id="token_price_input" type="number" min="0" step="0.01"
                            value="{{ '%.2f'|format(token_rate.dollars_per_million_input) if token_rate else '' }}">
-                    <div class="endpoint-hint">Per-million-token price for shared (token-billed) serving. Required to publish.</div>
                 </div>
 
                 <label for="token_price_output">Token Price — Output ($ / 1M)</label>
@@ -153,12 +178,7 @@
             </div>
 
             <div class="endpoint-actions">
-                <button type="button" class="ix-btn secondary" onclick="submitEndpointEditor('save')">Save</button>
-                {% if endpoint_state.code == 'published' %}
-                <a class="ix-btn" href="{{ endpoint_detail_href }}">Cancel</a>
-                {% else %}
-                <button type="button" class="ix-btn" onclick="submitEndpointEditor('publish')">Publish</button>
-                {% endif %}
+                <button type="button" class="ix-btn secondary" onclick="submitEndpointPricing()">Save Pricing</button>
             </div>
         </form>
     </div>
@@ -232,16 +252,19 @@
         };
     }
 
-    function setEndpointEditorMessage(kind, text) {
-        const el = document.getElementById('endpoint-editor-message');
+    function setMessage(id, kind, text) {
+        const el = document.getElementById(id);
         if (!el) return;
-        el.className = `endpoint-message ${kind}`;
+        el.className = kind ? `endpoint-message ${kind}` : 'endpoint-message';
         el.textContent = text || '';
     }
 
-    // Publishing a shared endpoint requires a token price. Set the rate first, then
-    // publish (the gateway rejects a rateless publish before any write).
-    async function saveTokenPriceForPublish() {
+    function setEndpointEditorMessage(kind, text) {
+        setMessage('endpoint-editor-message', kind, text);
+    }
+
+    // The gateway rejects a rateless publish, so Publish calls this before publishing.
+    async function saveTokenPrice() {
         const toCents = (id) => {
             const v = parseFloat(document.getElementById(id)?.value);
             return Number.isFinite(v) ? Math.round(v * 100) : NaN;
@@ -251,7 +274,7 @@
         let cached = toCents('token_price_cached');
         if (Number.isNaN(cached)) cached = 0;
         if (Number.isNaN(input) || Number.isNaN(output) || input < 0 || output < 0 || cached < 0) {
-            throw new Error('Enter a valid non-negative input and output token price before publishing.');
+            throw new Error('Enter a valid non-negative input and output token price.');
         }
         const resp = await fetch({{ url_for('prefix.admin_token_rates')|tojson }}, {
             method: 'POST',
@@ -269,19 +292,31 @@
         }
     }
 
+    async function submitEndpointPricing() {
+        setMessage('endpoint-pricing-message', '', '');
+        try {
+            await saveTokenPrice();
+            setMessage('endpoint-pricing-message', 'success', 'Token pricing saved.');
+        } catch (err) {
+            setMessage('endpoint-pricing-message', 'error', err.message || String(err));
+        }
+    }
+
     async function submitEndpointEditor(mode) {
         const payload = endpointEditorPayload();
         const url = mode === 'publish'
             ? {{ url_for('prefix.EndpointAdminPublish', slug=endpoint_slug)|tojson }}
             : {{ url_for('prefix.EndpointAdminSaveMetadata', slug=endpoint_slug)|tojson }};
-        const messageEl = document.getElementById('endpoint-editor-message');
-        if (messageEl) {
-            messageEl.className = 'endpoint-message';
-            messageEl.textContent = '';
-        }
+        setEndpointEditorMessage('', '');
+        if (mode === 'publish') setMessage('endpoint-pricing-message', '', '');
         try {
             if (mode === 'publish') {
-                await saveTokenPriceForPublish();
+                try {
+                    await saveTokenPrice();
+                } catch (err) {
+                    setMessage('endpoint-pricing-message', 'error', err.message || String(err));
+                    throw new Error('Set a valid token price before publishing (see Token Pricing below).');
+                }
             }
             const resp = await fetch(url, {
                 method: mode === 'publish' ? 'POST' : 'PUT',
@@ -290,10 +325,15 @@
             });
             const body = await resp.json().catch(() => ({}));
             if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
-            setEndpointEditorMessage('success', mode === 'publish' ? 'Endpoint published.' : 'Metadata saved.');
-            window.setTimeout(() => {
-                window.location.href = {{ endpoint_detail_href|tojson }};
-            }, 500);
+            if (mode === 'publish') {
+                setEndpointEditorMessage('success', 'Endpoint published.');
+                window.setTimeout(() => {
+                    window.location.href = {{ endpoint_detail_href|tojson }};
+                }, 500);
+                return;
+            }
+            // Stay on the page: pricing is a separate panel with its own unsaved edits.
+            setEndpointEditorMessage('success', 'Metadata saved.');
         } catch (err) {
             setEndpointEditorMessage('error', err.message || String(err));
         }

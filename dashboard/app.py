@@ -6083,6 +6083,7 @@ def load_live_endpoint_detail(
             entry["kind"] = "external"
             entry["platform_detail"] = None
             entry["upstream_model"] = external.get("upstream_model", "")
+            entry["base_url"] = external.get("base_url", "")
             entry["model_name"] = resolve_endpoint_model_name(
                 entry.get("sample_query"), None, fallback_slug=normalized_slug
             )
@@ -8110,7 +8111,6 @@ def EndpointList():
         except Exception as e:
             return json_error(f"failed to load endpoints: {e}", 500)
 
-        preview_tenant = selected_tenant
         api_key_display = mask_apikey_for_ui(onboarding_apikey) if onboarding_apikey else build_inference_apikey_placeholder()
         api_key_copy_value = onboarding_apikey if onboarding_apikey else build_inference_apikey_placeholder()
         api_key_copyable = bool(onboarding_apikey)
@@ -8123,22 +8123,10 @@ def EndpointList():
         except Exception as e:
             return json_error(f"failed to load public endpoints: {e}", 500)
 
-        preview_tenant = "<tenant>"
         api_key_display = "Log in to get API key"
         api_key_copy_value = ""
         api_key_copyable = False
         api_key_name = ""
-
-    for entry in entries:
-        if entry.get("kind") == "external":
-            entry["client_setup_preview"] = build_external_client_setup(entry.get("slug", ""))
-        else:
-            entry["client_setup_preview"] = build_endpoint_client_setup_preview(
-                preview_tenant,
-                entry.get("slug", ""),
-                entry.get("model_name", ""),
-                entry.get("provider", ""),
-            )
 
     return render_template(
         "endpoints_list.html",

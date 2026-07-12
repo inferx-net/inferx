@@ -326,9 +326,6 @@
                     <th style="text-align: left;">GPU Count</th>
                     <th style="text-align: left;">Context Length</th>
                     <th style="text-align: left;">Concurrency</th>
-                    {% if not is_admin_view %}
-                    <th style="text-align: left;">Integration</th>
-                    {% endif %}
                     {% if is_admin_view %}
                     <th>State</th>
                     <th>OpenRouter</th>
@@ -341,7 +338,6 @@
                 {% for entry in endpoint_entries %}
                 {% set slug = entry.get('slug', '') %}
                 {% set detail_href = url_for('prefix.EndpointAdminDetail', slug=slug) if is_admin_view else url_for('prefix.EndpointDetail', slug=slug, tenant=selected_tenant) %}
-                {% set client_preview = entry.get('client_setup_preview', {}) %}
                 <tr
                     data-search="{{ (slug ~ ' ' ~ entry.get('provider', '') ~ ' ' ~ entry.get('brief_intro', '') ~ ' ' ~ entry.get('detailed_intro', '') ~ ' ' ~ entry.get('cs_ttft', '') ~ ' ' ~ ' '.join(entry.get('tags', [])) ~ ' ' ~ ' '.join(entry.get('recommended_use_cases', [])))|lower }}"
                     data-tags="{{ (entry.get('tags', [])|join('||'))|lower }}"
@@ -350,7 +346,7 @@
                 >
                     <td style="text-align: left;">
                         <a class="endpoint-slug-link" href="{{ detail_href }}">{{ slug }}</a>
-                        {% if entry.get('kind') == 'external' %}
+                        {% if entry.get('kind') == 'external' and dashboard_is_inferx_admin %}
                         <span class="endpoint-state" style="margin-left:6px;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;" title="Proxied to an external OpenAI-compatible provider">External</span>
                         {% endif %}
                     </td>
@@ -358,35 +354,6 @@
                     <td style="text-align: left;">{% if entry.get('gpu_count') is not none %}{{ entry.get('gpu_count') }}{% else %}—{% endif %}</td>
                     <td style="text-align: left;">{{ entry.get('context_length', '') or '—' }}</td>
                     <td style="text-align: left;">{% if entry.get('concurrency') is not none %}{{ '%.2fx'|format(entry.get('concurrency')) }}{% else %}—{% endif %}</td>
-                    {% if not is_admin_view %}
-                    <td style="text-align: left;">
-                        <div class="endpoint-client-cell">
-                            <button
-                                type="button"
-                                class="endpoint-copy-btn"
-                                data-tooltip="{{ client_preview.get('api_base_url', '') }}"
-                                data-copy-value="{{ client_preview.get('api_base_url', '') }}"
-                                onclick="copyEndpointSetupValue(this)"
-                                aria-label="Copy endpoint"
-                            >Copy Endpoint</button>
-                            <button
-                                type="button"
-                                class="endpoint-copy-btn"
-                                data-tooltip="{{ client_preview.get('model_name', entry.get('model_name', slug)) }}"
-                                data-copy-value="{{ client_preview.get('model_name', entry.get('model_name', slug)) }}"
-                                onclick="copyEndpointSetupValue(this)"
-                                aria-label="Copy model"
-                            >Copy Model Name</button>
-                            {% if is_authenticated %}
-                            <a
-                                class="endpoint-copy-btn"
-                                href="{{ url_for('prefix.DownloadEndpointOpenCodeConfig', slug=slug, tenant=selected_tenant) }}"
-                                aria-label="Download OpenCode config"
-                            >OpenCode config</a>
-                            {% endif %}
-                        </div>
-                    </td>
-                    {% endif %}
                     {% if is_admin_view %}
                     {% set state = entry.get('state', {'code': 'deploying', 'label': 'Deploying'}) %}
                     <td><span class="endpoint-state {{ state.code }}">{{ state.label }}</span></td>
@@ -421,7 +388,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="{% if is_admin_view %}9{% else %}6{% endif %}" class="endpoint-empty">
+                    <td colspan="{% if is_admin_view %}9{% else %}5{% endif %}" class="endpoint-empty">
                         No endpoints are available right now.
                     </td>
                 </tr>
