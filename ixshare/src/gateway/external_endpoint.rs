@@ -255,6 +255,18 @@ pub async fn proxy_to_external(
         .unwrap()
 }
 
+/// Provider-facing sub-path for an incoming shared-surface request path.
+///
+/// Two front doors reach the same upstream: OpenRouter arrives as `/v1/...` and the
+/// direct surface as `/endpoints/v1/...`. Stripping `/endpoints` normalizes both to
+/// `/v1/...`; stripping `/v1` then yields the sub-path, because the stored `base_url`
+/// already carries the provider's `/v1` root. So `/chat/completions` and `/completions`
+/// both survive verbatim and are simply concatenated onto `base_url`.
+pub fn external_sub_path(incoming_path: &str) -> String {
+    let remain = incoming_path.strip_prefix("/endpoints").unwrap_or(incoming_path);
+    remain.strip_prefix("/v1").unwrap_or(remain).to_string()
+}
+
 /// Published-gate decision for the direct `/endpoints/v1/...` surface. An external
 /// endpoint has no `funcstatus`, so it serves only when its own `published` bit is set.
 pub fn external_published_gate(ext: &ExternalEndpoint) -> std::result::Result<(), String> {
@@ -360,6 +372,41 @@ mod tests {
         assert!(!is_valid_slug("a?b=1"));
         assert!(!is_valid_slug("a#b"));
         assert!(!is_valid_slug("a\nb"));
+    }
+
+    // ---- external_sub_path: both front doors, both OpenAI routes ----
+
+    #[test]
+    fn sub_path_strips_endpoints_and_v1_for_both_routes() {
+        // Direct surface: `/endpoints` then `/v1` come off, leaving the sub-path that is
+        // concatenated onto a base_url already ending in the provider's `/v1` root.
+        assert_eq!(
+            external_sub_path("/endpoints/v1/chat/completions"),
+            "/chat/completions"
+        );
+        assert_eq!(
+            external_sub_path("/endpoints/v1/completions"),
+            "/completions"
+        );
+
+        // OpenRouter surface arrives without the `/endpoints` prefix.
+        assert_eq!(external_sub_path("/v1/chat/completions"), "/chat/completions");
+        assert_eq!(external_sub_path("/v1/completions"), "/completions");
+    }
+
+    #[test]
+    fn sub_path_never_double_prefixes_v1() {
+        // The whole point of the strip: base_url carries `/v1`, so the sub-path must not.
+        for p in [
+            "/endpoints/v1/completions",
+            "/v1/completions",
+            "/endpoints/v1/chat/completions",
+        ] {
+            assert!(
+                !external_sub_path(p).starts_with("/v1"),
+                "{p} would produce a doubled /v1/v1 upstream"
+            );
+        }
     }
 
     // ---- proxy_to_external: outbound header hygiene + status pass-through ----
@@ -476,6 +523,27 @@ mod tests {
         // Path preserved and body forwarded verbatim.
         assert!(req.starts_with("POST /v1/chat/completions"), "got: {req}");
         assert!(req.contains("\"model\":\"u\""), "body must be forwarded");
+    }
+
+    #[tokio::test]
+    async fn proxy_composes_legacy_completions_onto_base_url() {
+        // End-to-end for `/endpoints/v1/completions`: the derived sub-path must land on
+        // the provider as `/v1/completions` (base_url's `/v1` + `/completions`), with the
+        // legacy `prompt` body forwarded verbatim rather than a chat `messages` array.
+        let (port, rx) = spawn_capture_server("HTTP/1.1 200 OK", "{\"usage\":{}}").await;
+        let ext = test_endpoint(format!("http://127.0.0.1:{}/v1", port));
+        let sub_path = external_sub_path("/endpoints/v1/completions");
+        let body = b"{\"model\":\"u\",\"prompt\":\"hi\"}".to_vec();
+
+        let resp = proxy_to_external(&ext, &sub_path, body, FAST_TIMEOUTS).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = rx.await.unwrap();
+        assert!(
+            req.starts_with("POST /v1/completions"),
+            "legacy route must reach the provider as /v1/completions; got: {req}"
+        );
+        assert!(req.contains("\"prompt\":\"hi\""), "body must be forwarded");
     }
 
     #[tokio::test]

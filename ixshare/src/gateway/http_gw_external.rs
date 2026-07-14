@@ -63,12 +63,15 @@ impl From<&ExternalEndpoint> for ExternalEndpointView {
     }
 }
 
+/// `http` is permitted so an external endpoint can target an in-cluster provider
+/// (`http://svc:8000/v1`), where there is no public network hop to protect. Setting a
+/// base_url is InferX-admin-only, so a plaintext scheme is a deliberate operator choice
+/// — note that on a public `http` URL the provider API key is sent in the clear.
+/// The parse itself is kept: `proxy_to_external` concatenates `base_url` with the
+/// sub-path, so an unparseable value would only surface as a broken upstream request.
 fn validate_base_url(base_url: &str) -> Result<()> {
-    let url = url::Url::parse(base_url)
+    url::Url::parse(base_url)
         .map_err(|_| Error::CommonError(format!("invalid base_url: {}", base_url)))?;
-    if url.scheme() != "https" {
-        return Err(Error::CommonError("base_url must be an https URL".to_string()));
-    }
     Ok(())
 }
 
@@ -305,9 +308,13 @@ mod tests {
     }
 
     #[test]
-    fn base_url_must_be_https() {
+    fn base_url_allows_http_for_in_cluster_providers() {
         assert!(validate_base_url("https://api.provider.com/v1").is_ok());
-        assert!(validate_base_url("http://api.provider.com/v1").is_err());
+        // In-cluster providers have no public hop; plaintext is an admin's choice to make.
+        assert!(validate_base_url("http://svc:8000/v1").is_ok());
+        assert!(validate_base_url("http://vllm.default.svc.cluster.local:8000/v1").is_ok());
+        assert!(validate_base_url("http://127.0.0.1:8000/v1").is_ok());
+        // Still rejected: not a URL at all, which would only break at proxy time.
         assert!(validate_base_url("not-a-url").is_err());
     }
 }
