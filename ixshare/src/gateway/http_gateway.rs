@@ -103,7 +103,8 @@ use super::scheduler_client::SCHEDULER_CLIENT;
 use super::http_gw::{BuildProviderModelEntry, ProviderModelsAdapter};
 use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
 use super::external_endpoint::{
-    endpoint_published_gate, external_model_entries, is_valid_slug, proxy_to_external,
+    endpoint_published_gate, external_model_entries, external_sub_path, is_valid_slug,
+    proxy_to_external,
     ExternalEndpointMgr, ExternalTimeouts,
 };
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
@@ -1217,6 +1218,7 @@ impl HttpGateway {
                 "/endpoints/v1/chat/completions",
                 post(SharedEndpointCompletions),
             )
+            .route("/endpoints/v1/completions", post(SharedEndpointCompletions))
             .route("/object/", put(CreateObj))
             .route("/object/:type/:tenant/:namespace/:name/", delete(DeleteObj))
             .route(
@@ -4539,7 +4541,7 @@ async fn shared_endpoint_dispatch(
             serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         // base_url carries the `/v1` root, so strip it from the incoming sub-path.
-        let sub_path = remainPath.strip_prefix("/v1").unwrap_or(&remainPath).to_string();
+        let sub_path = external_sub_path(&incoming_path);
         let response = proxy_to_external(
             &ext,
             &sub_path,
