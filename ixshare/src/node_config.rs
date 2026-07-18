@@ -306,6 +306,9 @@ pub struct GatewayConfig {
     pub externalConnectTimeoutSecs: u64,
     pub externalResponseHeaderTimeoutSecs: u64,
     pub externalIdleTimeoutSecs: u64,
+    // Connection-pool tuning for the shared outbound client to external endpoints.
+    pub externalPoolMaxIdlePerHost: u64,
+    pub externalPoolIdleTimeoutSecs: u64,
 }
 
 fn env_u64_or(key: &str, default: u64) -> u64 {
@@ -469,7 +472,9 @@ impl GatewayConfig {
         let externalConnectTimeoutSecs = env_u64_or("EXTERNAL_CONNECT_TIMEOUT_SECS", 10);
         let externalResponseHeaderTimeoutSecs =
             env_u64_or("EXTERNAL_RESPONSE_HEADER_TIMEOUT_SECS", 600);
-        let externalIdleTimeoutSecs = env_u64_or("EXTERNAL_IDLE_TIMEOUT_SECS", 30);
+        let externalIdleTimeoutSecs = env_u64_or("EXTERNAL_IDLE_TIMEOUT_SECS", 600);
+        let externalPoolMaxIdlePerHost = env_u64_or("EXTERNAL_POOL_MAX_IDLE_PER_HOST", 64);
+        let externalPoolIdleTimeoutSecs = env_u64_or("EXTERNAL_POOL_IDLE_TIMEOUT_SECS", 90);
 
         let ret = Self {
             nodeName: nodeName,
@@ -495,6 +500,8 @@ impl GatewayConfig {
             externalConnectTimeoutSecs,
             externalResponseHeaderTimeoutSecs,
             externalIdleTimeoutSecs,
+            externalPoolMaxIdlePerHost,
+            externalPoolIdleTimeoutSecs,
         };
 
         info!("GatewayConfig is {:#?}", &ret);

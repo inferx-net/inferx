@@ -234,6 +234,10 @@ pub struct ExternalEndpoint {
     pub upstream_model: String,
     pub provider_api_key: String,
     pub published: bool,
+    /// Per-endpoint in-flight concurrency cap. `0` = unlimited (gate skipped);
+    /// `N > 0` caps concurrent upstream requests to this slug across both surfaces.
+    #[serde(default)]
+    pub max_concurrency: i32,
     #[serde(default)]
     pub last_published_by: Option<String>,
 }
@@ -1414,7 +1418,7 @@ impl SqlSecret {
     /// Load the full ExternalEndpoint table (startup mirror hydration).
     pub async fn LoadExternalEndpoints(&self) -> Result<Vec<ExternalEndpoint>> {
         let query = r#"
-            SELECT slug, base_url, upstream_model, provider_api_key, published, last_published_by
+            SELECT slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by
             FROM ExternalEndpoint ORDER BY slug ASC
         "#;
         Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
@@ -1429,17 +1433,19 @@ impl SqlSecret {
         base_url: &str,
         upstream_model: &str,
         provider_api_key: &str,
+        max_concurrency: i32,
     ) -> Result<ExternalEndpoint> {
         let query = r#"
-            INSERT INTO ExternalEndpoint (slug, base_url, upstream_model, provider_api_key)
-            VALUES ($1, $2, $3, $4)
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+            INSERT INTO ExternalEndpoint (slug, base_url, upstream_model, provider_api_key, max_concurrency)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by
         "#;
         Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)
             .bind(base_url)
             .bind(upstream_model)
             .bind(provider_api_key)
+            .bind(max_concurrency)
             .fetch_one(&self.pool)
             .await?)
     }
@@ -1451,20 +1457,23 @@ impl SqlSecret {
         base_url: &str,
         upstream_model: &str,
         provider_api_key: Option<&str>,
+        max_concurrency: i32,
     ) -> Result<ExternalEndpoint> {
         let query = r#"
             UPDATE ExternalEndpoint SET
                 base_url = $2,
                 upstream_model = $3,
-                provider_api_key = COALESCE($4, provider_api_key)
+                provider_api_key = COALESCE($4, provider_api_key),
+                max_concurrency = $5
             WHERE slug = $1
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by
         "#;
         sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)
             .bind(base_url)
             .bind(upstream_model)
             .bind(provider_api_key)
+            .bind(max_concurrency)
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| Error::NotExist(format!("external endpoint {} not found", slug)))
@@ -1480,7 +1489,7 @@ impl SqlSecret {
         let query = r#"
             UPDATE ExternalEndpoint SET published = $2, last_published_by = $3
             WHERE slug = $1
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, last_published_by
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by
         "#;
         sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)
