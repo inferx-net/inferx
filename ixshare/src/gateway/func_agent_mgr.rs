@@ -172,8 +172,15 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
     let sqlaudit = SqlAudit::New(&auditdbAddr).await?;
     let sqlbilling = SqlAudit::New(&billingdbAddr).await?;
     let sqlsecret = SqlSecret::New(&GATEWAY_CONFIG.secretStoreAddr).await?;
+    let externalClient = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(GATEWAY_CONFIG.externalConnectTimeoutSecs))
+        .pool_max_idle_per_host(GATEWAY_CONFIG.externalPoolMaxIdlePerHost as usize)
+        .pool_idle_timeout(std::time::Duration::from_secs(GATEWAY_CONFIG.externalPoolIdleTimeoutSecs))
+        .build()
+        .map_err(|e| Error::CommonError(format!("external client build error: {e}")))?;
     let externalEndpointMgr =
-        crate::gateway::external_endpoint::ExternalEndpointMgr::New(sqlsecret.clone()).await?;
+        crate::gateway::external_endpoint::ExternalEndpointMgr::New(sqlsecret.clone(), externalClient)
+            .await?;
     let client = GetClient().await?;
 
     let objRepo = GwObjRepo::New(GATEWAY_CONFIG.stateSvcAddrs.to_vec())

@@ -11,7 +11,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::Response;
 use futures::StreamExt;
 use hyper::body::Bytes;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::common::*;
@@ -22,9 +22,10 @@ use crate::gateway::secret::{ExternalEndpoint, SqlSecret};
 /// caller — global gateway-config defaults in production, explicit values in tests —
 /// so `proxy_to_external` does not depend on the global config being initialized.
 /// No total-request-time cap by design, so long streaming generations never sever.
+/// The connect timeout is not here: it is baked into the shared `reqwest::Client`
+/// at gateway startup and cannot vary per request.
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalTimeouts {
-    pub connect_secs: u64,
     pub response_header_secs: u64,
     pub idle_secs: u64,
 }
@@ -32,7 +33,6 @@ pub struct ExternalTimeouts {
 impl ExternalTimeouts {
     pub fn from_gateway_config() -> Self {
         Self {
-            connect_secs: GATEWAY_CONFIG.externalConnectTimeoutSecs,
             response_header_secs: GATEWAY_CONFIG.externalResponseHeaderTimeoutSecs,
             idle_secs: GATEWAY_CONFIG.externalIdleTimeoutSecs,
         }
@@ -53,11 +53,20 @@ pub fn is_valid_slug(slug: &str) -> bool {
 pub struct ExternalEndpointMgr {
     sql: SqlSecret,
     map: Arc<RwLock<BTreeMap<String, ExternalEndpoint>>>,
+    /// One long-lived, pooled outbound client shared by every `proxy_to_external`
+    /// call. Built once, cloned cheaply (`Arc` internally), pools per host.
+    client: reqwest::Client,
+    /// Per-slug concurrency limiters; a slug gets an entry only while capped
+    /// (`max_concurrency >= 0`). Unlimited slugs allocate no state here.
+    limiters: Arc<RwLock<BTreeMap<String, Arc<Semaphore>>>>,
+    /// Sentinel handed out for unlimited endpoints so callers get a uniform
+    /// `Some`/`None` shape without branching on "unlimited".
+    unlimited: Arc<Semaphore>,
 }
 
 impl ExternalEndpointMgr {
     /// Hydrate the full mirror from Postgres at gateway startup.
-    pub async fn New(sql: SqlSecret) -> Result<Self> {
+    pub async fn New(sql: SqlSecret, client: reqwest::Client) -> Result<Self> {
         let rows = sql.LoadExternalEndpoints().await?;
         let mut map = BTreeMap::new();
         for row in rows {
@@ -66,7 +75,29 @@ impl ExternalEndpointMgr {
         Ok(Self {
             sql,
             map: Arc::new(RwLock::new(map)),
+            client,
+            limiters: Arc::new(RwLock::new(BTreeMap::new())),
+            unlimited: Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
         })
+    }
+
+    pub fn HttpClient(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    /// Admission gate for one upstream request to `slug`. `Some(permit)` = admitted
+    /// (held for the request's lifetime, released on drop); `None` = a capped
+    /// endpoint at capacity. `max_concurrency < 0` is unlimited: always `Some`.
+    /// `max_concurrency == 0` rejects every request.
+    pub fn try_acquire(&self, slug: &str) -> Option<OwnedSemaphorePermit> {
+        let max = self
+            .map
+            .read()
+            .unwrap()
+            .get(slug)
+            .map(|e| e.max_concurrency)
+            .unwrap_or(-1);
+        try_acquire_slot(max, slug, &self.limiters, &self.unlimited)
     }
 
     pub fn Get(&self, slug: &str) -> Option<ExternalEndpoint> {
@@ -82,7 +113,15 @@ impl ExternalEndpointMgr {
     }
 
     fn upsert_mirror(&self, ep: ExternalEndpoint) {
-        self.map.write().unwrap().insert(ep.slug.clone(), ep);
+        let mut map = self.map.write().unwrap();
+        // When the cap changes, drop the old semaphore so the next request rebuilds it
+        // at the new size. In-flight permits keep the old one alive until they drain,
+        // so a shrink applies to new requests only.
+        let changed = map.get(&ep.slug).map(|old| old.max_concurrency) != Some(ep.max_concurrency);
+        if changed {
+            self.limiters.write().unwrap().remove(&ep.slug);
+        }
+        map.insert(ep.slug.clone(), ep);
     }
 
     pub async fn Create(
@@ -91,10 +130,11 @@ impl ExternalEndpointMgr {
         base_url: &str,
         upstream_model: &str,
         provider_api_key: &str,
+        max_concurrency: i32,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key)
+            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -106,10 +146,11 @@ impl ExternalEndpointMgr {
         base_url: &str,
         upstream_model: &str,
         provider_api_key: Option<&str>,
+        max_concurrency: i32,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key)
+            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -132,6 +173,7 @@ impl ExternalEndpointMgr {
     pub async fn Delete(&self, slug: &str) -> Result<()> {
         self.sql.DeleteExternalEndpoint(slug).await?;
         self.map.write().unwrap().remove(slug);
+        self.limiters.write().unwrap().remove(slug);
         Ok(())
     }
 }
@@ -140,29 +182,48 @@ fn external_gateway_error(code: StatusCode, msg: String) -> Response {
     Response::builder().status(code).body(Body::from(msg)).unwrap()
 }
 
+/// Core of `try_acquire`, split out so it is testable without a DB-backed mgr.
+/// `max <= 0` is unlimited (permit from `unlimited`); otherwise the per-slug
+/// semaphore is looked up (or lazily created sized `max`) and tried.
+fn try_acquire_slot(
+    max: i32,
+    slug: &str,
+    limiters: &RwLock<BTreeMap<String, Arc<Semaphore>>>,
+    unlimited: &Arc<Semaphore>,
+) -> Option<OwnedSemaphorePermit> {
+    // Negative is the unlimited sentinel and must return before the `as usize`
+    // cast below; max == 0 builds a zero-permit semaphore that rejects everything.
+    if max < 0 {
+        return unlimited.clone().try_acquire_owned().ok();
+    }
+    let sem = {
+        let read = limiters.read().unwrap();
+        read.get(slug).cloned()
+    };
+    let sem = match sem {
+        Some(s) => s,
+        None => limiters
+            .write()
+            .unwrap()
+            .entry(slug.to_string())
+            .or_insert_with(|| Arc::new(Semaphore::new(max as usize)))
+            .clone(),
+    };
+    sem.try_acquire_owned().ok()
+}
+
 /// Stream a call to the provider with connect/response-header/idle deadlines (not reqwest's
 /// total-duration `.timeout()`) and adapt the reqwest response into an axum one.
 /// Fresh outbound headers only: the caller's Authorization is never forwarded.
 /// `sub_path` has the `/v1` root stripped (base_url carries it).
 pub async fn proxy_to_external(
+    client: &reqwest::Client,
     ext: &ExternalEndpoint,
     sub_path: &str,
     body_bytes: Vec<u8>,
     timeouts: ExternalTimeouts,
 ) -> Response {
     let url = format!("{}{}", ext.base_url.trim_end_matches('/'), sub_path);
-    let client = match reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(timeouts.connect_secs))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return external_gateway_error(
-                StatusCode::BAD_GATEWAY,
-                format!("service failure: external client build error: {e}"),
-            )
-        }
-    };
 
     let send = client
         .post(&url)
@@ -322,6 +383,7 @@ mod tests {
             upstream_model: "u".to_string(),
             provider_api_key: "sk-secret".to_string(),
             published,
+            max_concurrency: -1,
             last_published_by: None,
         }
     }
@@ -358,6 +420,63 @@ mod tests {
         assert!(entries.iter().all(|e| e["created"].as_i64() == Some(42)));
         assert!(entries.iter().all(|e| e["object"] == "model"));
         assert!(entries.iter().all(|e| e["owned_by"] == "inferx"));
+    }
+
+    fn empty_limiters() -> RwLock<BTreeMap<String, Arc<Semaphore>>> {
+        RwLock::new(BTreeMap::new())
+    }
+
+    #[test]
+    fn limiter_caps_at_max_and_admits_below() {
+        let limiters = empty_limiters();
+        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
+
+        let p1 = try_acquire_slot(2, "m", &limiters, &unlimited);
+        let p2 = try_acquire_slot(2, "m", &limiters, &unlimited);
+        assert!(p1.is_some() && p2.is_some(), "two permits fit under cap 2");
+        // At capacity: rejected.
+        assert!(try_acquire_slot(2, "m", &limiters, &unlimited).is_none());
+        // Releasing one frees a slot for a new request.
+        drop(p1);
+        assert!(try_acquire_slot(2, "m", &limiters, &unlimited).is_some());
+    }
+
+    #[test]
+    fn limiter_unlimited_always_admits_without_state() {
+        let limiters = empty_limiters();
+        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
+        let mut held = Vec::new();
+        for _ in 0..1000 {
+            let p = try_acquire_slot(-1, "m", &limiters, &unlimited);
+            assert!(p.is_some(), "max -1 is unlimited");
+            held.push(p);
+        }
+        // No per-slug semaphore is allocated for an unlimited endpoint.
+        assert!(limiters.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn limiter_zero_rejects_every_request() {
+        let limiters = empty_limiters();
+        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
+        // 0 is a real cap, not the unlimited sentinel: nothing is ever admitted,
+        // which is the 429 kill-switch state.
+        assert!(try_acquire_slot(0, "m", &limiters, &unlimited).is_none());
+        assert!(try_acquire_slot(0, "m", &limiters, &unlimited).is_none());
+    }
+
+    #[test]
+    fn limiter_resize_takes_effect_after_entry_dropped() {
+        let limiters = empty_limiters();
+        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
+
+        let _p = try_acquire_slot(1, "m", &limiters, &unlimited);
+        assert!(try_acquire_slot(1, "m", &limiters, &unlimited).is_none(), "cap 1 full");
+        // A resize drops the entry (as upsert_mirror does); the next call rebuilds it
+        // at the new size, so a larger cap now admits.
+        limiters.write().unwrap().remove("m");
+        assert!(try_acquire_slot(3, "m", &limiters, &unlimited).is_some());
+        assert!(try_acquire_slot(3, "m", &limiters, &unlimited).is_some());
     }
 
     #[test]
@@ -425,12 +544,16 @@ mod tests {
             upstream_model: "u".to_string(),
             provider_api_key: "sk-provider-secret".to_string(),
             published: true,
+            max_concurrency: -1,
             last_published_by: None,
         }
     }
 
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder().build().unwrap()
+    }
+
     const FAST_TIMEOUTS: ExternalTimeouts = ExternalTimeouts {
-        connect_secs: 5,
         response_header_secs: 5,
         idle_secs: 5,
     };
@@ -506,7 +629,7 @@ mod tests {
         let ext = test_endpoint(format!("http://127.0.0.1:{}/v1", port));
         let body = b"{\"model\":\"u\",\"messages\":[]}".to_vec();
 
-        let resp = proxy_to_external(&ext, "/chat/completions", body, FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", body, FAST_TIMEOUTS).await;
         assert_eq!(resp.status(), StatusCode::OK, "2xx must pass through");
         assert_eq!(collect_body(resp).await, "{\"usage\":{}}");
 
@@ -535,7 +658,7 @@ mod tests {
         let sub_path = external_sub_path("/endpoints/v1/completions");
         let body = b"{\"model\":\"u\",\"prompt\":\"hi\"}".to_vec();
 
-        let resp = proxy_to_external(&ext, &sub_path, body, FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext, &sub_path, body, FAST_TIMEOUTS).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = rx.await.unwrap();
@@ -552,7 +675,7 @@ mod tests {
             spawn_capture_server("HTTP/1.1 429 Too Many Requests", "{\"error\":\"rate\"}").await;
         let ext = test_endpoint(format!("http://127.0.0.1:{}/v1", port));
 
-        let resp = proxy_to_external(&ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
         // Real provider status is surfaced so the client can back off (never remapped).
         // The dispatch 2xx gate then skips metering for this non-2xx.
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -563,7 +686,7 @@ mod tests {
     async fn proxy_maps_connection_refused_to_502() {
         // Nothing is listening on this port → connection refused (no HTTP response).
         let ext = test_endpoint("http://127.0.0.1:1/v1".to_string());
-        let resp = proxy_to_external(&ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     }
 }

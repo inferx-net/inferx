@@ -113,6 +113,10 @@ pub async fn process_usage_response(
     is_streaming: bool,
     should_filter_usage: bool,
     meter: Option<TokenMeterCtx>,
+    // External-endpoint concurrency permit, held for the whole response lifetime:
+    // moved into the streaming task, or dropped when the non-streaming collect
+    // returns. `None` on the self-hosted funccall and legacy `/modelcall` paths.
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) -> Response {
     let status = response.status();
     let headers: Vec<_> = response
@@ -127,6 +131,8 @@ pub async fn process_usage_response(
         let responseBodyBody = response.into_body();
 
         tokio::spawn(async move {
+            // Hold the permit until this task exits, so the slot spans the generation.
+            let _permit = permit;
             let mut body = responseBodyBody;
             // Track the latest `usage` seen and bill it only when the stream ends
             // normally. With stream_options.continuous_usage_stats, intermediate
@@ -302,5 +308,6 @@ pub async fn FuncCallWithTokenTracking(
     let response = FuncCall1(token, gw, req).await?;
 
     // No meter context on the legacy /modelcall path: usage is logged only.
-    Ok(process_usage_response(response, isStreaming, !usageEnabled, None).await)
+    // Legacy `/modelcall` path: no external limiter permit.
+    Ok(process_usage_response(response, isStreaming, !usageEnabled, None, None).await)
 }

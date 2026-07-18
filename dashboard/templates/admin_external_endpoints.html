@@ -112,6 +112,11 @@
             <label for="f-key">Provider API key <span id="key-hint" class="external-ep-hint"></span></label>
             <input id="f-key" name="provider_api_key" type="password" autocomplete="new-password" placeholder="sk-...">
         </div>
+        <div class="external-ep-field">
+            <label for="f-max-concurrency">Max concurrency</label>
+            <input id="f-max-concurrency" type="number" min="-1" step="1" value="-1" placeholder="-1">
+            <div class="external-ep-hint">Cap on concurrent upstream requests; over-cap requests get 429. -1 = unlimited, 0 = reject all.</div>
+        </div>
         <div style="margin-top:16px;display:flex;gap:8px;">
             <button class="ix-btn secondary" onclick="submitForm()">Save</button>
             <button class="ix-btn secondary" onclick="resetForm()">Clear</button>
@@ -127,10 +132,11 @@
                 <th>Upstream Model</th>
                 <th>Key</th>
                 <th>Published</th>
+                <th>Max Conc</th>
                 <th>Actions</th>
             </tr>
         </thead>
-        <tbody id="ext-rows"><tr><td colspan="6">Loading…</td></tr></tbody>
+        <tbody id="ext-rows"><tr><td colspan="7">Loading…</td></tr></tbody>
     </table>
     <div id="list-msg" class="external-ep-message"></div>
 </div>
@@ -165,7 +171,7 @@ async function loadRows() {
     const tbody = document.getElementById("ext-rows");
     try {
         const rows = await jreq("GET", "/list");
-        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6">No external endpoints.</td></tr>'; return; }
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="7">No external endpoints.</td></tr>'; return; }
         tbody.innerHTML = rows.map(r => `
             <tr>
                 <td>${esc(r.slug)}</td>
@@ -173,6 +179,7 @@ async function loadRows() {
                 <td>${esc(r.upstream_model)}</td>
                 <td>${r.has_api_key ? "set" : "not set"}</td>
                 <td>${r.published ? "yes" : "no"}</td>
+                <td>${r.max_concurrency < 0 ? "∞" : esc(r.max_concurrency)}</td>
                 <td>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
                         <button class="ix-btn secondary" onclick='editRow(${JSON.stringify(r)})'>Edit</button>
@@ -182,7 +189,7 @@ async function loadRows() {
                 </td>
             </tr>`).join("");
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" style="color:#991b1b;">${esc(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;">${esc(e.message)}</td></tr>`;
     }
 }
 
@@ -193,6 +200,7 @@ function editRow(r) {
     document.getElementById("f-base-url").value = r.base_url;
     document.getElementById("f-upstream").value = r.upstream_model;
     document.getElementById("f-key").value = "";
+    document.getElementById("f-max-concurrency").value = r.max_concurrency != null ? r.max_concurrency : -1;
     document.getElementById("key-hint").textContent = "(leave blank to keep existing)";
     document.getElementById("form-title").textContent = "Edit " + r.slug;
     window.scrollTo(0, 0);
@@ -205,6 +213,7 @@ function resetForm() {
     document.getElementById("f-base-url").value = "";
     document.getElementById("f-upstream").value = "";
     document.getElementById("f-key").value = "";
+    document.getElementById("f-max-concurrency").value = "-1";
     document.getElementById("key-hint").textContent = "";
     document.getElementById("form-title").textContent = "Create endpoint";
     showMsg("form-msg", "", false);
@@ -216,14 +225,18 @@ async function submitForm() {
     const base_url = document.getElementById("f-base-url").value.trim();
     const upstream_model = document.getElementById("f-upstream").value.trim();
     const key = document.getElementById("f-key").value;
+    // A typed 0 means reject-all and must survive; only a blank/unparseable field
+    // falls back to the unlimited sentinel (`|| -1` would swallow the 0).
+    const parsedMax = parseInt(document.getElementById("f-max-concurrency").value, 10);
+    const max_concurrency = Number.isNaN(parsedMax) ? -1 : parsedMax;
     try {
         if (editing) {
-            const body = { base_url, upstream_model };
+            const body = { base_url, upstream_model, max_concurrency };
             if (key) body.provider_api_key = key;
             await jreq("PUT", "/item/" + encodeURIComponent(editing), body);
         } else {
             const slug = document.getElementById("f-slug").value.trim();
-            await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key });
+            await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key, max_concurrency });
         }
         showMsg("form-msg", "Saved.", true);
         resetForm(); loadRows();

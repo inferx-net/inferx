@@ -4540,9 +4540,26 @@ async fn shared_endpoint_dispatch(
         let body_bytes =
             serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+        // Admit against the per-slug concurrency cap before the upstream call.
+        // `None` = at capacity -> fast 429, no queueing. Both front doors share the
+        // one per-slug counter, and the permit is held for the response's lifetime.
+        let permit = match gw.externalEndpointMgr.try_acquire(&ext.slug) {
+            Some(p) => p,
+            None => {
+                return Ok(Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .body(Body::from(format!(
+                        "service failure: endpoint {} at capacity",
+                        ext.slug
+                    )))
+                    .unwrap());
+            }
+        };
+
         // base_url carries the `/v1` root, so strip it from the incoming sub-path.
         let sub_path = external_sub_path(&incoming_path);
         let response = proxy_to_external(
+            gw.externalEndpointMgr.HttpClient(),
             &ext,
             &sub_path,
             body_bytes,
@@ -4560,10 +4577,18 @@ async fn shared_endpoint_dispatch(
                 source: source.as_str().to_string(),
                 request_ts,
             };
-            return Ok(
-                process_usage_response(response, is_streaming, !usage_requested, Some(meter)).await,
-            );
+            // The permit drops only when the response body finishes draining, so
+            // concurrency is counted for the whole generation, not just headers.
+            return Ok(process_usage_response(
+                response,
+                is_streaming,
+                !usage_requested,
+                Some(meter),
+                Some(permit),
+            )
+            .await);
         }
+        // Non-2xx / transport failure: skip metering; the permit drops on return.
         return Ok(response);
     }
 
@@ -4618,7 +4643,8 @@ async fn shared_endpoint_dispatch(
         request_ts,
     };
 
-    Ok(process_usage_response(response, is_streaming, !usage_requested, Some(meter)).await)
+    // Self-hosted funccall path: no external limiter permit.
+    Ok(process_usage_response(response, is_streaming, !usage_requested, Some(meter), None).await)
 }
 
 /// Root OpenRouter inference entrypoint (`/v1/chat/completions`). Attributes to

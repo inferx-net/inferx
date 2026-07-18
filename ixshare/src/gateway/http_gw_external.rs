@@ -28,6 +28,9 @@ pub struct ExternalEndpointCreateRequest {
     pub base_url: String,
     pub upstream_model: String,
     pub provider_api_key: String,
+    /// Per-endpoint in-flight cap. Absent => `0` (unlimited) via the DB default.
+    #[serde(default)]
+    pub max_concurrency: i32,
 }
 
 #[derive(Deserialize)]
@@ -37,6 +40,9 @@ pub struct ExternalEndpointUpdateRequest {
     /// Absent/null = keep the existing key; a non-empty value rotates it.
     #[serde(default)]
     pub provider_api_key: Option<String>,
+    /// Per-endpoint in-flight cap (`0` = unlimited). Required & authoritative on
+    /// update — sent unconditionally like `base_url`/`upstream_model`.
+    pub max_concurrency: i32,
 }
 
 /// Read-side view. Never carries `provider_api_key`.
@@ -47,6 +53,7 @@ pub struct ExternalEndpointView {
     pub upstream_model: String,
     pub published: bool,
     pub has_api_key: bool,
+    pub max_concurrency: i32,
     pub last_published_by: Option<String>,
 }
 
@@ -58,6 +65,7 @@ impl From<&ExternalEndpoint> for ExternalEndpointView {
             upstream_model: e.upstream_model.clone(),
             published: e.published,
             has_api_key: !e.provider_api_key.trim().is_empty(),
+            max_concurrency: e.max_concurrency,
             last_published_by: e.last_published_by.clone(),
         }
     }
@@ -123,6 +131,11 @@ impl HttpGateway {
         if req.provider_api_key.trim().is_empty() {
             return Err(Error::CommonError("provider_api_key is required".to_string()));
         }
+        if req.max_concurrency < -1 {
+            return Err(Error::CommonError(
+                "max_concurrency must be >= -1 (-1 = unlimited, 0 = reject all)".to_string(),
+            ));
+        }
         validate_base_url(base_url)?;
 
         // Single-kind invariant: a slug is external xor a self-hosted func.
@@ -145,7 +158,7 @@ impl HttpGateway {
 
         let ep = self
             .externalEndpointMgr
-            .Create(slug, base_url, upstream_model, req.provider_api_key.trim())
+            .Create(slug, base_url, upstream_model, req.provider_api_key.trim(), req.max_concurrency)
             .await?;
         Ok(ExternalEndpointView::from(&ep))
     }
@@ -163,6 +176,11 @@ impl HttpGateway {
         if upstream_model.is_empty() {
             return Err(Error::CommonError("upstream_model is required".to_string()));
         }
+        if req.max_concurrency < -1 {
+            return Err(Error::CommonError(
+                "max_concurrency must be >= -1 (-1 = unlimited, 0 = reject all)".to_string(),
+            ));
+        }
         validate_base_url(base_url)?;
 
         // A blank/absent key means "keep existing"; only a non-empty value rotates it.
@@ -174,7 +192,7 @@ impl HttpGateway {
 
         let ep = self
             .externalEndpointMgr
-            .Update(slug, base_url, upstream_model, new_key)
+            .Update(slug, base_url, upstream_model, new_key, req.max_concurrency)
             .await?;
         Ok(ExternalEndpointView::from(&ep))
     }
@@ -298,6 +316,7 @@ mod tests {
             upstream_model: "u".to_string(),
             provider_api_key: "sk-super-secret".to_string(),
             published: true,
+            max_concurrency: -1,
             last_published_by: None,
         };
         let view = ExternalEndpointView::from(&ep);

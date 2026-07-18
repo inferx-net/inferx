@@ -157,11 +157,13 @@ CREATE TABLE ExternalEndpoint (
     upstream_model      VARCHAR NOT NULL,                -- model name sent to the provider
     provider_api_key    VARCHAR NOT NULL,                -- outbound key gateway sends to provider (plaintext; matches Apikey posture)
     published           BOOLEAN NOT NULL DEFAULT false,  -- direct-path gate (replaces funcstatus.published)
+    max_concurrency     INTEGER NOT NULL DEFAULT -1,     -- per-endpoint in-flight cap (-1 = unlimited, gate skipped; 0 = reject all)
     createtime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updatetime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_published_by   VARCHAR,
     CHECK (btrim(slug) <> ''),
-    CHECK (btrim(base_url) <> '')
+    CHECK (btrim(base_url) <> ''),
+    CHECK (max_concurrency >= -1)
 );
 
 CREATE TRIGGER external_endpoint_updatetime BEFORE UPDATE ON ExternalEndpoint
