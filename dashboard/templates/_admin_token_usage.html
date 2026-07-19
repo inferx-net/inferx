@@ -1,0 +1,677 @@
+<div id="TokenUsage" class="tabcontent">
+    <div id="token-usage-no-access" style="display: none; color: #888; padding: 40px; text-align: center; font-size: 16px;">
+        Token Usage is only available to Inferx administrators.
+    </div>
+
+    <div id="token-usage-content" style="display: none;">
+        <div id="token-usage-message" style="display: none; margin-bottom: 15px; padding: 10px; border-radius: 4px; position: sticky; top: 10px; z-index: 10;"></div>
+
+        <!-- Time Range Controls -->
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
+            <label style="margin: 0;">Time Range:</label>
+            <select id="token-usage-time-range" onchange="onTokenUsageTimeRangeChange()">
+                <option value="24">Last 24 Hours</option>
+                <option value="168">Last 7 Days</option>
+                <option value="720">Last 30 Days</option>
+                <option value="custom">Custom Range</option>
+            </select>
+            <div id="token-usage-range-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button type="button" onclick="setTokenUsageRangeHours(24)" id="token-usage-range-24h">24h</button>
+                <button type="button" onclick="setTokenUsageRangeHours(24 * 7)" id="token-usage-range-7d">7d</button>
+                <button type="button" onclick="setTokenUsageRangeHours(24 * 30)" id="token-usage-range-30d">30d</button>
+                <button type="button" onclick="showTokenUsageCustomRange()" id="token-usage-range-custom">Custom</button>
+            </div>
+        </div>
+        <div id="token-usage-custom-range" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+            <strong style="font-size: 12px; color: #666;">Custom Range (Local)</strong>
+            <input type="datetime-local" id="token-usage-start" style="font-size: 12px;">
+            <span style="font-size: 12px;">to</span>
+            <input type="datetime-local" id="token-usage-end" style="font-size: 12px;">
+            <button type="button" onclick="applyTokenUsageCustomRange()">Apply</button>
+        </div>
+
+        <!-- View Controls -->
+        <div id="token-usage-view-controls" style="margin-bottom: 15px;">
+            <label>View By:</label>
+            <input type="radio" name="token-usage-view" value="by-model" onchange="onTokenUsageViewChange()" checked> Model
+            <input type="radio" name="token-usage-view" value="by-tenant" onchange="onTokenUsageViewChange()"> Tenant
+        </div>
+
+        <!-- Main Table -->
+        <div id="token-usage-table-container" style="overflow-x: auto;">
+            <table id="token-usage-table" class="ix-table admin-data-table billing-analytics-table" style="width:100%">
+                <thead>
+                    <tr id="token-usage-thead">
+                        <!-- Columns will be populated dynamically -->
+                    </tr>
+                </thead>
+                <tbody id="token-usage-tbody">
+                    <tr><td colspan="8" style="text-align: center; color: #888;">Loading token usage...</td></tr>
+                </tbody>
+                <tfoot>
+                    <tr id="token-usage-tfoot">
+                        <!-- Summary row -->
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <div id="token-usage-detail-area" style="display: none; margin-top: 12px; border: 1px solid #aebfd1; padding: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                <h4 id="token-usage-detail-title" style="margin: 0;">Breakdown</h4>
+                <span id="token-usage-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
+                <button type="button" onclick="closeTokenUsageDrilldown()" style="margin-left: auto;">Close</button>
+            </div>
+            <div id="token-usage-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
+            <div id="token-usage-detail-content"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // =====================================================
+    // Token Usage Tab Functions
+    // =====================================================
+    // Mirrors the Endpoint Usage tab, but visualizes shared-endpoint
+    // token-based usage/spend. The /admin/usage/tokens API returns raw
+    // hourly rows (tenant, model_slug, hour, tokens, charge_cents), so
+    // grouping/summing is done client-side.
+
+    let tokenUsageAccessReady = false;
+    let tokenUsageInitialized = false;
+    let tokenUsageRange = { mode: 'hours', hours: 24 };
+    let tokenUsageViewMode = 'by-model';
+    let tokenUsageRawRows = [];
+    let tokenUsageData = [];
+    let tokenUsageSortColumn = 'charge_cents';
+    let tokenUsageSortDirection = 'desc';
+    let tokenUsageDetailKey = '';
+    let tokenUsageDetailRows = [];
+    let tokenUsageDetailSortColumn = 'hour';
+    let tokenUsageDetailSortDirection = 'desc';
+
+    async function initTokenUsageAccess() {
+        try {
+            const resp = await fetchWithAuth('/generate_roles');
+            const roles = await resp.json();
+            const isAdmin = is_inferx_admin_user(roles);
+
+            const noAccess = document.getElementById('token-usage-no-access');
+            const content = document.getElementById('token-usage-content');
+            const tabBtn = document.getElementById('token-usage-tab-btn');
+
+            if (!isAdmin) {
+                if (noAccess) noAccess.style.display = 'block';
+                if (content) content.style.display = 'none';
+                if (tabBtn) tabBtn.style.display = 'none';
+
+                // Fallback to another tab if this was the currently selected one
+                const savedTab = localStorage.getItem('currentTab');
+                if (savedTab === 'TokenUsage') {
+                    const fallback = document.querySelector(`button[onclick*="'Billing'"]`);
+                    if (fallback) {
+                        openTab({ currentTarget: fallback }, 'Billing', { historyMode: 'replace' });
+                    }
+                }
+                tokenUsageAccessReady = true;
+            } else {
+                if (noAccess) noAccess.style.display = 'none';
+                if (content) content.style.display = 'block';
+                if (tabBtn) tabBtn.style.display = '';
+                tokenUsageAccessReady = true;
+                maybeLoadTokenUsageData();
+            }
+        } catch (e) {
+            console.error('Error initializing Token Usage access:', e);
+        }
+    }
+
+    function getTokenUsageColumns() {
+        const groupCol = tokenUsageViewMode === 'by-tenant'
+            ? { key: 'tenant', label: 'Tenant', sortable: true, type: 'string' }
+            : { key: 'model_slug', label: 'Model', sortable: true, type: 'string' };
+        return [
+            groupCol,
+            { key: 'request_count', label: 'Requests', sortable: true, format: 'count', type: 'number' },
+            { key: 'input_tokens', label: 'Input Tokens', sortable: true, format: 'count', type: 'number' },
+            { key: 'cached_tokens', label: 'Cached Tokens', sortable: true, format: 'count', type: 'number' },
+            { key: 'output_tokens', label: 'Output Tokens', sortable: true, format: 'count', type: 'number' },
+            { key: 'charge_cents', label: 'Spend (USD)', sortable: true, format: 'currency', type: 'number' }
+        ];
+    }
+
+    function maybeLoadTokenUsageData(force = false) {
+        if (!tokenUsageAccessReady) return;
+        const tabEl = document.getElementById('TokenUsage');
+        if (!tabEl || !tabEl.classList.contains('active')) return;
+        if (force || !tokenUsageInitialized) {
+            loadTokenUsageData();
+        }
+    }
+
+    function updateTokenUsageRangeButtons() {
+        const btn24 = document.getElementById('token-usage-range-24h');
+        const btn7d = document.getElementById('token-usage-range-7d');
+        const btn30d = document.getElementById('token-usage-range-30d');
+        const btnCustom = document.getElementById('token-usage-range-custom');
+        if (!btn24 || !btn7d || !btn30d || !btnCustom) return;
+
+        btn24.classList.remove('active-range');
+        btn7d.classList.remove('active-range');
+        btn30d.classList.remove('active-range');
+        btnCustom.classList.remove('active-range');
+
+        if (tokenUsageRange.mode === 'hours') {
+            if (tokenUsageRange.hours === 24) btn24.classList.add('active-range');
+            if (tokenUsageRange.hours === 24 * 7) btn7d.classList.add('active-range');
+            if (tokenUsageRange.hours === 24 * 30) btn30d.classList.add('active-range');
+        } else if (tokenUsageRange.mode === 'custom') {
+            btnCustom.classList.add('active-range');
+        }
+    }
+
+    function updateTokenUsageTimeRangeSelect() {
+        const rangeSelect = document.getElementById('token-usage-time-range');
+        if (!rangeSelect) return;
+
+        if (tokenUsageRange.mode === 'custom') {
+            rangeSelect.value = 'custom';
+            return;
+        }
+
+        rangeSelect.value = String(tokenUsageRange.hours || 24);
+    }
+
+    function onTokenUsageTimeRangeChange() {
+        const rangeSelect = document.getElementById('token-usage-time-range');
+        if (!rangeSelect) return;
+
+        if (rangeSelect.value !== 'custom') {
+            const hours = parseInt(rangeSelect.value, 10);
+            if (!Number.isNaN(hours)) {
+                setTokenUsageRangeHours(hours);
+            }
+            return;
+        }
+
+        showTokenUsageCustomRange();
+    }
+
+    function setTokenUsageRangeHours(hours) {
+        tokenUsageRange = { mode: 'hours', hours: hours };
+        closeTokenUsageDrilldown();
+        const customEl = document.getElementById('token-usage-custom-range');
+        if (customEl) {
+            customEl.style.display = 'none';
+        }
+        updateTokenUsageTimeRangeSelect();
+        updateTokenUsageRangeButtons();
+        loadTokenUsageData();
+    }
+
+    function syncTokenUsageCustomRangeFromInputs(showAlerts = false) {
+        const startInput = document.getElementById('token-usage-start');
+        const endInput = document.getElementById('token-usage-end');
+        if (!startInput || !endInput) return false;
+
+        if (!startInput.value || !endInput.value) {
+            if (showAlerts) alert('Please select both start and end time (Local)');
+            return false;
+        }
+
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            if (showAlerts) alert('Invalid date range');
+            return false;
+        }
+
+        if (end <= start) {
+            if (showAlerts) alert('End time must be after start time');
+            return false;
+        }
+
+        const maxRangeMs = 30 * 24 * 60 * 60 * 1000; // 30 days
+        if (end.getTime() - start.getTime() > maxRangeMs) {
+            if (showAlerts) alert('Custom range is limited to 30 days');
+            return false;
+        }
+
+        tokenUsageRange = {
+            mode: 'custom',
+            start: start.toISOString(),
+            end: end.toISOString()
+        };
+        return true;
+    }
+
+    function showTokenUsageCustomRange() {
+        const customEl = document.getElementById('token-usage-custom-range');
+        const rangeSelect = document.getElementById('token-usage-time-range');
+        if (rangeSelect) {
+            rangeSelect.value = 'custom';
+        }
+        if (customEl) {
+            customEl.style.display = 'flex';
+            const endInput = document.getElementById('token-usage-end');
+            const startInput = document.getElementById('token-usage-start');
+            if (tokenUsageRange.mode === 'custom' && tokenUsageRange.start && tokenUsageRange.end) {
+                if (startInput) startInput.value = toLocalDatetimeValue(new Date(tokenUsageRange.start));
+                if (endInput) endInput.value = toLocalDatetimeValue(new Date(tokenUsageRange.end));
+                return;
+            }
+
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 1);
+            if (endInput) endInput.value = toLocalDatetimeValue(endDate);
+            if (startInput) startInput.value = toLocalDatetimeValue(startDate);
+        }
+    }
+
+    function applyTokenUsageCustomRange() {
+        if (!syncTokenUsageCustomRangeFromInputs(true)) return;
+
+        closeTokenUsageDrilldown();
+        const customEl = document.getElementById('token-usage-custom-range');
+        if (customEl) {
+            customEl.style.display = 'flex';
+        }
+        updateTokenUsageTimeRangeSelect();
+        updateTokenUsageRangeButtons();
+        loadTokenUsageData();
+    }
+
+    function updateTokenUsageViewButtons() {
+        const radio = document.querySelector(`input[name="token-usage-view"][value="${tokenUsageViewMode}"]`);
+        if (radio) {
+            radio.checked = true;
+        }
+    }
+
+    function onTokenUsageViewChange() {
+        const selected = document.querySelector('input[name="token-usage-view"]:checked');
+        setTokenUsageViewMode(selected ? selected.value : 'by-model');
+    }
+
+    function setTokenUsageViewMode(mode) {
+        tokenUsageViewMode = mode === 'by-tenant' ? 'by-tenant' : 'by-model';
+        closeTokenUsageDrilldown();
+        updateTokenUsageViewButtons();
+        // Re-group already-fetched raw rows; no need to refetch.
+        if (tokenUsageInitialized) {
+            renderTokenUsageFromRawRows();
+        } else {
+            loadTokenUsageData();
+        }
+    }
+
+    // Aggregate raw hourly rows into group totals keyed by tenant or model_slug.
+    function aggregateTokenUsageRows(rows, viewMode) {
+        const groupKey = viewMode === 'by-tenant' ? 'tenant' : 'model_slug';
+        const buckets = new Map();
+        (Array.isArray(rows) ? rows : []).forEach((row) => {
+            const key = String(row[groupKey] || '').trim();
+            if (!buckets.has(key)) {
+                buckets.set(key, {
+                    tenant: viewMode === 'by-tenant' ? key : '',
+                    model_slug: viewMode === 'by-tenant' ? '' : key,
+                    request_count: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    output_tokens: 0,
+                    charge_cents: 0
+                });
+            }
+            const bucket = buckets.get(key);
+            bucket.request_count += Number(row.request_count) || 0;
+            bucket.input_tokens += Number(row.input_tokens) || 0;
+            bucket.cached_tokens += Number(row.cached_tokens) || 0;
+            bucket.output_tokens += Number(row.output_tokens) || 0;
+            bucket.charge_cents += Number(row.charge_cents) || 0;
+        });
+        return Array.from(buckets.values());
+    }
+
+    function getTokenUsageSortValue(row, column) {
+        if (!row || !column) return '';
+        const value = row[column.key];
+        if (column.key === 'tenant') {
+            return billingAnalyticsTenantLabel(value).toLowerCase();
+        }
+        if (column.type === 'datetime') {
+            const ts = Date.parse(value || '');
+            return Number.isNaN(ts) ? 0 : ts;
+        }
+        if (column.type === 'number') {
+            return Number(value || 0);
+        }
+        return String(value || '').toLowerCase();
+    }
+
+    function sortTokenUsageRows(rows, columns, sortColumn, sortDirection) {
+        const column = Array.isArray(columns) ? columns.find((col) => col.key === sortColumn) : null;
+        if (!column) return Array.isArray(rows) ? rows.slice() : [];
+
+        const dir = sortDirection === 'asc' ? 1 : -1;
+        return (Array.isArray(rows) ? rows.slice() : []).sort((a, b) => {
+            const aValue = getTokenUsageSortValue(a, column);
+            const bValue = getTokenUsageSortValue(b, column);
+
+            if (typeof aValue === 'number' && typeof bValue === 'number') {
+                if (aValue === bValue) return 0;
+                return aValue > bValue ? dir : -dir;
+            }
+
+            const cmp = String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: 'base' });
+            return cmp * dir;
+        });
+    }
+
+    async function loadTokenUsageData() {
+        const messageEl = document.getElementById('token-usage-message');
+        try {
+            if (messageEl) {
+                messageEl.style.display = 'none';
+                messageEl.textContent = '';
+                messageEl.className = '';
+            }
+
+            const rolesResp = await fetchWithAuth('/generate_roles');
+            if (rolesResp.ok) {
+                const roles = await rolesResp.json();
+                await loadBillingTenantOwnerNames(roles);
+            }
+
+            let params = new URLSearchParams();
+            if (tokenUsageRange.mode === 'hours') {
+                params.set('hours', tokenUsageRange.hours);
+            } else if (tokenUsageRange.mode === 'custom') {
+                params.set('start', tokenUsageRange.start);
+                params.set('end', tokenUsageRange.end);
+            }
+            // Pull the full hourly set for the range; aggregation is client-side.
+            params.set('limit', '100000');
+            params.set('offset', '0');
+
+            const url = `/admin/usage/tokens?${params.toString()}`;
+            const resp = await fetchWithAuth(url);
+
+            if (!resp.ok) {
+                throw new Error(`API error: ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            tokenUsageRawRows = Array.isArray(data.usage) ? data.usage : [];
+            tokenUsageInitialized = true;
+            renderTokenUsageFromRawRows();
+        } catch (error) {
+            console.error('Error loading token usage:', error);
+            if (messageEl) {
+                messageEl.textContent = 'Failed to load token usage data';
+                messageEl.className = 'error-message';
+                messageEl.style.display = 'block';
+                messageEl.style.background = '#fee2e2';
+                messageEl.style.color = '#b91c1c';
+            }
+        }
+    }
+
+    function renderTokenUsageFromRawRows() {
+        tokenUsageData = sortTokenUsageRows(
+            aggregateTokenUsageRows(tokenUsageRawRows, tokenUsageViewMode),
+            getTokenUsageColumns(),
+            tokenUsageSortColumn,
+            tokenUsageSortDirection
+        );
+        renderTokenUsageTable();
+    }
+
+    function renderTokenUsageTable() {
+        const tbody = document.getElementById('token-usage-tbody');
+        const thead = document.getElementById('token-usage-thead');
+        const tfoot = document.getElementById('token-usage-tfoot');
+
+        if (!tbody || !thead || !tfoot) return;
+
+        const columns = getTokenUsageColumns();
+
+        // Render header
+        thead.innerHTML = columns.map(col =>
+            `<th style="cursor: pointer;" onclick="tokenUsageSort('${col.key}')">
+                ${col.label} <span id="token-usage-sort-${col.key}-icon">${getSortIcon(tokenUsageSortColumn, tokenUsageSortDirection, col.key)}</span>
+            </th>`
+        ).join('');
+
+        // Render body
+        tbody.innerHTML = '';
+        if (tokenUsageData.length === 0) {
+            const totalCols = columns.length;
+            tbody.innerHTML = `<tr><td colspan="${totalCols}" style="text-align: center; color: #888;">No token usage data</td></tr>`;
+            renderTokenUsageTableFooter([]);
+            return;
+        }
+
+        tokenUsageData.forEach((row) => {
+            const tr = document.createElement('tr');
+            tr.style.cursor = 'pointer';
+            tr.onclick = () => tokenUsageRowClick(row);
+
+            columns.forEach((col) => {
+                const td = document.createElement('td');
+                let value = row[col.key];
+                if (col.key === 'tenant') {
+                    value = billingAnalyticsTenantLabel(value);
+                    const tenantName = String(row[col.key] || '').trim();
+                    if (tenantName !== '') {
+                        const tenantLink = document.createElement('button');
+                        tenantLink.type = 'button';
+                        tenantLink.className = 'billing-admin-tenant-link';
+                        tenantLink.textContent = value;
+                        tenantLink.addEventListener('click', async (event) => {
+                            event.stopPropagation();
+                            await openBillingForTenant(tenantName);
+                        });
+                        td.appendChild(tenantLink);
+                    } else {
+                        td.textContent = '--';
+                    }
+                } else if (col.key === 'model_slug') {
+                    td.textContent = (value === null || value === undefined || value === '') ? '(unspecified)' : value;
+                } else if (col.format === 'count') {
+                    td.style.textAlign = 'right';
+                    td.textContent = formatCount(value);
+                } else if (col.format === 'currency') {
+                    td.style.textAlign = 'right';
+                    td.textContent = '$' + ((Number(value) || 0) / 100).toFixed(2);
+                } else if (value === null || value === undefined || value === '') {
+                    td.textContent = '--';
+                } else {
+                    td.textContent = value;
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+
+        renderTokenUsageTableFooter(tokenUsageData);
+    }
+
+    function renderTokenUsageTableFooter(data) {
+        const tfoot = document.getElementById('token-usage-tfoot');
+        if (!tfoot) return;
+
+        let totalRequests = 0;
+        let totalInput = 0;
+        let totalCached = 0;
+        let totalOutput = 0;
+        let totalCents = 0;
+
+        data.forEach(row => {
+            totalRequests += Number(row.request_count) || 0;
+            totalInput += Number(row.input_tokens) || 0;
+            totalCached += Number(row.cached_tokens) || 0;
+            totalOutput += Number(row.output_tokens) || 0;
+            totalCents += Number(row.charge_cents) || 0;
+        });
+
+        tfoot.innerHTML = `
+            <td style="font-weight: bold; text-align: right;">Total:</td>
+            <td style="font-weight: bold; text-align: right;">${formatCount(totalRequests)}</td>
+            <td style="font-weight: bold; text-align: right;">${formatCount(totalInput)}</td>
+            <td style="font-weight: bold; text-align: right;">${formatCount(totalCached)}</td>
+            <td style="font-weight: bold; text-align: right;">${formatCount(totalOutput)}</td>
+            <td style="font-weight: bold; text-align: right;">$${(totalCents / 100).toFixed(2)}</td>
+        `;
+    }
+
+    function tokenUsageSort(key) {
+        if (tokenUsageSortColumn === key) {
+            tokenUsageSortDirection = tokenUsageSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            tokenUsageSortColumn = key;
+            tokenUsageSortDirection = 'asc';
+        }
+        tokenUsageData = sortTokenUsageRows(
+            tokenUsageData,
+            getTokenUsageColumns(),
+            tokenUsageSortColumn,
+            tokenUsageSortDirection
+        );
+        renderTokenUsageTable();
+    }
+
+    function showTokenUsageDetailArea(titleText, { loading = false, message = '', messageColor = '#888' } = {}) {
+        const areaEl = document.getElementById('token-usage-detail-area');
+        const titleEl = document.getElementById('token-usage-detail-title');
+        const loadingEl = document.getElementById('token-usage-detail-loading');
+        const messageEl = document.getElementById('token-usage-detail-message');
+        const contentEl = document.getElementById('token-usage-detail-content');
+        if (!areaEl || !titleEl || !loadingEl || !messageEl || !contentEl) return null;
+
+        areaEl.style.display = 'block';
+        titleEl.textContent = titleText;
+        loadingEl.style.display = loading ? 'inline' : 'none';
+        messageEl.style.display = message ? 'block' : 'none';
+        messageEl.textContent = message;
+        messageEl.style.color = messageColor;
+        return contentEl;
+    }
+
+    function closeTokenUsageDrilldown() {
+        const areaEl = document.getElementById('token-usage-detail-area');
+        const loadingEl = document.getElementById('token-usage-detail-loading');
+        const messageEl = document.getElementById('token-usage-detail-message');
+        const contentEl = document.getElementById('token-usage-detail-content');
+        if (areaEl) areaEl.style.display = 'none';
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (messageEl) {
+            messageEl.style.display = 'none';
+            messageEl.textContent = '';
+        }
+        if (contentEl) contentEl.innerHTML = '';
+        tokenUsageDetailKey = '';
+        tokenUsageDetailRows = [];
+    }
+
+    // Drill into a group: show its raw hourly rows for the selected range.
+    function tokenUsageRowClick(row) {
+        const groupKey = tokenUsageViewMode === 'by-tenant' ? 'tenant' : 'model_slug';
+        const keyValue = String(row[groupKey] || '').trim();
+        tokenUsageDetailKey = keyValue;
+        tokenUsageDetailRows = tokenUsageRawRows.filter(
+            (r) => String(r[groupKey] || '').trim() === keyValue
+        );
+        tokenUsageDetailSortColumn = 'hour';
+        tokenUsageDetailSortDirection = 'desc';
+
+        const label = tokenUsageViewMode === 'by-tenant'
+            ? billingAnalyticsTenantLabel(keyValue)
+            : (keyValue === '' ? '(unspecified)' : keyValue);
+        renderTokenUsageDrilldown(label);
+    }
+
+    function getTokenUsageDetailColumns() {
+        // In by-tenant view, break the tenant down per model (and hour); in
+        // by-model view, break the model down per tenant (and hour).
+        const secondary = tokenUsageViewMode === 'by-tenant'
+            ? { key: 'model_slug', label: 'Model', type: 'string' }
+            : { key: 'tenant', label: 'Tenant', type: 'string' };
+        return [
+            { key: 'hour', label: 'Hour (Local)', type: 'datetime' },
+            secondary,
+            { key: 'request_count', label: 'Requests', type: 'number' },
+            { key: 'input_tokens', label: 'Input Tokens', type: 'number' },
+            { key: 'cached_tokens', label: 'Cached Tokens', type: 'number' },
+            { key: 'output_tokens', label: 'Output Tokens', type: 'number' },
+            { key: 'charge_cents', label: 'Spend (USD)', type: 'number' }
+        ];
+    }
+
+    function renderTokenUsageDrilldown(label) {
+        const titlePrefix = tokenUsageViewMode === 'by-tenant' ? 'Breakdown: Tenant' : 'Breakdown: Model';
+        const content = showTokenUsageDetailArea(`${titlePrefix} / ${label}`, { loading: false });
+        if (!content) return;
+
+        if (!Array.isArray(tokenUsageDetailRows) || tokenUsageDetailRows.length === 0) {
+            content.innerHTML = '<p style="color: #888; padding: 20px;">No token usage data for this selection in the period</p>';
+            return;
+        }
+
+        const columns = getTokenUsageDetailColumns();
+        const sortedRows = sortTokenUsageRows(
+            tokenUsageDetailRows,
+            columns,
+            tokenUsageDetailSortColumn,
+            tokenUsageDetailSortDirection
+        );
+
+        const headerHtml = columns.map(col =>
+            `<th style="text-align: ${col.type === 'number' ? 'right' : 'left'}; padding: 8px; cursor: pointer;" onclick="tokenUsageDetailSort('${col.key}')">
+                ${col.label} <span id="token-usage-detail-sort-${col.key}-icon">${getSortIcon(tokenUsageDetailSortColumn, tokenUsageDetailSortDirection, col.key)}</span>
+            </th>`
+        ).join('');
+
+        const rowsHtml = sortedRows.map(row => {
+            const cells = columns.map(col => {
+                const value = row[col.key];
+                if (col.key === 'hour') {
+                    return `<td style="padding: 8px;">${formatLocalDateTime(value)}</td>`;
+                }
+                if (col.key === 'tenant') {
+                    return `<td style="padding: 8px;">${billingAnalyticsTenantLabel(value)}</td>`;
+                }
+                if (col.key === 'model_slug') {
+                    return `<td style="padding: 8px;">${(value === null || value === undefined || value === '') ? '(unspecified)' : value}</td>`;
+                }
+                if (col.key === 'charge_cents') {
+                    return `<td style="padding: 8px; text-align: right;">$${((Number(value) || 0) / 100).toFixed(2)}</td>`;
+                }
+                return `<td style="padding: 8px; text-align: right;">${formatCount(value)}</td>`;
+            }).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+
+        content.innerHTML = `
+            <div style="overflow-x: auto;">
+                <table class="billing-analytics-table" style="width: 100%; min-width: 720px;">
+                    <thead><tr>${headerHtml}</tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+    }
+
+    function tokenUsageDetailSort(key) {
+        if (tokenUsageDetailSortColumn === key) {
+            tokenUsageDetailSortDirection = tokenUsageDetailSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            tokenUsageDetailSortColumn = key;
+            tokenUsageDetailSortDirection = 'asc';
+        }
+        const label = tokenUsageViewMode === 'by-tenant'
+            ? billingAnalyticsTenantLabel(tokenUsageDetailKey)
+            : (tokenUsageDetailKey === '' ? '(unspecified)' : tokenUsageDetailKey);
+        renderTokenUsageDrilldown(label);
+    }
+</script>

@@ -811,6 +811,7 @@
     <button class="tablinks" onclick="openTab(event, 'Billing')">Billing</button>
     <button class="tablinks" id="billing-admin-tab-btn" onclick="openTab(event, 'BillingAdmin')" style="display: none;">Billing Admin</button>
     <button class="tablinks" id="endpoint-usage-tab-btn" onclick="openTab(event, 'EndpointUsage')">Endpoint Usage</button>
+    <button class="tablinks" id="token-usage-tab-btn" onclick="openTab(event, 'TokenUsage')">Token Usage</button>
     {% if dashboard_is_inferx_admin %}
     <button class="tablinks" onclick="openTab(event, 'SkillTemplates')">Skill Templates</button>
     <button class="tablinks" onclick="window.location.href='{{ url_for('prefix.admin_external_endpoints_page') }}'">External Endpoints</button>
@@ -1994,6 +1995,7 @@
         'Billing',
         'BillingAdmin',
         'EndpointUsage',
+        'TokenUsage',
         'SkillTemplates',
     ]);
 
@@ -2134,6 +2136,10 @@
             maybeLoadEndpointUsageData();
         }
 
+        if (tabName === 'TokenUsage') {
+            maybeLoadTokenUsageData();
+        }
+
         if (['Apikeys', 'Roles', 'Namespaces', 'Tenants', 'SkillTemplates'].includes(tabName)) {
             ensureAdminTabData(tabName).catch(error => {
                 console.error(`Failed to load ${tabName} tab data:`, error);
@@ -2161,6 +2167,7 @@
         }
         await initBillingAdminAccess();
         await initEndpointUsageAccess();
+        await initTokenUsageAccess();
         if (targetTab === 'Billing') {
             await populateBillingTenants();
             await syncBillingTenantFromUrl(initialUrlState.tenant, { historyMode: 'replace' });
@@ -3996,6 +4003,7 @@
             renderEndpointUsageDrilldown(endpointUsageDrilldownData);
         }
     }
+
 
     function updateUsageGranularityButtons() {
         const hourlyBtn = document.getElementById('usage-granularity-hourly');
@@ -8811,5 +8819,7 @@
     }
 
 </script>
+
+{% include '_admin_token_usage.html' %}
 
 {% endblock %}
