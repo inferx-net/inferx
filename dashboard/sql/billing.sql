@@ -188,7 +188,7 @@ CREATE TABLE TokenUsageHourly (
     tenant             VARCHAR NOT NULL,
     model_slug         VARCHAR NOT NULL,
     hour               TIMESTAMPTZ NOT NULL,
-    input_tokens       BIGINT NOT NULL DEFAULT 0,   -- billable input = prompt - cached
+    input_tokens       BIGINT NOT NULL DEFAULT 0,   -- raw prompt tokens (usage truth); billing lives in input_numer
     cached_tokens      BIGINT NOT NULL DEFAULT 0,
     output_tokens      BIGINT NOT NULL DEFAULT 0,
     request_count      BIGINT NOT NULL DEFAULT 0,

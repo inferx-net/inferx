@@ -1258,16 +1258,12 @@ impl SqlAudit {
                     e.caller_tenant AS tenant,
                     e.model_slug,
                     date_trunc('hour', e.ts) AS hour,
-                    -- When the cached rate is 0, cached tokens are billed as normal
-                    -- input, so the displayed input count includes them (matches the
-                    -- charge below and the hourly rollup in token-hourly-aggregate.sql).
-                    SUM(
-                        CASE
-                            WHEN r.cents_per_million_cached = 0
-                                THEN e.prompt_tokens
-                            ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
-                        END
-                    )::bigint AS input_tokens,
+                    -- Usage truth: input_tokens is the raw prompt-token total,
+                    -- independent of pricing, matching the hourly rollup in
+                    -- token-hourly-aggregate.sql. Billing stays rate-aware in
+                    -- charge_cents below. See
+                    -- docs/token-usage-hourly-prompt-token-proposal.md.
+                    SUM(e.prompt_tokens)::bigint AS input_tokens,
                     SUM(e.cached_tokens)::bigint AS cached_tokens,
                     SUM(e.completion_tokens)::bigint AS output_tokens,
                     COUNT(*)::bigint AS request_count,

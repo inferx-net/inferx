@@ -1200,14 +1200,18 @@ data:
         e.caller_tenant AS tenant,
         e.model_slug,
         date_trunc('hour', e.ts) AS hour,
-        -- A cached rate of 0 means "no cache discount": bill the full prompt at
-        -- the input rate (kept in sync with the live overlay in audit.rs
+        -- Usage truth: raw prompt tokens, independent of pricing. Stored in
+        -- input_tokens (see docs/token-usage-hourly-prompt-token-proposal.md).
+        e.prompt_tokens AS prompt_input_tokens,
+        -- Billing basis: a cached rate of 0 means "no cache discount", so bill
+        -- the full prompt at the input rate; otherwise carve out the cached
+        -- subset (kept in sync with the live overlay in audit.rs
         -- ListTokenUsageHourly and the pass-1 debit rollup above).
         CASE
           WHEN r.cents_per_million_cached = 0
             THEN e.prompt_tokens
           ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
-        END AS input_tokens,
+        END AS billable_input_tokens,
         e.cached_tokens,
         e.completion_tokens AS output_tokens,
         r.cents_per_million_input,
@@ -1223,11 +1227,11 @@ data:
         t.tenant,
         t.model_slug,
         t.hour,
-        SUM(t.input_tokens)::bigint AS input_tokens,
+        SUM(t.prompt_input_tokens)::bigint AS input_tokens,
         SUM(t.cached_tokens)::bigint AS cached_tokens,
         SUM(t.output_tokens)::bigint AS output_tokens,
         COUNT(*)::bigint AS request_count,
-        COALESCE(SUM(t.input_tokens * t.cents_per_million_input), 0)::bigint AS input_numer,
+        COALESCE(SUM(t.billable_input_tokens * t.cents_per_million_input), 0)::bigint AS input_numer,
         COALESCE(SUM(t.output_tokens * t.cents_per_million_output), 0)::bigint AS output_numer,
         COALESCE(SUM(t.cached_tokens * t.cents_per_million_cached), 0)::bigint AS cached_numer
       FROM event_with_rate t
@@ -1259,6 +1263,247 @@ data:
       output_numer = EXCLUDED.output_numer,
       cached_numer = EXCLUDED.cached_numer,
       charge_cents = EXCLUDED.charge_cents;
+
+  token-hourly-aggregate-range.sql: |
+    \set ON_ERROR_STOP on
+
+    -- Backfill TokenUsageHourly for a custom [start_hour, end_hour) UTC range.
+    -- Example:
+    -- psql -v start_hour='2026-02-01T00:00:00Z' -v end_hour='2026-02-09T00:00:00Z' -f /scripts/token-hourly-aggregate-range.sql
+    -- Uses the same token-rate lookup + upsert logic as token-hourly-aggregate.sql.
+    WITH
+    params AS (
+      SELECT
+        date_trunc('hour', :'start_hour'::timestamptz) AS start_hour,
+        date_trunc('hour', :'end_hour'::timestamptz) AS end_hour
+    ),
+    event_with_rate AS (
+      SELECT
+        e.caller_tenant AS tenant,
+        e.model_slug,
+        date_trunc('hour', e.ts) AS hour,
+        -- Usage truth: raw prompt tokens, independent of pricing. Stored in
+        -- input_tokens (see docs/token-usage-hourly-prompt-token-proposal.md).
+        e.prompt_tokens AS prompt_input_tokens,
+        -- Billing basis: a cached rate of 0 means "no cache discount", so bill
+        -- the full prompt at the input rate; otherwise carve out the cached
+        -- subset (kept in sync with token-hourly-aggregate.sql and the live
+        -- overlay in audit.rs ListTokenUsageHourly).
+        CASE
+          WHEN r.cents_per_million_cached = 0
+            THEN e.prompt_tokens
+          ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+        END AS billable_input_tokens,
+        e.cached_tokens,
+        e.completion_tokens AS output_tokens,
+        r.cents_per_million_input,
+        r.cents_per_million_output,
+        r.cents_per_million_cached
+      FROM TokenUsageEvent e
+      JOIN params p ON TRUE
+      CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+      WHERE e.ts >= p.start_hour
+        AND e.ts < p.end_hour
+    ),
+    hourly AS (
+      SELECT
+        t.tenant,
+        t.model_slug,
+        t.hour,
+        SUM(t.prompt_input_tokens)::bigint AS input_tokens,
+        SUM(t.cached_tokens)::bigint AS cached_tokens,
+        SUM(t.output_tokens)::bigint AS output_tokens,
+        COUNT(*)::bigint AS request_count,
+        COALESCE(SUM(t.billable_input_tokens * t.cents_per_million_input), 0)::bigint AS input_numer,
+        COALESCE(SUM(t.output_tokens * t.cents_per_million_output), 0)::bigint AS output_numer,
+        COALESCE(SUM(t.cached_tokens * t.cents_per_million_cached), 0)::bigint AS cached_numer
+      FROM event_with_rate t
+      GROUP BY t.tenant, t.model_slug, t.hour
+    ),
+    upserted AS (
+      INSERT INTO TokenUsageHourly
+        (tenant, model_slug, hour, input_tokens, cached_tokens, output_tokens,
+         request_count, input_numer, output_numer, cached_numer, charge_cents)
+      SELECT
+        h.tenant,
+        h.model_slug,
+        h.hour,
+        h.input_tokens,
+        h.cached_tokens,
+        h.output_tokens,
+        h.request_count,
+        h.input_numer,
+        h.output_numer,
+        h.cached_numer,
+        (h.input_numer + h.output_numer + h.cached_numer) / 1000000
+      FROM hourly h
+      ON CONFLICT (tenant, model_slug, hour)
+      DO UPDATE SET
+        input_tokens = EXCLUDED.input_tokens,
+        cached_tokens = EXCLUDED.cached_tokens,
+        output_tokens = EXCLUDED.output_tokens,
+        request_count = EXCLUDED.request_count,
+        input_numer = EXCLUDED.input_numer,
+        output_numer = EXCLUDED.output_numer,
+        cached_numer = EXCLUDED.cached_numer,
+        charge_cents = EXCLUDED.charge_cents
+      RETURNING tenant, hour
+    )
+    SELECT
+      p.start_hour,
+      p.end_hour,
+      COUNT(u.hour)::bigint AS upserted_rows
+    FROM params p
+    LEFT JOIN upserted u ON TRUE
+    GROUP BY p.start_hour, p.end_hour;
+
+  verify-token-usage-hourly.sql: |
+    \set ON_ERROR_STOP on
+
+    -- Verification recomputes expected hourly token rows from TokenUsageEvent
+    -- for the selected range and checks both completeness and exact values.
+    BEGIN;
+
+    CREATE TEMP TABLE verify_token_usage_hourly_state ON COMMIT DROP AS
+    WITH params AS (
+      SELECT
+        date_trunc('hour', :'start_hour'::timestamptz) AS start_hour,
+        date_trunc('hour', :'end_hour'::timestamptz) AS end_hour
+    ),
+    expected AS (
+      SELECT
+        e.caller_tenant AS tenant,
+        e.model_slug,
+        date_trunc('hour', e.ts) AS hour,
+        -- Usage truth: input_tokens is the raw prompt-token total, independent
+        -- of pricing (see docs/token-usage-hourly-prompt-token-proposal.md).
+        SUM(e.prompt_tokens)::bigint AS expected_input_tokens,
+        SUM(e.cached_tokens)::bigint AS expected_cached_tokens,
+        SUM(e.completion_tokens)::bigint AS expected_output_tokens,
+        COUNT(*)::bigint AS expected_request_count,
+        -- Billing basis stays rate-aware: mirror token-hourly-aggregate.sql,
+        -- where a cached rate of 0 bills the full prompt as input.
+        COALESCE(SUM(
+          CASE
+            WHEN r.cents_per_million_cached = 0
+              THEN e.prompt_tokens
+            ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
+          END * r.cents_per_million_input
+        ), 0)::bigint AS expected_input_numer,
+        COALESCE(SUM(
+          e.completion_tokens * r.cents_per_million_output
+        ), 0)::bigint AS expected_output_numer,
+        COALESCE(SUM(
+          e.cached_tokens * r.cents_per_million_cached
+        ), 0)::bigint AS expected_cached_numer
+      FROM TokenUsageEvent e
+      JOIN params p ON TRUE
+      CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+      WHERE e.ts >= p.start_hour
+        AND e.ts < p.end_hour
+      GROUP BY e.caller_tenant, e.model_slug, date_trunc('hour', e.ts)
+    ),
+    actual AS (
+      SELECT
+        h.tenant,
+        h.model_slug,
+        h.hour,
+        h.input_tokens,
+        h.cached_tokens,
+        h.output_tokens,
+        h.request_count,
+        h.input_numer,
+        h.output_numer,
+        h.cached_numer,
+        h.charge_cents
+      FROM TokenUsageHourly h
+      JOIN params p ON TRUE
+      WHERE h.hour >= p.start_hour
+        AND h.hour < p.end_hour
+    )
+    SELECT
+      COALESCE(a.tenant, e.tenant) AS tenant,
+      COALESCE(a.model_slug, e.model_slug) AS model_slug,
+      COALESCE(a.hour, e.hour) AS hour,
+      a.input_tokens,
+      a.cached_tokens,
+      a.output_tokens,
+      a.request_count,
+      a.input_numer,
+      a.output_numer,
+      a.cached_numer,
+      a.charge_cents,
+      e.expected_input_tokens,
+      e.expected_cached_tokens,
+      e.expected_output_tokens,
+      e.expected_request_count,
+      e.expected_input_numer,
+      e.expected_output_numer,
+      e.expected_cached_numer,
+      a.tenant IS NULL AS missing_actual_row,
+      e.tenant IS NULL AS unexpected_actual_row,
+      a.charge_cents IS DISTINCT FROM (a.input_numer + a.output_numer + a.cached_numer) / 1000000 AS charge_cents_self_mismatch,
+      a.input_tokens IS DISTINCT FROM e.expected_input_tokens AS input_tokens_mismatch,
+      a.cached_tokens IS DISTINCT FROM e.expected_cached_tokens AS cached_tokens_mismatch,
+      a.output_tokens IS DISTINCT FROM e.expected_output_tokens AS output_tokens_mismatch,
+      a.request_count IS DISTINCT FROM e.expected_request_count AS request_count_mismatch,
+      a.input_numer IS DISTINCT FROM e.expected_input_numer AS input_numer_mismatch,
+      a.output_numer IS DISTINCT FROM e.expected_output_numer AS output_numer_mismatch,
+      a.cached_numer IS DISTINCT FROM e.expected_cached_numer AS cached_numer_mismatch
+    FROM actual a
+    FULL OUTER JOIN expected e
+      ON e.tenant = a.tenant
+     AND e.model_slug = a.model_slug
+     AND e.hour = a.hour
+    WHERE a.tenant IS NULL
+       OR e.tenant IS NULL
+       OR a.charge_cents IS DISTINCT FROM (a.input_numer + a.output_numer + a.cached_numer) / 1000000
+       OR a.input_tokens IS DISTINCT FROM e.expected_input_tokens
+       OR a.cached_tokens IS DISTINCT FROM e.expected_cached_tokens
+       OR a.output_tokens IS DISTINCT FROM e.expected_output_tokens
+       OR a.request_count IS DISTINCT FROM e.expected_request_count
+       OR a.input_numer IS DISTINCT FROM e.expected_input_numer
+       OR a.output_numer IS DISTINCT FROM e.expected_output_numer
+       OR a.cached_numer IS DISTINCT FROM e.expected_cached_numer;
+
+    SELECT *
+    FROM verify_token_usage_hourly_state
+    ORDER BY tenant, model_slug, hour
+    LIMIT 50;
+
+    CREATE TEMP TABLE verify_token_usage_hourly_counts ON COMMIT DROP AS
+    SELECT
+      COUNT(*) FILTER (WHERE missing_actual_row) AS missing_actual_row_count,
+      COUNT(*) FILTER (WHERE unexpected_actual_row) AS unexpected_actual_row_count,
+      COUNT(*) FILTER (WHERE charge_cents_self_mismatch) AS charge_cents_self_mismatch_count,
+      COUNT(*) FILTER (
+        WHERE input_tokens_mismatch
+           OR cached_tokens_mismatch
+           OR output_tokens_mismatch
+           OR request_count_mismatch
+           OR input_numer_mismatch
+           OR output_numer_mismatch
+           OR cached_numer_mismatch
+      ) AS exact_value_mismatch_count
+    FROM verify_token_usage_hourly_state;
+
+    SELECT
+      missing_actual_row_count,
+      unexpected_actual_row_count,
+      charge_cents_self_mismatch_count,
+      exact_value_mismatch_count
+    FROM verify_token_usage_hourly_counts;
+
+    SELECT 1 / CASE
+      WHEN missing_actual_row_count
+         + unexpected_actual_row_count
+         + charge_cents_self_mismatch_count
+         + exact_value_mismatch_count = 0 THEN 1
+      ELSE 0
+    END AS verification_passed
+    FROM verify_token_usage_hourly_counts;
+
+    COMMIT;
 
   # Alert query: unprocessed token events with no active rate at their ts. These
   # are a should-never-happen misconfiguration; they stay unbilled and self-heal
