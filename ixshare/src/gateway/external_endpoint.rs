@@ -183,7 +183,8 @@ fn external_gateway_error(code: StatusCode, msg: String) -> Response {
 }
 
 /// Core of `try_acquire`, split out so it is testable without a DB-backed mgr.
-/// `max <= 0` is unlimited (permit from `unlimited`); otherwise the per-slug
+/// `max < 0` is unlimited (permit from `unlimited`); `max == 0` builds a
+/// zero-permit semaphore that rejects everything; otherwise the per-slug
 /// semaphore is looked up (or lazily created sized `max`) and tried.
 fn try_acquire_slot(
     max: i32,

@@ -234,12 +234,19 @@ pub struct ExternalEndpoint {
     pub upstream_model: String,
     pub provider_api_key: String,
     pub published: bool,
-    /// Per-endpoint in-flight concurrency cap. `0` = unlimited (gate skipped);
-    /// `N > 0` caps concurrent upstream requests to this slug across both surfaces.
-    #[serde(default)]
+    /// Per-endpoint in-flight concurrency cap. `-1` = unlimited (gate skipped);
+    /// `0` = reject every request; `N > 0` caps concurrent upstream requests to
+    /// this slug across both surfaces. The serde default must be `-1`: a plain
+    /// `#[serde(default)]` would yield `0`, which is reject-all, not unlimited.
+    #[serde(default = "unlimited_concurrency")]
     pub max_concurrency: i32,
     #[serde(default)]
     pub last_published_by: Option<String>,
+}
+
+/// Serde default for absent `max_concurrency`: `-1` = unlimited.
+fn unlimited_concurrency() -> i32 {
+    -1
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
