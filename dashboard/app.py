@@ -110,6 +110,15 @@ REMOTE_AUDIO_FETCH_HEADERS = {
     "User-Agent": "InferX-Dashboard/1.0 remote-audio-fetch",
 }
 
+def format_token_price_dollars(value):
+    """Format $/1M token prices without useless trailing zeroes."""
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):.6f}".rstrip("0").rstrip(".")
+    except Exception:
+        return ""
+
 
 @app.context_processor
 def inject_dashboard_links():
@@ -134,6 +143,7 @@ def inject_dashboard_links():
             DASHBOARD_GATEWAY_ALIGNED_ANONYMOUS_ACCESS
             and session.get('access_token', '') == ''
         ),
+        "format_token_price_dollars": format_token_price_dollars,
     }
 
 #Create a Blueprint with a common prefix
@@ -10610,7 +10620,7 @@ def endpoint_token_rate(slug):
 def fetch_active_token_rate(slug):
     """Server-side fetch of the active token rate for `slug` (dict) or None.
 
-    Returns cents-per-million as stored plus dollars-per-million for display.
+    Returns microcents-per-million as stored plus dollars-per-million for display.
     """
     try:
         access_token = str(session.get("access_token", "") or "")
@@ -10624,12 +10634,12 @@ def fetch_active_token_rate(slug):
             return None
         data = resp.json()
         for src, dst in (
-            ("cents_per_million_input", "dollars_per_million_input"),
-            ("cents_per_million_output", "dollars_per_million_output"),
-            ("cents_per_million_cached", "dollars_per_million_cached"),
+            ("microcents_per_million_input", "dollars_per_million_input"),
+            ("microcents_per_million_output", "dollars_per_million_output"),
+            ("microcents_per_million_cached", "dollars_per_million_cached"),
         ):
-            cents = data.get(src)
-            data[dst] = round(cents / 100.0, 4) if cents is not None else None
+            microcents = data.get(src)
+            data[dst] = round(microcents / 100000000.0, 6) if microcents is not None else None
         return data
     except Exception:
         return None

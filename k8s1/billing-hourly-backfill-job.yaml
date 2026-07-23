@@ -33,18 +33,32 @@ spec:
               fi
               echo "Running UsageHourlyByFunc numerator migration"
               psql -v ON_ERROR_STOP=1 -f /scripts/migrate-usage-hourly-by-func-numer.sql
+              echo "Running token billing schema migration"
+              psql -v ON_ERROR_STOP=1 -f /scripts/migrate-token-billing.sql
               echo "Backfilling UsageHourlyByFunc from ${START_HOUR} to ${END_HOUR} (end exclusive)"
               psql \
                 -v ON_ERROR_STOP=1 \
                 -v start_hour="${START_HOUR}" \
                 -v end_hour="${END_HOUR}" \
                 -f /scripts/hourly-aggregate-by-func-range.sql
+              echo "Backfilling TokenUsageHourly from ${START_HOUR} to ${END_HOUR} (end exclusive)"
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -v start_hour="${START_HOUR}" \
+                -v end_hour="${END_HOUR}" \
+                -f /scripts/token-hourly-aggregate-range.sql
               echo "Verifying UsageHourlyByFunc numerators from ${START_HOUR} to ${END_HOUR} (end exclusive)"
               psql \
                 -v ON_ERROR_STOP=1 \
                 -v start_hour="${START_HOUR}" \
                 -v end_hour="${END_HOUR}" \
                 -f /scripts/verify-usage-hourly-by-func-numer.sql
+              echo "Verifying TokenUsageHourly from ${START_HOUR} to ${END_HOUR} (end exclusive)"
+              psql \
+                -v ON_ERROR_STOP=1 \
+                -v start_hour="${START_HOUR}" \
+                -v end_hour="${END_HOUR}" \
+                -f /scripts/verify-token-usage-hourly.sql
           env:
             - name: PGHOST
               value: billingdb
@@ -60,11 +74,11 @@ spec:
               # MUST be replaced before applying this Job.
               # Choose the UTC start timestamp for the hourly backfill range.
               # After hour truncation it must still be earlier than BACKFILL_END.
-              value: "2026-03-11T05:00:00Z"
+              value: "REPLACE_WITH_START_TIMESTAMP"
             - name: BACKFILL_END
               # MUST be replaced before applying this Job.
               # Choose the end-exclusive UTC timestamp for the same backfill range.
-              value: "2026-04-08T00:00:00Z"
+              value: "REPLACE_WITH_END_TIMESTAMP"
           volumeMounts:
             - name: sql-scripts
               mountPath: /scripts

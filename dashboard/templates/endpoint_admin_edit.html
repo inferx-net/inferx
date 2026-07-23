@@ -159,20 +159,20 @@
             <div class="endpoint-form-grid">
                 <label for="token_price_input">Token Price — Input ($ / 1M)</label>
                 <div>
-                    <input id="token_price_input" type="number" min="0" step="0.01"
-                           value="{{ '%.2f'|format(token_rate.dollars_per_million_input) if token_rate else '' }}">
+                    <input id="token_price_input" type="number" min="0" step="0.000001"
+                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_input) if token_rate else '' }}">
                 </div>
 
                 <label for="token_price_output">Token Price — Output ($ / 1M)</label>
                 <div>
-                    <input id="token_price_output" type="number" min="0" step="0.01"
-                           value="{{ '%.2f'|format(token_rate.dollars_per_million_output) if token_rate else '' }}">
+                    <input id="token_price_output" type="number" min="0" step="0.000001"
+                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_output) if token_rate else '' }}">
                 </div>
 
                 <label for="token_price_cached">Token Price — Cached Input ($ / 1M)</label>
                 <div>
-                    <input id="token_price_cached" type="number" min="0" step="0.01"
-                           value="{{ '%.2f'|format(token_rate.dollars_per_million_cached) if token_rate else '0.00' }}">
+                    <input id="token_price_cached" type="number" min="0" step="0.000001"
+                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_cached) if token_rate else '0' }}">
                     <div class="endpoint-hint">Discounted rate for the cached prompt subset. Defaults to 0.</div>
                 </div>
             </div>
@@ -265,13 +265,13 @@
 
     // The gateway rejects a rateless publish, so Publish calls this before publishing.
     async function saveTokenPrice() {
-        const toCents = (id) => {
+        const toMicrocents = (id) => {
             const v = parseFloat(document.getElementById(id)?.value);
-            return Number.isFinite(v) ? Math.round(v * 100) : NaN;
+            return Number.isFinite(v) ? Math.round(v * 100000000) : NaN;
         };
-        const input = toCents('token_price_input');
-        const output = toCents('token_price_output');
-        let cached = toCents('token_price_cached');
+        const input = toMicrocents('token_price_input');
+        const output = toMicrocents('token_price_output');
+        let cached = toMicrocents('token_price_cached');
         if (Number.isNaN(cached)) cached = 0;
         if (Number.isNaN(input) || Number.isNaN(output) || input < 0 || output < 0 || cached < 0) {
             throw new Error('Enter a valid non-negative input and output token price.');
@@ -281,9 +281,9 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 model_slug: {{ endpoint_slug|tojson }},
-                cents_per_million_input: input,
-                cents_per_million_output: output,
-                cents_per_million_cached: cached,
+                microcents_per_million_input: input,
+                microcents_per_million_output: output,
+                microcents_per_million_cached: cached,
             }),
         });
         if (!resp.ok) {

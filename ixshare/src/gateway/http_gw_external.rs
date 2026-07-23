@@ -28,9 +28,17 @@ pub struct ExternalEndpointCreateRequest {
     pub base_url: String,
     pub upstream_model: String,
     pub provider_api_key: String,
-    /// Per-endpoint in-flight cap. Absent => `0` (unlimited) via the DB default.
-    #[serde(default)]
+    /// Per-endpoint in-flight cap. Absent => `-1` (unlimited). Note the DB
+    /// default never applies here: the value is always bound on insert, so the
+    /// serde default must itself be `-1` — a plain `#[serde(default)]` would
+    /// yield `0`, which is reject-all, not unlimited.
+    #[serde(default = "unlimited_concurrency")]
     pub max_concurrency: i32,
+}
+
+/// Serde default for absent `max_concurrency`: `-1` = unlimited.
+fn unlimited_concurrency() -> i32 {
+    -1
 }
 
 #[derive(Deserialize)]
@@ -40,8 +48,9 @@ pub struct ExternalEndpointUpdateRequest {
     /// Absent/null = keep the existing key; a non-empty value rotates it.
     #[serde(default)]
     pub provider_api_key: Option<String>,
-    /// Per-endpoint in-flight cap (`0` = unlimited). Required & authoritative on
-    /// update — sent unconditionally like `base_url`/`upstream_model`.
+    /// Per-endpoint in-flight cap (`-1` = unlimited, `0` = reject all). Required
+    /// & authoritative on update — sent unconditionally like
+    /// `base_url`/`upstream_model`.
     pub max_concurrency: i32,
 }
 

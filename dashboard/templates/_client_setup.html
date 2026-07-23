@@ -417,10 +417,10 @@
                     {% if token_rate %}
                     {{ client_setup_display_field(
                         'Price',
-                        '$%.2f input / $%.2f output per 1M tokens%s'|format(
-                            token_rate.dollars_per_million_input,
-                            token_rate.dollars_per_million_output,
-                            ' · cached input $%.2f/1M'|format(token_rate.dollars_per_million_cached) if token_rate.cents_per_million_cached else ''
+                        '$%s input / $%s output per 1M tokens%s'|format(
+                            format_token_price_dollars(token_rate.dollars_per_million_input),
+                            format_token_price_dollars(token_rate.dollars_per_million_output),
+                            ' · cached input $%s/1M'|format(format_token_price_dollars(token_rate.dollars_per_million_cached)) if token_rate.microcents_per_million_cached else ''
                         )
                     ) }}
                     {% endif %}

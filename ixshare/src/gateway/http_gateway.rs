@@ -5088,9 +5088,9 @@ struct AddBillingRateResponse {
 #[derive(Deserialize)]
 struct AddTokenRateRequest {
     model_slug: Option<String>, // None/empty = global default
-    cents_per_million_input: i64,
-    cents_per_million_output: i64,
-    cents_per_million_cached: Option<i64>,
+    microcents_per_million_input: i64,
+    microcents_per_million_output: i64,
+    microcents_per_million_cached: Option<i64>,
     effective_from: Option<String>,
     effective_to: Option<String>,
     tenant: Option<String>,
@@ -5101,9 +5101,9 @@ struct AddTokenRateResponse {
     success: bool,
     rate_id: i64,
     model_slug: Option<String>,
-    cents_per_million_input: i64,
-    cents_per_million_output: i64,
-    cents_per_million_cached: i64,
+    microcents_per_million_input: i64,
+    microcents_per_million_output: i64,
+    microcents_per_million_cached: i64,
     effective_from: String,
     effective_to: Option<String>,
     tenant: Option<String>,
@@ -5121,6 +5121,8 @@ struct TokenRateHistoryResponse {
     records: Vec<crate::audit::TokenRateHistoryRecord>,
     total: i64,
 }
+
+const MAX_SAFE_MICROCENTS_PER_MILLION: i64 = i64::MAX - 500000;
 
 #[derive(Serialize)]
 struct BillingRateHistoryResponse {
@@ -6066,12 +6068,20 @@ async fn AddTokenRate(
             .unwrap());
     }
 
-    let cached = req.cents_per_million_cached.unwrap_or(0);
-    if req.cents_per_million_input < 0 || req.cents_per_million_output < 0 || cached < 0 {
+    let input = req.microcents_per_million_input;
+    let output = req.microcents_per_million_output;
+    let cached = req.microcents_per_million_cached.unwrap_or(0);
+    if input < 0 || output < 0 || cached < 0 {
         return Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from("token rates must be >= 0"))
             .unwrap());
+    }
+    if input > MAX_SAFE_MICROCENTS_PER_MILLION
+        || output > MAX_SAFE_MICROCENTS_PER_MILLION
+        || cached > MAX_SAFE_MICROCENTS_PER_MILLION
+    {
+        return Ok(BadRequest("token rates exceed the maximum supported microcents value"));
     }
 
     let effective_from = match req.effective_from.as_deref() {
@@ -6128,8 +6138,8 @@ async fn AddTokenRate(
         .sqlBilling
         .AddTokenRate(
             model_slug.as_deref(),
-            req.cents_per_million_input,
-            req.cents_per_million_output,
+            input,
+            output,
             cached,
             effective_from,
             effective_to,
@@ -6143,9 +6153,9 @@ async fn AddTokenRate(
                 success: true,
                 rate_id: id,
                 model_slug,
-                cents_per_million_input: req.cents_per_million_input,
-                cents_per_million_output: req.cents_per_million_output,
-                cents_per_million_cached: cached,
+                microcents_per_million_input: input,
+                microcents_per_million_output: output,
+                microcents_per_million_cached: cached,
                 effective_from: effective_from.to_rfc3339(),
                 effective_to: effective_to_resp,
                 tenant,
@@ -6175,9 +6185,9 @@ async fn GetActiveTokenRateForSlug(
         Ok(Some(r)) => {
             let body = serde_json::json!({
                 "model_slug": r.model_slug,
-                "cents_per_million_input": r.cents_per_million_input,
-                "cents_per_million_output": r.cents_per_million_output,
-                "cents_per_million_cached": r.cents_per_million_cached,
+                "microcents_per_million_input": r.microcents_per_million_input,
+                "microcents_per_million_output": r.microcents_per_million_output,
+                "microcents_per_million_cached": r.microcents_per_million_cached,
                 "effective_from": r.effective_from.to_rfc3339(),
                 "tenant": r.tenant,
             });
