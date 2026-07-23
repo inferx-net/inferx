@@ -684,9 +684,9 @@ struct TokenUsageWindowRow {
 pub struct TokenRateHistoryRecord {
     pub id: i64,
     pub model_slug: Option<String>,
-    pub cents_per_million_input: i64,
-    pub cents_per_million_output: i64,
-    pub cents_per_million_cached: i64,
+    pub microcents_per_million_input: i64,
+    pub microcents_per_million_output: i64,
+    pub microcents_per_million_cached: i64,
     pub effective_from: DateTime<Utc>,
     pub effective_to: Option<DateTime<Utc>>,
     pub tenant: Option<String>,
@@ -1098,9 +1098,9 @@ impl SqlAudit {
     pub async fn AddTokenRate(
         &self,
         model_slug: Option<&str>,
-        cents_per_million_input: i64,
-        cents_per_million_output: i64,
-        cents_per_million_cached: i64,
+        microcents_per_million_input: i64,
+        microcents_per_million_output: i64,
+        microcents_per_million_cached: i64,
         effective_from: DateTime<Utc>,
         effective_to: Option<DateTime<Utc>>,
         tenant: Option<&str>,
@@ -1108,17 +1108,17 @@ impl SqlAudit {
     ) -> Result<i64> {
         let query = r#"
             INSERT INTO TokenRate (
-                model_slug, cents_per_million_input, cents_per_million_output,
-                cents_per_million_cached, effective_from, effective_to, tenant, added_by
+                model_slug, microcents_per_million_input, microcents_per_million_output,
+                microcents_per_million_cached, effective_from, effective_to, tenant, added_by
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING id
         "#;
         let row: (i32,) = sqlx::query_as(query)
             .bind(model_slug)
-            .bind(cents_per_million_input)
-            .bind(cents_per_million_output)
-            .bind(cents_per_million_cached)
+            .bind(microcents_per_million_input)
+            .bind(microcents_per_million_output)
+            .bind(microcents_per_million_cached)
             .bind(effective_from)
             .bind(effective_to)
             .bind(tenant)
@@ -1139,9 +1139,9 @@ impl SqlAudit {
             SELECT
                 id::bigint as id,
                 model_slug,
-                cents_per_million_input,
-                cents_per_million_output,
-                cents_per_million_cached,
+                microcents_per_million_input,
+                microcents_per_million_output,
+                microcents_per_million_cached,
                 effective_from,
                 effective_to,
                 tenant,
@@ -1177,9 +1177,9 @@ impl SqlAudit {
             SELECT
                 id::bigint as id,
                 model_slug,
-                cents_per_million_input,
-                cents_per_million_output,
-                cents_per_million_cached,
+                microcents_per_million_input,
+                microcents_per_million_output,
+                microcents_per_million_cached,
                 effective_from,
                 effective_to,
                 tenant,
@@ -1267,27 +1267,29 @@ impl SqlAudit {
                     SUM(e.cached_tokens)::bigint AS cached_tokens,
                     SUM(e.completion_tokens)::bigint AS output_tokens,
                     COUNT(*)::bigint AS request_count,
-                    (
+                    TRUNC(
+                        (
                         -- A cached rate of 0 means "no cache discount": bill the full
                         -- prompt at the input rate. A positive cached rate splits the
                         -- prompt into non-cached (input rate) and cached (cached rate).
                         COALESCE(
                             SUM(
                                 CASE
-                                    WHEN r.cents_per_million_cached = 0
+                                    WHEN r.microcents_per_million_cached = 0
                                         THEN e.prompt_tokens
                                     ELSE GREATEST(e.prompt_tokens - e.cached_tokens, 0::bigint)
                                 END
-                                * r.cents_per_million_input
+                                * r.microcents_per_million_input::numeric
                             ),
                             0
                         )
-                        + COALESCE(SUM(e.cached_tokens * r.cents_per_million_cached), 0)
-                        + COALESCE(SUM(e.completion_tokens * r.cents_per_million_output), 0)
-                    )::bigint / 1000000 AS charge_cents
+                        + COALESCE(SUM(e.cached_tokens * r.microcents_per_million_cached::numeric), 0)
+                        + COALESCE(SUM(e.completion_tokens * r.microcents_per_million_output::numeric), 0)
+                        ) / 1000000000000
+                    )::bigint AS charge_cents
                 FROM TokenUsageEvent e
                 JOIN params p ON true
-                CROSS JOIN LATERAL GetTokenRateCents(e.model_slug, e.ts, e.caller_tenant) r
+                CROSS JOIN LATERAL GetTokenRateMicrocents(e.model_slug, e.ts, e.caller_tenant) r
                 WHERE e.ts >= GREATEST(p.start_hour, p.recent_start)
                   AND e.ts < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
                   AND (p.tenant IS NULL OR e.caller_tenant = p.tenant)

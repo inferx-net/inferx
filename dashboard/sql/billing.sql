@@ -39,7 +39,7 @@ CREATE TABLE TenantQuota (
     token_used_cents       BIGINT NOT NULL DEFAULT 0, -- Cumulative token usage in cents
     inference_carry_numer  BIGINT NOT NULL DEFAULT 0, -- Exact inference numerator remainder / 3600000
     standby_carry_numer    BIGINT NOT NULL DEFAULT 0, -- Exact standby numerator remainder / 3600000
-    token_carry_numer      BIGINT NOT NULL DEFAULT 0, -- Exact token numerator remainder / 1000000
+    token_carry_numer      BIGINT NOT NULL DEFAULT 0, -- Exact token numerator remainder / 1000000000000
     threshold_cents        BIGINT DEFAULT 0,          -- Disable when remaining < this
     quota_exceeded         BOOLEAN DEFAULT FALSE,
     currency               VARCHAR(3) DEFAULT 'USD'
@@ -169,9 +169,9 @@ CREATE INDEX idx_tokenevent_unprocessed ON TokenUsageEvent(ts) WHERE processed_a
 CREATE TABLE TokenRate (
     id                        SERIAL PRIMARY KEY,
     model_slug                VARCHAR,               -- NULL = global default
-    cents_per_million_input   BIGINT NOT NULL,
-    cents_per_million_output  BIGINT NOT NULL,
-    cents_per_million_cached  BIGINT NOT NULL DEFAULT 0,
+    microcents_per_million_input   BIGINT NOT NULL,
+    microcents_per_million_output  BIGINT NOT NULL,
+    microcents_per_million_cached  BIGINT NOT NULL DEFAULT 0,
     effective_from            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     effective_to              TIMESTAMPTZ,           -- NULL = currently active
     tenant                    VARCHAR,               -- NULL = default; set = per-tenant override
@@ -192,9 +192,9 @@ CREATE TABLE TokenUsageHourly (
     cached_tokens      BIGINT NOT NULL DEFAULT 0,
     output_tokens      BIGINT NOT NULL DEFAULT 0,
     request_count      BIGINT NOT NULL DEFAULT 0,
-    input_numer        BIGINT NOT NULL DEFAULT 0,
-    output_numer       BIGINT NOT NULL DEFAULT 0,
-    cached_numer       BIGINT NOT NULL DEFAULT 0,
+    input_numer        NUMERIC NOT NULL DEFAULT 0,
+    output_numer       NUMERIC NOT NULL DEFAULT 0,
+    cached_numer       NUMERIC NOT NULL DEFAULT 0,
     charge_cents       BIGINT NOT NULL DEFAULT 0,   -- display only
     UNIQUE(tenant, model_slug, hour)
 );
@@ -202,23 +202,23 @@ CREATE TABLE TokenUsageHourly (
 CREATE INDEX idx_tokenhourly_tenant ON TokenUsageHourly(tenant, hour);
 
 -- Event-time-bound rate lookup, mirroring GetBillingRateCents. Returns the three
--- cents-per-million values, or no row when no rate is active (caller: skip + alert).
-CREATE OR REPLACE FUNCTION GetTokenRateCents(
+-- microcents-per-million values, or no row when no rate is active (caller: skip + alert).
+CREATE OR REPLACE FUNCTION GetTokenRateMicrocents(
     p_model_slug VARCHAR,
     p_ts TIMESTAMPTZ,
     p_tenant VARCHAR
 ) RETURNS TABLE (
-    cents_per_million_input  BIGINT,
-    cents_per_million_output BIGINT,
-    cents_per_million_cached BIGINT
+    microcents_per_million_input  BIGINT,
+    microcents_per_million_output BIGINT,
+    microcents_per_million_cached BIGINT
 )
 LANGUAGE SQL
 STABLE
 AS $$
     SELECT
-        r.cents_per_million_input,
-        r.cents_per_million_output,
-        r.cents_per_million_cached
+        r.microcents_per_million_input,
+        r.microcents_per_million_output,
+        r.microcents_per_million_cached
     FROM TokenRate r
     WHERE (r.model_slug = p_model_slug OR r.model_slug IS NULL)
       AND (r.tenant     = p_tenant     OR r.tenant IS NULL)
