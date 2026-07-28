@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nodeagent-cr
+  labels:
+    app: nodeagent-cr
+spec:
+  selector:
+    matchLabels:
+      app: nodeagent-cr
+  template:
+    metadata:
+      labels:
+        app: nodeagent-cr
+    spec:
+      hostPID: true
+      nodeSelector:
+        inferx_nodeType: inferx_file      
+      containers:
+        - name: nodeagent
+          image: napodman-test:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN", "IPC_LOCK", "SYS_RAWIO"]
+            runAsUser: 0
+            runAsGroup: 0
+          env:
+          - name: NA_TYPE
+            value: "CR"
+          - name: STATESVC_ADDR
+            value: "http://statesvc:1237"
+          - name: IFERX_DISABLE_HELPERBUF
+            value: "true"
+          - name: INIT_CUDAHOSTALLOC
+            value: "-1"
+          - name: RUN_SERVICE
+            value: "NodeAgentAll"
+          - name: ENABLE_COREDUMP
+            value: "false"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: ALLOC_MEMORY
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.memory                
+          - name: ALLOC_MEMORY_2M
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.hugepages-2Mi   
+          - name: CACHE_MEMORY
+            value: "25Gi"
+          - name: RESERVE_MEM_PERCENTAGE
+            value: "10"
+          - name: FLEXIBLE_MEM_PERCENTAGE
+            value: "10"
+          - name: CONTEXT_COUNT
+            value: "1"
+          - name: ALLOC_CPU
+            valueFrom:
+              resourceFieldRef:
+                containerName: nodeagent
+                resource: limits.cpu                            
+          resources:
+            requests:
+              cpu: "1"
+              memory: "30Gi"
+            limits:
+              cpu: "20"
+              memory: "160Gi"
+          volumeMounts:
+            - mountPath: /run/udev
+              name: run-udev
+            - mountPath: /opt/inferx
+              name: opt-inferx
+            - mountPath: /var/run/docker/runtime-runc/moby/
+              name: docker-runtime
+            - mountPath: /home/brad/mnt
+              name: docker-mnt
+            - name: dind
+              mountPath: /var/lib/docker
+      volumes:
+        - name: run-udev
+          hostPath:
+            path: /run/udev
+        - name: opt-inferx
+          hostPath:
+            path: /opt/inferx/
+        - name: docker-runtime
+          hostPath:
+            path: /var/run/docker/runtime-runc/moby/
+        - name: docker-mnt
+          hostPath:
+            path: /home/brad/mnt
+        - name: dind
+          hostPath:
+            path: /opt/inferx/dind
+      restartPolicy: Always
