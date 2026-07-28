@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS ExternalEndpoint (
     provider_api_key    VARCHAR NOT NULL,                -- outbound key gateway sends to provider (plaintext; matches Apikey posture)
     published           BOOLEAN NOT NULL DEFAULT false,  -- direct-path gate (replaces funcstatus.published)
     max_concurrency     INTEGER NOT NULL DEFAULT -1,     -- per-endpoint in-flight cap (-1 = unlimited, gate skipped; 0 = reject all)
+    metrics_url         TEXT,                            -- NULL = static cap; set = dynamic ceiling controller manages this slug
     createtime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updatetime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_published_by   VARCHAR,
@@ -32,6 +33,10 @@ ALTER TABLE ExternalEndpoint ALTER COLUMN max_concurrency SET DEFAULT -1;
 ALTER TABLE ExternalEndpoint DROP CONSTRAINT IF EXISTS external_endpoint_max_concurrency_check;
 ALTER TABLE ExternalEndpoint ADD CONSTRAINT external_endpoint_max_concurrency_check
     CHECK (max_concurrency >= -1);
+
+-- NULL = static cap (today's behavior); set = the dynamic ceiling controller
+-- manages this slug's live cap within [1, max_concurrency].
+ALTER TABLE ExternalEndpoint ADD COLUMN IF NOT EXISTS metrics_url TEXT;
 
 CREATE OR REPLACE FUNCTION set_updatetime()
 RETURNS TRIGGER AS $$

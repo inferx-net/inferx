@@ -158,6 +158,7 @@ CREATE TABLE ExternalEndpoint (
     provider_api_key    VARCHAR NOT NULL,                -- outbound key gateway sends to provider (plaintext; matches Apikey posture)
     published           BOOLEAN NOT NULL DEFAULT false,  -- direct-path gate (replaces funcstatus.published)
     max_concurrency     INTEGER NOT NULL DEFAULT -1,     -- per-endpoint in-flight cap (-1 = unlimited, gate skipped; 0 = reject all)
+    metrics_url         TEXT,                            -- NULL = static cap; set = dynamic ceiling controller manages this slug
     createtime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updatetime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_published_by   VARCHAR,

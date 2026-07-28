@@ -13,6 +13,7 @@
 // limitations under
 
 pub mod auth_layer;
+pub mod external_ceiling;
 pub mod external_endpoint;
 pub mod func_agent_mgr;
 pub mod func_worker;
