@@ -8310,6 +8310,11 @@ def EndpointDetail(slug):
         endpoint_funcspec = ""
 
     token_rate = fetch_active_token_rate(slug) if is_authenticated else None
+    cache_stats = (
+        fetch_endpoint_cache_stats(slug)
+        if is_authenticated
+        else None
+    )
     shared_api_base_url = f"{normalize_public_api_base_url()}/endpoints/v1"
 
     return render_template(
@@ -8320,6 +8325,7 @@ def EndpointDetail(slug):
         selected_tenant=selected_tenant,
         client_setup=client_setup,
         token_rate=token_rate,
+        cache_stats=cache_stats,
         shared_api_base_url=shared_api_base_url,
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=selected_tenant)
@@ -8487,6 +8493,7 @@ def EndpointAdminDetail(slug):
         selected_tenant=active_tenant,
         client_setup=client_setup,
         token_rate=fetch_active_token_rate(slug),
+        cache_stats=fetch_endpoint_cache_stats(slug),
         shared_api_base_url=f"{normalize_public_api_base_url()}/endpoints/v1",
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=active_tenant)
@@ -10641,6 +10648,37 @@ def fetch_active_token_rate(slug):
             microcents = data.get(src)
             data[dst] = round(microcents / 100000000.0, 6) if microcents is not None else None
         return data
+    except Exception:
+        return None
+
+
+def fetch_endpoint_cache_stats(slug: str):
+    """Fetch the global 24h cache hit rate for one endpoint, or None."""
+    try:
+        normalized_slug = str(slug or "").strip()
+        access_token = str(session.get("access_token", "") or "").strip()
+        if normalized_slug == "" or access_token == "":
+            return None
+
+        url = f"{get_gateway_url()}/billing/endpoint-cache-hit-rate/{quote(normalized_slug, safe='')}"
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return None
+
+        return {
+            "cache_enabled": str(payload.get("cache_hit_rate_state") or "") == "observed",
+            "cache_hit_rate_state": str(payload.get("cache_hit_rate_state") or ""),
+            "cache_hit_rate_24h": payload.get("cache_hit_rate_24h"),
+            "cache_hit_rate_24h_display": str(payload.get("cache_hit_rate_24h_display") or ""),
+        }
     except Exception:
         return None
 

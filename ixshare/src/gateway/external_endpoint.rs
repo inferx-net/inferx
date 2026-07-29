@@ -3,6 +3,7 @@
 // reads never touch the DB. Coherent for a single gateway only.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -11,7 +12,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::Response;
 use futures::StreamExt;
 use hyper::body::Bytes;
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::common::*;
@@ -49,6 +50,35 @@ pub fn is_valid_slug(slug: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// Atomic admission primitive: `inflight < ceiling` admits, CAS'd. A resize
+/// (either direction) is a plain store, visible to the very next admission.
+#[derive(Debug)]
+pub struct ConcurrencyLimiter {
+    inflight: AtomicI64,
+    ceiling: AtomicI64,
+}
+
+impl ConcurrencyLimiter {
+    fn new(ceiling: i64) -> Self {
+        Self {
+            inflight: AtomicI64::new(0),
+            ceiling: AtomicI64::new(ceiling),
+        }
+    }
+}
+
+/// `None` = unlimited endpoint, no per-slug state, drop is a no-op.
+#[derive(Debug)]
+pub struct ConcurrencyPermit(Option<Arc<ConcurrencyLimiter>>);
+
+impl Drop for ConcurrencyPermit {
+    fn drop(&mut self) {
+        if let Some(limiter) = &self.0 {
+            limiter.inflight.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExternalEndpointMgr {
     sql: SqlSecret,
@@ -56,18 +86,16 @@ pub struct ExternalEndpointMgr {
     /// One long-lived, pooled outbound client shared by every `proxy_to_external`
     /// call. Built once, cloned cheaply (`Arc` internally), pools per host.
     client: reqwest::Client,
-    /// Per-slug concurrency limiters; a slug gets an entry only while capped
-    /// (`max_concurrency >= 0`). Unlimited slugs allocate no state here.
-    limiters: Arc<RwLock<BTreeMap<String, Arc<Semaphore>>>>,
-    /// Sentinel handed out for unlimited endpoints so callers get a uniform
-    /// `Some`/`None` shape without branching on "unlimited".
-    unlimited: Arc<Semaphore>,
+    /// Entries are tombstoned, never removed, so a same-slug recreate reuses the
+    /// still-draining counter; the controller sweep prunes drained ones.
+    limiters: Arc<RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>>>,
 }
 
 impl ExternalEndpointMgr {
     /// Hydrate the full mirror from Postgres at gateway startup.
     pub async fn New(sql: SqlSecret, client: reqwest::Client) -> Result<Self> {
         let rows = sql.LoadExternalEndpoints().await?;
+        let limiters = hydrate_limiters(&rows);
         let mut map = BTreeMap::new();
         for row in rows {
             map.insert(row.slug.clone(), row);
@@ -76,8 +104,7 @@ impl ExternalEndpointMgr {
             sql,
             map: Arc::new(RwLock::new(map)),
             client,
-            limiters: Arc::new(RwLock::new(BTreeMap::new())),
-            unlimited: Arc::new(Semaphore::new(Semaphore::MAX_PERMITS)),
+            limiters: Arc::new(RwLock::new(limiters)),
         })
     }
 
@@ -89,7 +116,7 @@ impl ExternalEndpointMgr {
     /// (held for the request's lifetime, released on drop); `None` = a capped
     /// endpoint at capacity. `max_concurrency < 0` is unlimited: always `Some`.
     /// `max_concurrency == 0` rejects every request.
-    pub fn try_acquire(&self, slug: &str) -> Option<OwnedSemaphorePermit> {
+    pub fn try_acquire(&self, slug: &str) -> Option<ConcurrencyPermit> {
         let max = self
             .map
             .read()
@@ -97,7 +124,59 @@ impl ExternalEndpointMgr {
             .get(slug)
             .map(|e| e.max_concurrency)
             .unwrap_or(-1);
-        try_acquire_slot(max, slug, &self.limiters, &self.unlimited)
+        try_acquire_slot(max, slug, &self.limiters)
+    }
+
+    /// Read fresh each controller tick; the controller never caches `c`.
+    pub fn get_ceiling(&self, slug: &str) -> Option<i64> {
+        self.limiters
+            .read()
+            .unwrap()
+            .get(slug)
+            .map(|l| l.ceiling.load(Ordering::SeqCst))
+    }
+
+    /// Under the map's read lock, re-checks `metrics_url` is still set, else
+    /// drops the write. Held alongside `upsert_mirror`'s write lock, so a
+    /// same-tick `dynamic -> static` clear can't be undone by a racing tick's
+    /// store. Floors at 1 only: `max_concurrency` is the dynamic seed, not a
+    /// ceiling, so the controller may raise `c` past it (phase-1 seed model).
+    pub fn set_ceiling(&self, slug: &str, c: i64) {
+        let map = self.map.read().unwrap();
+        let Some(ep) = map.get(slug) else { return };
+        if ep.metrics_url.is_none() {
+            return;
+        }
+        let floored = c.max(1);
+        if let Some(limiter) = self.limiters.read().unwrap().get(slug) {
+            limiter.ceiling.store(floored, Ordering::SeqCst);
+        }
+    }
+
+    /// Read fresh each controller tick alongside `get_ceiling`: whether the local
+    /// limiter is currently saturated is one of the two signals gating an increase.
+    pub fn get_inflight(&self, slug: &str) -> Option<i64> {
+        self.limiters
+            .read()
+            .unwrap()
+            .get(slug)
+            .map(|l| l.inflight.load(Ordering::SeqCst))
+    }
+
+    /// Drops drained (`inflight == 0`) entries with no mirror row or an
+    /// unlimited row. Runs every controller tick regardless of dynamic slugs.
+    pub fn sweep_limiters(&self) {
+        let map = self.map.read().unwrap();
+        let mut limiters = self.limiters.write().unwrap();
+        limiters.retain(|slug, limiter| {
+            if limiter.inflight.load(Ordering::SeqCst) != 0 {
+                return true;
+            }
+            match map.get(slug) {
+                None => false,
+                Some(ep) => ep.max_concurrency >= 0,
+            }
+        });
     }
 
     pub fn Get(&self, slug: &str) -> Option<ExternalEndpoint> {
@@ -112,15 +191,35 @@ impl ExternalEndpointMgr {
         self.map.read().unwrap().values().cloned().collect()
     }
 
+    /// Row mutation and ceiling reset share the map's write lock with
+    /// `set_ceiling`'s guard. On a change to `max_concurrency` or `metrics_url`
+    /// the ceiling resets to `N`; a dynamic row's limiter is eagerly created even
+    /// without a change, so the controller can act pre-traffic. `-1` stores
+    /// nothing — unlimited bypasses the limiter and it drains until swept.
     fn upsert_mirror(&self, ep: ExternalEndpoint) {
         let mut map = self.map.write().unwrap();
-        // When the cap changes, drop the old semaphore so the next request rebuilds it
-        // at the new size. In-flight permits keep the old one alive until they drain,
-        // so a shrink applies to new requests only.
-        let changed = map.get(&ep.slug).map(|old| old.max_concurrency) != Some(ep.max_concurrency);
-        if changed {
-            self.limiters.write().unwrap().remove(&ep.slug);
+        let changed = map.get(&ep.slug).map(|old| (old.max_concurrency, old.metrics_url.clone()))
+            != Some((ep.max_concurrency, ep.metrics_url.clone()));
+
+        if ep.max_concurrency >= 0 {
+            let is_dynamic = ep.metrics_url.is_some();
+            if changed || is_dynamic {
+                let ceiling = ep.max_concurrency as i64;
+                let mut limiters = self.limiters.write().unwrap();
+                match limiters.get(&ep.slug).cloned() {
+                    Some(l) => {
+                        if changed {
+                            l.ceiling.store(ceiling, Ordering::SeqCst);
+                        }
+                    }
+                    None if is_dynamic => {
+                        limiters.insert(ep.slug.clone(), Arc::new(ConcurrencyLimiter::new(ceiling)));
+                    }
+                    None => {}
+                }
+            }
         }
+
         map.insert(ep.slug.clone(), ep);
     }
 
@@ -131,10 +230,11 @@ impl ExternalEndpointMgr {
         upstream_model: &str,
         provider_api_key: &str,
         max_concurrency: i32,
+        metrics_url: Option<&str>,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency)
+            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -147,10 +247,11 @@ impl ExternalEndpointMgr {
         upstream_model: &str,
         provider_api_key: Option<&str>,
         max_concurrency: i32,
+        metrics_url: Option<&str>,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency)
+            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -170,47 +271,71 @@ impl ExternalEndpointMgr {
         Ok(ep)
     }
 
+    /// Leaves the limiter entry in place (tombstoned): a same-slug recreate
+    /// reuses the counter instead of orphaning it. A slug with no mirror row
+    /// admits nothing anyway. The sweep prunes it once drained.
     pub async fn Delete(&self, slug: &str) -> Result<()> {
         self.sql.DeleteExternalEndpoint(slug).await?;
         self.map.write().unwrap().remove(slug);
-        self.limiters.write().unwrap().remove(slug);
         Ok(())
     }
+}
+
+/// Hydration-only seeding: each dynamic row's limiter starts at the stored
+/// `max_concurrency`. A learned live ceiling is in-memory only and is never
+/// persisted, so a restart always re-seeds from the seed, not the last-learned
+/// value (phase-1 semantics).
+fn hydrate_limiters(rows: &[ExternalEndpoint]) -> BTreeMap<String, Arc<ConcurrencyLimiter>> {
+    let mut limiters = BTreeMap::new();
+    for row in rows {
+        if row.metrics_url.is_some() && row.max_concurrency >= 0 {
+            limiters.insert(row.slug.clone(), Arc::new(ConcurrencyLimiter::new(row.max_concurrency as i64)));
+        }
+    }
+    limiters
 }
 
 fn external_gateway_error(code: StatusCode, msg: String) -> Response {
     Response::builder().status(code).body(Body::from(msg)).unwrap()
 }
 
-/// Core of `try_acquire`, split out so it is testable without a DB-backed mgr.
-/// `max < 0` is unlimited (permit from `unlimited`); `max == 0` builds a
-/// zero-permit semaphore that rejects everything; otherwise the per-slug
-/// semaphore is looked up (or lazily created sized `max`) and tried.
+/// Split out so it is testable without a DB-backed mgr. `max < 0` is unlimited;
+/// otherwise the per-slug limiter is looked up (or lazily created) and CAS-admitted.
 fn try_acquire_slot(
     max: i32,
     slug: &str,
-    limiters: &RwLock<BTreeMap<String, Arc<Semaphore>>>,
-    unlimited: &Arc<Semaphore>,
-) -> Option<OwnedSemaphorePermit> {
-    // Negative is the unlimited sentinel and must return before the `as usize`
-    // cast below; max == 0 builds a zero-permit semaphore that rejects everything.
+    limiters: &RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>>,
+) -> Option<ConcurrencyPermit> {
     if max < 0 {
-        return unlimited.clone().try_acquire_owned().ok();
+        return Some(ConcurrencyPermit(None));
     }
-    let sem = {
+    let limiter = {
         let read = limiters.read().unwrap();
         read.get(slug).cloned()
     };
-    let sem = match sem {
-        Some(s) => s,
+    let limiter = match limiter {
+        Some(l) => l,
         None => limiters
             .write()
             .unwrap()
             .entry(slug.to_string())
-            .or_insert_with(|| Arc::new(Semaphore::new(max as usize)))
+            .or_insert_with(|| Arc::new(ConcurrencyLimiter::new(max as i64)))
             .clone(),
     };
-    sem.try_acquire_owned().ok()
+    loop {
+        let inflight = limiter.inflight.load(Ordering::SeqCst);
+        let ceiling = limiter.ceiling.load(Ordering::SeqCst);
+        if inflight >= ceiling {
+            return None;
+        }
+        if limiter
+            .inflight
+            .compare_exchange(inflight, inflight + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Some(ConcurrencyPermit(Some(limiter)));
+        }
+    }
 }
 
 /// Stream a call to the provider with connect/response-header/idle deadlines (not reqwest's
@@ -386,6 +511,7 @@ mod tests {
             published,
             max_concurrency: -1,
             last_published_by: None,
+            metrics_url: None,
         }
     }
 
@@ -423,61 +549,302 @@ mod tests {
         assert!(entries.iter().all(|e| e["owned_by"] == "inferx"));
     }
 
-    fn empty_limiters() -> RwLock<BTreeMap<String, Arc<Semaphore>>> {
+    fn empty_limiters() -> RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>> {
         RwLock::new(BTreeMap::new())
     }
 
     #[test]
     fn limiter_caps_at_max_and_admits_below() {
         let limiters = empty_limiters();
-        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
 
-        let p1 = try_acquire_slot(2, "m", &limiters, &unlimited);
-        let p2 = try_acquire_slot(2, "m", &limiters, &unlimited);
+        let p1 = try_acquire_slot(2, "m", &limiters);
+        let p2 = try_acquire_slot(2, "m", &limiters);
         assert!(p1.is_some() && p2.is_some(), "two permits fit under cap 2");
         // At capacity: rejected.
-        assert!(try_acquire_slot(2, "m", &limiters, &unlimited).is_none());
+        assert!(try_acquire_slot(2, "m", &limiters).is_none());
         // Releasing one frees a slot for a new request.
         drop(p1);
-        assert!(try_acquire_slot(2, "m", &limiters, &unlimited).is_some());
+        assert!(try_acquire_slot(2, "m", &limiters).is_some());
     }
 
     #[test]
     fn limiter_unlimited_always_admits_without_state() {
         let limiters = empty_limiters();
-        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
         let mut held = Vec::new();
         for _ in 0..1000 {
-            let p = try_acquire_slot(-1, "m", &limiters, &unlimited);
+            let p = try_acquire_slot(-1, "m", &limiters);
             assert!(p.is_some(), "max -1 is unlimited");
             held.push(p);
         }
-        // No per-slug semaphore is allocated for an unlimited endpoint.
+        // No per-slug limiter is allocated for an unlimited endpoint.
         assert!(limiters.read().unwrap().is_empty());
     }
 
     #[test]
     fn limiter_zero_rejects_every_request() {
         let limiters = empty_limiters();
-        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
         // 0 is a real cap, not the unlimited sentinel: nothing is ever admitted,
         // which is the 429 kill-switch state.
-        assert!(try_acquire_slot(0, "m", &limiters, &unlimited).is_none());
-        assert!(try_acquire_slot(0, "m", &limiters, &unlimited).is_none());
+        assert!(try_acquire_slot(0, "m", &limiters).is_none());
+        assert!(try_acquire_slot(0, "m", &limiters).is_none());
     }
 
     #[test]
-    fn limiter_resize_takes_effect_after_entry_dropped() {
+    fn limiter_shrink_applies_to_next_admission_with_no_overadmission() {
         let limiters = empty_limiters();
-        let unlimited = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
 
-        let _p = try_acquire_slot(1, "m", &limiters, &unlimited);
-        assert!(try_acquire_slot(1, "m", &limiters, &unlimited).is_none(), "cap 1 full");
-        // A resize drops the entry (as upsert_mirror does); the next call rebuilds it
-        // at the new size, so a larger cap now admits.
-        limiters.write().unwrap().remove("m");
-        assert!(try_acquire_slot(3, "m", &limiters, &unlimited).is_some());
-        assert!(try_acquire_slot(3, "m", &limiters, &unlimited).is_some());
+        let _p1 = try_acquire_slot(3, "m", &limiters);
+        let _p2 = try_acquire_slot(3, "m", &limiters);
+        // Shrink while 2 are in flight: an atomic store, no remove-and-rebuild.
+        limiters.read().unwrap().get("m").unwrap().ceiling.store(1, Ordering::SeqCst);
+        // The next admission sees the new ceiling immediately: already over it,
+        // so it is rejected outright (never transiently admits old + new).
+        assert!(try_acquire_slot(3, "m", &limiters).is_none());
+    }
+
+    #[test]
+    fn limiter_grow_admits_immediately() {
+        let limiters = empty_limiters();
+
+        let _p1 = try_acquire_slot(1, "m", &limiters);
+        assert!(try_acquire_slot(1, "m", &limiters).is_none(), "cap 1 full");
+        limiters.read().unwrap().get("m").unwrap().ceiling.store(3, Ordering::SeqCst);
+        assert!(try_acquire_slot(1, "m", &limiters).is_some());
+        assert!(try_acquire_slot(1, "m", &limiters).is_some());
+    }
+
+    // ---- ExternalEndpointMgr: contracts 1 and 4 (no DB needed by these methods) ----
+
+    fn test_mgr() -> ExternalEndpointMgr {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://user:pass@localhost/db")
+            .unwrap();
+        ExternalEndpointMgr {
+            sql: SqlSecret { pool },
+            map: Arc::new(RwLock::new(BTreeMap::new())),
+            client: reqwest::Client::new(),
+            limiters: Arc::new(RwLock::new(BTreeMap::new())),
+        }
+    }
+
+    fn dyn_ep(slug: &str, max_concurrency: i32, metrics_url: Option<&str>) -> ExternalEndpoint {
+        ExternalEndpoint {
+            slug: slug.to_string(),
+            base_url: "http://vllm:8000/v1".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk-secret".to_string(),
+            published: true,
+            max_concurrency,
+            last_published_by: None,
+            metrics_url: metrics_url.map(|s| s.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn eager_limiter_exists_before_first_request_and_honors_lowered_ceiling() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
+        assert_eq!(mgr.get_ceiling("m"), Some(16));
+
+        mgr.set_ceiling("m", 4);
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(mgr.try_acquire("m").expect("within lowered ceiling"));
+        }
+        assert!(mgr.try_acquire("m").is_none(), "5th request rejected at 4, not N=16");
+    }
+
+    #[tokio::test]
+    async fn dynamic_to_static_transition_restores_ceiling_to_n() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 2);
+        assert_eq!(mgr.get_ceiling("m"), Some(2));
+
+        // Admin clears metrics_url with the same max_concurrency.
+        mgr.upsert_mirror(dyn_ep("m", 16, None));
+        assert_eq!(mgr.get_ceiling("m"), Some(16));
+    }
+
+    #[tokio::test]
+    async fn mirror_upsert_resets_ceiling_on_metrics_url_set_or_edit() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 16, None));
+        assert_eq!(mgr.get_ceiling("m"), None, "static row: lazy, no limiter yet");
+
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
+        assert_eq!(mgr.get_ceiling("m"), Some(16));
+
+        mgr.set_ceiling("m", 3);
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://y/metrics")));
+        assert_eq!(mgr.get_ceiling("m"), Some(16), "editing metrics_url resets too");
+    }
+
+    #[tokio::test]
+    async fn upsert_never_overwrites_with_a_stale_cached_ceiling() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 2);
+
+        // Admin raises N to 16; the reset must be visible to the very next read.
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
+        let c = mgr.get_ceiling("m").unwrap();
+        assert_eq!(c, 16, "must read the reset value, not a value derived from the pre-edit c=2");
+    }
+
+    #[tokio::test]
+    async fn tombstone_continuity_recreate_reuses_the_draining_limiter() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
+        let held = mgr.try_acquire("m").expect("admits within cap 2");
+
+        // Simulate Delete: drop the row, leave the limiter tombstoned (the row-gate
+        // that would otherwise refuse a rowless slug lives in dispatch, not here).
+        mgr.map.write().unwrap().remove("m");
+
+        // Recreate at the same slug with a smaller cap: the still-draining permit
+        // counts against the new ceiling (never old_inflight + new_cap).
+        mgr.upsert_mirror(dyn_ep("m", 1, Some("http://x/metrics")));
+        assert!(mgr.try_acquire("m").is_none(), "1 already in flight fills cap 1");
+        drop(held);
+        assert!(mgr.try_acquire("m").is_some());
+    }
+
+    #[tokio::test]
+    async fn sweep_prunes_drained_rowless_and_unlimited_entries_only() {
+        let mgr = test_mgr();
+
+        mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
+        let held = mgr.try_acquire("m").expect("admits within cap 2");
+        mgr.map.write().unwrap().remove("m");
+        mgr.sweep_limiters();
+        assert!(mgr.limiters.read().unwrap().contains_key("m"), "still draining: not pruned");
+        drop(held);
+        mgr.sweep_limiters();
+        assert!(!mgr.limiters.read().unwrap().contains_key("m"), "drained + no row: pruned");
+
+        // Recreated as unlimited: no ceiling store, but the old limiter still
+        // drains and must be swept once empty even though a row exists.
+        mgr.upsert_mirror(dyn_ep("u", 2, Some("http://y/metrics")));
+        let held2 = mgr.try_acquire("u").expect("admits within cap 2");
+        mgr.upsert_mirror(dyn_ep("u", -1, None));
+        mgr.sweep_limiters();
+        assert!(mgr.limiters.read().unwrap().contains_key("u"), "still draining: not pruned");
+        drop(held2);
+        mgr.sweep_limiters();
+        assert!(!mgr.limiters.read().unwrap().contains_key("u"), "drained + unlimited row: pruned");
+    }
+
+    #[tokio::test]
+    async fn guarded_set_ceiling_drops_write_after_metrics_url_cleared() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
+        // Racing tick's store was computed while the slug was still dynamic...
+        let pre_edit_ceiling = mgr.get_ceiling("m").unwrap();
+        // ...but the admin's clear lands first, restoring the static cap.
+        mgr.upsert_mirror(dyn_ep("m", 16, None));
+        assert_eq!(mgr.get_ceiling("m"), Some(16));
+
+        mgr.set_ceiling("m", pre_edit_ceiling / 2);
+        assert_eq!(mgr.get_ceiling("m"), Some(16), "guard drops the write: metrics_url is cleared");
+    }
+
+    #[tokio::test]
+    async fn set_ceiling_no_longer_clamps_to_max_concurrency_for_dynamic_rows() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        // Phase-1: max_concurrency is only the seed, not an upper bound; the
+        // controller may raise the live ceiling past it.
+        mgr.set_ceiling("m", 10);
+        assert_eq!(mgr.get_ceiling("m"), Some(10), "no clamp to max_concurrency=4");
+    }
+
+    #[tokio::test]
+    async fn set_ceiling_still_floors_at_one() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        mgr.set_ceiling("m", -3);
+        assert_eq!(mgr.get_ceiling("m"), Some(1), "floors at 1 even for a negative drop");
+    }
+
+    #[tokio::test]
+    async fn get_inflight_tracks_held_permits_and_none_for_unknown_slug() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        assert_eq!(mgr.get_inflight("m"), Some(0));
+
+        let p1 = mgr.try_acquire("m").expect("within cap");
+        let p2 = mgr.try_acquire("m").expect("within cap");
+        assert_eq!(mgr.get_inflight("m"), Some(2));
+
+        drop(p1);
+        assert_eq!(mgr.get_inflight("m"), Some(1));
+        drop(p2);
+
+        assert_eq!(mgr.get_inflight("no-such-slug"), None);
+    }
+
+    #[tokio::test]
+    async fn upsert_resets_controller_raised_ceiling_on_max_concurrency_edit() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        // Controller raised the live ceiling above the seed.
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 9, Some("http://x/metrics")));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(9),
+            "editing max_concurrency resets a controller-raised ceiling back to the new seed"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_resets_controller_raised_ceiling_on_metrics_url_edit() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://y/metrics")));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(7),
+            "editing metrics_url resets a controller-raised ceiling back to the seed"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_restores_static_cap_after_controller_raised_ceiling_above_seed() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 7, None));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(7),
+            "disabling dynamic mode restores the static cap, even from a controller-raised ceiling"
+        );
+    }
+
+    #[test]
+    fn hydration_seeds_dynamic_limiter_from_stored_max_concurrency_only() {
+        let rows = vec![
+            dyn_ep("dyn", 7, Some("http://x/metrics")),
+            dyn_ep("static", 5, None),
+            dyn_ep("unlimited", -1, Some("http://y/metrics")),
+        ];
+        let limiters = hydrate_limiters(&rows);
+        assert_eq!(
+            limiters.get("dyn").unwrap().ceiling.load(Ordering::SeqCst),
+            7,
+            "dynamic row seeds from stored max_concurrency, never a previously learned ceiling"
+        );
+        assert!(limiters.get("static").is_none(), "static rows are lazy, no eager limiter");
+        assert!(limiters.get("unlimited").is_none(), "unlimited dynamic rows get no limiter");
     }
 
     #[test]
@@ -547,6 +914,7 @@ mod tests {
             published: true,
             max_concurrency: -1,
             last_published_by: None,
+            metrics_url: None,
         }
     }
 

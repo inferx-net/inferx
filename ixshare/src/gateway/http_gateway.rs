@@ -13,6 +13,7 @@
 // limitations under
 
 use core::str;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -1184,6 +1185,7 @@ impl HttpGateway {
             .route(
                 "/admin/external-endpoints/:slug",
                 get(super::http_gw_external::GetExternalEndpoint)
+                    .post(super::http_gw_external::UpdateExternalEndpoint)
                     .put(super::http_gw_external::UpdateExternalEndpoint)
                     .delete(super::http_gw_external::DeleteExternalEndpoint),
             )
@@ -1359,6 +1361,10 @@ impl HttpGateway {
             .route("/billing/token-rates", post(AddTokenRate))
             .route("/billing/token-rates", get(GetTokenRateHistory))
             .route("/billing/token-rate/:slug", get(GetActiveTokenRateForSlug))
+            .route(
+                "/billing/endpoint-cache-hit-rate/:slug",
+                get(GetEndpointCacheHitRateForSlug),
+            )
             .route("/billing/credits/history", get(GetBillingCreditHistory))
             .route("/tenant/:tenant/credits", get(GetTenantCredits))
             .route(
@@ -5235,6 +5241,14 @@ struct TokenUsageQuery {
     model_slug: Option<String>,
 }
 
+#[derive(Serialize)]
+struct EndpointCacheHitRateResponse {
+    model_slug: String,
+    cache_hit_rate_24h: Option<f64>,
+    cache_hit_rate_24h_display: String,
+    cache_hit_rate_state: String,
+}
+
 #[derive(Deserialize)]
 struct AdminEndpointUsageByPeriodQuery {
     hours: Option<i32>,
@@ -6204,6 +6218,130 @@ async fn GetActiveTokenRateForSlug(
         Err(e) => Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from(format!("Failed to get token rate: {:?}", e)))
+            .unwrap()),
+    }
+}
+
+fn token_accessible_tenants(token: &AccessToken) -> Vec<String> {
+    let mut tenants = BTreeSet::new();
+    tenants.insert("public".to_string());
+
+    if let Some(tenant) = token.restrictTenant.as_ref() {
+        tenants.insert(tenant.clone());
+    }
+    if let Some(tenant) = token.defaultTenant.as_ref() {
+        tenants.insert(tenant.clone());
+    }
+
+    for role in &token.roles {
+        if let Some(tenant) = role.strip_prefix(AccessToken::TENANT_USER) {
+            if !tenant.is_empty() {
+                tenants.insert(tenant.to_string());
+            }
+            continue;
+        }
+        if let Some(tenant) = role.strip_prefix(AccessToken::TENANT_ADMIN) {
+            if !tenant.is_empty() {
+                tenants.insert(tenant.to_string());
+            }
+            continue;
+        }
+        if let Some(rest) = role.strip_prefix(AccessToken::NAMSPACE_USER) {
+            if let Some((tenant, _)) = rest.split_once('/') {
+                if !tenant.is_empty() {
+                    tenants.insert(tenant.to_string());
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = role.strip_prefix(AccessToken::NAMSPACE_ADMIN) {
+            if let Some((tenant, _)) = rest.split_once('/') {
+                if !tenant.is_empty() {
+                    tenants.insert(tenant.to_string());
+                }
+            }
+        }
+    }
+
+    tenants.into_iter().collect()
+}
+
+/// Global 24h cache hit rate for one endpoint slug. Readable by any
+/// authenticated caller that can access the published endpoint.
+async fn GetEndpointCacheHitRateForSlug(
+    Extension(token): Extension<Arc<AccessToken>>,
+    State(gw): State<HttpGateway>,
+    Path(slug): Path<String>,
+) -> SResult<Response, StatusCode> {
+    let normalized_slug = slug.trim().trim_start_matches('/');
+    let normalized_slug = normalized_slug
+        .strip_prefix("endpoints/")
+        .unwrap_or(normalized_slug);
+    if normalized_slug.is_empty() {
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("empty endpoint slug"))
+            .unwrap());
+    }
+
+    let allowed = if token.IsInferxAdmin() {
+        true
+    } else {
+        token_accessible_tenants(&token)
+            .into_iter()
+            .any(|tenant| validate_agent_endpoint_published(&gw, &tenant, normalized_slug).is_ok())
+    };
+    if !allowed {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("endpoint not accessible"))
+            .unwrap());
+    }
+
+    let (start_hour, end_hour, _) = match ParseAdminEndpointRange(Some(24), None, None) {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+
+    match gw
+        .sqlBilling
+        .GetGlobalCacheHitRate24hForModel(normalized_slug, start_hour, end_hour)
+        .await
+    {
+        Ok((total_input_tokens, total_cached_tokens)) => {
+            let (cache_hit_rate_24h, cache_hit_rate_24h_display, cache_hit_rate_state) =
+                if total_cached_tokens > 0 && total_input_tokens > 0 {
+                    let hit_rate = ((total_cached_tokens as f64) / (total_input_tokens as f64))
+                        * 100.0;
+                    let hit_rate = hit_rate.clamp(0.0, 100.0);
+                    (
+                        Some(hit_rate),
+                        format!("{hit_rate:.1}%"),
+                        "observed".to_string(),
+                    )
+                } else if total_input_tokens <= 0 {
+                    (None, String::new(), "no_traffic".to_string())
+                } else {
+                    (None, String::new(), "no_hits_observed".to_string())
+                };
+            let body = EndpointCacheHitRateResponse {
+                model_slug: normalized_slug.to_string(),
+                cache_hit_rate_24h,
+                cache_hit_rate_24h_display,
+                cache_hit_rate_state,
+            };
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap())
+        }
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(format!(
+                "Failed to get endpoint cache hit rate: {:?}",
+                e
+            )))
             .unwrap()),
     }
 }

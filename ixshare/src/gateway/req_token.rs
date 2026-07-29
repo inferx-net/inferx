@@ -116,7 +116,7 @@ pub async fn process_usage_response(
     // External-endpoint concurrency permit, held for the whole response lifetime:
     // moved into the streaming task, or dropped when the non-streaming collect
     // returns. `None` on the self-hosted funccall and legacy `/modelcall` paths.
-    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    permit: Option<crate::gateway::external_endpoint::ConcurrencyPermit>,
 ) -> Response {
     let status = response.status();
     let headers: Vec<_> = response

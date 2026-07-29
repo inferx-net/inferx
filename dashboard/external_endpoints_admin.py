@@ -71,7 +71,9 @@ def register_external_endpoints_admin(
         try:
             if request.method == "GET":
                 return jsonify(gw_external("GET", f"/{slug}") or {})
-            if request.method == "PUT":
+            # Some deployments only forward GET/POST cleanly through the full
+            # dashboard -> gateway stack, so accept POST as an update alias.
+            if request.method in ("PUT", "POST"):
                 req = request.get_json(silent=True) or {}
                 return jsonify(gw_external("PUT", f"/{slug}", json_body=req) or {})
             return jsonify(gw_external("DELETE", f"/{slug}") or {})
@@ -82,7 +84,7 @@ def register_external_endpoints_admin(
         ("/admin/external-endpoints", page, ["GET"], "admin_external_endpoints_page"),
         ("/admin/external-endpoints/list", list_data, ["GET"], "admin_external_endpoints_list"),
         ("/admin/external-endpoints/create", create, ["POST"], "admin_external_endpoints_create"),
-        ("/admin/external-endpoints/item/<slug>", item, ["GET", "PUT", "DELETE"], "admin_external_endpoints_item"),
+        ("/admin/external-endpoints/item/<slug>", item, ["GET", "POST", "PUT", "DELETE"], "admin_external_endpoints_item"),
     ]
     for path, view, methods, endpoint in rules:
         prefix_bp.add_url_rule(path, view_func=view, methods=methods, endpoint=endpoint)

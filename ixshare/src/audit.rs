@@ -1345,6 +1345,61 @@ impl SqlAudit {
         Ok((records, total))
     }
 
+    pub async fn GetGlobalCacheHitRate24hForModel(
+        &self,
+        model_slug: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<(i64, i64)> {
+        let row: (Option<i64>, Option<i64>) = sqlx::query_as(
+            r#"
+            WITH
+            params AS (
+                SELECT
+                    $1::varchar AS model_slug,
+                    $2::timestamptz AS start_hour,
+                    $3::timestamptz AS end_hour,
+                    date_trunc('hour', NOW()) - INTERVAL '3 hours' AS recent_start
+            ),
+            historical AS (
+                SELECT
+                    COALESCE(SUM(h.input_tokens), 0)::bigint AS input_tokens,
+                    COALESCE(SUM(h.cached_tokens), 0)::bigint AS cached_tokens
+                FROM TokenUsageHourly h
+                JOIN params p ON true
+                WHERE h.hour >= p.start_hour
+                  AND h.hour <= p.end_hour
+                  AND h.hour < p.recent_start
+                  AND h.model_slug = p.model_slug
+            ),
+            recent AS (
+                SELECT
+                    COALESCE(SUM(e.prompt_tokens), 0)::bigint AS input_tokens,
+                    COALESCE(SUM(e.cached_tokens), 0)::bigint AS cached_tokens
+                FROM TokenUsageEvent e
+                JOIN params p ON true
+                WHERE e.ts >= GREATEST(p.start_hour, p.recent_start)
+                  AND e.ts < LEAST(p.end_hour + INTERVAL '1 hour', NOW())
+                  AND e.model_slug = p.model_slug
+            )
+            SELECT
+                (historical.input_tokens + recent.input_tokens)::bigint AS input_tokens,
+                (historical.cached_tokens + recent.cached_tokens)::bigint AS cached_tokens
+            FROM historical
+            CROSS JOIN recent
+            "#,
+        )
+        .bind(model_slug)
+        .bind(start)
+        .bind(end)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let total_input_tokens = row.0.unwrap_or(0);
+        let total_cached_tokens = row.1.unwrap_or(0);
+        Ok((total_input_tokens, total_cached_tokens))
+    }
+
     /// List billing rate history with optional scope/tenant filtering and pagination.
     pub async fn ListBillingRateHistory(
         &self,

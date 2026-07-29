@@ -179,8 +179,13 @@ pub async fn GatewaySvc(notify: Option<Arc<Notify>>) -> Result<()> {
         .build()
         .map_err(|e| Error::CommonError(format!("external client build error: {e}")))?;
     let externalEndpointMgr =
-        crate::gateway::external_endpoint::ExternalEndpointMgr::New(sqlsecret.clone(), externalClient)
+        crate::gateway::external_endpoint::ExternalEndpointMgr::New(sqlsecret.clone(), externalClient.clone())
             .await?;
+    tokio::spawn(crate::gateway::external_ceiling::run(
+        externalEndpointMgr.clone(),
+        externalClient,
+        std::time::Duration::from_secs(GATEWAY_CONFIG.externalCeilingTickIntervalSecs),
+    ));
     let client = GetClient().await?;
 
     let objRepo = GwObjRepo::New(GATEWAY_CONFIG.stateSvcAddrs.to_vec())

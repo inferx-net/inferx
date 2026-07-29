@@ -34,6 +34,9 @@ pub struct ExternalEndpointCreateRequest {
     /// yield `0`, which is reject-all, not unlimited.
     #[serde(default = "unlimited_concurrency")]
     pub max_concurrency: i32,
+    /// Opt-in to the dynamic ceiling controller. Absent = `None` = static.
+    #[serde(default)]
+    pub metrics_url: Option<String>,
 }
 
 /// Serde default for absent `max_concurrency`: `-1` = unlimited.
@@ -52,6 +55,8 @@ pub struct ExternalEndpointUpdateRequest {
     /// & authoritative on update — sent unconditionally like
     /// `base_url`/`upstream_model`.
     pub max_concurrency: i32,
+    /// Sent unconditionally like `max_concurrency`; `null` clears back to static.
+    pub metrics_url: Option<String>,
 }
 
 /// Read-side view. Never carries `provider_api_key`.
@@ -64,6 +69,7 @@ pub struct ExternalEndpointView {
     pub has_api_key: bool,
     pub max_concurrency: i32,
     pub last_published_by: Option<String>,
+    pub metrics_url: Option<String>,
 }
 
 impl From<&ExternalEndpoint> for ExternalEndpointView {
@@ -76,6 +82,7 @@ impl From<&ExternalEndpoint> for ExternalEndpointView {
             has_api_key: !e.provider_api_key.trim().is_empty(),
             max_concurrency: e.max_concurrency,
             last_published_by: e.last_published_by.clone(),
+            metrics_url: e.metrics_url.clone(),
         }
     }
 }
@@ -89,6 +96,31 @@ impl From<&ExternalEndpoint> for ExternalEndpointView {
 fn validate_base_url(base_url: &str) -> Result<()> {
     url::Url::parse(base_url)
         .map_err(|_| Error::CommonError(format!("invalid base_url: {}", base_url)))?;
+    Ok(())
+}
+
+/// `metrics_url` opts a slug into the dynamic ceiling controller (contract 1 of
+/// the dynamic-ceiling doc). It must be an `http`/`https` URL, and may only be
+/// set when `max_concurrency > 0` — for a dynamic row `max_concurrency` is the
+/// initial live-ceiling seed (phase-1 seed semantics), not a hard cap, and a
+/// seeded adaptive controller needs a finite starting point to seed from.
+fn validate_metrics_url(metrics_url: Option<&str>, max_concurrency: i32) -> Result<()> {
+    let Some(metrics_url) = metrics_url else {
+        return Ok(());
+    };
+    let parsed = url::Url::parse(metrics_url)
+        .map_err(|_| Error::CommonError(format!("invalid metrics_url: {}", metrics_url)))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(Error::CommonError(format!(
+            "metrics_url must be http or https: {}",
+            metrics_url
+        )));
+    }
+    if max_concurrency <= 0 {
+        return Err(Error::CommonError(
+            "metrics_url may only be set when max_concurrency > 0".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -146,6 +178,8 @@ impl HttpGateway {
             ));
         }
         validate_base_url(base_url)?;
+        let metrics_url = req.metrics_url.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        validate_metrics_url(metrics_url, req.max_concurrency)?;
 
         // Single-kind invariant: a slug is external xor a self-hosted func.
         if self
@@ -167,7 +201,14 @@ impl HttpGateway {
 
         let ep = self
             .externalEndpointMgr
-            .Create(slug, base_url, upstream_model, req.provider_api_key.trim(), req.max_concurrency)
+            .Create(
+                slug,
+                base_url,
+                upstream_model,
+                req.provider_api_key.trim(),
+                req.max_concurrency,
+                metrics_url,
+            )
             .await?;
         Ok(ExternalEndpointView::from(&ep))
     }
@@ -191,6 +232,8 @@ impl HttpGateway {
             ));
         }
         validate_base_url(base_url)?;
+        let metrics_url = req.metrics_url.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        validate_metrics_url(metrics_url, req.max_concurrency)?;
 
         // A blank/absent key means "keep existing"; only a non-empty value rotates it.
         let new_key = req
@@ -201,7 +244,7 @@ impl HttpGateway {
 
         let ep = self
             .externalEndpointMgr
-            .Update(slug, base_url, upstream_model, new_key, req.max_concurrency)
+            .Update(slug, base_url, upstream_model, new_key, req.max_concurrency, metrics_url)
             .await?;
         Ok(ExternalEndpointView::from(&ep))
     }
@@ -327,6 +370,7 @@ mod tests {
             published: true,
             max_concurrency: -1,
             last_published_by: None,
+            metrics_url: None,
         };
         let view = ExternalEndpointView::from(&ep);
         assert!(view.has_api_key);
@@ -344,5 +388,26 @@ mod tests {
         assert!(validate_base_url("http://127.0.0.1:8000/v1").is_ok());
         // Still rejected: not a URL at all, which would only break at proxy time.
         assert!(validate_base_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn metrics_url_requires_positive_max_concurrency_seed() {
+        // Dynamic endpoints need a finite initial ceiling to seed the controller from.
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), 0).is_err());
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), -1).is_err());
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), 7).is_ok());
+    }
+
+    #[test]
+    fn metrics_url_absent_skips_the_seed_check() {
+        // Static endpoints keep -1/0/N semantics untouched; no metrics_url, no check.
+        assert!(validate_metrics_url(None, -1).is_ok());
+        assert!(validate_metrics_url(None, 0).is_ok());
+    }
+
+    #[test]
+    fn metrics_url_must_be_http_or_https() {
+        assert!(validate_metrics_url(Some("ftp://vllm:8000/metrics"), 7).is_err());
+        assert!(validate_metrics_url(Some("not-a-url"), 7).is_err());
     }
 }
