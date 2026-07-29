@@ -1184,6 +1184,7 @@ impl HttpGateway {
             .route(
                 "/admin/external-endpoints/:slug",
                 get(super::http_gw_external::GetExternalEndpoint)
+                    .post(super::http_gw_external::UpdateExternalEndpoint)
                     .put(super::http_gw_external::UpdateExternalEndpoint)
                     .delete(super::http_gw_external::DeleteExternalEndpoint),
             )

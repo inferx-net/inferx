@@ -95,12 +95,9 @@ impl ExternalEndpointMgr {
     /// Hydrate the full mirror from Postgres at gateway startup.
     pub async fn New(sql: SqlSecret, client: reqwest::Client) -> Result<Self> {
         let rows = sql.LoadExternalEndpoints().await?;
+        let limiters = hydrate_limiters(&rows);
         let mut map = BTreeMap::new();
-        let mut limiters = BTreeMap::new();
         for row in rows {
-            if row.metrics_url.is_some() && row.max_concurrency >= 0 {
-                limiters.insert(row.slug.clone(), Arc::new(ConcurrencyLimiter::new(row.max_concurrency as i64)));
-            }
             map.insert(row.slug.clone(), row);
         }
         Ok(Self {
@@ -139,21 +136,31 @@ impl ExternalEndpointMgr {
             .map(|l| l.ceiling.load(Ordering::SeqCst))
     }
 
-    /// Under the map's read lock, re-checks `metrics_url` is still set and
-    /// clamps to `[1, N]`, else drops the write. Held alongside `upsert_mirror`'s
-    /// write lock, so a same-tick `dynamic -> static` clear can't be undone by a
-    /// racing tick's store.
+    /// Under the map's read lock, re-checks `metrics_url` is still set, else
+    /// drops the write. Held alongside `upsert_mirror`'s write lock, so a
+    /// same-tick `dynamic -> static` clear can't be undone by a racing tick's
+    /// store. Floors at 1 only: `max_concurrency` is the dynamic seed, not a
+    /// ceiling, so the controller may raise `c` past it (phase-1 seed model).
     pub fn set_ceiling(&self, slug: &str, c: i64) {
         let map = self.map.read().unwrap();
         let Some(ep) = map.get(slug) else { return };
         if ep.metrics_url.is_none() {
             return;
         }
-        let n = (ep.max_concurrency as i64).max(1);
-        let clamped = c.clamp(1, n);
+        let floored = c.max(1);
         if let Some(limiter) = self.limiters.read().unwrap().get(slug) {
-            limiter.ceiling.store(clamped, Ordering::SeqCst);
+            limiter.ceiling.store(floored, Ordering::SeqCst);
         }
+    }
+
+    /// Read fresh each controller tick alongside `get_ceiling`: whether the local
+    /// limiter is currently saturated is one of the two signals gating an increase.
+    pub fn get_inflight(&self, slug: &str) -> Option<i64> {
+        self.limiters
+            .read()
+            .unwrap()
+            .get(slug)
+            .map(|l| l.inflight.load(Ordering::SeqCst))
     }
 
     /// Drops drained (`inflight == 0`) entries with no mirror row or an
@@ -272,6 +279,20 @@ impl ExternalEndpointMgr {
         self.map.write().unwrap().remove(slug);
         Ok(())
     }
+}
+
+/// Hydration-only seeding: each dynamic row's limiter starts at the stored
+/// `max_concurrency`. A learned live ceiling is in-memory only and is never
+/// persisted, so a restart always re-seeds from the seed, not the last-learned
+/// value (phase-1 semantics).
+fn hydrate_limiters(rows: &[ExternalEndpoint]) -> BTreeMap<String, Arc<ConcurrencyLimiter>> {
+    let mut limiters = BTreeMap::new();
+    for row in rows {
+        if row.metrics_url.is_some() && row.max_concurrency >= 0 {
+            limiters.insert(row.slug.clone(), Arc::new(ConcurrencyLimiter::new(row.max_concurrency as i64)));
+        }
+    }
+    limiters
 }
 
 fn external_gateway_error(code: StatusCode, msg: String) -> Response {
@@ -729,12 +750,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guarded_set_ceiling_clamps_to_current_n_after_shrink() {
+    async fn set_ceiling_no_longer_clamps_to_max_concurrency_for_dynamic_rows() {
         let mgr = test_mgr();
-        mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
         mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        // Phase-1: max_concurrency is only the seed, not an upper bound; the
+        // controller may raise the live ceiling past it.
         mgr.set_ceiling("m", 10);
-        assert_eq!(mgr.get_ceiling("m"), Some(4), "clamped to the current N=4");
+        assert_eq!(mgr.get_ceiling("m"), Some(10), "no clamp to max_concurrency=4");
+    }
+
+    #[tokio::test]
+    async fn set_ceiling_still_floors_at_one() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        mgr.set_ceiling("m", -3);
+        assert_eq!(mgr.get_ceiling("m"), Some(1), "floors at 1 even for a negative drop");
+    }
+
+    #[tokio::test]
+    async fn get_inflight_tracks_held_permits_and_none_for_unknown_slug() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
+        assert_eq!(mgr.get_inflight("m"), Some(0));
+
+        let p1 = mgr.try_acquire("m").expect("within cap");
+        let p2 = mgr.try_acquire("m").expect("within cap");
+        assert_eq!(mgr.get_inflight("m"), Some(2));
+
+        drop(p1);
+        assert_eq!(mgr.get_inflight("m"), Some(1));
+        drop(p2);
+
+        assert_eq!(mgr.get_inflight("no-such-slug"), None);
+    }
+
+    #[tokio::test]
+    async fn upsert_resets_controller_raised_ceiling_on_max_concurrency_edit() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        // Controller raised the live ceiling above the seed.
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 9, Some("http://x/metrics")));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(9),
+            "editing max_concurrency resets a controller-raised ceiling back to the new seed"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_resets_controller_raised_ceiling_on_metrics_url_edit() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://y/metrics")));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(7),
+            "editing metrics_url resets a controller-raised ceiling back to the seed"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_restores_static_cap_after_controller_raised_ceiling_above_seed() {
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
+        mgr.set_ceiling("m", 20);
+        assert_eq!(mgr.get_ceiling("m"), Some(20));
+
+        mgr.upsert_mirror(dyn_ep("m", 7, None));
+        assert_eq!(
+            mgr.get_ceiling("m"),
+            Some(7),
+            "disabling dynamic mode restores the static cap, even from a controller-raised ceiling"
+        );
+    }
+
+    #[test]
+    fn hydration_seeds_dynamic_limiter_from_stored_max_concurrency_only() {
+        let rows = vec![
+            dyn_ep("dyn", 7, Some("http://x/metrics")),
+            dyn_ep("static", 5, None),
+            dyn_ep("unlimited", -1, Some("http://y/metrics")),
+        ];
+        let limiters = hydrate_limiters(&rows);
+        assert_eq!(
+            limiters.get("dyn").unwrap().ceiling.load(Ordering::SeqCst),
+            7,
+            "dynamic row seeds from stored max_concurrency, never a previously learned ceiling"
+        );
+        assert!(limiters.get("static").is_none(), "static rows are lazy, no eager limiter");
+        assert!(limiters.get("unlimited").is_none(), "unlimited dynamic rows get no limiter");
     }
 
     #[test]

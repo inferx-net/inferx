@@ -13,22 +13,29 @@ use crate::gateway::external_endpoint::ExternalEndpointMgr;
 const SCRAPE_TIMEOUT: Duration = Duration::from_secs(2);
 const KV_HIGH_WATER: f64 = 0.90;
 const FAILURE_ERROR_THRESHOLD: u32 = 10;
+/// Bounds how far a single tick may drop `c` under backlog. Tuned against the
+/// controller's tick interval, not a standalone constant: see
+/// docs/external-endpoint-dynamic-ceiling-seed-phase1.md.
+const MAX_DROP_PER_TICK: i64 = 2;
 
 const WAITING_METRIC: &str = "vllm:num_requests_waiting";
 const KV_METRIC_V1: &str = "vllm:kv_cache_usage_perc";
 const KV_METRIC_V0: &str = "vllm:gpu_cache_usage_perc";
 
-/// AIMD law for one slug's ceiling `c`, bounded to `[1, n]`. Decrease fires on
-/// `waiting > 0` alone; increase requires both signals clean; the ambiguous
-/// middle (empty queue, high KV) holds.
-pub fn step(c: i64, n: i64, waiting: i64, kv: f64) -> i64 {
-    let n = n.max(1);
+/// Phase-1 seed law for one slug's ceiling `c`. There is no upper bound: the
+/// seed (`max_concurrency`) only sets the starting point, not a clamp. Decrease
+/// fires on `waiting > 0`, bounded per tick by `MAX_DROP_PER_TICK` so a large
+/// inherited backlog can't collapse the ceiling in one scrape. Increase
+/// requires both `local_inflight == Some(c)` (the local limiter is actually the
+/// bottleneck, not an idle endpoint) and a clean queue/KV reading; the
+/// ambiguous middle (unsaturated, or high KV) holds.
+pub fn step(c: i64, waiting: i64, kv: f64, local_inflight: Option<i64>) -> i64 {
     if waiting > 0 {
-        (c / 2).max(1)
-    } else if kv < KV_HIGH_WATER {
-        (c + 1).min(n)
+        (c - waiting.min(MAX_DROP_PER_TICK)).max(1)
+    } else if local_inflight == Some(c) && kv < KV_HIGH_WATER {
+        c + 1
     } else {
-        c.clamp(1, n)
+        c
     }
 }
 
@@ -121,6 +128,7 @@ fn decide(
     mut state: SlugState,
     pair: (i32, String),
     ceiling: Option<i64>,
+    inflight: Option<i64>,
     scrape_result: Result<ScrapedMetrics, String>,
 ) -> (SlugState, Option<(i64, i64, ScrapedMetrics)>) {
     if state.pair != pair {
@@ -136,8 +144,7 @@ fn decide(
         Ok(metrics) => {
             state.consecutive_failures = 0;
             let Some(c) = ceiling else { return (state, None) };
-            let n = pair.0 as i64;
-            let new_c = step(c, n, metrics.waiting, metrics.kv);
+            let new_c = step(c, metrics.waiting, metrics.kv, inflight);
             let change = if new_c != c { Some((c, new_c, metrics)) } else { None };
             (state, change)
         }
@@ -162,7 +169,8 @@ async fn tick(mgr: &ExternalEndpointMgr, client: &reqwest::Client, state: &mut B
         let pair = (ep.max_concurrency, ep.metrics_url.clone().unwrap_or_default());
         let prior = state.remove(&ep.slug).unwrap_or_default();
         let ceiling = mgr.get_ceiling(&ep.slug);
-        let (next, change) = decide(prior, pair, ceiling, result);
+        let inflight = mgr.get_inflight(&ep.slug);
+        let (next, change) = decide(prior, pair, ceiling, inflight, result);
 
         if let Some((old, new, metrics)) = change {
             mgr.set_ceiling(&ep.slug, new);
@@ -198,22 +206,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn step_halves_on_waiting_regardless_of_kv() {
-        assert_eq!(step(8, 16, 12, 0.1), 4);
-        assert_eq!(step(8, 16, 12, 0.95), 4);
-        assert_eq!(step(1, 16, 1, 0.0), 1, "floor at 1");
+    fn step_drops_bounded_by_max_drop_per_tick_regardless_of_kv() {
+        assert_eq!(step(7, 1, 0.1, None), 6);
+        assert_eq!(step(7, 2, 0.1, None), 5);
+        assert_eq!(step(7, 8, 0.1, None), 5, "drop bounded even under a large inherited backlog");
+        assert_eq!(step(7, 2, 0.95, Some(7)), 5, "decrease ignores kv/inflight once waiting > 0");
+        assert_eq!(step(1, 1, 0.0, None), 1, "floor at 1");
     }
 
     #[test]
     fn step_increases_only_when_both_signals_clean() {
-        assert_eq!(step(4, 16, 0, 0.5), 5);
-        assert_eq!(step(16, 16, 0, 0.1), 16, "clamped at N");
+        assert_eq!(step(4, 0, 0.5, Some(4)), 5);
+        assert_eq!(step(16, 0, 0.1, Some(16)), 17, "unbounded: no clamp back to the seed");
     }
 
     #[test]
     fn step_holds_at_kv_wall() {
-        assert_eq!(step(8, 16, 0, 0.90), 8);
-        assert_eq!(step(8, 16, 0, 0.99), 8);
+        assert_eq!(step(8, 0, 0.90, Some(8)), 8);
+        assert_eq!(step(8, 0, 0.99, Some(8)), 8);
+    }
+
+    #[test]
+    fn step_holds_when_local_limiter_is_not_saturated() {
+        // waiting == 0 and kv healthy, but the local limiter isn't the bottleneck:
+        // an idle/underloaded endpoint must not keep climbing forever.
+        assert_eq!(step(8, 0, 0.1, Some(7)), 8);
+        assert_eq!(step(8, 0, 0.1, None), 8, "missing inflight sample must never increase");
     }
 
     const V1_SAMPLE: &str = r#"
@@ -269,7 +287,7 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
     fn decide_freezes_ceiling_on_scrape_failure() {
         let state = SlugState::default();
         let pair = (16, "http://x/metrics".to_string());
-        let (next, change) = decide(state, pair, Some(8), Err("timeout".to_string()));
+        let (next, change) = decide(state, pair, Some(8), Some(8), Err("timeout".to_string()));
         assert!(change.is_none(), "no set_ceiling call on failure");
         assert_eq!(next.consecutive_failures, 1);
     }
@@ -282,6 +300,7 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
         let (next, change) = decide(
             state,
             (16, "http://x/metrics".to_string()),
+            Some(8),
             Some(8),
             Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }),
         );
@@ -298,8 +317,35 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
             state,
             (16, "http://new/metrics".to_string()),
             Some(16),
+            Some(16),
             Err("timeout".to_string()),
         );
         assert_eq!(next.consecutive_failures, 1, "pair change resets, then this failure counts once");
+    }
+
+    #[test]
+    fn decide_holds_on_clean_scrape_when_inflight_is_none() {
+        // get_inflight can race a swept limiter within the same tick; a missing
+        // sample must fall through to "hold," never treated as saturated.
+        let state = SlugState::default();
+        let pair = (16, "http://x/metrics".to_string());
+        let (_, change) = decide(state, pair, Some(8), None, Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }));
+        assert!(change.is_none(), "missing inflight sample must never trigger an increase");
+    }
+
+    #[test]
+    fn decide_increases_past_max_concurrency_seed() {
+        let state = SlugState::default();
+        let pair = (7, "http://x/metrics".to_string());
+        let (_, change) = decide(state, pair, Some(7), Some(7), Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }));
+        assert_eq!(change, Some((7, 8, ScrapedMetrics { waiting: 0, kv: 0.1 })), "no clamp back to the seed of 7");
+    }
+
+    #[test]
+    fn decide_bounds_decrease_under_large_waiting() {
+        let state = SlugState::default();
+        let pair = (7, "http://x/metrics".to_string());
+        let (_, change) = decide(state, pair, Some(7), Some(7), Ok(ScrapedMetrics { waiting: 8, kv: 0.1 }));
+        assert_eq!(change, Some((7, 5, ScrapedMetrics { waiting: 8, kv: 0.1 })), "bounded by MAX_DROP_PER_TICK=2");
     }
 }

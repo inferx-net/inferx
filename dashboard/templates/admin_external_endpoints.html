@@ -115,15 +115,16 @@
         <div class="external-ep-field">
             <label for="f-max-concurrency">Max concurrency</label>
             <input id="f-max-concurrency" type="number" min="-1" step="1" value="-1" placeholder="-1">
-            <div class="external-ep-hint">Cap on concurrent upstream requests; over-cap requests get 429. -1 = unlimited, 0 = reject all.</div>
+            <div class="external-ep-hint" id="max-concurrency-hint">Cap on concurrent upstream requests; over-cap requests get 429. -1 = unlimited, 0 = reject all.</div>
         </div>
         <div class="external-ep-field">
             <label><input type="checkbox" id="f-metrics-enabled" onchange="onMetricsToggle()"> Enable dynamic ceiling</label>
             <input id="f-metrics-url" placeholder="http://svc:8000/metrics" style="display:none;">
             <div class="external-ep-hint" id="metrics-hint" style="display:none;">
-                vLLM /metrics endpoint. The controller moves the live ceiling within [1, Max concurrency]
-                based on queue depth and KV-cache usage. Prefilled from Base URL; edit if wrong. Requires
-                Max concurrency &gt; 0.
+                vLLM /metrics endpoint. When dynamic ceiling is on, Max concurrency is only the initial
+                live ceiling seed, not a permanent cap — the controller may raise it above this value
+                based on queue depth and KV-cache usage, and will still lower it under backlog. Prefilled
+                from Base URL; edit if wrong. Requires Max concurrency &gt; 0.
             </div>
         </div>
         <div style="margin-top:16px;display:flex;gap:8px;">
@@ -218,8 +219,12 @@ function onMetricsToggle() {
     const enabled = document.getElementById("f-metrics-enabled").checked;
     const input = document.getElementById("f-metrics-url");
     const hint = document.getElementById("metrics-hint");
+    const maxHint = document.getElementById("max-concurrency-hint");
     input.style.display = enabled ? "" : "none";
     hint.style.display = enabled ? "" : "none";
+    maxHint.textContent = enabled
+        ? "Initial live ceiling seed for the dynamic controller, not a permanent cap. Must be > 0."
+        : "Cap on concurrent upstream requests; over-cap requests get 429. -1 = unlimited, 0 = reject all.";
     if (enabled && !input.value.trim()) {
         input.value = suggestMetricsUrl(document.getElementById("f-base-url").value.trim());
     }
@@ -273,7 +278,9 @@ async function submitForm() {
         if (editing) {
             const body = { base_url, upstream_model, max_concurrency, metrics_url };
             if (key) body.provider_api_key = key;
-            await jreq("PUT", "/item/" + encodeURIComponent(editing), body);
+            // Use POST for edits as a compatibility path for deployments where
+            // intermediaries reject PUT with 405 before Flask/Axum sees it.
+            await jreq("POST", "/item/" + encodeURIComponent(editing), body);
         } else {
             const slug = document.getElementById("f-slug").value.trim();
             await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key, max_concurrency, metrics_url });

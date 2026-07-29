@@ -101,8 +101,9 @@ fn validate_base_url(base_url: &str) -> Result<()> {
 
 /// `metrics_url` opts a slug into the dynamic ceiling controller (contract 1 of
 /// the dynamic-ceiling doc). It must be an `http`/`https` URL, and may only be
-/// set when `max_concurrency > 0` — the controller needs a finite `N` to bound
-/// the live ceiling within `[1, N]`.
+/// set when `max_concurrency > 0` — for a dynamic row `max_concurrency` is the
+/// initial live-ceiling seed (phase-1 seed semantics), not a hard cap, and a
+/// seeded adaptive controller needs a finite starting point to seed from.
 fn validate_metrics_url(metrics_url: Option<&str>, max_concurrency: i32) -> Result<()> {
     let Some(metrics_url) = metrics_url else {
         return Ok(());
@@ -387,5 +388,26 @@ mod tests {
         assert!(validate_base_url("http://127.0.0.1:8000/v1").is_ok());
         // Still rejected: not a URL at all, which would only break at proxy time.
         assert!(validate_base_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn metrics_url_requires_positive_max_concurrency_seed() {
+        // Dynamic endpoints need a finite initial ceiling to seed the controller from.
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), 0).is_err());
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), -1).is_err());
+        assert!(validate_metrics_url(Some("http://vllm:8000/metrics"), 7).is_ok());
+    }
+
+    #[test]
+    fn metrics_url_absent_skips_the_seed_check() {
+        // Static endpoints keep -1/0/N semantics untouched; no metrics_url, no check.
+        assert!(validate_metrics_url(None, -1).is_ok());
+        assert!(validate_metrics_url(None, 0).is_ok());
+    }
+
+    #[test]
+    fn metrics_url_must_be_http_or_https() {
+        assert!(validate_metrics_url(Some("ftp://vllm:8000/metrics"), 7).is_err());
+        assert!(validate_metrics_url(Some("not-a-url"), 7).is_err());
     }
 }
