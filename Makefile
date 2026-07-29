@@ -1,7 +1,7 @@
 ARCH := ${shell uname -m}
-PLATFORM_VERSION ?= v0.6.0beta5
-DB_VERSION ?= v0.6.0beta5
-DASHBOARD_VERSION ?= v0.6.0beta5
+PLATFORM_VERSION ?= v0.6.0beta7
+DB_VERSION ?= v0.6.0beta7
+DASHBOARD_VERSION ?= v0.6.0beta7
 RUNTIME_VERSION ?= v0.5.0
 NA_VERSION ?= v0.5.0
 RUNMODEL_VERSION ?= v0.2.6
@@ -31,7 +31,7 @@ svcdeploy: svc
 	cp nodeconfig/node*.json ./target/svc/inferx/config
 	cp ./deployment/svc-entrypoint.sh ./target/svc/svc-entrypoint.sh
 	sudo docker build --network=host --build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) -t inferx/inferx_platform:$(PLATFORM_VERSION) ./target/svc
-	sudo docker image prune -f
+# 	sudo docker image prune -f
 	# sudo docker push inferx/inferx_platform:$(PLATFORM_VERSION)
 
 hf:

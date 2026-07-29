@@ -8310,6 +8310,11 @@ def EndpointDetail(slug):
         endpoint_funcspec = ""
 
     token_rate = fetch_active_token_rate(slug) if is_authenticated else None
+    cache_stats = (
+        fetch_endpoint_cache_stats(slug, selected_tenant)
+        if is_authenticated and selected_tenant
+        else None
+    )
     shared_api_base_url = f"{normalize_public_api_base_url()}/endpoints/v1"
 
     return render_template(
@@ -8320,6 +8325,7 @@ def EndpointDetail(slug):
         selected_tenant=selected_tenant,
         client_setup=client_setup,
         token_rate=token_rate,
+        cache_stats=cache_stats,
         shared_api_base_url=shared_api_base_url,
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=selected_tenant)
@@ -8487,6 +8493,7 @@ def EndpointAdminDetail(slug):
         selected_tenant=active_tenant,
         client_setup=client_setup,
         token_rate=fetch_active_token_rate(slug),
+        cache_stats=fetch_endpoint_cache_stats(slug, active_tenant),
         shared_api_base_url=f"{normalize_public_api_base_url()}/endpoints/v1",
         opencode_download_href=(
             url_for("prefix.DownloadEndpointOpenCodeConfig", slug=slug, tenant=active_tenant)
@@ -10641,6 +10648,74 @@ def fetch_active_token_rate(slug):
             microcents = data.get(src)
             data[dst] = round(microcents / 100000000.0, 6) if microcents is not None else None
         return data
+    except Exception:
+        return None
+
+
+def fetch_endpoint_cache_stats(slug: str, tenant: str):
+    """Summarize last-24h cache usage for one endpoint/tenant, or None.
+
+    Cache is treated as enabled only when the 24h window contains non-zero
+    cached_tokens, per the endpoint-page display rule.
+    """
+    try:
+        normalized_slug = str(slug or "").strip()
+        normalized_tenant = str(tenant or "").strip()
+        access_token = str(session.get("access_token", "") or "").strip()
+        if normalized_slug == "" or normalized_tenant == "" or access_token == "":
+            return None
+
+        url = (
+            f"{get_gateway_url()}/usage/tokens/{quote(normalized_tenant, safe='')}"
+            f"?hours=24&model_slug={quote(normalized_slug, safe='')}&limit=256&offset=0"
+        )
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        usage_rows = payload.get("usage")
+        if not isinstance(usage_rows, list):
+            return None
+
+        total_input_tokens = 0
+        total_cached_tokens = 0
+        for row in usage_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                total_input_tokens += int(row.get("input_tokens") or 0)
+            except Exception:
+                pass
+            try:
+                total_cached_tokens += int(row.get("cached_tokens") or 0)
+            except Exception:
+                pass
+
+        if total_cached_tokens <= 0:
+            return {
+                "cache_enabled": False,
+                "cached_tokens_24h": 0,
+                "input_tokens_24h": total_input_tokens,
+                "cache_hit_rate_24h": None,
+                "cache_hit_rate_24h_display": "",
+            }
+
+        hit_rate = 0.0
+        if total_input_tokens > 0:
+            hit_rate = max(0.0, min(100.0, (total_cached_tokens / total_input_tokens) * 100.0))
+
+        return {
+            "cache_enabled": True,
+            "cached_tokens_24h": total_cached_tokens,
+            "input_tokens_24h": total_input_tokens,
+            "cache_hit_rate_24h": hit_rate,
+            "cache_hit_rate_24h_display": f"{hit_rate:.1f}%",
+        }
     except Exception:
         return None
 

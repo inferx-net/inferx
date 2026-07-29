@@ -253,6 +253,9 @@
             <strong>Context Length</strong><div>{{ endpoint_entry.get('context_length', '') or '—' }}</div>
             <strong>Concurrency</strong><div>{% if endpoint_entry.get('concurrency') is not none %}{{ '%.2fx'|format(endpoint_entry.get('concurrency')) }}{% else %}—{% endif %}</div>
             <strong>Cold Start TTFT</strong><div>{{ endpoint_entry.get('cs_ttft', '') or '—' }}</div>
+            {% if cache_stats and cache_stats.get('cache_enabled') %}
+            <strong>24h Cache Hit Rate</strong><div>{{ cache_stats.get('cache_hit_rate_24h_display') or '—' }}</div>
+            {% endif %}
             <strong>Recommended Use Cases</strong>
             <div>{% if endpoint_entry.get('recommended_use_cases') %}{{ endpoint_entry.get('recommended_use_cases', [])|join(', ') }}{% else %}—{% endif %}</div>
             <strong>Detailed Intro</strong><div style="white-space: pre-wrap;">{{ endpoint_entry.get('detailed_intro', '') or '—' }}</div>
