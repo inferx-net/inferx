@@ -18,6 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::common::*;
 use crate::gateway::http_gateway::GATEWAY_CONFIG;
 use crate::gateway::secret::{ExternalEndpoint, SqlSecret};
+use serde::Deserialize;
 
 /// Upstream liveness deadlines for the outbound proxy (seconds). Passed in by the
 /// caller — global gateway-config defaults in production, explicit values in tests —
@@ -48,6 +49,64 @@ pub fn is_valid_slug(slug: &str) -> bool {
         && slug
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ReplicaId(pub String);
+
+impl std::fmt::Display for ReplicaId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredReplica {
+    pub id: ReplicaId,
+    pub base_url: String,
+    pub metrics_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplicaConfig {
+    pub base_url: String,
+    #[serde(default)]
+    pub metrics_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "discovery")]
+pub enum BackendConfig {
+    #[serde(rename = "explicit")]
+    Explicit {
+        replicas: Vec<ReplicaConfig>,
+    },
+}
+
+impl BackendConfig {
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(v.clone()).ok()
+    }
+}
+
+pub fn resolve_replicas(ep: &ExternalEndpoint) -> Vec<DiscoveredReplica> {
+    if let Some(cfg) = ep.backends.as_ref().and_then(BackendConfig::from_json) {
+        match cfg {
+            BackendConfig::Explicit { replicas } => {
+                replicas.iter().map(|r| DiscoveredReplica {
+                    id: ReplicaId(r.base_url.clone()),
+                    base_url: r.base_url.clone(),
+                    metrics_url: r.metrics_url.clone(),
+                }).collect()
+            }
+        }
+    } else {
+        vec![DiscoveredReplica {
+            id: ReplicaId("default".to_string()),
+            base_url: ep.base_url.clone(),
+            metrics_url: ep.metrics_url.clone(),
+        }]
+    }
 }
 
 /// Atomic admission primitive: `inflight < ceiling` admits, CAS'd. A resize
@@ -83,28 +142,37 @@ impl Drop for ConcurrencyPermit {
 pub struct ExternalEndpointMgr {
     sql: SqlSecret,
     map: Arc<RwLock<BTreeMap<String, ExternalEndpoint>>>,
-    /// One long-lived, pooled outbound client shared by every `proxy_to_external`
-    /// call. Built once, cloned cheaply (`Arc` internally), pools per host.
     client: reqwest::Client,
-    /// Entries are tombstoned, never removed, so a same-slug recreate reuses the
-    /// still-draining counter; the controller sweep prunes drained ones.
-    limiters: Arc<RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>>>,
+    limiters: Arc<RwLock<BTreeMap<(String, ReplicaId), Arc<ConcurrencyLimiter>>>>,
+    resolved_backends: Arc<RwLock<BTreeMap<String, Vec<DiscoveredReplica>>>>,
 }
 
 impl ExternalEndpointMgr {
     /// Hydrate the full mirror from Postgres at gateway startup.
     pub async fn New(sql: SqlSecret, client: reqwest::Client) -> Result<Self> {
         let rows = sql.LoadExternalEndpoints().await?;
-        let limiters = hydrate_limiters(&rows);
+        let mut resolved_backends = BTreeMap::new();
+        let mut limiters = BTreeMap::new();
         let mut map = BTreeMap::new();
-        for row in rows {
-            map.insert(row.slug.clone(), row);
+        for row in &rows {
+            map.insert(row.slug.clone(), row.clone());
+            let replicas = resolve_replicas(row);
+            if row.max_concurrency >= 0 {
+                for r in &replicas {
+                    limiters.insert(
+                        (row.slug.clone(), r.id.clone()),
+                        Arc::new(ConcurrencyLimiter::new(row.max_concurrency as i64)),
+                    );
+                }
+            }
+            resolved_backends.insert(row.slug.clone(), replicas);
         }
         Ok(Self {
             sql,
             map: Arc::new(RwLock::new(map)),
             client,
             limiters: Arc::new(RwLock::new(limiters)),
+            resolved_backends: Arc::new(RwLock::new(resolved_backends)),
         })
     }
 
@@ -112,11 +180,15 @@ impl ExternalEndpointMgr {
         &self.client
     }
 
+    pub fn resolved_replicas(&self, slug: &str) -> Vec<DiscoveredReplica> {
+        self.resolved_backends.read().unwrap().get(slug).cloned().unwrap_or_default()
+    }
+
     /// Admission gate for one upstream request to `slug`. `Some(permit)` = admitted
     /// (held for the request's lifetime, released on drop); `None` = a capped
     /// endpoint at capacity. `max_concurrency < 0` is unlimited: always `Some`.
     /// `max_concurrency == 0` rejects every request.
-    pub fn try_acquire(&self, slug: &str) -> Option<ConcurrencyPermit> {
+    pub fn try_acquire(&self, slug: &str, replica_id: &ReplicaId) -> Option<ConcurrencyPermit> {
         let max = self
             .map
             .read()
@@ -124,42 +196,44 @@ impl ExternalEndpointMgr {
             .get(slug)
             .map(|e| e.max_concurrency)
             .unwrap_or(-1);
-        try_acquire_slot(max, slug, &self.limiters)
+        try_acquire_slot(max, slug, replica_id, &self.limiters)
     }
 
     /// Read fresh each controller tick; the controller never caches `c`.
-    pub fn get_ceiling(&self, slug: &str) -> Option<i64> {
+    pub fn get_ceiling(&self, slug: &str, replica_id: &ReplicaId) -> Option<i64> {
         self.limiters
             .read()
             .unwrap()
-            .get(slug)
+            .get(&(slug.to_string(), replica_id.clone()))
             .map(|l| l.ceiling.load(Ordering::SeqCst))
     }
 
-    /// Under the map's read lock, re-checks `metrics_url` is still set, else
-    /// drops the write. Held alongside `upsert_mirror`'s write lock, so a
-    /// same-tick `dynamic -> static` clear can't be undone by a racing tick's
-    /// store. Floors at 1 only: `max_concurrency` is the dynamic seed, not a
-    /// ceiling, so the controller may raise `c` past it (phase-1 seed model).
-    pub fn set_ceiling(&self, slug: &str, c: i64) {
+    pub fn set_ceiling(&self, slug: &str, replica_id: &ReplicaId, c: i64) {
         let map = self.map.read().unwrap();
         let Some(ep) = map.get(slug) else { return };
-        if ep.metrics_url.is_none() {
+        let cfg = ep.backends.as_ref().and_then(BackendConfig::from_json);
+        if let Some(_cfg) = cfg {
+            let resolved = self.resolved_backends.read().unwrap();
+            let Some(replica) = resolved.get(slug).and_then(|rs| rs.iter().find(|r| &r.id == replica_id)) else {
+                return;
+            };
+            if replica.metrics_url.is_none() {
+                return;
+            }
+        } else if ep.metrics_url.is_none() {
             return;
         }
         let floored = c.max(1);
-        if let Some(limiter) = self.limiters.read().unwrap().get(slug) {
+        if let Some(limiter) = self.limiters.read().unwrap().get(&(slug.to_string(), replica_id.clone())) {
             limiter.ceiling.store(floored, Ordering::SeqCst);
         }
     }
 
-    /// Read fresh each controller tick alongside `get_ceiling`: whether the local
-    /// limiter is currently saturated is one of the two signals gating an increase.
-    pub fn get_inflight(&self, slug: &str) -> Option<i64> {
+    pub fn get_inflight(&self, slug: &str, replica_id: &ReplicaId) -> Option<i64> {
         self.limiters
             .read()
             .unwrap()
-            .get(slug)
+            .get(&(slug.to_string(), replica_id.clone()))
             .map(|l| l.inflight.load(Ordering::SeqCst))
     }
 
@@ -168,7 +242,7 @@ impl ExternalEndpointMgr {
     pub fn sweep_limiters(&self) {
         let map = self.map.read().unwrap();
         let mut limiters = self.limiters.write().unwrap();
-        limiters.retain(|slug, limiter| {
+        limiters.retain(|(slug, _), limiter| {
             if limiter.inflight.load(Ordering::SeqCst) != 0 {
                 return true;
             }
@@ -197,30 +271,71 @@ impl ExternalEndpointMgr {
     /// without a change, so the controller can act pre-traffic. `-1` stores
     /// nothing — unlimited bypasses the limiter and it drains until swept.
     fn upsert_mirror(&self, ep: ExternalEndpoint) {
-        let mut map = self.map.write().unwrap();
-        let changed = map.get(&ep.slug).map(|old| (old.max_concurrency, old.metrics_url.clone()))
-            != Some((ep.max_concurrency, ep.metrics_url.clone()));
+        let old = {
+            let map = self.map.read().unwrap();
+            map.get(&ep.slug).cloned()
+        };
+        let max_changed = old.as_ref().map(|o| o.max_concurrency) != Some(ep.max_concurrency);
+        let metrics_changed = old.as_ref().map(|o| o.metrics_url.clone()) != Some(ep.metrics_url.clone());
+        let backends_changed = old.as_ref().map(|o| o.backends.clone()) != Some(ep.backends.clone());
+        let changed = max_changed || metrics_changed || backends_changed;
 
-        if ep.max_concurrency >= 0 {
-            let is_dynamic = ep.metrics_url.is_some();
-            if changed || is_dynamic {
+        let cfg = ep.backends.as_ref().and_then(BackendConfig::from_json);
+        let has_metrics = ep.metrics_url.is_some()
+            || cfg.as_ref().map(|c| match c { BackendConfig::Explicit { replicas } => replicas.iter().any(|r| r.metrics_url.is_some()) }).unwrap_or(false);
+
+        if cfg.is_some() && backends_changed {
+            let resolved = resolve_replicas(&ep);
+            if ep.max_concurrency >= 0 {
                 let ceiling = ep.max_concurrency as i64;
-                let mut limiters = self.limiters.write().unwrap();
-                match limiters.get(&ep.slug).cloned() {
-                    Some(l) => {
-                        if changed {
-                            l.ceiling.store(ceiling, Ordering::SeqCst);
-                        }
+                let new_ids: std::collections::HashSet<&ReplicaId> = resolved.iter().map(|r| &r.id).collect();
+                {
+                    let mut limiters = self.limiters.write().unwrap();
+                    limiters.retain(|(s, rid), l| {
+                        s != &ep.slug || l.inflight.load(Ordering::SeqCst) != 0 || new_ids.contains(rid)
+                    });
+                    for r in &resolved {
+                        limiters.entry((ep.slug.clone(), r.id.clone()))
+                            .and_modify(|l| { l.ceiling.store(ceiling, Ordering::SeqCst); })
+                            .or_insert_with(|| Arc::new(ConcurrencyLimiter::new(ceiling)));
                     }
-                    None if is_dynamic => {
-                        limiters.insert(ep.slug.clone(), Arc::new(ConcurrencyLimiter::new(ceiling)));
-                    }
-                    None => {}
                 }
+            }
+            self.resolved_backends.write().unwrap().insert(ep.slug.clone(), resolved);
+        } else if has_metrics && ep.max_concurrency >= 0 {
+            let ceiling = ep.max_concurrency as i64;
+            if max_changed || metrics_changed {
+                let resolved = self.resolved_backends.read().unwrap().get(&ep.slug).cloned()
+                    .unwrap_or_else(|| resolve_replicas(&ep));
+                if self.resolved_backends.read().unwrap().get(&ep.slug).is_none() {
+                    self.resolved_backends.write().unwrap().insert(ep.slug.clone(), resolved.clone());
+                }
+                let mut limiters = self.limiters.write().unwrap();
+                for r in &resolved {
+                    limiters.entry((ep.slug.clone(), r.id.clone()))
+                        .and_modify(|l| { if max_changed || metrics_changed { l.ceiling.store(ceiling, Ordering::SeqCst); } })
+                        .or_insert_with(|| Arc::new(ConcurrencyLimiter::new(ceiling)));
+                }
+            }
+        } else if changed && ep.max_concurrency >= 0 {
+            let ceiling = ep.max_concurrency as i64;
+            let mut limiters = self.limiters.write().unwrap();
+            for ((_, _), l) in limiters.iter_mut().filter(|((s, _), _)| s == &ep.slug) {
+                l.ceiling.store(ceiling, Ordering::SeqCst);
             }
         }
 
-        map.insert(ep.slug.clone(), ep);
+        // Guarantee the serving path always has replicas. A no-backends,
+        // no-metrics row falls through every branch above, so materialize the
+        // default replica (idempotent when a branch already inserted).
+        if self.resolved_backends.read().unwrap().get(&ep.slug).is_none() {
+            self.resolved_backends
+                .write()
+                .unwrap()
+                .insert(ep.slug.clone(), resolve_replicas(&ep));
+        }
+
+        self.map.write().unwrap().insert(ep.slug.clone(), ep);
     }
 
     pub async fn Create(
@@ -231,10 +346,11 @@ impl ExternalEndpointMgr {
         provider_api_key: &str,
         max_concurrency: i32,
         metrics_url: Option<&str>,
+        backends: Option<&serde_json::Value>,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url)
+            .InsertExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url, backends)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -248,10 +364,11 @@ impl ExternalEndpointMgr {
         provider_api_key: Option<&str>,
         max_concurrency: i32,
         metrics_url: Option<&str>,
+        backends: Option<&serde_json::Value>,
     ) -> Result<ExternalEndpoint> {
         let ep = self
             .sql
-            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url)
+            .UpdateExternalEndpoint(slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url, backends)
             .await?;
         self.upsert_mirror(ep.clone());
         Ok(ep)
@@ -277,22 +394,9 @@ impl ExternalEndpointMgr {
     pub async fn Delete(&self, slug: &str) -> Result<()> {
         self.sql.DeleteExternalEndpoint(slug).await?;
         self.map.write().unwrap().remove(slug);
+        self.resolved_backends.write().unwrap().remove(slug);
         Ok(())
     }
-}
-
-/// Hydration-only seeding: each dynamic row's limiter starts at the stored
-/// `max_concurrency`. A learned live ceiling is in-memory only and is never
-/// persisted, so a restart always re-seeds from the seed, not the last-learned
-/// value (phase-1 semantics).
-fn hydrate_limiters(rows: &[ExternalEndpoint]) -> BTreeMap<String, Arc<ConcurrencyLimiter>> {
-    let mut limiters = BTreeMap::new();
-    for row in rows {
-        if row.metrics_url.is_some() && row.max_concurrency >= 0 {
-            limiters.insert(row.slug.clone(), Arc::new(ConcurrencyLimiter::new(row.max_concurrency as i64)));
-        }
-    }
-    limiters
 }
 
 fn external_gateway_error(code: StatusCode, msg: String) -> Response {
@@ -304,21 +408,23 @@ fn external_gateway_error(code: StatusCode, msg: String) -> Response {
 fn try_acquire_slot(
     max: i32,
     slug: &str,
-    limiters: &RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>>,
+    replica_id: &ReplicaId,
+    limiters: &RwLock<BTreeMap<(String, ReplicaId), Arc<ConcurrencyLimiter>>>,
 ) -> Option<ConcurrencyPermit> {
     if max < 0 {
         return Some(ConcurrencyPermit(None));
     }
+    let key = (slug.to_string(), replica_id.clone());
     let limiter = {
         let read = limiters.read().unwrap();
-        read.get(slug).cloned()
+        read.get(&key).cloned()
     };
     let limiter = match limiter {
         Some(l) => l,
         None => limiters
             .write()
             .unwrap()
-            .entry(slug.to_string())
+            .entry(key)
             .or_insert_with(|| Arc::new(ConcurrencyLimiter::new(max as i64)))
             .clone(),
     };
@@ -344,17 +450,18 @@ fn try_acquire_slot(
 /// `sub_path` has the `/v1` root stripped (base_url carries it).
 pub async fn proxy_to_external(
     client: &reqwest::Client,
-    ext: &ExternalEndpoint,
+    base_url: &str,
+    api_key: &str,
     sub_path: &str,
     body_bytes: Vec<u8>,
     timeouts: ExternalTimeouts,
-) -> Response {
-    let url = format!("{}{}", ext.base_url.trim_end_matches('/'), sub_path);
+) -> std::result::Result<Response, (StatusCode, String)> {
+    let url = format!("{}{}", base_url.trim_end_matches('/'), sub_path);
 
     let send = client
         .post(&url)
         .header("content-type", "application/json")
-        .bearer_auth(&ext.provider_api_key)
+        .bearer_auth(api_key)
         .body(body_bytes)
         .send();
 
@@ -364,24 +471,28 @@ pub async fn proxy_to_external(
     )
     .await
     {
-        // Response headers never arrived.
         Err(_) => {
-            return external_gateway_error(
+            return Ok(external_gateway_error(
                 StatusCode::GATEWAY_TIMEOUT,
                 "service failure: upstream response header timeout".to_string(),
-            )
+            ))
         }
-        // Transport failure, no HTTP response: connect-timeout -> 504, refused/DNS -> 502.
         Ok(Err(e)) => {
+            if e.is_connect() {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("service failure: upstream connect error: {e}"),
+                ));
+            }
             let code = if e.is_timeout() {
                 StatusCode::GATEWAY_TIMEOUT
             } else {
                 StatusCode::BAD_GATEWAY
             };
-            return external_gateway_error(
+            return Ok(external_gateway_error(
                 code,
                 format!("service failure: upstream transport error: {e}"),
-            );
+            ));
         }
         Ok(Ok(r)) => r,
     };
@@ -437,9 +548,9 @@ pub async fn proxy_to_external(
         }
     });
 
-    builder
+    Ok(builder
         .body(Body::from_stream(ReceiverStream::new(rx)))
-        .unwrap()
+        .unwrap())
 }
 
 /// Provider-facing sub-path for an incoming shared-surface request path.
@@ -512,6 +623,7 @@ mod tests {
             max_concurrency: -1,
             last_published_by: None,
             metrics_url: None,
+            backends: None,
         }
     }
 
@@ -549,7 +661,7 @@ mod tests {
         assert!(entries.iter().all(|e| e["owned_by"] == "inferx"));
     }
 
-    fn empty_limiters() -> RwLock<BTreeMap<String, Arc<ConcurrencyLimiter>>> {
+    fn empty_limiters() -> RwLock<BTreeMap<(String, ReplicaId), Arc<ConcurrencyLimiter>>> {
         RwLock::new(BTreeMap::new())
     }
 
@@ -557,14 +669,14 @@ mod tests {
     fn limiter_caps_at_max_and_admits_below() {
         let limiters = empty_limiters();
 
-        let p1 = try_acquire_slot(2, "m", &limiters);
-        let p2 = try_acquire_slot(2, "m", &limiters);
+        let p1 = try_acquire_slot(2, "m", &default_replica_id(), &limiters);
+        let p2 = try_acquire_slot(2, "m", &default_replica_id(), &limiters);
         assert!(p1.is_some() && p2.is_some(), "two permits fit under cap 2");
         // At capacity: rejected.
-        assert!(try_acquire_slot(2, "m", &limiters).is_none());
+        assert!(try_acquire_slot(2, "m", &default_replica_id(), &limiters).is_none());
         // Releasing one frees a slot for a new request.
         drop(p1);
-        assert!(try_acquire_slot(2, "m", &limiters).is_some());
+        assert!(try_acquire_slot(2, "m", &default_replica_id(), &limiters).is_some());
     }
 
     #[test]
@@ -572,7 +684,7 @@ mod tests {
         let limiters = empty_limiters();
         let mut held = Vec::new();
         for _ in 0..1000 {
-            let p = try_acquire_slot(-1, "m", &limiters);
+            let p = try_acquire_slot(-1, "m", &default_replica_id(), &limiters);
             assert!(p.is_some(), "max -1 is unlimited");
             held.push(p);
         }
@@ -585,32 +697,32 @@ mod tests {
         let limiters = empty_limiters();
         // 0 is a real cap, not the unlimited sentinel: nothing is ever admitted,
         // which is the 429 kill-switch state.
-        assert!(try_acquire_slot(0, "m", &limiters).is_none());
-        assert!(try_acquire_slot(0, "m", &limiters).is_none());
+        assert!(try_acquire_slot(0, "m", &default_replica_id(), &limiters).is_none());
+        assert!(try_acquire_slot(0, "m", &default_replica_id(), &limiters).is_none());
     }
 
     #[test]
     fn limiter_shrink_applies_to_next_admission_with_no_overadmission() {
         let limiters = empty_limiters();
 
-        let _p1 = try_acquire_slot(3, "m", &limiters);
-        let _p2 = try_acquire_slot(3, "m", &limiters);
+        let _p1 = try_acquire_slot(3, "m", &default_replica_id(), &limiters);
+        let _p2 = try_acquire_slot(3, "m", &default_replica_id(), &limiters);
         // Shrink while 2 are in flight: an atomic store, no remove-and-rebuild.
-        limiters.read().unwrap().get("m").unwrap().ceiling.store(1, Ordering::SeqCst);
+        limiters.read().unwrap().get(&("m".to_string(), default_replica_id())).unwrap().ceiling.store(1, Ordering::SeqCst);
         // The next admission sees the new ceiling immediately: already over it,
         // so it is rejected outright (never transiently admits old + new).
-        assert!(try_acquire_slot(3, "m", &limiters).is_none());
+        assert!(try_acquire_slot(3, "m", &default_replica_id(), &limiters).is_none());
     }
 
     #[test]
     fn limiter_grow_admits_immediately() {
         let limiters = empty_limiters();
 
-        let _p1 = try_acquire_slot(1, "m", &limiters);
-        assert!(try_acquire_slot(1, "m", &limiters).is_none(), "cap 1 full");
-        limiters.read().unwrap().get("m").unwrap().ceiling.store(3, Ordering::SeqCst);
-        assert!(try_acquire_slot(1, "m", &limiters).is_some());
-        assert!(try_acquire_slot(1, "m", &limiters).is_some());
+        let _p1 = try_acquire_slot(1, "m", &default_replica_id(), &limiters);
+        assert!(try_acquire_slot(1, "m", &default_replica_id(), &limiters).is_none(), "cap 1 full");
+        limiters.read().unwrap().get(&("m".to_string(), default_replica_id())).unwrap().ceiling.store(3, Ordering::SeqCst);
+        assert!(try_acquire_slot(1, "m", &default_replica_id(), &limiters).is_some());
+        assert!(try_acquire_slot(1, "m", &default_replica_id(), &limiters).is_some());
     }
 
     // ---- ExternalEndpointMgr: contracts 1 and 4 (no DB needed by these methods) ----
@@ -624,7 +736,12 @@ mod tests {
             map: Arc::new(RwLock::new(BTreeMap::new())),
             client: reqwest::Client::new(),
             limiters: Arc::new(RwLock::new(BTreeMap::new())),
+            resolved_backends: Arc::new(RwLock::new(BTreeMap::new())),
         }
+    }
+
+    fn default_replica_id() -> ReplicaId {
+        ReplicaId("default".to_string())
     }
 
     fn dyn_ep(slug: &str, max_concurrency: i32, metrics_url: Option<&str>) -> ExternalEndpoint {
@@ -637,58 +754,88 @@ mod tests {
             max_concurrency,
             last_published_by: None,
             metrics_url: metrics_url.map(|s| s.to_string()),
+            backends: None,
         }
+    }
+
+    #[tokio::test]
+    async fn upsert_materializes_default_replica_for_plain_static_row() {
+        // Regression: a no-backends, no-metrics row created at runtime left
+        // resolved_backends empty, so the serving path returned 503
+        // "no available replicas". The default replica must be materialized
+        // from base_url.
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", -1, None));
+        let replicas = mgr.resolved_replicas("m");
+        assert_eq!(replicas.len(), 1);
+        assert_eq!(replicas[0].id, default_replica_id());
+        assert_eq!(replicas[0].base_url, "http://vllm:8000/v1");
+
+        // A second upsert (e.g. admin edits max_concurrency only) must not
+        // clobber the existing resolved entry.
+        mgr.upsert_mirror(dyn_ep("m", 4, None));
+        let replicas = mgr.resolved_replicas("m");
+        assert_eq!(replicas.len(), 1, "re-upsert preserves the default replica");
+    }
+
+    #[tokio::test]
+    async fn upsert_materializes_default_replica_for_static_capped_row() {
+        // Same regression for a static row with a finite cap and no metrics:
+        // the ceiling branch above does not insert into resolved_backends.
+        let mgr = test_mgr();
+        mgr.upsert_mirror(dyn_ep("m", 8, None));
+        assert_eq!(mgr.resolved_replicas("m").len(), 1);
     }
 
     #[tokio::test]
     async fn eager_limiter_exists_before_first_request_and_honors_lowered_ceiling() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
-        assert_eq!(mgr.get_ceiling("m"), Some(16));
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16));
 
-        mgr.set_ceiling("m", 4);
+        mgr.set_ceiling("m", &default_replica_id(), 4);
         let mut held = Vec::new();
         for _ in 0..4 {
-            held.push(mgr.try_acquire("m").expect("within lowered ceiling"));
+            held.push(mgr.try_acquire("m", &default_replica_id()).expect("within lowered ceiling"));
         }
-        assert!(mgr.try_acquire("m").is_none(), "5th request rejected at 4, not N=16");
+        assert!(mgr.try_acquire("m", &default_replica_id()).is_none(), "5th request rejected at 4, not N=16");
     }
 
     #[tokio::test]
     async fn dynamic_to_static_transition_restores_ceiling_to_n() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
-        mgr.set_ceiling("m", 2);
-        assert_eq!(mgr.get_ceiling("m"), Some(2));
+        mgr.set_ceiling("m", &default_replica_id(), 2);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(2));
 
         // Admin clears metrics_url with the same max_concurrency.
         mgr.upsert_mirror(dyn_ep("m", 16, None));
-        assert_eq!(mgr.get_ceiling("m"), Some(16));
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16));
     }
 
     #[tokio::test]
     async fn mirror_upsert_resets_ceiling_on_metrics_url_set_or_edit() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 16, None));
-        assert_eq!(mgr.get_ceiling("m"), None, "static row: lazy, no limiter yet");
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), None, "static row: lazy, no limiter yet");
 
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
-        assert_eq!(mgr.get_ceiling("m"), Some(16));
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16));
 
-        mgr.set_ceiling("m", 3);
+        mgr.set_ceiling("m", &default_replica_id(), 3);
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://y/metrics")));
-        assert_eq!(mgr.get_ceiling("m"), Some(16), "editing metrics_url resets too");
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16), "editing metrics_url resets too");
     }
 
     #[tokio::test]
     async fn upsert_never_overwrites_with_a_stale_cached_ceiling() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
-        mgr.set_ceiling("m", 2);
+        mgr.set_ceiling("m", &default_replica_id(), 2);
 
         // Admin raises N to 16; the reset must be visible to the very next read.
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
-        let c = mgr.get_ceiling("m").unwrap();
+        let c = mgr.get_ceiling("m", &default_replica_id()).unwrap();
         assert_eq!(c, 16, "must read the reset value, not a value derived from the pre-edit c=2");
     }
 
@@ -696,7 +843,7 @@ mod tests {
     async fn tombstone_continuity_recreate_reuses_the_draining_limiter() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
-        let held = mgr.try_acquire("m").expect("admits within cap 2");
+        let held = mgr.try_acquire("m", &default_replica_id()).expect("admits within cap 2");
 
         // Simulate Delete: drop the row, leave the limiter tombstoned (the row-gate
         // that would otherwise refuse a rowless slug lives in dispatch, not here).
@@ -705,9 +852,9 @@ mod tests {
         // Recreate at the same slug with a smaller cap: the still-draining permit
         // counts against the new ceiling (never old_inflight + new_cap).
         mgr.upsert_mirror(dyn_ep("m", 1, Some("http://x/metrics")));
-        assert!(mgr.try_acquire("m").is_none(), "1 already in flight fills cap 1");
+        assert!(mgr.try_acquire("m", &default_replica_id()).is_none(), "1 already in flight fills cap 1");
         drop(held);
-        assert!(mgr.try_acquire("m").is_some());
+        assert!(mgr.try_acquire("m", &default_replica_id()).is_some());
     }
 
     #[tokio::test]
@@ -715,24 +862,24 @@ mod tests {
         let mgr = test_mgr();
 
         mgr.upsert_mirror(dyn_ep("m", 2, Some("http://x/metrics")));
-        let held = mgr.try_acquire("m").expect("admits within cap 2");
+        let held = mgr.try_acquire("m", &default_replica_id()).expect("admits within cap 2");
         mgr.map.write().unwrap().remove("m");
         mgr.sweep_limiters();
-        assert!(mgr.limiters.read().unwrap().contains_key("m"), "still draining: not pruned");
+        assert!(mgr.limiters.read().unwrap().contains_key(&("m".to_string(), default_replica_id())), "still draining: not pruned");
         drop(held);
         mgr.sweep_limiters();
-        assert!(!mgr.limiters.read().unwrap().contains_key("m"), "drained + no row: pruned");
+        assert!(!mgr.limiters.read().unwrap().contains_key(&("m".to_string(), default_replica_id())), "drained + no row: pruned");
 
         // Recreated as unlimited: no ceiling store, but the old limiter still
         // drains and must be swept once empty even though a row exists.
         mgr.upsert_mirror(dyn_ep("u", 2, Some("http://y/metrics")));
-        let held2 = mgr.try_acquire("u").expect("admits within cap 2");
+        let held2 = mgr.try_acquire("u", &default_replica_id()).expect("admits within cap 2");
         mgr.upsert_mirror(dyn_ep("u", -1, None));
         mgr.sweep_limiters();
-        assert!(mgr.limiters.read().unwrap().contains_key("u"), "still draining: not pruned");
+        assert!(mgr.limiters.read().unwrap().contains_key(&("u".to_string(), default_replica_id())), "still draining: not pruned");
         drop(held2);
         mgr.sweep_limiters();
-        assert!(!mgr.limiters.read().unwrap().contains_key("u"), "drained + unlimited row: pruned");
+        assert!(!mgr.limiters.read().unwrap().contains_key(&("u".to_string(), default_replica_id())), "drained + unlimited row: pruned");
     }
 
     #[tokio::test]
@@ -740,13 +887,13 @@ mod tests {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 16, Some("http://x/metrics")));
         // Racing tick's store was computed while the slug was still dynamic...
-        let pre_edit_ceiling = mgr.get_ceiling("m").unwrap();
+        let pre_edit_ceiling = mgr.get_ceiling("m", &default_replica_id()).unwrap();
         // ...but the admin's clear lands first, restoring the static cap.
         mgr.upsert_mirror(dyn_ep("m", 16, None));
-        assert_eq!(mgr.get_ceiling("m"), Some(16));
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16));
 
-        mgr.set_ceiling("m", pre_edit_ceiling / 2);
-        assert_eq!(mgr.get_ceiling("m"), Some(16), "guard drops the write: metrics_url is cleared");
+        mgr.set_ceiling("m", &default_replica_id(), pre_edit_ceiling / 2);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(16), "guard drops the write: metrics_url is cleared");
     }
 
     #[tokio::test]
@@ -755,33 +902,33 @@ mod tests {
         mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
         // Phase-1: max_concurrency is only the seed, not an upper bound; the
         // controller may raise the live ceiling past it.
-        mgr.set_ceiling("m", 10);
-        assert_eq!(mgr.get_ceiling("m"), Some(10), "no clamp to max_concurrency=4");
+        mgr.set_ceiling("m", &default_replica_id(), 10);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(10), "no clamp to max_concurrency=4");
     }
 
     #[tokio::test]
     async fn set_ceiling_still_floors_at_one() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
-        mgr.set_ceiling("m", -3);
-        assert_eq!(mgr.get_ceiling("m"), Some(1), "floors at 1 even for a negative drop");
+        mgr.set_ceiling("m", &default_replica_id(), -3);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(1), "floors at 1 even for a negative drop");
     }
 
     #[tokio::test]
     async fn get_inflight_tracks_held_permits_and_none_for_unknown_slug() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 4, Some("http://x/metrics")));
-        assert_eq!(mgr.get_inflight("m"), Some(0));
+        assert_eq!(mgr.get_inflight("m", &default_replica_id()), Some(0));
 
-        let p1 = mgr.try_acquire("m").expect("within cap");
-        let p2 = mgr.try_acquire("m").expect("within cap");
-        assert_eq!(mgr.get_inflight("m"), Some(2));
+        let p1 = mgr.try_acquire("m", &default_replica_id()).expect("within cap");
+        let p2 = mgr.try_acquire("m", &default_replica_id()).expect("within cap");
+        assert_eq!(mgr.get_inflight("m", &default_replica_id()), Some(2));
 
         drop(p1);
-        assert_eq!(mgr.get_inflight("m"), Some(1));
+        assert_eq!(mgr.get_inflight("m", &default_replica_id()), Some(1));
         drop(p2);
 
-        assert_eq!(mgr.get_inflight("no-such-slug"), None);
+        assert_eq!(mgr.get_inflight("no-such-slug", &default_replica_id()), None);
     }
 
     #[tokio::test]
@@ -789,12 +936,12 @@ mod tests {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
         // Controller raised the live ceiling above the seed.
-        mgr.set_ceiling("m", 20);
-        assert_eq!(mgr.get_ceiling("m"), Some(20));
+        mgr.set_ceiling("m", &default_replica_id(), 20);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(20));
 
         mgr.upsert_mirror(dyn_ep("m", 9, Some("http://x/metrics")));
         assert_eq!(
-            mgr.get_ceiling("m"),
+            mgr.get_ceiling("m", &default_replica_id()),
             Some(9),
             "editing max_concurrency resets a controller-raised ceiling back to the new seed"
         );
@@ -804,12 +951,12 @@ mod tests {
     async fn upsert_resets_controller_raised_ceiling_on_metrics_url_edit() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
-        mgr.set_ceiling("m", 20);
-        assert_eq!(mgr.get_ceiling("m"), Some(20));
+        mgr.set_ceiling("m", &default_replica_id(), 20);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(20));
 
         mgr.upsert_mirror(dyn_ep("m", 7, Some("http://y/metrics")));
         assert_eq!(
-            mgr.get_ceiling("m"),
+            mgr.get_ceiling("m", &default_replica_id()),
             Some(7),
             "editing metrics_url resets a controller-raised ceiling back to the seed"
         );
@@ -819,32 +966,15 @@ mod tests {
     async fn upsert_restores_static_cap_after_controller_raised_ceiling_above_seed() {
         let mgr = test_mgr();
         mgr.upsert_mirror(dyn_ep("m", 7, Some("http://x/metrics")));
-        mgr.set_ceiling("m", 20);
-        assert_eq!(mgr.get_ceiling("m"), Some(20));
+        mgr.set_ceiling("m", &default_replica_id(), 20);
+        assert_eq!(mgr.get_ceiling("m", &default_replica_id()), Some(20));
 
         mgr.upsert_mirror(dyn_ep("m", 7, None));
         assert_eq!(
-            mgr.get_ceiling("m"),
+            mgr.get_ceiling("m", &default_replica_id()),
             Some(7),
             "disabling dynamic mode restores the static cap, even from a controller-raised ceiling"
         );
-    }
-
-    #[test]
-    fn hydration_seeds_dynamic_limiter_from_stored_max_concurrency_only() {
-        let rows = vec![
-            dyn_ep("dyn", 7, Some("http://x/metrics")),
-            dyn_ep("static", 5, None),
-            dyn_ep("unlimited", -1, Some("http://y/metrics")),
-        ];
-        let limiters = hydrate_limiters(&rows);
-        assert_eq!(
-            limiters.get("dyn").unwrap().ceiling.load(Ordering::SeqCst),
-            7,
-            "dynamic row seeds from stored max_concurrency, never a previously learned ceiling"
-        );
-        assert!(limiters.get("static").is_none(), "static rows are lazy, no eager limiter");
-        assert!(limiters.get("unlimited").is_none(), "unlimited dynamic rows get no limiter");
     }
 
     #[test]
@@ -915,6 +1045,7 @@ mod tests {
             max_concurrency: -1,
             last_published_by: None,
             metrics_url: None,
+            backends: None,
         }
     }
 
@@ -998,7 +1129,7 @@ mod tests {
         let ext = test_endpoint(format!("http://127.0.0.1:{}/v1", port));
         let body = b"{\"model\":\"u\",\"messages\":[]}".to_vec();
 
-        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", body, FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext.base_url, &ext.provider_api_key, "/chat/completions", body, FAST_TIMEOUTS).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "2xx must pass through");
         assert_eq!(collect_body(resp).await, "{\"usage\":{}}");
 
@@ -1027,7 +1158,7 @@ mod tests {
         let sub_path = external_sub_path("/endpoints/v1/completions");
         let body = b"{\"model\":\"u\",\"prompt\":\"hi\"}".to_vec();
 
-        let resp = proxy_to_external(&test_client(), &ext, &sub_path, body, FAST_TIMEOUTS).await;
+        let resp = proxy_to_external(&test_client(), &ext.base_url, &ext.provider_api_key, &sub_path, body, FAST_TIMEOUTS).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = rx.await.unwrap();
@@ -1044,18 +1175,17 @@ mod tests {
             spawn_capture_server("HTTP/1.1 429 Too Many Requests", "{\"error\":\"rate\"}").await;
         let ext = test_endpoint(format!("http://127.0.0.1:{}/v1", port));
 
-        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
-        // Real provider status is surfaced so the client can back off (never remapped).
-        // The dispatch 2xx gate then skips metering for this non-2xx.
+        let resp = proxy_to_external(&test_client(), &ext.base_url, &ext.provider_api_key, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await.unwrap();
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(collect_body(resp).await, "{\"error\":\"rate\"}");
     }
 
     #[tokio::test]
-    async fn proxy_maps_connection_refused_to_502() {
-        // Nothing is listening on this port → connection refused (no HTTP response).
+    async fn proxy_maps_connection_refused_to_connect_error() {
         let ext = test_endpoint("http://127.0.0.1:1/v1".to_string());
-        let resp = proxy_to_external(&test_client(), &ext, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
-        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let result = proxy_to_external(&test_client(), &ext.base_url, &ext.provider_api_key, "/chat/completions", b"{}".to_vec(), FAST_TIMEOUTS).await;
+        assert!(result.is_err(), "connect failure must be Err (safe to retry)");
+        let (code, _) = result.unwrap_err();
+        assert_eq!(code, StatusCode::BAD_GATEWAY);
     }
 }

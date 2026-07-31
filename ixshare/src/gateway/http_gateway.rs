@@ -4546,56 +4546,84 @@ async fn shared_endpoint_dispatch(
         let body_bytes =
             serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        // Admit against the per-slug concurrency cap before the upstream call.
-        // `None` = at capacity -> fast 429, no queueing. Both front doors share the
-        // one per-slug counter, and the permit is held for the response's lifetime.
-        let permit = match gw.externalEndpointMgr.try_acquire(&ext.slug) {
-            Some(p) => p,
-            None => {
-                return Ok(Response::builder()
-                    .status(StatusCode::TOO_MANY_REQUESTS)
-                    .body(Body::from(format!(
-                        "service failure: endpoint {} at capacity",
-                        ext.slug
-                    )))
-                    .unwrap());
-            }
-        };
-
-        // base_url carries the `/v1` root, so strip it from the incoming sub-path.
         let sub_path = external_sub_path(&incoming_path);
-        let response = proxy_to_external(
-            gw.externalEndpointMgr.HttpClient(),
-            &ext,
-            &sub_path,
-            body_bytes,
-            ExternalTimeouts::from_gateway_config(),
-        )
-        .await;
-
-        // Bill only on 2xx; provider errors / transport failures pass through unbilled.
-        if response.status().is_success() {
-            let meter = TokenMeterCtx {
-                gateway_request_id: uuid::Uuid::new_v4().to_string(),
-                client_request_id,
-                caller_tenant,
-                model_slug: modelName,
-                source: source.as_str().to_string(),
-                request_ts,
-            };
-            // The permit drops only when the response body finishes draining, so
-            // concurrency is counted for the whole generation, not just headers.
-            return Ok(process_usage_response(
-                response,
-                is_streaming,
-                !usage_requested,
-                Some(meter),
-                Some(permit),
-            )
-            .await);
+        let replicas = gw.externalEndpointMgr.resolved_replicas(&ext.slug);
+        if replicas.is_empty() {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Body::from(format!(
+                    "service failure: endpoint {} has no available replicas",
+                    ext.slug
+                )))
+                .unwrap());
         }
-        // Non-2xx / transport failure: skip metering; the permit drops on return.
-        return Ok(response);
+
+        let timeouts = ExternalTimeouts::from_gateway_config();
+        let mut last_response: Option<Response> = None;
+
+        for replica in &replicas {
+            let permit = match gw.externalEndpointMgr.try_acquire(&ext.slug, &replica.id) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let result = proxy_to_external(
+                gw.externalEndpointMgr.HttpClient(),
+                &replica.base_url,
+                &ext.provider_api_key,
+                &sub_path,
+                body_bytes.clone(),
+                timeouts,
+            )
+            .await;
+
+            let response = match result {
+                Err(_) => {
+                    drop(permit);
+                    continue;
+                }
+                Ok(r) => r,
+            };
+
+            let status = response.status();
+            if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
+                last_response = Some(response);
+                drop(permit);
+                continue;
+            }
+
+            if status.is_success() {
+                let meter = TokenMeterCtx {
+                    gateway_request_id: uuid::Uuid::new_v4().to_string(),
+                    client_request_id,
+                    caller_tenant,
+                    model_slug: modelName,
+                    source: source.as_str().to_string(),
+                    request_ts,
+                };
+                return Ok(process_usage_response(
+                    response,
+                    is_streaming,
+                    !usage_requested,
+                    Some(meter),
+                    Some(permit),
+                )
+                .await);
+            }
+            return Ok(response);
+        }
+
+        if let Some(resp) = last_response {
+            return Ok(resp);
+        }
+
+        return Ok(Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .body(Body::from(format!(
+                "service failure: endpoint {} all replicas at capacity",
+                ext.slug
+            )))
+            .unwrap());
     }
 
     // Direct callers reach the shared surface only for a published endpoint. OR is

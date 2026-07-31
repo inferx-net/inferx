@@ -159,11 +159,12 @@ CREATE TABLE ExternalEndpoint (
     published           BOOLEAN NOT NULL DEFAULT false,  -- direct-path gate (replaces funcstatus.published)
     max_concurrency     INTEGER NOT NULL DEFAULT -1,     -- per-endpoint in-flight cap (-1 = unlimited, gate skipped; 0 = reject all)
     metrics_url         TEXT,                            -- NULL = static cap; set = dynamic ceiling controller manages this slug
+    backends            JSONB,                           -- NULL = single-backend; set = multi-replica config (discovery + replica URLs)
     createtime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updatetime          TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_published_by   VARCHAR,
     CHECK (btrim(slug) <> ''),
-    CHECK (btrim(base_url) <> ''),
+    CHECK (backends IS NOT NULL OR btrim(base_url) <> ''),
     CHECK (max_concurrency >= -1)
 );
 
