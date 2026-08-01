@@ -104,8 +104,8 @@ use super::scheduler_client::SCHEDULER_CLIENT;
 use super::http_gw::{BuildProviderModelEntry, ProviderModelsAdapter};
 use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
 use super::external_endpoint::{
+    dispatch_failover,
     endpoint_published_gate, external_model_entries, external_sub_path, is_valid_slug,
-    proxy_to_external,
     ExternalEndpointMgr, ExternalTimeouts,
 };
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
@@ -4547,83 +4547,37 @@ async fn shared_endpoint_dispatch(
             serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         let sub_path = external_sub_path(&incoming_path);
-        let replicas = gw.externalEndpointMgr.resolved_replicas(&ext.slug);
-        if replicas.is_empty() {
-            return Ok(Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body(Body::from(format!(
-                    "service failure: endpoint {} has no available replicas",
-                    ext.slug
-                )))
-                .unwrap());
-        }
-
         let timeouts = ExternalTimeouts::from_gateway_config();
-        let mut last_response: Option<Response> = None;
+        let outcome = dispatch_failover(
+            &gw.externalEndpointMgr,
+            &ext,
+            &gw.externalEndpointMgr.resolved_replicas(&ext.slug),
+            &caller_tenant,
+            &sub_path,
+            body_bytes.clone(),
+            timeouts,
+        )
+        .await;
 
-        for replica in &replicas {
-            let permit = match gw.externalEndpointMgr.try_acquire(&ext.slug, &replica.id) {
-                Some(p) => p,
-                None => continue,
+        if outcome.response.status().is_success() {
+            let meter = TokenMeterCtx {
+                gateway_request_id: uuid::Uuid::new_v4().to_string(),
+                client_request_id,
+                caller_tenant,
+                model_slug: modelName,
+                source: source.as_str().to_string(),
+                request_ts,
             };
-
-            let result = proxy_to_external(
-                gw.externalEndpointMgr.HttpClient(),
-                &replica.base_url,
-                &ext.provider_api_key,
-                &sub_path,
-                body_bytes.clone(),
-                timeouts,
+            return Ok(process_usage_response(
+                outcome.response,
+                is_streaming,
+                !usage_requested,
+                Some(meter),
+                outcome.permit,
             )
-            .await;
-
-            let response = match result {
-                Err(_) => {
-                    drop(permit);
-                    continue;
-                }
-                Ok(r) => r,
-            };
-
-            let status = response.status();
-            if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
-                last_response = Some(response);
-                drop(permit);
-                continue;
-            }
-
-            if status.is_success() {
-                let meter = TokenMeterCtx {
-                    gateway_request_id: uuid::Uuid::new_v4().to_string(),
-                    client_request_id,
-                    caller_tenant,
-                    model_slug: modelName,
-                    source: source.as_str().to_string(),
-                    request_ts,
-                };
-                return Ok(process_usage_response(
-                    response,
-                    is_streaming,
-                    !usage_requested,
-                    Some(meter),
-                    Some(permit),
-                )
-                .await);
-            }
-            return Ok(response);
+            .await);
         }
-
-        if let Some(resp) = last_response {
-            return Ok(resp);
-        }
-
-        return Ok(Response::builder()
-            .status(StatusCode::TOO_MANY_REQUESTS)
-            .body(Body::from(format!(
-                "service failure: endpoint {} all replicas at capacity",
-                ext.slug
-            )))
-            .unwrap());
+        return Ok(outcome.response);
     }
 
     // Direct callers reach the shared surface only for a published endpoint. OR is

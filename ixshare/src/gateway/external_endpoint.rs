@@ -3,6 +3,7 @@
 // reads never touch the DB. Coherent for a single gateway only.
 
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -72,6 +73,8 @@ pub struct ReplicaConfig {
     pub base_url: String,
     #[serde(default)]
     pub metrics_url: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,23 +92,138 @@ impl BackendConfig {
     }
 }
 
-pub fn resolve_replicas(ep: &ExternalEndpoint) -> Vec<DiscoveredReplica> {
+pub fn resolve_replicas(ep: &ExternalEndpoint) -> std::result::Result<Vec<DiscoveredReplica>, String> {
     if let Some(cfg) = ep.backends.as_ref().and_then(BackendConfig::from_json) {
         match cfg {
             BackendConfig::Explicit { replicas } => {
-                replicas.iter().map(|r| DiscoveredReplica {
-                    id: ReplicaId(r.base_url.clone()),
-                    base_url: r.base_url.clone(),
-                    metrics_url: r.metrics_url.clone(),
-                }).collect()
+                let mut seen = std::collections::BTreeSet::new();
+                let mut out = Vec::with_capacity(replicas.len());
+                for r in replicas {
+                    let id_str = r.id.clone().unwrap_or_else(|| r.base_url.clone());
+                    let id = ReplicaId(id_str);
+                    if !seen.insert(id.clone()) {
+                        return Err(format!("duplicate replica id: {}", id));
+                    }
+                    out.push(DiscoveredReplica {
+                        id,
+                        base_url: r.base_url.clone(),
+                        metrics_url: r.metrics_url.clone(),
+                    });
+                }
+                Ok(out)
             }
         }
     } else {
-        vec![DiscoveredReplica {
+        Ok(vec![DiscoveredReplica {
             id: ReplicaId("default".to_string()),
             base_url: ep.base_url.clone(),
             metrics_url: ep.metrics_url.clone(),
-        }]
+        }])
+    }
+}
+
+fn hrw_score(tenant: &str, replica_id: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    tenant.hash(&mut h);
+    replica_id.hash(&mut h);
+    h.finish()
+}
+
+pub fn affinity_order(replicas: &[DiscoveredReplica], tenant: &str) -> Vec<DiscoveredReplica> {
+    let mut scored: Vec<(u64, &DiscoveredReplica)> = replicas
+        .iter()
+        .map(|r| (hrw_score(tenant, &r.id.0), r))
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.into_iter().map(|(_, r)| r.clone()).collect()
+}
+
+pub struct DispatchOutcome {
+    pub response: Response,
+    pub permit: Option<ConcurrencyPermit>,
+}
+
+pub async fn dispatch_failover(
+    mgr: &ExternalEndpointMgr,
+    ext: &ExternalEndpoint,
+    resolved: &[DiscoveredReplica],
+    tenant: &str,
+    sub_path: &str,
+    body_bytes: Vec<u8>,
+    timeouts: ExternalTimeouts,
+) -> DispatchOutcome {
+    let replicas = affinity_order(resolved, tenant);
+    if replicas.is_empty() {
+        return DispatchOutcome {
+            response: Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Body::from(format!(
+                    "service failure: endpoint {} has no available replicas",
+                    ext.slug
+                )))
+                .unwrap(),
+            permit: None,
+        };
+    }
+
+    let mut last_response: Option<Response> = None;
+
+    for replica in &replicas {
+        let permit = match mgr.try_acquire(&ext.slug, &replica.id) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let result = proxy_to_external(
+            mgr.HttpClient(),
+            &replica.base_url,
+            &ext.provider_api_key,
+            &sub_path,
+            body_bytes.clone(),
+            timeouts,
+        )
+        .await;
+
+        let response = match result {
+            Err(_) => {
+                drop(permit);
+                continue;
+            }
+            Ok(r) => r,
+        };
+
+        let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
+            last_response = Some(response);
+            drop(permit);
+            continue;
+        }
+
+        if status.is_success() {
+            return DispatchOutcome {
+                response,
+                permit: Some(permit),
+            };
+        }
+
+        drop(permit);
+        return DispatchOutcome {
+            response,
+            permit: None,
+        };
+    }
+
+    DispatchOutcome {
+        response: last_response.unwrap_or_else(|| {
+            Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body(Body::from(format!(
+                    "service failure: endpoint {} all replicas at capacity",
+                    ext.slug
+                )))
+                .unwrap()
+        }),
+        permit: None,
     }
 }
 
@@ -155,8 +273,14 @@ impl ExternalEndpointMgr {
         let mut limiters = BTreeMap::new();
         let mut map = BTreeMap::new();
         for row in &rows {
+            let replicas = match resolve_replicas(row) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("endpoint {}: {}, skipping", row.slug, e);
+                    continue;
+                }
+            };
             map.insert(row.slug.clone(), row.clone());
-            let replicas = resolve_replicas(row);
             if row.max_concurrency >= 0 {
                 for r in &replicas {
                     limiters.insert(
@@ -285,7 +409,13 @@ impl ExternalEndpointMgr {
             || cfg.as_ref().map(|c| match c { BackendConfig::Explicit { replicas } => replicas.iter().any(|r| r.metrics_url.is_some()) }).unwrap_or(false);
 
         if cfg.is_some() && backends_changed {
-            let resolved = resolve_replicas(&ep);
+            let resolved = match resolve_replicas(&ep) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("endpoint {}: {}, skipping mirror update", ep.slug, e);
+                    return;
+                }
+            };
             if ep.max_concurrency >= 0 {
                 let ceiling = ep.max_concurrency as i64;
                 let new_ids: std::collections::HashSet<&ReplicaId> = resolved.iter().map(|r| &r.id).collect();
@@ -305,8 +435,10 @@ impl ExternalEndpointMgr {
         } else if has_metrics && ep.max_concurrency >= 0 {
             let ceiling = ep.max_concurrency as i64;
             if max_changed || metrics_changed {
-                let resolved = self.resolved_backends.read().unwrap().get(&ep.slug).cloned()
-                    .unwrap_or_else(|| resolve_replicas(&ep));
+                let resolved = match self.resolved_backends.read().unwrap().get(&ep.slug).cloned() {
+                    Some(r) => r,
+                    None => resolve_replicas(&ep).unwrap_or_default(),
+                };
                 if self.resolved_backends.read().unwrap().get(&ep.slug).is_none() {
                     self.resolved_backends.write().unwrap().insert(ep.slug.clone(), resolved.clone());
                 }
@@ -329,10 +461,12 @@ impl ExternalEndpointMgr {
         // no-metrics row falls through every branch above, so materialize the
         // default replica (idempotent when a branch already inserted).
         if self.resolved_backends.read().unwrap().get(&ep.slug).is_none() {
-            self.resolved_backends
-                .write()
-                .unwrap()
-                .insert(ep.slug.clone(), resolve_replicas(&ep));
+            if let Ok(resolved) = resolve_replicas(&ep) {
+                self.resolved_backends
+                    .write()
+                    .unwrap()
+                    .insert(ep.slug.clone(), resolved);
+            }
         }
 
         self.map.write().unwrap().insert(ep.slug.clone(), ep);
@@ -1187,5 +1321,292 @@ mod tests {
         assert!(result.is_err(), "connect failure must be Err (safe to retry)");
         let (code, _) = result.unwrap_err();
         assert_eq!(code, StatusCode::BAD_GATEWAY);
+    }
+
+    // ---- affinity: hrw_score, affinity_order, resolve_replicas uniqueness ----
+
+    fn multi_replica_ep(slug: &str, ids: &[&str]) -> ExternalEndpoint {
+        let replicas: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| serde_json::json!({
+                "base_url": format!("http://{}:8000/v1", id),
+                "metrics_url": format!("http://{}:8000/metrics", id),
+                "id": id,
+            }))
+            .collect();
+        ExternalEndpoint {
+            slug: slug.to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 4,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas})),
+        }
+    }
+
+    #[test]
+    fn affinity_order_same_tenant_same_preferred() {
+        let ep = multi_replica_ep("m", &["a", "b", "c"]);
+        let replicas = resolve_replicas(&ep).unwrap();
+        let order1 = affinity_order(&replicas, "tenant1");
+        let order2 = affinity_order(&replicas, "tenant1");
+        assert_eq!(order1[0].id, order2[0].id, "same tenant must get same preferred");
+        assert_eq!(order1.len(), 3);
+        assert_eq!(order2.len(), 3);
+    }
+
+    #[test]
+    fn affinity_order_different_tenants_distribute() {
+        let ep = multi_replica_ep("m", &["a", "b", "c"]);
+        let replicas = resolve_replicas(&ep).unwrap();
+        let prefs: std::collections::BTreeSet<String> = (0..30)
+            .map(|i| affinity_order(&replicas, &format!("t{}", i))[0].id.0.clone())
+            .collect();
+        assert!(prefs.len() > 1, "different tenants should not all pin to one replica");
+    }
+
+    #[test]
+    fn affinity_order_single_replica_noop() {
+        let ep = multi_replica_ep("m", &["a"]);
+        let replicas = resolve_replicas(&ep).unwrap();
+        let order = affinity_order(&replicas, "any");
+        assert_eq!(order.len(), 1);
+        assert_eq!(order[0].id, replicas[0].id);
+    }
+
+    #[test]
+    fn hrw_score_deterministic() {
+        let s1 = hrw_score("tenant", "replica-a");
+        let s2 = hrw_score("tenant", "replica-a");
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn hrw_score_different_inputs_different() {
+        let s1 = hrw_score("tenant1", "replica-a");
+        let s2 = hrw_score("tenant2", "replica-a");
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn resolve_replicas_stable_id_independent_of_url() {
+        let replicas = vec![
+            serde_json::json!({"base_url": "http://old:8000/v1", "id": "r1"}),
+            serde_json::json!({"base_url": "http://old:8000/v1", "id": "r2"}),
+        ];
+        let ep = ExternalEndpoint {
+            slug: "m".to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 4,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas})),
+        };
+        let r1 = resolve_replicas(&ep).unwrap();
+        let score1 = hrw_score("t", &r1[0].id.0);
+
+        let replicas2 = vec![
+            serde_json::json!({"base_url": "http://new:9000/v1", "id": "r1"}),
+            serde_json::json!({"base_url": "http://new:9000/v1", "id": "r2"}),
+        ];
+        let ep2 = ExternalEndpoint {
+            slug: "m".to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 4,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas2})),
+        };
+        let r2 = resolve_replicas(&ep2).unwrap();
+        let score2 = hrw_score("t", &r2[0].id.0);
+
+        assert_eq!(score1, score2, "changing base_url with stable id must not change score");
+    }
+
+    #[test]
+    fn resolve_replicas_rejects_duplicate_ids() {
+        let replicas = vec![
+            serde_json::json!({"base_url": "http://a:8000/v1", "id": "dup"}),
+            serde_json::json!({"base_url": "http://b:8000/v1", "id": "dup"}),
+        ];
+        let ep = ExternalEndpoint {
+            slug: "m".to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 4,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas})),
+        };
+        let result = resolve_replicas(&ep);
+        assert!(result.is_err(), "duplicate ids must be rejected");
+        assert!(result.unwrap_err().contains("duplicate"));
+    }
+
+    #[test]
+    fn resolve_replicas_rejects_duplicate_base_urls_without_id() {
+        let replicas = vec![
+            serde_json::json!({"base_url": "http://a:8000/v1"}),
+            serde_json::json!({"base_url": "http://a:8000/v1"}),
+        ];
+        let ep = ExternalEndpoint {
+            slug: "m".to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 4,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas})),
+        };
+        let result = resolve_replicas(&ep);
+        assert!(result.is_err(), "duplicate base_urls (no id) must be rejected");
+    }
+
+    #[test]
+    fn affinity_order_adding_replica_minimal_remap() {
+        let ep3 = multi_replica_ep("m", &["a", "b", "c"]);
+        let ep4 = multi_replica_ep("m", &["a", "b", "c", "d"]);
+        let r3 = resolve_replicas(&ep3).unwrap();
+        let r4 = resolve_replicas(&ep4).unwrap();
+        let mut remapped = 0;
+        for i in 0..1000 {
+            let t = format!("tenant{}", i);
+            let p3 = affinity_order(&r3, &t)[0].id.0.clone();
+            let p4 = affinity_order(&r4, &t)[0].id.0.clone();
+            if p3 != p4 {
+                remapped += 1;
+            }
+        }
+        assert!(remapped > 150 && remapped < 350, "adding one replica to 3 should remap ~25%, got {}/1000", remapped);
+    }
+
+    #[test]
+    fn affinity_order_removing_replica_minimal_remap() {
+        let ep3 = multi_replica_ep("m", &["a", "b", "c"]);
+        let ep2 = multi_replica_ep("m", &["a", "b"]);
+        let r3 = resolve_replicas(&ep3).unwrap();
+        let r2 = resolve_replicas(&ep2).unwrap();
+        let mut remapped = 0;
+        for i in 0..1000 {
+            let t = format!("tenant{}", i);
+            let p3 = affinity_order(&r3, &t)[0].id.0.clone();
+            let p2 = affinity_order(&r2, &t)[0].id.0.clone();
+            if p3 != p2 {
+                remapped += 1;
+            }
+        }
+        assert!(remapped > 250 && remapped < 450, "removing one replica from 3 should remap ~33%, got {}/1000", remapped);
+    }
+
+    #[test]
+    fn affinity_order_removed_replica_tenants_move_to_second_highest() {
+        let ep3 = multi_replica_ep("m", &["a", "b", "c"]);
+        let r3 = resolve_replicas(&ep3).unwrap();
+        let ep2 = multi_replica_ep("m", &["a", "b"]);
+        let r2 = resolve_replicas(&ep2).unwrap();
+        for i in 0..200 {
+            let t = format!("tenant{}", i);
+            let order3 = affinity_order(&r3, &t);
+            let pref3 = &order3[0].id.0;
+            let second3 = &order3[1].id.0;
+            let pref2 = &affinity_order(&r2, &t)[0].id.0;
+            if pref3 == "c" {
+                assert_eq!(
+                    pref2, second3,
+                    "tenant {} had c as preferred and {} as second; after removing c, preferred should be {} but got {}",
+                    t, second3, second3, pref2
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_affinity_routes_same_tenant_to_same_replica() {
+        async fn spawn_multi_server(status_line: &'static str, resp_body: &'static str, count: usize) -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                for _ in 0..count {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let http_resp = format!(
+                        "{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status_line,
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = socket.write_all(http_resp.as_bytes()).await;
+                    let _ = socket.flush().await;
+                }
+            });
+            port
+        }
+
+        let port_a = spawn_multi_server("HTTP/1.1 200 OK", "{\"usage\":{}}", 10).await;
+        let port_b = spawn_multi_server("HTTP/1.1 200 OK", "{\"usage\":{}}", 10).await;
+        let port_c = spawn_multi_server("HTTP/1.1 200 OK", "{\"usage\":{}}", 10).await;
+
+        let mgr = test_mgr();
+        let replicas_json = vec![
+            serde_json::json!({"base_url": format!("http://127.0.0.1:{}/v1", port_a), "id": "a"}),
+            serde_json::json!({"base_url": format!("http://127.0.0.1:{}/v1", port_b), "id": "b"}),
+            serde_json::json!({"base_url": format!("http://127.0.0.1:{}/v1", port_c), "id": "c"}),
+        ];
+        let ep = ExternalEndpoint {
+            slug: "m".to_string(),
+            base_url: "".to_string(),
+            upstream_model: "u".to_string(),
+            provider_api_key: "sk".to_string(),
+            published: true,
+            max_concurrency: 2,
+            last_published_by: None,
+            metrics_url: None,
+            backends: Some(serde_json::json!({"discovery": "explicit", "replicas": replicas_json})),
+        };
+        mgr.upsert_mirror(ep);
+
+        let r = mgr.resolved_replicas("m");
+        let body = b"{\"model\":\"u\",\"messages\":[]}".to_vec();
+
+        let outcome = dispatch_failover(
+            &mgr, &mgr.Get("m").unwrap(), &r, "tenant-x", "/chat/completions", body.clone(), FAST_TIMEOUTS,
+        ).await;
+        assert_eq!(outcome.response.status(), StatusCode::OK);
+        drop(outcome.permit);
+
+        let outcome2 = dispatch_failover(
+            &mgr, &mgr.Get("m").unwrap(), &r, "tenant-x", "/chat/completions", body.clone(), FAST_TIMEOUTS,
+        ).await;
+        assert_eq!(outcome2.response.status(), StatusCode::OK);
+        assert_eq!(
+            affinity_order(&r, "tenant-x")[0].id,
+            affinity_order(&r, "tenant-x")[0].id,
+            "same tenant keeps same preferred replica"
+        );
+        drop(outcome2.permit);
+
+        let mut fill = Vec::new();
+        while let Some(p) = mgr.try_acquire("m", &affinity_order(&r, "tenant-x")[0].id) {
+            fill.push(p);
+        }
+
+        let outcome3 = dispatch_failover(
+            &mgr, &mgr.Get("m").unwrap(), &r, "tenant-x", "/chat/completions", body.clone(), FAST_TIMEOUTS,
+        ).await;
+        assert_eq!(outcome3.response.status(), StatusCode::OK, "overflow to second affinity replica succeeds");
+        drop(outcome3.permit);
+        drop(fill);
     }
 }

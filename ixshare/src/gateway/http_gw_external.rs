@@ -137,8 +137,13 @@ fn validate_backends(
             if replicas.is_empty() {
                 return Err(Error::CommonError("backends requires at least one replica".to_string()));
             }
+            let mut seen = std::collections::BTreeSet::new();
             for r in replicas {
                 validate_replica_url(&r.base_url, r.metrics_url.as_deref(), max_concurrency)?;
+                let id = r.id.clone().unwrap_or_else(|| r.base_url.clone());
+                if !seen.insert(id.clone()) {
+                    return Err(Error::CommonError(format!("duplicate replica id: {}", id)));
+                }
             }
         }
     }
@@ -516,5 +521,43 @@ mod tests {
     fn validate_backends_none_is_ok() {
         assert!(validate_backends(None, None, -1).is_ok());
         assert!(validate_backends(None, Some("http://x/metrics"), 4).is_ok());
+    }
+
+    #[test]
+    fn validate_backends_rejects_duplicate_explicit_ids() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1", "id": "r1"},
+                {"base_url": "http://10.0.0.2:8000/v1", "id": "r1"},
+            ]
+        });
+        let err = validate_backends(Some(&cfg), None, 4).unwrap_err();
+        assert!(format!("{:?}", err).contains("duplicate replica id"));
+    }
+
+    #[test]
+    fn validate_backends_rejects_duplicate_base_urls_without_id() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1"},
+                {"base_url": "http://10.0.0.1:8000/v1"},
+            ]
+        });
+        let err = validate_backends(Some(&cfg), None, 4).unwrap_err();
+        assert!(format!("{:?}", err).contains("duplicate replica id"));
+    }
+
+    #[test]
+    fn validate_backends_accepts_distinct_ids() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1", "id": "r1"},
+                {"base_url": "http://10.0.0.2:8000/v1", "id": "r2"},
+            ]
+        });
+        assert!(validate_backends(Some(&cfg), None, 4).is_ok());
     }
 }
