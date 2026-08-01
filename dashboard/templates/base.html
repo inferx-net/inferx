@@ -686,10 +686,6 @@
     {% if show_public_nav %}
     <nav>
         <a href="{{ url_for('prefix.EndpointList') }}" class="{% if nav_endpoints_active %}active{% endif %}"> Endpoints </a>
-        {% if not is_public_visitor %}
-        <a href="{{ hosturl }}listskills/myskills" class="{% if nav_skills_active %}active{% endif %}"> Skills <sup class="nav-preview-badge">Preview</sup></a>
-        <a href="{{ hosturl }}agent" class="{% if nav_agent_active %}active{% endif %}"> Agent <sup class="nav-preview-badge">Preview</sup></a>
-        {% endif %}
         <a href="{{ hosturl }}catalog" class="{% if nav_catalog_active %}active{% endif %}"> Catalog </a>
         {% if not is_public_visitor %}
         <a href="{{ hosturl }}listfunc" class="{% if nav_models_active %}active{% endif %}"> Models </a>
