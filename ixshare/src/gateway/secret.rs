@@ -85,6 +85,8 @@ pub struct EndpointMetadata {
     pub parameter_count_b: Option<f64>,
     pub context_length: Option<i64>,
     pub concurrency: Option<f64>,
+    pub base_pricing: Option<serde_json::Value>,
+    pub discount_to_user: Option<f64>,
 }
 
 /// Operator-authored OpenRouter listing metadata persisted on the Endpoints row
@@ -138,6 +140,7 @@ pub struct ListedEndpoint {
     pub context_length: Option<i64>,
     pub max_output_length: Option<i64>,
     pub pricing: Option<serde_json::Value>,
+    pub base_pricing: Option<serde_json::Value>,
     pub discount_to_user: Option<f64>,
     pub supported_sampling_parameters: Option<Vec<String>>,
     pub supported_features: Option<Vec<String>>,
@@ -165,6 +168,7 @@ const ENDPOINT_LISTING_SELECT_COLUMNS: &str = r#"
         context_length,
         max_output_length,
         pricing,
+        base_pricing,
         discount_to_user::float8 AS discount_to_user,
         supported_sampling_parameters,
         supported_features,
@@ -198,6 +202,7 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
         context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
         max_output_length: row.try_get::<Option<i64>, _>("max_output_length").ok().flatten(),
         pricing: row.try_get::<Option<serde_json::Value>, _>("pricing").ok().flatten(),
+        base_pricing: row.try_get::<Option<serde_json::Value>, _>("base_pricing").ok().flatten(),
         discount_to_user: row.try_get::<Option<f64>, _>("discount_to_user").ok().flatten(),
         supported_sampling_parameters: read_vec("supported_sampling_parameters"),
         supported_features: read_vec("supported_features"),
@@ -1079,9 +1084,11 @@ impl SqlSecret {
                 provider,
                 parameter_count_b,
                 context_length,
-                concurrency
+                concurrency,
+                base_pricing,
+                discount_to_user
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13
             )
             ON CONFLICT (slug)
             DO UPDATE SET
@@ -1093,7 +1100,9 @@ impl SqlSecret {
                 provider = EXCLUDED.provider,
                 parameter_count_b = EXCLUDED.parameter_count_b,
                 context_length = EXCLUDED.context_length,
-                concurrency = EXCLUDED.concurrency
+                concurrency = EXCLUDED.concurrency,
+                base_pricing = EXCLUDED.base_pricing,
+                discount_to_user = EXCLUDED.discount_to_user
         "#;
 
         sqlx::query(query)
@@ -1108,6 +1117,8 @@ impl SqlSecret {
             .bind(metadata.parameter_count_b)
             .bind(metadata.context_length)
             .bind(metadata.concurrency)
+            .bind(&metadata.base_pricing)
+            .bind(metadata.discount_to_user)
             .execute(&self.pool)
             .await?;
 
@@ -1125,7 +1136,9 @@ impl SqlSecret {
                 provider,
                 parameter_count_b,
                 context_length,
-                concurrency
+                concurrency,
+                base_pricing,
+                discount_to_user
             FROM Endpoints
             WHERE slug = $1
         "#;
@@ -1155,6 +1168,8 @@ impl SqlSecret {
             parameter_count_b: row.try_get::<Option<f64>, _>("parameter_count_b").ok().flatten(),
             context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
             concurrency: row.try_get::<Option<f64>, _>("concurrency").ok().flatten(),
+            base_pricing: row.try_get::<Option<serde_json::Value>, _>("base_pricing").ok().flatten(),
+            discount_to_user: row.try_get::<Option<f64>, _>("discount_to_user").ok().flatten(),
         };
 
         Ok(Some(metadata))
@@ -1180,10 +1195,12 @@ impl SqlSecret {
                 parameter_count_b,
                 context_length,
                 concurrency,
+                base_pricing,
+                discount_to_user,
                 last_published_at,
                 last_published_by
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, NOW(), $12
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13, NOW(), $14
             )
             ON CONFLICT (slug)
             DO UPDATE SET
@@ -1197,6 +1214,8 @@ impl SqlSecret {
                 parameter_count_b = EXCLUDED.parameter_count_b,
                 context_length = EXCLUDED.context_length,
                 concurrency = EXCLUDED.concurrency,
+                base_pricing = EXCLUDED.base_pricing,
+                discount_to_user = EXCLUDED.discount_to_user,
                 last_published_at = NOW(),
                 last_published_by = EXCLUDED.last_published_by
         "#;
@@ -1213,6 +1232,8 @@ impl SqlSecret {
             .bind(metadata.parameter_count_b)
             .bind(metadata.context_length)
             .bind(metadata.concurrency)
+            .bind(&metadata.base_pricing)
+            .bind(metadata.discount_to_user)
             .bind(last_published_by)
             .execute(&self.pool)
             .await?;

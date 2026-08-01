@@ -414,16 +414,6 @@
                         shared_model_name,
                         shared_model_name
                     ) }}
-                    {% if token_rate %}
-                    {{ client_setup_display_field(
-                        'Price',
-                        '$%s input / $%s output per 1M tokens%s'|format(
-                            format_token_price_dollars(token_rate.dollars_per_million_input),
-                            format_token_price_dollars(token_rate.dollars_per_million_output),
-                            ' · cached input $%s/1M'|format(format_token_price_dollars(token_rate.dollars_per_million_cached)) if token_rate.microcents_per_million_cached else ''
-                        )
-                    ) }}
-                    {% endif %}
                 </div>
                 <div class="client-setup-code-shell">
                     <div class="client-setup-code-header">

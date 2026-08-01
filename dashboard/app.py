@@ -120,6 +120,84 @@ def format_token_price_dollars(value):
         return ""
 
 
+def enrich_token_rate_display(token_rate, discount_to_user=None, base_pricing=None):
+    """Attach display-friendly base/effective pricing for endpoint pages."""
+    if not isinstance(token_rate, dict):
+        return token_rate
+
+    enriched = dict(token_rate)
+    discount = None
+    try:
+        if discount_to_user not in (None, ""):
+            discount = float(discount_to_user)
+    except Exception:
+        discount = None
+
+    enriched["discount_to_user"] = discount
+    enriched["discount_percent"] = None
+    normalized_base_pricing = normalize_base_pricing(base_pricing)
+    for kind in ("input", "output", "cached"):
+        base_value = None
+        if isinstance(normalized_base_pricing, dict):
+            base_value = normalized_base_pricing.get(f"{kind}_per_million")
+        enriched[f"base_dollars_per_million_{kind}"] = (
+            base_value if base_value is not None else enriched.get(f"dollars_per_million_{kind}")
+        )
+
+    if discount is None or discount < 0 or discount > 1:
+        return enriched
+
+    enriched["discount_percent"] = round(discount * 100.0, 2)
+    multiplier = 1.0 - discount
+    for kind in ("input", "output", "cached"):
+        effective = enriched.get(f"dollars_per_million_{kind}")
+        if enriched.get(f"base_dollars_per_million_{kind}") is None:
+            enriched[f"base_dollars_per_million_{kind}"] = (
+                round(effective / multiplier, 6)
+                if effective is not None and multiplier > 0
+                else None
+            )
+    return enriched
+
+
+def normalize_base_pricing(value):
+    parsed = normalize_catalog_json_field(value)
+    if not isinstance(parsed, dict):
+        return None
+    result = {}
+    for src, dst in (
+        ("input_per_million", "input_per_million"),
+        ("output_per_million", "output_per_million"),
+        ("cached_per_million", "cached_per_million"),
+    ):
+        raw = parsed.get(src)
+        if raw in (None, ""):
+            result[dst] = None
+            continue
+        try:
+            result[dst] = float(raw)
+        except Exception:
+            result[dst] = None
+    return result
+
+
+def serialize_base_pricing_for_metadata(base_pricing):
+    if not isinstance(base_pricing, dict):
+        return None
+    result = {}
+    for key in ("input_per_million", "output_per_million", "cached_per_million"):
+        value = base_pricing.get(key)
+        if value in (None, ""):
+            result[key] = 0.0 if key == "cached_per_million" else None
+            continue
+        result[key] = float(value)
+    if result["input_per_million"] is None or result["output_per_million"] is None:
+        return None
+    if result["cached_per_million"] is None:
+        result["cached_per_million"] = 0.0
+    return result
+
+
 @app.context_processor
 def inject_dashboard_links():
     script_root = ""
@@ -4713,6 +4791,7 @@ ENDPOINT_ENTRY_SELECT_COLUMNS = """
         output_modalities,
         max_output_length,
         pricing,
+        base_pricing,
         discount_to_user::float8 AS discount_to_user,
         supported_sampling_parameters,
         supported_features,
@@ -4770,6 +4849,7 @@ def normalize_endpoint_row(row):
         "supported_sampling_parameters",
         "supported_features",
         "pricing",
+        "base_pricing",
         "datacenters",
     ):
         if key in entry:
@@ -4781,6 +4861,7 @@ def normalize_endpoint_row(row):
             entry["discount_to_user"] = float(discount)
         except Exception:
             entry["discount_to_user"] = None
+    entry["base_pricing"] = normalize_base_pricing(entry.get("base_pricing"))
 
     max_output_length = entry.get("max_output_length")
     if max_output_length is not None:
@@ -4876,6 +4957,76 @@ def query_external_endpoints_via_sql():
         slug = str(row.get("slug", "") or "").strip()
         if slug != "":
             result[slug] = row
+    return result
+
+
+def query_active_token_rates_by_slug(slugs):
+    """Return active token-rate rows keyed by requested slug.
+
+    Mirrors the gateway's lookup precedence: prefer an active slug-specific row,
+    else fall back to an active global/default row (`model_slug IS NULL`).
+    """
+    ensure_endpoint_db_available()
+    normalized_slugs = sorted(
+        {str(slug or "").strip() for slug in (slugs or []) if str(slug or "").strip() != ""}
+    )
+    if not normalized_slugs:
+        return {}
+
+    query = """
+        SELECT
+            requested_slug,
+            matched_model_slug,
+            microcents_per_million_input,
+            microcents_per_million_output,
+            microcents_per_million_cached,
+            effective_from,
+            effective_to,
+            created_at,
+            added_by
+        FROM UNNEST(%s::varchar[]) AS requested_slug
+        CROSS JOIN LATERAL (
+            SELECT
+                model_slug AS matched_model_slug,
+                microcents_per_million_input,
+                microcents_per_million_output,
+                microcents_per_million_cached,
+                effective_from,
+                effective_to,
+                created_at,
+                added_by
+            FROM TokenRate
+            WHERE (model_slug = requested_slug OR model_slug IS NULL)
+              AND tenant IS NULL
+              AND effective_from <= NOW()
+              AND (effective_to IS NULL OR NOW() < effective_to)
+            ORDER BY (model_slug IS NOT NULL) DESC,
+                     effective_from DESC
+            LIMIT 1
+        ) r
+    """
+    try:
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (normalized_slugs,))
+                rows = cursor.fetchall()
+    except Exception:
+        return {}
+
+    result = {}
+    for row in rows:
+        data = dict(row)
+        data["model_slug"] = data.get("matched_model_slug")
+        for src, dst in (
+            ("microcents_per_million_input", "dollars_per_million_input"),
+            ("microcents_per_million_output", "dollars_per_million_output"),
+            ("microcents_per_million_cached", "dollars_per_million_cached"),
+        ):
+            microcents = data.get(src)
+            data[dst] = round(microcents / 100000000.0, 6) if microcents is not None else None
+        slug = str(data.get("requested_slug", "") or "").strip()
+        if slug != "":
+            result[slug] = data
     return result
 
 
@@ -5454,6 +5605,7 @@ def endpoint_metadata_payload_from_prefill(data):
     entry = data if isinstance(data, dict) else {}
     context_length_raw = str(entry.get("context_length", "") or "").strip()
     context_length = None if context_length_raw == "" else int(context_length_raw)
+    base_pricing = serialize_base_pricing_for_metadata(entry.get("base_pricing"))
     return {
         "brief_intro": str(entry.get("brief_intro", "") or "").strip(),
         "detailed_intro": str(entry.get("detailed_intro", "") or "").strip(),
@@ -5475,6 +5627,8 @@ def endpoint_metadata_payload_from_prefill(data):
         "parameter_count_b": normalize_catalog_parameter_count(entry.get("parameter_count_b")),
         "context_length": context_length,
         "concurrency": normalize_catalog_parameter_count(entry.get("concurrency")),
+        "base_pricing": base_pricing,
+        "discount_to_user": _or_optional_number(entry.get("discount_to_user"), "discount_to_user"),
     }
 
 
@@ -5824,6 +5978,8 @@ def build_endpoint_editor_prefill(slug: str, existing_entry, platform_func):
         "parameter_count_b": "",
         "context_length": "",
         "concurrency": "",
+        "base_pricing": None,
+        "discount_to_user": "",
     }
 
     catalog_entry = resolve_endpoint_catalog_entry(slug, platform_func)
@@ -5844,6 +6000,8 @@ def build_endpoint_editor_prefill(slug: str, existing_entry, platform_func):
             "parameter_count_b",
             "context_length",
             "concurrency",
+            "base_pricing",
+            "discount_to_user",
         ):
             value = source.get(key)
             if key in ("recommended_use_cases", "tags"):
@@ -5872,6 +6030,10 @@ def build_endpoint_editor_prefill(slug: str, existing_entry, platform_func):
         prefill["parameter_count_b"] = ""
     if prefill["concurrency"] is None:
         prefill["concurrency"] = ""
+    if not isinstance(prefill["base_pricing"], dict):
+        prefill["base_pricing"] = None
+    if prefill["discount_to_user"] is None:
+        prefill["discount_to_user"] = ""
 
     prefill["openrouter"] = build_endpoint_openrouter_prefill(existing_entry, platform_commands)
 
@@ -5974,6 +6136,59 @@ def build_endpoint_openrouter_prefill(existing_entry, platform_commands=None):
         "or_deprecation_date": dep_utc_iso,
         "or_listed_at_display": str(src.get("or_listed_at_display", "") or "").strip(),
         "or_listed_by": str(src.get("or_listed_by", "") or "").strip(),
+    }
+
+
+def build_endpoint_pricing_prefill(token_rate, openrouter_prefill):
+    openrouter_prefill = openrouter_prefill if isinstance(openrouter_prefill, dict) else {}
+    return {
+        "token_rate": enrich_token_rate_display(
+            token_rate,
+            openrouter_prefill.get("discount_to_user"),
+        ),
+        "discount_to_user": openrouter_prefill.get("discount_to_user", ""),
+        "openrouter_payload": {
+            "or_name": openrouter_prefill.get("or_name", ""),
+            "hugging_face_id": openrouter_prefill.get("hugging_face_id", ""),
+            "quantization": openrouter_prefill.get("quantization", ""),
+            "input_modalities": openrouter_prefill.get("input_modalities", ""),
+            "output_modalities": openrouter_prefill.get("output_modalities", ""),
+            "context_length": openrouter_prefill.get("context_length", ""),
+            "max_output_length": openrouter_prefill.get("max_output_length", ""),
+            "pricing": openrouter_prefill.get("pricing", ""),
+            "supported_sampling_parameters": openrouter_prefill.get("supported_sampling_parameters", ""),
+            "supported_features": openrouter_prefill.get("supported_features", ""),
+            "openrouter_slug": openrouter_prefill.get("openrouter_slug", ""),
+            "capacity_tpm": openrouter_prefill.get("capacity_tpm", ""),
+            "datacenters": openrouter_prefill.get("datacenters", ""),
+            "or_deprecation_date": openrouter_prefill.get("or_deprecation_date", ""),
+        },
+    }
+
+
+def build_endpoint_pricing_metadata_prefill(entry):
+    entry = entry if isinstance(entry, dict) else {}
+    base_pricing = normalize_base_pricing(entry.get("base_pricing")) or {}
+    return {
+        "input_per_million": base_pricing.get("input_per_million"),
+        "output_per_million": base_pricing.get("output_per_million"),
+        "cached_per_million": base_pricing.get("cached_per_million"),
+        "discount_to_user": entry.get("discount_to_user", ""),
+    }
+
+
+def compute_discounted_token_rate_microcents(base_pricing, discount_to_user):
+    base = serialize_base_pricing_for_metadata(base_pricing)
+    if base is None:
+        raise ValueError("base_pricing requires input and output prices")
+    discount = 0.0 if discount_to_user in (None, "") else float(discount_to_user)
+    if discount < 0 or discount > 1:
+        raise ValueError("discount_to_user must be between 0 and 1 inclusive")
+    multiplier = 1.0 - discount
+    return {
+        "microcents_per_million_input": int(round(base["input_per_million"] * multiplier * 100000000.0)),
+        "microcents_per_million_output": int(round(base["output_per_million"] * multiplier * 100000000.0)),
+        "microcents_per_million_cached": int(round(base["cached_per_million"] * multiplier * 100000000.0)),
     }
 
 
@@ -6333,6 +6548,21 @@ def build_endpoint_list_entries(*, include_unpublished: bool, tenant: str = ""):
         )
         entries.append(entry)
 
+    active_rates = query_active_token_rates_by_slug([entry.get("slug") for entry in entries])
+    for entry in entries:
+        token_rate = enrich_token_rate_display(
+            active_rates.get(str(entry.get("slug", "") or "").strip()),
+            entry.get("discount_to_user"),
+            entry.get("base_pricing"),
+        )
+        if token_rate is None:
+            token_rate = enrich_token_rate_display(
+                fetch_active_token_rate(entry.get("slug")),
+                entry.get("discount_to_user"),
+                entry.get("base_pricing"),
+            )
+        entry["token_rate"] = token_rate
+
     return entries
 
 
@@ -6390,6 +6620,21 @@ def build_admin_endpoint_list_entries():
         entry["gpu_count"] = None  # no GPU — renders "—", not "0"
         entry["state"] = external_endpoint_state(published, metadata_entry)
         entries.append(entry)
+
+    active_rates = query_active_token_rates_by_slug([entry.get("slug") for entry in entries])
+    for entry in entries:
+        token_rate = enrich_token_rate_display(
+            active_rates.get(str(entry.get("slug", "") or "").strip()),
+            entry.get("discount_to_user"),
+            entry.get("base_pricing"),
+        )
+        if token_rate is None:
+            token_rate = enrich_token_rate_display(
+                fetch_active_token_rate(entry.get("slug")),
+                entry.get("discount_to_user"),
+                entry.get("base_pricing"),
+            )
+        entry["token_rate"] = token_rate
 
     return entries
 
@@ -8309,7 +8554,11 @@ def EndpointDetail(slug):
     except Exception:
         endpoint_funcspec = ""
 
-    token_rate = fetch_active_token_rate(slug) if is_authenticated else None
+    token_rate = enrich_token_rate_display(
+        fetch_active_token_rate(slug) if is_authenticated else None,
+        entry.get("discount_to_user"),
+        entry.get("base_pricing"),
+    )
     cache_stats = (
         fetch_endpoint_cache_stats(slug)
         if is_authenticated
@@ -8492,7 +8741,11 @@ def EndpointAdminDetail(slug):
         is_authenticated=True,
         selected_tenant=active_tenant,
         client_setup=client_setup,
-        token_rate=fetch_active_token_rate(slug),
+        token_rate=enrich_token_rate_display(
+            fetch_active_token_rate(slug),
+            entry.get("discount_to_user"),
+            entry.get("base_pricing"),
+        ),
         cache_stats=fetch_endpoint_cache_stats(slug),
         shared_api_base_url=f"{normalize_public_api_base_url()}/endpoints/v1",
         opencode_download_href=(
@@ -8542,12 +8795,22 @@ def EndpointAdminEdit(slug):
     except Exception as e:
         return json_error(f"failed to load endpoint editor for `{slug}`: {e}", 500)
 
+    pricing_prefill = build_endpoint_pricing_metadata_prefill(existing_entry or {})
+
     return render_template(
         "endpoint_admin_edit.html",
         endpoint_slug=slug,
         endpoint_prefill=prefill,
         endpoint_catalog_entry=catalog_entry,
-        token_rate=fetch_active_token_rate(slug),
+        token_rate=enrich_token_rate_display(
+            fetch_active_token_rate(slug),
+            (existing_entry or {}).get("discount_to_user"),
+            (existing_entry or {}).get("base_pricing"),
+        ),
+        pricing_base_input=pricing_prefill["input_per_million"],
+        pricing_base_output=pricing_prefill["output_per_million"],
+        pricing_base_cached=pricing_prefill["cached_per_million"],
+        pricing_discount_to_user=pricing_prefill["discount_to_user"],
         endpoint_detail_href=dashboard_href("prefix.EndpointAdminDetail", slug=slug),
         endpoint_openrouter_href=dashboard_href("prefix.EndpointAdminOpenRouterEdit", slug=slug),
         endpoint_state=endpoint_state,
@@ -8597,12 +8860,43 @@ def EndpointAdminOpenRouterEdit(slug):
 def EndpointAdminSaveMetadata(slug):
     req = request.get_json(silent=True) or {}
     try:
-        payload = endpoint_metadata_payload_from_prefill(req)
+        existing_entry = None
+        try:
+            existing_entry = query_endpoint_row_by_slug(slug)
+        except LookupError:
+            existing_entry = {"slug": slug}
+        merged = dict(existing_entry or {})
+        if isinstance(req, dict):
+            merged.update(req)
+        payload = endpoint_metadata_payload_from_prefill(merged)
         version = proxy_gateway_endpoint_admin_action("PUT", slug, metadata=payload)
     except ValueError as e:
         return json_error(str(e), 400)
     except Exception as e:
         return json_error(f"failed to save endpoint metadata: {e}", 502)
+    return jsonify({"slug": slug, "version": version, "saved": True})
+
+
+@prefix_bp.route("/admin/endpoints/<slug>/pricing", methods=["PUT"])
+@require_login
+@require_admin
+def EndpointAdminSavePricing(slug):
+    req = request.get_json(silent=True) or {}
+    try:
+        existing_entry = None
+        try:
+            existing_entry = query_endpoint_row_by_slug(slug)
+        except LookupError:
+            existing_entry = {"slug": slug}
+        merged = dict(existing_entry or {})
+        merged["base_pricing"] = req.get("base_pricing")
+        merged["discount_to_user"] = req.get("discount_to_user")
+        payload = endpoint_metadata_payload_from_prefill(merged)
+        version = proxy_gateway_endpoint_admin_action("PUT", slug, metadata=payload)
+    except ValueError as e:
+        return json_error(str(e), 400)
+    except Exception as e:
+        return json_error(f"failed to save endpoint pricing metadata: {e}", 502)
     return jsonify({"slug": slug, "version": version, "saved": True})
 
 
@@ -8612,7 +8906,16 @@ def EndpointAdminSaveMetadata(slug):
 def EndpointAdminPublish(slug):
     req = request.get_json(silent=True) or {}
     try:
-        payload = endpoint_metadata_payload_from_prefill(req)
+        existing_entry = None
+        try:
+            existing_entry = query_endpoint_row_by_slug(slug)
+        except LookupError:
+            existing_entry = None
+
+        merged = dict(existing_entry or {})
+        if isinstance(req, dict):
+            merged.update(req)
+        payload = endpoint_metadata_payload_from_prefill(merged)
         existing_entry = None
         try:
             existing_entry = query_endpoint_row_by_slug(slug)
@@ -10629,17 +10932,13 @@ def fetch_active_token_rate(slug):
 
     Returns microcents-per-million as stored plus dollars-per-million for display.
     """
-    try:
-        access_token = str(session.get("access_token", "") or "")
-        if access_token == "":
+    normalized_slug = str(slug or "").strip()
+    if normalized_slug == "":
+        return None
+
+    def add_display_fields(data):
+        if not isinstance(data, dict):
             return None
-        url = f"{get_gateway_url()}/billing/token-rate/{quote(str(slug), safe='')}"
-        resp = requests.get(
-            url, headers={"Authorization": f"Bearer {access_token}"}, timeout=15
-        )
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
         for src, dst in (
             ("microcents_per_million_input", "dollars_per_million_input"),
             ("microcents_per_million_output", "dollars_per_million_output"),
@@ -10648,6 +10947,45 @@ def fetch_active_token_rate(slug):
             microcents = data.get(src)
             data[dst] = round(microcents / 100000000.0, 6) if microcents is not None else None
         return data
+
+    try:
+        access_token = str(session.get("access_token", "") or "")
+        if access_token != "":
+            url = f"{get_gateway_url()}/billing/token-rate/{quote(normalized_slug, safe='')}"
+            resp = requests.get(
+                url, headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+            )
+            if resp.status_code == 200:
+                return add_display_fields(resp.json())
+    except Exception:
+        pass
+
+    try:
+        if psycopg2 is None or RealDictCursor is None or SECRDB_ADDR == "":
+            return None
+        query = """
+            SELECT
+                model_slug,
+                tenant,
+                microcents_per_million_input,
+                microcents_per_million_output,
+                microcents_per_million_cached,
+                effective_from,
+                effective_to,
+                created_at,
+                added_by
+            FROM TokenRate
+            WHERE model_slug = %s
+              AND effective_from <= NOW()
+              AND (effective_to IS NULL OR NOW() < effective_to)
+            ORDER BY effective_from DESC
+            LIMIT 1
+        """
+        with psycopg2.connect(SECRDB_ADDR, connect_timeout=5) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (normalized_slug,))
+                row = cursor.fetchone()
+        return add_display_fields(dict(row)) if row is not None else None
     except Exception:
         return None
 

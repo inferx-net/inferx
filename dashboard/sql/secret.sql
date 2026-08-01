@@ -126,6 +126,7 @@ CREATE TABLE Endpoints (
     output_modalities       JSONB,
     max_output_length       BIGINT,
     pricing                 JSONB,
+    base_pricing            JSONB,
     discount_to_user        NUMERIC,
     supported_sampling_parameters JSONB,
     supported_features      JSONB,

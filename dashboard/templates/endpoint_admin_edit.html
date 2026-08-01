@@ -157,23 +157,31 @@
         <div id="endpoint-pricing-message" class="endpoint-message"></div>
         <form id="endpoint-pricing-form" style="margin-top: 12px;">
             <div class="endpoint-form-grid">
-                <label for="token_price_input">Token Price — Input ($ / 1M)</label>
+                <label for="token_price_input">Base Token Price — Input ($ / 1M)</label>
                 <div>
                     <input id="token_price_input" type="number" min="0" step="0.000001"
-                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_input) if token_rate else '' }}">
+                           value="{{ format_token_price_dollars(pricing_base_input) if pricing_base_input is not none else '' }}">
                 </div>
 
-                <label for="token_price_output">Token Price — Output ($ / 1M)</label>
+                <label for="token_price_output">Base Token Price — Output ($ / 1M)</label>
                 <div>
                     <input id="token_price_output" type="number" min="0" step="0.000001"
-                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_output) if token_rate else '' }}">
+                           value="{{ format_token_price_dollars(pricing_base_output) if pricing_base_output is not none else '' }}">
                 </div>
 
-                <label for="token_price_cached">Token Price — Cached Input ($ / 1M)</label>
+                <label for="token_price_cached">Base Token Price — Cached Input ($ / 1M)</label>
                 <div>
                     <input id="token_price_cached" type="number" min="0" step="0.000001"
-                           value="{{ format_token_price_dollars(token_rate.dollars_per_million_cached) if token_rate else '0' }}">
-                    <div class="endpoint-hint">Discounted rate for the cached prompt subset. Defaults to 0.</div>
+                           value="{{ format_token_price_dollars(pricing_base_cached) if pricing_base_cached is not none else '0' }}">
+                    <div class="endpoint-hint">Base cached-input price before discount. Defaults to 0.</div>
+                </div>
+
+                <label for="discount_to_user">Discount to User</label>
+                <div>
+                    <input id="discount_to_user" type="number" min="0" max="1" step="0.0001"
+                           value="{{ pricing_discount_to_user if pricing_discount_to_user not in (none, '') else '' }}"
+                           placeholder="0">
+                    <div class="endpoint-hint">Fractional discount applied to the base token prices. Example: <code>0.1</code> means 10% off, <code>1</code> means free.</div>
                 </div>
             </div>
 
@@ -265,17 +273,44 @@
 
     // The gateway rejects a rateless publish, so Publish calls this before publishing.
     async function saveTokenPrice() {
-        const toMicrocents = (id) => {
+        const toNumber = (id) => {
             const v = parseFloat(document.getElementById(id)?.value);
-            return Number.isFinite(v) ? Math.round(v * 100000000) : NaN;
+            return Number.isFinite(v) ? v : NaN;
         };
-        const input = toMicrocents('token_price_input');
-        const output = toMicrocents('token_price_output');
-        let cached = toMicrocents('token_price_cached');
-        if (Number.isNaN(cached)) cached = 0;
-        if (Number.isNaN(input) || Number.isNaN(output) || input < 0 || output < 0 || cached < 0) {
-            throw new Error('Enter a valid non-negative input and output token price.');
+        const discountRaw = (document.getElementById('discount_to_user')?.value || '').trim();
+        const discount = discountRaw === '' ? '' : parseFloat(discountRaw);
+        const baseInput = toNumber('token_price_input');
+        const baseOutput = toNumber('token_price_output');
+        let baseCached = toNumber('token_price_cached');
+        if (Number.isNaN(baseCached)) baseCached = 0;
+        if (Number.isNaN(baseInput) || Number.isNaN(baseOutput) || baseInput < 0 || baseOutput < 0 || baseCached < 0) {
+            throw new Error('Enter valid non-negative base input and output token prices.');
         }
+        if (discount !== '' && (!Number.isFinite(discount) || discount < 0 || discount > 1)) {
+            throw new Error('Enter a valid discount between 0 and 1 inclusive.');
+        }
+        const discountMultiplier = 1 - (discount === '' ? 0 : discount);
+        const input = Math.round(baseInput * discountMultiplier * 100000000);
+        const output = Math.round(baseOutput * discountMultiplier * 100000000);
+        const cached = Math.round(baseCached * discountMultiplier * 100000000);
+
+        const pricingMetaResp = await fetch({{ url_for('prefix.EndpointAdminSavePricing', slug=endpoint_slug)|tojson }}, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                base_pricing: {
+                    input_per_million: baseInput,
+                    output_per_million: baseOutput,
+                    cached_per_million: baseCached,
+                },
+                discount_to_user: discountRaw,
+            }),
+        });
+        if (!pricingMetaResp.ok) {
+            const body = await pricingMetaResp.json().catch(() => ({}));
+            throw new Error(body.error || `Failed to save pricing metadata (HTTP ${pricingMetaResp.status})`);
+        }
+
         const resp = await fetch({{ url_for('prefix.admin_token_rates')|tojson }}, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
