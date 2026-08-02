@@ -80,7 +80,7 @@ impl EventHandler for Scheduler {
 
 impl Scheduler {
     pub fn New() -> Self {
-        let (eventTx, eventRx) = mpsc::channel::<DeltaEvent>(1000);
+        let (eventTx, eventRx) = mpsc::channel::<DeltaEvent>(100_000);
         let (msgTx, msgRx) = mpsc::channel::<WorkerHandlerMsg>(1000);
 
         return Self {
