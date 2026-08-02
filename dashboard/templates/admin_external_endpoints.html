@@ -127,6 +127,17 @@
                 from Base URL; edit if wrong. Requires Max concurrency &gt; 0.
             </div>
         </div>
+        <div class="external-ep-field">
+            <label><input type="checkbox" id="f-backends-enabled" onchange="onBackendsToggle()"> Multi-replica backends</label>
+            <div id="backends-container" style="display:none; margin-top:8px;">
+                <div id="replica-list"></div>
+                <button class="ix-btn secondary" type="button" onclick="addReplicaRow()" style="margin-top:8px;">Add replica</button>
+                <div class="external-ep-hint" style="margin-top:4px;">
+                    Each replica has its own base_url and optional metrics_url for per-replica dynamic ceiling control.
+                    When backends is set, the single Base URL and Dynamic ceiling fields above are ignored.
+                </div>
+            </div>
+        </div>
         <div style="margin-top:16px;display:flex;gap:8px;">
             <button class="ix-btn secondary" onclick="submitForm()">Save</button>
             <button class="ix-btn secondary" onclick="resetForm()">Clear</button>
@@ -144,10 +155,11 @@
                 <th>Published</th>
                 <th>Max Conc</th>
                 <th>Dynamic</th>
+                <th>Replicas</th>
                 <th>Actions</th>
             </tr>
         </thead>
-        <tbody id="ext-rows"><tr><td colspan="8">Loading…</td></tr></tbody>
+        <tbody id="ext-rows"><tr><td colspan="9">Loading…</td></tr></tbody>
     </table>
     <div id="list-msg" class="external-ep-message"></div>
 </div>
@@ -182,8 +194,16 @@ async function loadRows() {
     const tbody = document.getElementById("ext-rows");
     try {
         const rows = await jreq("GET", "/list");
-        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8">No external endpoints.</td></tr>'; return; }
-        tbody.innerHTML = rows.map(r => `
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="9">No external endpoints.</td></tr>'; return; }
+        tbody.innerHTML = rows.map(r => {
+            let replicaCount = "1";
+            if (r.backends) {
+                try {
+                    const cfg = typeof r.backends === "string" ? JSON.parse(r.backends) : r.backends;
+                    replicaCount = (cfg && cfg.replicas) ? cfg.replicas.length : "?";
+                } catch(e) { replicaCount = "?"; }
+            }
+            return `
             <tr>
                 <td>${esc(r.slug)}</td>
                 <td>${esc(r.base_url)}</td>
@@ -192,6 +212,7 @@ async function loadRows() {
                 <td>${r.published ? "yes" : "no"}</td>
                 <td>${r.max_concurrency < 0 ? "∞" : esc(r.max_concurrency)}</td>
                 <td>${r.metrics_url ? esc(r.metrics_url) : "no"}</td>
+                <td>${replicaCount}</td>
                 <td>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
                         <button class="ix-btn secondary" onclick='editRow(${JSON.stringify(r)})'>Edit</button>
@@ -199,9 +220,10 @@ async function loadRows() {
                         <button class="ix-btn danger" onclick="del('${esc(r.slug)}')">Delete</button>
                     </div>
                 </td>
-            </tr>`).join("");
+            </tr>`;
+        }).join("");
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="8" style="color:#991b1b;">${esc(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" style="color:#991b1b;">${esc(e.message)}</td></tr>`;
     }
 }
 
@@ -230,6 +252,50 @@ function onMetricsToggle() {
     }
 }
 
+function addReplicaRow(baseUrl, metricsUrl) {
+    const container = document.getElementById("replica-list");
+    const div = document.createElement("div");
+    div.style.cssText = "display:flex;gap:6px;margin-top:6px;align-items:center;";
+    div.innerHTML = `
+        <input class="replica-base-url" placeholder="http://10.0.0.1:8000/v1" value="${esc(baseUrl || "")}" style="flex:1;">
+        <input class="replica-metrics-url" placeholder="http://10.0.0.1:8000/metrics (optional)" value="${esc(metricsUrl || "")}" style="flex:1;">
+        <button class="ix-btn danger" type="button" onclick="this.parentElement.remove();">Remove</button>
+    `;
+    container.appendChild(div);
+}
+
+function onBackendsToggle() {
+    const enabled = document.getElementById("f-backends-enabled").checked;
+    document.getElementById("backends-container").style.display = enabled ? "" : "none";
+    const baseUrlField = document.getElementById("f-base-url").parentElement;
+    const metricsField = document.getElementById("f-metrics-enabled").parentElement.parentElement;
+    if (enabled) {
+        baseUrlField.style.opacity = "0.4";
+        metricsField.style.opacity = "0.4";
+        if (document.getElementById("replica-list").children.length === 0) {
+            addReplicaRow("", "");
+        }
+    } else {
+        baseUrlField.style.opacity = "";
+        metricsField.style.opacity = "";
+    }
+}
+
+function getReplicasFromForm() {
+    const rows = document.querySelectorAll("#replica-list > div");
+    const replicas = [];
+    rows.forEach(row => {
+        const baseUrl = row.querySelector(".replica-base-url").value.trim();
+        const metricsUrl = row.querySelector(".replica-metrics-url").value.trim();
+        if (baseUrl) {
+            const r = { base_url: baseUrl };
+            if (metricsUrl) r.metrics_url = metricsUrl;
+            replicas.push(r);
+        }
+    });
+    return replicas;
+}
+
 function editRow(r) {
     document.getElementById("edit-slug").value = r.slug;
     const slugEl = document.getElementById("f-slug");
@@ -243,6 +309,17 @@ function editRow(r) {
     document.getElementById("f-metrics-enabled").checked = !!r.metrics_url;
     document.getElementById("f-metrics-url").value = r.metrics_url || "";
     onMetricsToggle();
+    document.getElementById("replica-list").innerHTML = "";
+    if (r.backends) {
+        try {
+            const cfg = typeof r.backends === "string" ? JSON.parse(r.backends) : r.backends;
+            if (cfg && cfg.replicas && cfg.replicas.length > 0) {
+                document.getElementById("f-backends-enabled").checked = true;
+                cfg.replicas.forEach(rep => addReplicaRow(rep.base_url, rep.metrics_url || ""));
+            }
+        } catch(e) {}
+    }
+    onBackendsToggle();
     window.scrollTo(0, 0);
 }
 
@@ -259,6 +336,9 @@ function resetForm() {
     document.getElementById("f-metrics-enabled").checked = false;
     document.getElementById("f-metrics-url").value = "";
     onMetricsToggle();
+    document.getElementById("f-backends-enabled").checked = false;
+    document.getElementById("replica-list").innerHTML = "";
+    onBackendsToggle();
     showMsg("form-msg", "", false);
 }
 
@@ -268,22 +348,25 @@ async function submitForm() {
     const base_url = document.getElementById("f-base-url").value.trim();
     const upstream_model = document.getElementById("f-upstream").value.trim();
     const key = document.getElementById("f-key").value;
-    // A typed 0 means reject-all and must survive; only a blank/unparseable field
-    // falls back to the unlimited sentinel (`|| -1` would swallow the 0).
     const parsedMax = parseInt(document.getElementById("f-max-concurrency").value, 10);
     const max_concurrency = Number.isNaN(parsedMax) ? -1 : parsedMax;
     const metrics_enabled = document.getElementById("f-metrics-enabled").checked;
     const metrics_url = metrics_enabled ? document.getElementById("f-metrics-url").value.trim() : null;
+    const backends_enabled = document.getElementById("f-backends-enabled").checked;
+    let backends = null;
+    if (backends_enabled) {
+        const replicas = getReplicasFromForm();
+        if (replicas.length === 0) { showMsg("form-msg", "Add at least one replica.", false); return; }
+        backends = { discovery: "explicit", replicas };
+    }
     try {
         if (editing) {
-            const body = { base_url, upstream_model, max_concurrency, metrics_url };
+            const body = { base_url, upstream_model, max_concurrency, metrics_url, backends };
             if (key) body.provider_api_key = key;
-            // Use POST for edits as a compatibility path for deployments where
-            // intermediaries reject PUT with 405 before Flask/Axum sees it.
             await jreq("POST", "/item/" + encodeURIComponent(editing), body);
         } else {
             const slug = document.getElementById("f-slug").value.trim();
-            await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key, max_concurrency, metrics_url });
+            await jreq("POST", "/create", { slug, base_url, upstream_model, provider_api_key: key, max_concurrency, metrics_url, backends });
         }
         showMsg("form-msg", "Saved.", true);
         resetForm(); loadRows();

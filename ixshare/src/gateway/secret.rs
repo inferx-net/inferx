@@ -85,6 +85,8 @@ pub struct EndpointMetadata {
     pub parameter_count_b: Option<f64>,
     pub context_length: Option<i64>,
     pub concurrency: Option<f64>,
+    pub base_pricing: Option<serde_json::Value>,
+    pub discount_to_user: Option<f64>,
 }
 
 /// Operator-authored OpenRouter listing metadata persisted on the Endpoints row
@@ -138,6 +140,7 @@ pub struct ListedEndpoint {
     pub context_length: Option<i64>,
     pub max_output_length: Option<i64>,
     pub pricing: Option<serde_json::Value>,
+    pub base_pricing: Option<serde_json::Value>,
     pub discount_to_user: Option<f64>,
     pub supported_sampling_parameters: Option<Vec<String>>,
     pub supported_features: Option<Vec<String>>,
@@ -165,6 +168,7 @@ const ENDPOINT_LISTING_SELECT_COLUMNS: &str = r#"
         context_length,
         max_output_length,
         pricing,
+        base_pricing,
         discount_to_user::float8 AS discount_to_user,
         supported_sampling_parameters,
         supported_features,
@@ -198,6 +202,7 @@ fn listed_endpoint_from_row(row: &sqlx::postgres::PgRow) -> ListedEndpoint {
         context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
         max_output_length: row.try_get::<Option<i64>, _>("max_output_length").ok().flatten(),
         pricing: row.try_get::<Option<serde_json::Value>, _>("pricing").ok().flatten(),
+        base_pricing: row.try_get::<Option<serde_json::Value>, _>("base_pricing").ok().flatten(),
         discount_to_user: row.try_get::<Option<f64>, _>("discount_to_user").ok().flatten(),
         supported_sampling_parameters: read_vec("supported_sampling_parameters"),
         supported_features: read_vec("supported_features"),
@@ -234,18 +239,14 @@ pub struct ExternalEndpoint {
     pub upstream_model: String,
     pub provider_api_key: String,
     pub published: bool,
-    /// Per-endpoint in-flight concurrency cap. `-1` = unlimited (gate skipped);
-    /// `0` = reject every request; `N > 0` caps concurrent upstream requests to
-    /// this slug across both surfaces. The serde default must be `-1`: a plain
-    /// `#[serde(default)]` would yield `0`, which is reject-all, not unlimited.
     #[serde(default = "unlimited_concurrency")]
     pub max_concurrency: i32,
     #[serde(default)]
     pub last_published_by: Option<String>,
-    /// NULL = static behavior; set = the dynamic ceiling controller manages
-    /// this slug's live cap within `[1, max_concurrency]`.
     #[serde(default)]
     pub metrics_url: Option<String>,
+    #[serde(default)]
+    pub backends: Option<serde_json::Value>,
 }
 
 /// Serde default for absent `max_concurrency`: `-1` = unlimited.
@@ -1083,9 +1084,11 @@ impl SqlSecret {
                 provider,
                 parameter_count_b,
                 context_length,
-                concurrency
+                concurrency,
+                base_pricing,
+                discount_to_user
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13
             )
             ON CONFLICT (slug)
             DO UPDATE SET
@@ -1097,7 +1100,9 @@ impl SqlSecret {
                 provider = EXCLUDED.provider,
                 parameter_count_b = EXCLUDED.parameter_count_b,
                 context_length = EXCLUDED.context_length,
-                concurrency = EXCLUDED.concurrency
+                concurrency = EXCLUDED.concurrency,
+                base_pricing = EXCLUDED.base_pricing,
+                discount_to_user = EXCLUDED.discount_to_user
         "#;
 
         sqlx::query(query)
@@ -1112,6 +1117,8 @@ impl SqlSecret {
             .bind(metadata.parameter_count_b)
             .bind(metadata.context_length)
             .bind(metadata.concurrency)
+            .bind(&metadata.base_pricing)
+            .bind(metadata.discount_to_user)
             .execute(&self.pool)
             .await?;
 
@@ -1129,7 +1136,9 @@ impl SqlSecret {
                 provider,
                 parameter_count_b,
                 context_length,
-                concurrency
+                concurrency,
+                base_pricing,
+                discount_to_user
             FROM Endpoints
             WHERE slug = $1
         "#;
@@ -1159,6 +1168,8 @@ impl SqlSecret {
             parameter_count_b: row.try_get::<Option<f64>, _>("parameter_count_b").ok().flatten(),
             context_length: row.try_get::<Option<i64>, _>("context_length").ok().flatten(),
             concurrency: row.try_get::<Option<f64>, _>("concurrency").ok().flatten(),
+            base_pricing: row.try_get::<Option<serde_json::Value>, _>("base_pricing").ok().flatten(),
+            discount_to_user: row.try_get::<Option<f64>, _>("discount_to_user").ok().flatten(),
         };
 
         Ok(Some(metadata))
@@ -1184,10 +1195,12 @@ impl SqlSecret {
                 parameter_count_b,
                 context_length,
                 concurrency,
+                base_pricing,
+                discount_to_user,
                 last_published_at,
                 last_published_by
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, NOW(), $12
+                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13, NOW(), $14
             )
             ON CONFLICT (slug)
             DO UPDATE SET
@@ -1201,6 +1214,8 @@ impl SqlSecret {
                 parameter_count_b = EXCLUDED.parameter_count_b,
                 context_length = EXCLUDED.context_length,
                 concurrency = EXCLUDED.concurrency,
+                base_pricing = EXCLUDED.base_pricing,
+                discount_to_user = EXCLUDED.discount_to_user,
                 last_published_at = NOW(),
                 last_published_by = EXCLUDED.last_published_by
         "#;
@@ -1217,6 +1232,8 @@ impl SqlSecret {
             .bind(metadata.parameter_count_b)
             .bind(metadata.context_length)
             .bind(metadata.concurrency)
+            .bind(&metadata.base_pricing)
+            .bind(metadata.discount_to_user)
             .bind(last_published_by)
             .execute(&self.pool)
             .await?;
@@ -1429,7 +1446,7 @@ impl SqlSecret {
     /// Load the full ExternalEndpoint table (startup mirror hydration).
     pub async fn LoadExternalEndpoints(&self) -> Result<Vec<ExternalEndpoint>> {
         let query = r#"
-            SELECT slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url
+            SELECT slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url, backends
             FROM ExternalEndpoint ORDER BY slug ASC
         "#;
         Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
@@ -1446,11 +1463,12 @@ impl SqlSecret {
         provider_api_key: &str,
         max_concurrency: i32,
         metrics_url: Option<&str>,
+        backends: Option<&serde_json::Value>,
     ) -> Result<ExternalEndpoint> {
         let query = r#"
-            INSERT INTO ExternalEndpoint (slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url
+            INSERT INTO ExternalEndpoint (slug, base_url, upstream_model, provider_api_key, max_concurrency, metrics_url, backends)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url, backends
         "#;
         Ok(sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)
@@ -1459,6 +1477,7 @@ impl SqlSecret {
             .bind(provider_api_key)
             .bind(max_concurrency)
             .bind(metrics_url)
+            .bind(backends)
             .fetch_one(&self.pool)
             .await?)
     }
@@ -1472,6 +1491,7 @@ impl SqlSecret {
         provider_api_key: Option<&str>,
         max_concurrency: i32,
         metrics_url: Option<&str>,
+        backends: Option<&serde_json::Value>,
     ) -> Result<ExternalEndpoint> {
         let query = r#"
             UPDATE ExternalEndpoint SET
@@ -1479,9 +1499,10 @@ impl SqlSecret {
                 upstream_model = $3,
                 provider_api_key = COALESCE($4, provider_api_key),
                 max_concurrency = $5,
-                metrics_url = $6
+                metrics_url = $6,
+                backends = $7
             WHERE slug = $1
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url, backends
         "#;
         sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)
@@ -1490,6 +1511,7 @@ impl SqlSecret {
             .bind(provider_api_key)
             .bind(max_concurrency)
             .bind(metrics_url)
+            .bind(backends)
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| Error::NotExist(format!("external endpoint {} not found", slug)))
@@ -1505,7 +1527,7 @@ impl SqlSecret {
         let query = r#"
             UPDATE ExternalEndpoint SET published = $2, last_published_by = $3
             WHERE slug = $1
-            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url
+            RETURNING slug, base_url, upstream_model, provider_api_key, published, max_concurrency, last_published_by, metrics_url, backends
         "#;
         sqlx::query_as::<_, ExternalEndpoint>(query)
             .bind(slug)

@@ -312,6 +312,9 @@ pub struct GatewayConfig {
     // Dynamic ceiling controller tick interval. Default 3s is unsettled; see
     // docs/external-endpoint-dynamic-ceiling.md's Tuning section.
     pub externalCeilingTickIntervalSecs: u64,
+    // Dynamic ceiling controller backlog threshold for queue-only decreases.
+    // The separate "waiting > 0 && kv high" path remains immediate.
+    pub externalCeilingDecreaseWaitingThreshold: u64,
 }
 
 fn env_u64_or(key: &str, default: u64) -> u64 {
@@ -479,6 +482,8 @@ impl GatewayConfig {
         let externalPoolMaxIdlePerHost = env_u64_or("EXTERNAL_POOL_MAX_IDLE_PER_HOST", 64);
         let externalPoolIdleTimeoutSecs = env_u64_or("EXTERNAL_POOL_IDLE_TIMEOUT_SECS", 90);
         let externalCeilingTickIntervalSecs = env_u64_or("EXTERNAL_CEILING_TICK_INTERVAL_SECS", 3);
+        let externalCeilingDecreaseWaitingThreshold =
+            env_u64_or("EXTERNAL_CEILING_DECREASE_WAITING_THRESHOLD", 2);
 
         let ret = Self {
             nodeName: nodeName,
@@ -507,6 +512,7 @@ impl GatewayConfig {
             externalPoolMaxIdlePerHost,
             externalPoolIdleTimeoutSecs,
             externalCeilingTickIntervalSecs,
+            externalCeilingDecreaseWaitingThreshold,
         };
 
         info!("GatewayConfig is {:#?}", &ret);

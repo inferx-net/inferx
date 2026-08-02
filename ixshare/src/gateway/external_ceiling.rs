@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use futures::future::join_all;
 
-use crate::gateway::external_endpoint::ExternalEndpointMgr;
+use crate::gateway::external_endpoint::{ExternalEndpointMgr, ReplicaId};
+use crate::gateway::http_gateway::GATEWAY_CONFIG;
 
 const SCRAPE_TIMEOUT: Duration = Duration::from_secs(2);
 const KV_HIGH_WATER: f64 = 0.90;
@@ -24,15 +25,25 @@ const KV_METRIC_V0: &str = "vllm:gpu_cache_usage_perc";
 
 /// Phase-1 seed law for one slug's ceiling `c`. There is no upper bound: the
 /// seed (`max_concurrency`) only sets the starting point, not a clamp. Decrease
-/// fires on `waiting > 0`, bounded per tick by `MAX_DROP_PER_TICK` so a large
-/// inherited backlog can't collapse the ceiling in one scrape. Increase
-/// requires both `local_inflight == Some(c)` (the local limiter is actually the
-/// bottleneck, not an idle endpoint) and a clean queue/KV reading; the
-/// ambiguous middle (unsaturated, or high KV) holds.
-pub fn step(c: i64, waiting: i64, kv: f64, local_inflight: Option<i64>) -> i64 {
-    if waiting > 0 {
+/// fires on `waiting >= decrease_waiting_threshold` (sustained backlog) or
+/// `waiting > 0` with KV at the wall, bounded per tick by
+/// `MAX_DROP_PER_TICK` so a large inherited backlog can't collapse the ceiling
+/// in one scrape. `waiting == threshold-1` with healthy KV is treated as
+/// transient (hold), which preserves the old "waiting=1 is tolerated" behavior
+/// at the default threshold of 2. Increase requires both
+/// `local_inflight == Some(c)` (the local limiter is actually the bottleneck,
+/// not an idle endpoint) and a clean queue/KV reading; the ambiguous middle
+/// (unsaturated, or high KV) holds.
+pub fn step(
+    c: i64,
+    waiting: i64,
+    kv: f64,
+    local_inflight: Option<i64>,
+    decrease_waiting_threshold: i64,
+) -> i64 {
+    if waiting >= decrease_waiting_threshold || (waiting > 0 && kv >= KV_HIGH_WATER) {
         (c - waiting.min(MAX_DROP_PER_TICK)).max(1)
-    } else if local_inflight == Some(c) && kv < KV_HIGH_WATER {
+    } else if local_inflight == Some(c) && kv < KV_HIGH_WATER && waiting == 0 {
         c + 1
     } else {
         c
@@ -115,20 +126,18 @@ async fn scrape(client: &reqwest::Client, url: &str) -> Result<ScrapedMetrics, S
     parse_metrics(&text)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct SlugState {
     consecutive_failures: u32,
     pair: (i32, String),
 }
 
-/// Task-local decision for one slug on one tick: which `SlugState` to carry
-/// forward, and (when a successful scrape moved the ceiling) the log line's
-/// `(old, new)` values.
 fn decide(
     mut state: SlugState,
     pair: (i32, String),
     ceiling: Option<i64>,
     inflight: Option<i64>,
+    decrease_waiting_threshold: i64,
     scrape_result: Result<ScrapedMetrics, String>,
 ) -> (SlugState, Option<(i64, i64, ScrapedMetrics)>) {
     if state.pair != pair {
@@ -144,47 +153,66 @@ fn decide(
         Ok(metrics) => {
             state.consecutive_failures = 0;
             let Some(c) = ceiling else { return (state, None) };
-            let new_c = step(c, metrics.waiting, metrics.kv, inflight);
+            let new_c = step(c, metrics.waiting, metrics.kv, inflight, decrease_waiting_threshold);
             let change = if new_c != c { Some((c, new_c, metrics)) } else { None };
             (state, change)
         }
     }
 }
 
-async fn tick(mgr: &ExternalEndpointMgr, client: &reqwest::Client, state: &mut BTreeMap<String, SlugState>) {
+async fn tick(mgr: &ExternalEndpointMgr, client: &reqwest::Client, state: &mut BTreeMap<(String, ReplicaId), SlugState>) {
+    let decrease_waiting_threshold =
+        GATEWAY_CONFIG.externalCeilingDecreaseWaitingThreshold.max(1) as i64;
     let endpoints = mgr.List();
-    let dynamic: Vec<_> = endpoints.into_iter().filter(|e| e.metrics_url.is_some()).collect();
+    let mut dynamic: Vec<_> = Vec::new();
+    for ep in &endpoints {
+        let has_metrics = ep.metrics_url.is_some()
+            || ep.backends.as_ref()
+                .and_then(crate::gateway::external_endpoint::BackendConfig::from_json)
+                .map(|c| match c { crate::gateway::external_endpoint::BackendConfig::Explicit { replicas } => replicas.iter().any(|r| r.metrics_url.is_some()) })
+                .unwrap_or(false);
+        if has_metrics && ep.max_concurrency >= 0 {
+            for r in mgr.resolved_replicas(&ep.slug) {
+                if r.metrics_url.is_some() {
+                    dynamic.push((ep.clone(), r));
+                }
+            }
+        }
+    }
 
-    let dynamic_slugs: std::collections::BTreeSet<&str> = dynamic.iter().map(|e| e.slug.as_str()).collect();
-    state.retain(|slug, _| dynamic_slugs.contains(slug.as_str()));
+    let dynamic_keys: std::collections::BTreeSet<(String, ReplicaId)> =
+        dynamic.iter().map(|(ep, r)| (ep.slug.clone(), r.id.clone())).collect();
+    state.retain(|k, _| dynamic_keys.contains(k));
 
     let scrapes = join_all(
         dynamic
             .iter()
-            .map(|ep| scrape(client, ep.metrics_url.as_deref().unwrap_or(""))),
+            .map(|(_, r)| scrape(client, r.metrics_url.as_deref().unwrap_or(""))),
     )
     .await;
 
-    for (ep, result) in dynamic.iter().zip(scrapes.into_iter()) {
-        let pair = (ep.max_concurrency, ep.metrics_url.clone().unwrap_or_default());
-        let prior = state.remove(&ep.slug).unwrap_or_default();
-        let ceiling = mgr.get_ceiling(&ep.slug);
-        let inflight = mgr.get_inflight(&ep.slug);
-        let (next, change) = decide(prior, pair, ceiling, inflight, result);
+    for ((ep, replica), result) in dynamic.iter().zip(scrapes.into_iter()) {
+        let pair = (ep.max_concurrency, replica.metrics_url.clone().unwrap_or_default());
+        let key = (ep.slug.clone(), replica.id.clone());
+        let prior = state.remove(&key).unwrap_or_default();
+        let ceiling = mgr.get_ceiling(&ep.slug, &replica.id);
+        let inflight = mgr.get_inflight(&ep.slug, &replica.id);
+        let (next, change) =
+            decide(prior, pair, ceiling, inflight, decrease_waiting_threshold, result);
 
         if let Some((old, new, metrics)) = change {
-            mgr.set_ceiling(&ep.slug, new);
+            mgr.set_ceiling(&ep.slug, &replica.id, new);
             info!(
-                "endpoint {} ceiling {} -> {} (waiting={}, kv={:.2})",
-                ep.slug, old, new, metrics.waiting, metrics.kv
+                "endpoint {} replica {} ceiling {} -> {} (waiting={}, kv={:.2})",
+                ep.slug, replica.id, old, new, metrics.waiting, metrics.kv
             );
         } else if next.consecutive_failures > 0 {
-            warn!("endpoint {} metrics scrape failed ({} consecutive)", ep.slug, next.consecutive_failures);
+            warn!("endpoint {} replica {} metrics scrape failed ({} consecutive)", ep.slug, replica.id, next.consecutive_failures);
             if next.consecutive_failures == FAILURE_ERROR_THRESHOLD {
-                error!("endpoint {} metrics scrape failing repeatedly, ceiling frozen", ep.slug);
+                error!("endpoint {} replica {} metrics scrape failing repeatedly, ceiling frozen", ep.slug, replica.id);
             }
         }
-        state.insert(ep.slug.clone(), next);
+        state.insert(key, next);
     }
 
     mgr.sweep_limiters();
@@ -193,7 +221,7 @@ async fn tick(mgr: &ExternalEndpointMgr, client: &reqwest::Client, state: &mut B
 /// Spawned once per gateway. Re-reads `List()` every tick, so admin CRUD is
 /// picked up without any per-endpoint task lifecycle.
 pub async fn run(mgr: ExternalEndpointMgr, client: reqwest::Client, tick_interval: Duration) {
-    let mut state: BTreeMap<String, SlugState> = BTreeMap::new();
+    let mut state: BTreeMap<(String, ReplicaId), SlugState> = BTreeMap::new();
     let mut interval = tokio::time::interval(tick_interval);
     loop {
         interval.tick().await;
@@ -205,33 +233,64 @@ pub async fn run(mgr: ExternalEndpointMgr, client: reqwest::Client, tick_interva
 mod tests {
     use super::*;
 
+    const DEFAULT_DECREASE_WAITING_THRESHOLD: i64 = 2;
+
     #[test]
     fn step_drops_bounded_by_max_drop_per_tick_regardless_of_kv() {
-        assert_eq!(step(7, 1, 0.1, None), 6);
-        assert_eq!(step(7, 2, 0.1, None), 5);
-        assert_eq!(step(7, 8, 0.1, None), 5, "drop bounded even under a large inherited backlog");
-        assert_eq!(step(7, 2, 0.95, Some(7)), 5, "decrease ignores kv/inflight once waiting > 0");
-        assert_eq!(step(1, 1, 0.0, None), 1, "floor at 1");
+        assert_eq!(step(7, 2, 0.1, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 5);
+        assert_eq!(step(7, 8, 0.1, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 5, "drop bounded even under a large inherited backlog");
+        assert_eq!(step(7, 2, 0.95, Some(7), DEFAULT_DECREASE_WAITING_THRESHOLD), 5, "decrease ignores kv/inflight once waiting >= 2");
+        assert_eq!(step(1, 2, 0.0, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 1, "floor at 1");
+    }
+
+    #[test]
+    fn step_holds_on_transient_waiting_1_with_healthy_kv() {
+        assert_eq!(step(7, 1, 0.1, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 7, "waiting=1 with healthy kv is transient, hold");
+        assert_eq!(step(7, 1, 0.5, Some(7), DEFAULT_DECREASE_WAITING_THRESHOLD), 7, "waiting=1 with healthy kv holds even when saturated");
+        assert_eq!(step(1, 1, 0.0, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 1, "holds at floor");
+    }
+
+    #[test]
+    fn step_drops_on_waiting_1_when_kv_high() {
+        assert_eq!(step(7, 1, 0.90, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 6, "waiting=1 + kv at wall -> decrease");
+        assert_eq!(step(7, 1, 0.95, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 6, "waiting=1 + kv above wall -> decrease");
+    }
+
+    #[test]
+    fn step_drops_on_waiting_2_regardless_of_kv() {
+        assert_eq!(step(7, 2, 0.1, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 5, "waiting=2 decreases even with healthy kv");
+        assert_eq!(step(7, 2, 0.95, Some(7), DEFAULT_DECREASE_WAITING_THRESHOLD), 5, "waiting=2 decreases even with high kv");
     }
 
     #[test]
     fn step_increases_only_when_both_signals_clean() {
-        assert_eq!(step(4, 0, 0.5, Some(4)), 5);
-        assert_eq!(step(16, 0, 0.1, Some(16)), 17, "unbounded: no clamp back to the seed");
+        assert_eq!(step(4, 0, 0.5, Some(4), DEFAULT_DECREASE_WAITING_THRESHOLD), 5);
+        assert_eq!(step(16, 0, 0.1, Some(16), DEFAULT_DECREASE_WAITING_THRESHOLD), 17, "unbounded: no clamp back to the seed");
+    }
+
+    #[test]
+    fn step_does_not_increase_when_waiting_1() {
+        assert_eq!(step(4, 1, 0.1, Some(4), DEFAULT_DECREASE_WAITING_THRESHOLD), 4, "waiting=1 blocks increase even if saturated and kv healthy");
+    }
+
+    #[test]
+    fn step_respects_configurable_waiting_threshold() {
+        assert_eq!(step(7, 9, 0.1, None, 10), 7, "below threshold backlog holds when kv is healthy");
+        assert_eq!(step(7, 10, 0.1, None, 10), 5, "reaching threshold triggers the bounded decrease");
     }
 
     #[test]
     fn step_holds_at_kv_wall() {
-        assert_eq!(step(8, 0, 0.90, Some(8)), 8);
-        assert_eq!(step(8, 0, 0.99, Some(8)), 8);
+        assert_eq!(step(8, 0, 0.90, Some(8), DEFAULT_DECREASE_WAITING_THRESHOLD), 8);
+        assert_eq!(step(8, 0, 0.99, Some(8), DEFAULT_DECREASE_WAITING_THRESHOLD), 8);
     }
 
     #[test]
     fn step_holds_when_local_limiter_is_not_saturated() {
         // waiting == 0 and kv healthy, but the local limiter isn't the bottleneck:
         // an idle/underloaded endpoint must not keep climbing forever.
-        assert_eq!(step(8, 0, 0.1, Some(7)), 8);
-        assert_eq!(step(8, 0, 0.1, None), 8, "missing inflight sample must never increase");
+        assert_eq!(step(8, 0, 0.1, Some(7), DEFAULT_DECREASE_WAITING_THRESHOLD), 8);
+        assert_eq!(step(8, 0, 0.1, None, DEFAULT_DECREASE_WAITING_THRESHOLD), 8, "missing inflight sample must never increase");
     }
 
     const V1_SAMPLE: &str = r#"
@@ -287,7 +346,14 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
     fn decide_freezes_ceiling_on_scrape_failure() {
         let state = SlugState::default();
         let pair = (16, "http://x/metrics".to_string());
-        let (next, change) = decide(state, pair, Some(8), Some(8), Err("timeout".to_string()));
+        let (next, change) = decide(
+            state,
+            pair,
+            Some(8),
+            Some(8),
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
+            Err("timeout".to_string()),
+        );
         assert!(change.is_none(), "no set_ceiling call on failure");
         assert_eq!(next.consecutive_failures, 1);
     }
@@ -302,6 +368,7 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
             (16, "http://x/metrics".to_string()),
             Some(8),
             Some(8),
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
             Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }),
         );
         assert_eq!(next.consecutive_failures, 0);
@@ -318,6 +385,7 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
             (16, "http://new/metrics".to_string()),
             Some(16),
             Some(16),
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
             Err("timeout".to_string()),
         );
         assert_eq!(next.consecutive_failures, 1, "pair change resets, then this failure counts once");
@@ -329,7 +397,14 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
         // sample must fall through to "hold," never treated as saturated.
         let state = SlugState::default();
         let pair = (16, "http://x/metrics".to_string());
-        let (_, change) = decide(state, pair, Some(8), None, Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }));
+        let (_, change) = decide(
+            state,
+            pair,
+            Some(8),
+            None,
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
+            Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }),
+        );
         assert!(change.is_none(), "missing inflight sample must never trigger an increase");
     }
 
@@ -337,7 +412,14 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
     fn decide_increases_past_max_concurrency_seed() {
         let state = SlugState::default();
         let pair = (7, "http://x/metrics".to_string());
-        let (_, change) = decide(state, pair, Some(7), Some(7), Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }));
+        let (_, change) = decide(
+            state,
+            pair,
+            Some(7),
+            Some(7),
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
+            Ok(ScrapedMetrics { waiting: 0, kv: 0.1 }),
+        );
         assert_eq!(change, Some((7, 8, ScrapedMetrics { waiting: 0, kv: 0.1 })), "no clamp back to the seed of 7");
     }
 
@@ -345,7 +427,14 @@ vllm:kv_cache_usage_perc{engine=\"1\"} 0.80\n";
     fn decide_bounds_decrease_under_large_waiting() {
         let state = SlugState::default();
         let pair = (7, "http://x/metrics".to_string());
-        let (_, change) = decide(state, pair, Some(7), Some(7), Ok(ScrapedMetrics { waiting: 8, kv: 0.1 }));
+        let (_, change) = decide(
+            state,
+            pair,
+            Some(7),
+            Some(7),
+            DEFAULT_DECREASE_WAITING_THRESHOLD,
+            Ok(ScrapedMetrics { waiting: 8, kv: 0.1 }),
+        );
         assert_eq!(change, Some((7, 5, ScrapedMetrics { waiting: 8, kv: 0.1 })), "bounded by MAX_DROP_PER_TICK=2");
     }
 }

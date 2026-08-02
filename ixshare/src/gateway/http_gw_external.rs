@@ -28,18 +28,14 @@ pub struct ExternalEndpointCreateRequest {
     pub base_url: String,
     pub upstream_model: String,
     pub provider_api_key: String,
-    /// Per-endpoint in-flight cap. Absent => `-1` (unlimited). Note the DB
-    /// default never applies here: the value is always bound on insert, so the
-    /// serde default must itself be `-1` — a plain `#[serde(default)]` would
-    /// yield `0`, which is reject-all, not unlimited.
     #[serde(default = "unlimited_concurrency")]
     pub max_concurrency: i32,
-    /// Opt-in to the dynamic ceiling controller. Absent = `None` = static.
     #[serde(default)]
     pub metrics_url: Option<String>,
+    #[serde(default)]
+    pub backends: Option<serde_json::Value>,
 }
 
-/// Serde default for absent `max_concurrency`: `-1` = unlimited.
 fn unlimited_concurrency() -> i32 {
     -1
 }
@@ -48,15 +44,12 @@ fn unlimited_concurrency() -> i32 {
 pub struct ExternalEndpointUpdateRequest {
     pub base_url: String,
     pub upstream_model: String,
-    /// Absent/null = keep the existing key; a non-empty value rotates it.
     #[serde(default)]
     pub provider_api_key: Option<String>,
-    /// Per-endpoint in-flight cap (`-1` = unlimited, `0` = reject all). Required
-    /// & authoritative on update — sent unconditionally like
-    /// `base_url`/`upstream_model`.
     pub max_concurrency: i32,
-    /// Sent unconditionally like `max_concurrency`; `null` clears back to static.
     pub metrics_url: Option<String>,
+    #[serde(default)]
+    pub backends: Option<serde_json::Value>,
 }
 
 /// Read-side view. Never carries `provider_api_key`.
@@ -70,6 +63,7 @@ pub struct ExternalEndpointView {
     pub max_concurrency: i32,
     pub last_published_by: Option<String>,
     pub metrics_url: Option<String>,
+    pub backends: Option<serde_json::Value>,
 }
 
 impl From<&ExternalEndpoint> for ExternalEndpointView {
@@ -83,6 +77,7 @@ impl From<&ExternalEndpoint> for ExternalEndpointView {
             max_concurrency: e.max_concurrency,
             last_published_by: e.last_published_by.clone(),
             metrics_url: e.metrics_url.clone(),
+            backends: e.backends.clone(),
         }
     }
 }
@@ -120,6 +115,60 @@ fn validate_metrics_url(metrics_url: Option<&str>, max_concurrency: i32) -> Resu
         return Err(Error::CommonError(
             "metrics_url may only be set when max_concurrency > 0".to_string(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_backends(
+    backends: Option<&serde_json::Value>,
+    metrics_url: Option<&str>,
+    max_concurrency: i32,
+) -> Result<()> {
+    let Some(bv) = backends else { return Ok(()); };
+    if metrics_url.is_some() {
+        return Err(Error::CommonError(
+            "metrics_url must be null when backends is set".to_string(),
+        ));
+    }
+    let cfg = crate::gateway::external_endpoint::BackendConfig::from_json(bv)
+        .ok_or_else(|| Error::CommonError("invalid backends config".to_string()))?;
+    match &cfg {
+        crate::gateway::external_endpoint::BackendConfig::Explicit { replicas } => {
+            if replicas.is_empty() {
+                return Err(Error::CommonError("backends requires at least one replica".to_string()));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for r in replicas {
+                validate_replica_url(&r.base_url, r.metrics_url.as_deref(), max_concurrency)?;
+                let id = r.id.clone().unwrap_or_else(|| r.base_url.clone());
+                if !seen.insert(id.clone()) {
+                    return Err(Error::CommonError(format!("duplicate replica id: {}", id)));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_replica_url(base_url: &str, metrics_url: Option<&str>, max_concurrency: i32) -> Result<()> {
+    if base_url.trim().is_empty() {
+        return Err(Error::CommonError("replica base_url is required".to_string()));
+    }
+    url::Url::parse(base_url)
+        .map_err(|_| Error::CommonError(format!("invalid replica base_url: {}", base_url)))?;
+    if let Some(mu) = metrics_url {
+        let parsed = url::Url::parse(mu)
+            .map_err(|_| Error::CommonError(format!("invalid replica metrics_url: {}", mu)))?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err(Error::CommonError(format!(
+                "replica metrics_url must be http or https: {}", mu
+            )));
+        }
+        if max_concurrency <= 0 {
+            return Err(Error::CommonError(
+                "replica metrics_url requires max_concurrency > 0".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -177,11 +226,12 @@ impl HttpGateway {
                 "max_concurrency must be >= -1 (-1 = unlimited, 0 = reject all)".to_string(),
             ));
         }
-        validate_base_url(base_url)?;
+        if req.backends.is_none() {
+            validate_base_url(base_url)?;
+        }
         let metrics_url = req.metrics_url.as_deref().map(str::trim).filter(|s| !s.is_empty());
         validate_metrics_url(metrics_url, req.max_concurrency)?;
-
-        // Single-kind invariant: a slug is external xor a self-hosted func.
+        validate_backends(req.backends.as_ref(), metrics_url, req.max_concurrency)?;
         if self
             .objRepo
             .GetFunc(PLATFORM_TENANT, PLATFORM_SHARED_NAMESPACE, slug)
@@ -208,6 +258,7 @@ impl HttpGateway {
                 req.provider_api_key.trim(),
                 req.max_concurrency,
                 metrics_url,
+                req.backends.as_ref(),
             )
             .await?;
         Ok(ExternalEndpointView::from(&ep))
@@ -231,11 +282,13 @@ impl HttpGateway {
                 "max_concurrency must be >= -1 (-1 = unlimited, 0 = reject all)".to_string(),
             ));
         }
-        validate_base_url(base_url)?;
+        if req.backends.is_none() {
+            validate_base_url(base_url)?;
+        }
         let metrics_url = req.metrics_url.as_deref().map(str::trim).filter(|s| !s.is_empty());
         validate_metrics_url(metrics_url, req.max_concurrency)?;
+        validate_backends(req.backends.as_ref(), metrics_url, req.max_concurrency)?;
 
-        // A blank/absent key means "keep existing"; only a non-empty value rotates it.
         let new_key = req
             .provider_api_key
             .as_ref()
@@ -244,7 +297,7 @@ impl HttpGateway {
 
         let ep = self
             .externalEndpointMgr
-            .Update(slug, base_url, upstream_model, new_key, req.max_concurrency, metrics_url)
+            .Update(slug, base_url, upstream_model, new_key, req.max_concurrency, metrics_url, req.backends.as_ref())
             .await?;
         Ok(ExternalEndpointView::from(&ep))
     }
@@ -371,6 +424,7 @@ mod tests {
             max_concurrency: -1,
             last_published_by: None,
             metrics_url: None,
+            backends: None,
         };
         let view = ExternalEndpointView::from(&ep);
         assert!(view.has_api_key);
@@ -409,5 +463,101 @@ mod tests {
     fn metrics_url_must_be_http_or_https() {
         assert!(validate_metrics_url(Some("ftp://vllm:8000/metrics"), 7).is_err());
         assert!(validate_metrics_url(Some("not-a-url"), 7).is_err());
+    }
+
+    #[test]
+    fn validate_backends_explicit_accepts_valid_config() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1", "metrics_url": "http://10.0.0.1:8000/metrics"},
+                {"base_url": "http://10.0.0.2:8000/v1"}
+            ]
+        });
+        assert!(validate_backends(Some(&cfg), None, 4).is_ok());
+    }
+
+    #[test]
+    fn validate_backends_rejects_metrics_url_alongside_backends() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": [{"base_url": "http://10.0.0.1:8000/v1"}]});
+        assert!(validate_backends(Some(&cfg), Some("http://x/metrics"), 4).is_err());
+    }
+
+    #[test]
+    fn validate_backends_rejects_empty_replicas() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": []});
+        assert!(validate_backends(Some(&cfg), None, 4).is_err());
+    }
+
+    #[test]
+    fn validate_backends_rejects_invalid_replica_base_url() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": [{"base_url": "not-a-url"}]});
+        assert!(validate_backends(Some(&cfg), None, 4).is_err());
+    }
+
+    #[test]
+    fn validate_backends_rejects_replica_metrics_url_non_http() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": [{"base_url": "http://10.0.0.1:8000/v1", "metrics_url": "ftp://10.0.0.1:8000/metrics"}]});
+        assert!(validate_backends(Some(&cfg), None, 4).is_err());
+    }
+
+    #[test]
+    fn validate_backends_requires_max_concurrency_positive_with_metrics() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": [{"base_url": "http://10.0.0.1:8000/v1", "metrics_url": "http://10.0.0.1:8000/metrics"}]});
+        assert!(validate_backends(Some(&cfg), None, 0).is_err());
+        assert!(validate_backends(Some(&cfg), None, -1).is_err());
+        assert!(validate_backends(Some(&cfg), None, 4).is_ok());
+    }
+
+    #[test]
+    fn validate_backends_accepts_static_only_replicas_with_any_max_concurrency() {
+        let cfg = serde_json::json!({"discovery": "explicit", "replicas": [{"base_url": "http://10.0.0.1:8000/v1"}]});
+        assert!(validate_backends(Some(&cfg), None, -1).is_ok());
+        assert!(validate_backends(Some(&cfg), None, 0).is_ok());
+        assert!(validate_backends(Some(&cfg), None, 4).is_ok());
+    }
+
+    #[test]
+    fn validate_backends_none_is_ok() {
+        assert!(validate_backends(None, None, -1).is_ok());
+        assert!(validate_backends(None, Some("http://x/metrics"), 4).is_ok());
+    }
+
+    #[test]
+    fn validate_backends_rejects_duplicate_explicit_ids() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1", "id": "r1"},
+                {"base_url": "http://10.0.0.2:8000/v1", "id": "r1"},
+            ]
+        });
+        let err = validate_backends(Some(&cfg), None, 4).unwrap_err();
+        assert!(format!("{:?}", err).contains("duplicate replica id"));
+    }
+
+    #[test]
+    fn validate_backends_rejects_duplicate_base_urls_without_id() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1"},
+                {"base_url": "http://10.0.0.1:8000/v1"},
+            ]
+        });
+        let err = validate_backends(Some(&cfg), None, 4).unwrap_err();
+        assert!(format!("{:?}", err).contains("duplicate replica id"));
+    }
+
+    #[test]
+    fn validate_backends_accepts_distinct_ids() {
+        let cfg = serde_json::json!({
+            "discovery": "explicit",
+            "replicas": [
+                {"base_url": "http://10.0.0.1:8000/v1", "id": "r1"},
+                {"base_url": "http://10.0.0.2:8000/v1", "id": "r2"},
+            ]
+        });
+        assert!(validate_backends(Some(&cfg), None, 4).is_ok());
     }
 }

@@ -109,6 +109,23 @@
     .endpoint-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .endpoint-empty { color: #64748b; }
     .endpoint-published-at { white-space: nowrap; }
+    .endpoint-price-cell {
+        white-space: nowrap;
+    }
+    .endpoint-price-base {
+        color: #94a3b8;
+        text-decoration: line-through;
+        margin-right: 6px;
+    }
+    .endpoint-price-effective {
+        color: #0f766e;
+        font-weight: 600;
+    }
+    .endpoint-discount-cell {
+        color: #059669;
+        font-weight: 600;
+        white-space: nowrap;
+    }
     .endpoint-quickstart {
         border: 1px solid #bfdbfe;
         background: linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
@@ -321,16 +338,17 @@
         <table class="ix-table" style="width: 100%;">
             <thead>
                 <tr>
-                    <th style="text-align: left;">Name</th>
-                    <th style="text-align: left;">Brief Intro</th>
-                    <th style="text-align: left;">GPU Count</th>
-                    <th style="text-align: left;">Context Length</th>
-                    <th style="text-align: left;">Concurrency</th>
+                    <th style="text-align: center;">Name</th>
+                    <th style="text-align: center;">Context Length</th>
+                    <th style="text-align: center;">Discount</th>
+                    <th style="text-align: center;">Input / 1M</th>
+                    <th style="text-align: center;">Output / 1M</th>
+                    <th style="text-align: center;">Cached / 1M</th>
                     {% if is_admin_view %}
-                    <th>State</th>
-                    <th>OpenRouter</th>
-                    <th>Published At</th>
-                    <th>Actions</th>
+                    <th style="text-align: center;">State</th>
+                    <th style="text-align: center;">OpenRouter</th>
+                    <th style="text-align: center;">Published At</th>
+                    <th style="text-align: center;">Actions</th>
                     {% endif %}
                 </tr>
             </thead>
@@ -350,10 +368,30 @@
                         <span class="endpoint-state" style="margin-left:6px;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;" title="Proxied to an external OpenAI-compatible provider">External</span>
                         {% endif %}
                     </td>
-                    <td style="text-align: left;">{{ entry.get('brief_intro', '') or 'No summary yet.' }}</td>
-                    <td style="text-align: left;">{% if entry.get('gpu_count') is not none %}{{ entry.get('gpu_count') }}{% else %}—{% endif %}</td>
-                    <td style="text-align: left;">{{ entry.get('context_length', '') or '—' }}</td>
-                    <td style="text-align: left;">{% if entry.get('concurrency') is not none %}{{ '%.2fx'|format(entry.get('concurrency')) }}{% else %}—{% endif %}</td>
+                    <td style="text-align: center;">{{ entry.get('context_length', '') or '—' }}</td>
+                    {% set rate = entry.get('token_rate') %}
+                    <td class="endpoint-discount-cell" style="text-align: center;">{% if rate and rate.discount_percent %}{{ '%.2f%%'|format(rate.discount_percent) }} off{% else %}—{% endif %}</td>
+                    <td class="endpoint-price-cell" style="text-align: center;">
+                        {% if rate and rate.dollars_per_million_input is not none %}
+                        {% if rate.discount_percent and rate.base_dollars_per_million_input is not none %}<span class="endpoint-price-base">${{ format_token_price_dollars(rate.base_dollars_per_million_input) }}</span>{% endif %}<span class="endpoint-price-effective">${{ format_token_price_dollars(rate.dollars_per_million_input) }}</span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td class="endpoint-price-cell" style="text-align: center;">
+                        {% if rate and rate.dollars_per_million_output is not none %}
+                        {% if rate.discount_percent and rate.base_dollars_per_million_output is not none %}<span class="endpoint-price-base">${{ format_token_price_dollars(rate.base_dollars_per_million_output) }}</span>{% endif %}<span class="endpoint-price-effective">${{ format_token_price_dollars(rate.dollars_per_million_output) }}</span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td class="endpoint-price-cell" style="text-align: center;">
+                        {% if rate and rate.dollars_per_million_cached is not none %}
+                        {% if rate.discount_percent and rate.base_dollars_per_million_cached is not none %}<span class="endpoint-price-base">${{ format_token_price_dollars(rate.base_dollars_per_million_cached) }}</span>{% endif %}<span class="endpoint-price-effective">${{ format_token_price_dollars(rate.dollars_per_million_cached) }}</span>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
                     {% if is_admin_view %}
                     {% set state = entry.get('state', {'code': 'deploying', 'label': 'Deploying'}) %}
                     <td><span class="endpoint-state {{ state.code }}">{{ state.label }}</span></td>
@@ -388,7 +426,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="{% if is_admin_view %}9{% else %}5{% endif %}" class="endpoint-empty">
+                    <td colspan="{% if is_admin_view %}10{% else %}6{% endif %}" class="endpoint-empty">
                         No endpoints are available right now.
                     </td>
                 </tr>

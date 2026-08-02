@@ -249,9 +249,20 @@
             <strong>Name</strong><div>{{ endpoint_entry.get('slug', '') }}</div>
             <strong>Provider</strong><div>{{ endpoint_entry.get('provider', '') or '—' }}</div>
             <strong>Parameter Size</strong><div>{% if endpoint_entry.get('parameter_count_b') is not none %}{{ '%.2fB'|format(endpoint_entry.get('parameter_count_b')) }}{% else %}—{% endif %}</div>
-            <strong>GPU Count</strong><div>{% if endpoint_entry.get('gpu_count') is not none %}{{ endpoint_entry.get('gpu_count') }}{% else %}—{% endif %}</div>
             <strong>Context Length</strong><div>{{ endpoint_entry.get('context_length', '') or '—' }}</div>
-            <strong>Concurrency</strong><div>{% if endpoint_entry.get('concurrency') is not none %}{{ '%.2fx'|format(endpoint_entry.get('concurrency')) }}{% else %}—{% endif %}</div>
+            <strong>Token Price</strong>
+            <div>
+                {% if token_rate %}
+                ${{ format_token_price_dollars(token_rate.dollars_per_million_input) }} input / ${{ format_token_price_dollars(token_rate.dollars_per_million_output) }} output per 1M tokens{% if token_rate.microcents_per_million_cached %} · cached input ${{ format_token_price_dollars(token_rate.dollars_per_million_cached) }}/1M{% endif %}
+                {% if token_rate.discount_percent %}
+                <div style="margin-top: 4px; color: #64748b; font-size: var(--ix-font-size-subtle);">
+                    Base: ${{ format_token_price_dollars(token_rate.base_dollars_per_million_input) }} / ${{ format_token_price_dollars(token_rate.base_dollars_per_million_output) }}{% if token_rate.base_dollars_per_million_cached is not none %} / ${{ format_token_price_dollars(token_rate.base_dollars_per_million_cached) }} cached{% endif %} per 1M · Discount: {{ '%.2f%%'|format(token_rate.discount_percent) }}
+                </div>
+                {% endif %}
+                {% else %}
+                —
+                {% endif %}
+            </div>
             <strong>Cold Start TTFT</strong><div>{{ endpoint_entry.get('cs_ttft', '') or '—' }}</div>
             {% if cache_stats and cache_stats.get('cache_enabled') %}
             <strong>24h Cache Hit Rate</strong><div>{{ cache_stats.get('cache_hit_rate_24h_display') or '—' }}</div>

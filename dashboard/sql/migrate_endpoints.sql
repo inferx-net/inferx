@@ -36,6 +36,7 @@ ALTER TABLE Endpoints
     ADD COLUMN IF NOT EXISTS output_modalities JSONB,    -- (do NOT default to ["text"])
     ADD COLUMN IF NOT EXISTS max_output_length BIGINT,
     ADD COLUMN IF NOT EXISTS pricing           JSONB,    -- rate card: prompt/completion or up-to-2 tiers
+    ADD COLUMN IF NOT EXISTS base_pricing      JSONB,    -- base Input/Output/Cached per-1M prices before discount
     ADD COLUMN IF NOT EXISTS discount_to_user  NUMERIC,  -- optional OpenRouter discount; NULL = none
     ADD COLUMN IF NOT EXISTS supported_sampling_parameters JSONB,
     ADD COLUMN IF NOT EXISTS supported_features            JSONB,

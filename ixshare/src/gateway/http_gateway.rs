@@ -104,8 +104,8 @@ use super::scheduler_client::SCHEDULER_CLIENT;
 use super::http_gw::{BuildProviderModelEntry, ProviderModelsAdapter};
 use super::req_token::{inject_usage_options, process_usage_response, TokenMeterCtx};
 use super::external_endpoint::{
+    dispatch_failover,
     endpoint_published_gate, external_model_entries, external_sub_path, is_valid_slug,
-    proxy_to_external,
     ExternalEndpointMgr, ExternalTimeouts,
 };
 use super::secret::{EndpointMetadata, EndpointOpenRouterMetadata, SkillDetail, SqlSecret};
@@ -4546,35 +4546,20 @@ async fn shared_endpoint_dispatch(
         let body_bytes =
             serde_json::to_vec(&jsonReq).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        // Admit against the per-slug concurrency cap before the upstream call.
-        // `None` = at capacity -> fast 429, no queueing. Both front doors share the
-        // one per-slug counter, and the permit is held for the response's lifetime.
-        let permit = match gw.externalEndpointMgr.try_acquire(&ext.slug) {
-            Some(p) => p,
-            None => {
-                return Ok(Response::builder()
-                    .status(StatusCode::TOO_MANY_REQUESTS)
-                    .body(Body::from(format!(
-                        "service failure: endpoint {} at capacity",
-                        ext.slug
-                    )))
-                    .unwrap());
-            }
-        };
-
-        // base_url carries the `/v1` root, so strip it from the incoming sub-path.
         let sub_path = external_sub_path(&incoming_path);
-        let response = proxy_to_external(
-            gw.externalEndpointMgr.HttpClient(),
+        let timeouts = ExternalTimeouts::from_gateway_config();
+        let outcome = dispatch_failover(
+            &gw.externalEndpointMgr,
             &ext,
+            &gw.externalEndpointMgr.resolved_replicas(&ext.slug),
+            &caller_tenant,
             &sub_path,
-            body_bytes,
-            ExternalTimeouts::from_gateway_config(),
+            body_bytes.clone(),
+            timeouts,
         )
         .await;
 
-        // Bill only on 2xx; provider errors / transport failures pass through unbilled.
-        if response.status().is_success() {
+        if outcome.response.status().is_success() {
             let meter = TokenMeterCtx {
                 gateway_request_id: uuid::Uuid::new_v4().to_string(),
                 client_request_id,
@@ -4583,19 +4568,16 @@ async fn shared_endpoint_dispatch(
                 source: source.as_str().to_string(),
                 request_ts,
             };
-            // The permit drops only when the response body finishes draining, so
-            // concurrency is counted for the whole generation, not just headers.
             return Ok(process_usage_response(
-                response,
+                outcome.response,
                 is_streaming,
                 !usage_requested,
                 Some(meter),
-                Some(permit),
+                outcome.permit,
             )
             .await);
         }
-        // Non-2xx / transport failure: skip metering; the permit drops on return.
-        return Ok(response);
+        return Ok(outcome.response);
     }
 
     // Direct callers reach the shared surface only for a published endpoint. OR is
