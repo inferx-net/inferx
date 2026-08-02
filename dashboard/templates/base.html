@@ -719,7 +719,8 @@
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
-        const billingPaymentUrl = 'https://buy.stripe.com/3cIcMY8Qi5ftastaBu4Vy04';
+        const developerPlanUrl = 'https://buy.stripe.com/3cIcMY8Qi5ftastaBu4Vy04';
+        const addCreditsUrl = 'https://buy.stripe.com/5kQaEQ5E68rFbwxbFy4Vy05';
         const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
         const loginUrl = '{{ hosturl }}' + "login";
@@ -1016,23 +1017,33 @@
                 return;
             }
 
-            const link = document.createElement('a');
-            link.href = billingPaymentUrl;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.textContent = 'payment link';
+            const subscribeLink = document.createElement('a');
+            subscribeLink.href = developerPlanUrl;
+            subscribeLink.target = '_blank';
+            subscribeLink.rel = 'noopener noreferrer';
+            subscribeLink.textContent = 'Subscribe';
+
+            const addCreditsLink = document.createElement('a');
+            addCreditsLink.href = addCreditsUrl;
+            addCreditsLink.target = '_blank';
+            addCreditsLink.rel = 'noopener noreferrer';
+            addCreditsLink.textContent = 'Add credits';
 
             if (quotaExceeded) {
                 text.replaceChildren(
-                    document.createTextNode('Your credit has run out. InferX currently offers $10/month/model while in beta to continue using the service. Use the '),
-                    link,
-                    document.createTextNode(' to set it up.'),
+                    document.createTextNode('Your credit has run out. Developer Plan: $10/month includes $20 in usage credits and discounted pricing. '),
+                    subscribeLink,
+                    document.createTextNode(' | Prefer pay as you go? '),
+                    addCreditsLink,
+                    document.createTextNode(' ->'),
                 );
             } else {
                 text.replaceChildren(
-                    document.createTextNode('InferX currently offers $10/month/model while in beta when your credit runs out. Use the '),
-                    link,
-                    document.createTextNode(' to set it up.'),
+                    document.createTextNode('Developer Plan: $10/month includes $20 in usage credits and discounted pricing. '),
+                    subscribeLink,
+                    document.createTextNode(' | Prefer pay as you go? '),
+                    addCreditsLink,
+                    document.createTextNode(' ->'),
                 );
             }
 
