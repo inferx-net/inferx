@@ -1,0 +1,11 @@
+{
+  "image": "localhost/vllm/vllm-openai:v0.20.0-cu129",
+  "model": "Qwen/Qwen3.5-2B",
+  "servedModelName": "tp2-a",
+  "tp": 2,
+  "gpuMemoryUtilization": 0.80,
+  "maxNumSeqs": 8,
+  "maxModelLen": 50000,
+  "port": 9010,
+  "gpu": "0,1"
+}

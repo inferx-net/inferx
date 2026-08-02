@@ -1,0 +1,76 @@
+{
+  "image": "localhost/vllm/vllm-openai:v0.20.0-cu129",
+  "commands": [
+    "Qwen/Qwen3.5-2B",
+    "--served-model-name", "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "--trust-remote-code",
+    "--max-model-len", "50000",
+    "--gpu-memory-utilization", "0.80",
+    "--tensor-parallel-size=2",
+    "--disable-custom-all-reduce",
+    "--max-num-seqs", "8",
+    "--enable-sleep-mode"
+  ],
+  "envs": [
+    ["HF_HUB_OFFLINE", "1"],
+    ["VLLM_SERVER_DEV_MODE", "1"]
+  ],
+  "mounts": [
+    {
+      "hostpath": "/opt/inferx/cache",
+      "mountpath": "/root/.cache/huggingface"
+    },
+    {
+      "hostpath": "/opt/inferx/shm",
+      "mountpath": "/dev/shm"
+    }
+  ],
+  "endpoint": {
+    "port": 8000,
+    "probe": "/health",
+    "schema": "Http",
+    "probe_timeout": 1000,
+    "probetype": "Prompt"
+  },
+  "version": 1,
+  "model_type": "Public",
+  "entrypoint": [],
+  "resources": {
+    "CPU": 4000,
+    "Mem": 32000,
+    "ReadyMem": 0,
+    "CacheMem": 0,
+    "GPU": {
+      "Type": "",
+      "Count": 2,
+      "vRam": 0,
+      "contextCount": 1
+    }
+  },
+  "standby": {
+    "gpu": "Mem",
+    "pageable": "File",
+    "pinned": "File"
+  },
+  "sample_query": {
+    "apiType": "text2text",
+    "path": "/v1/completions",
+    "prompt": "What is 1+1?",
+    "body": {}
+  },
+  "policy": {
+    "Obj": {
+      "nvidia_replica": 0,
+      "min_replica": 0,
+      "max_replica": 1,
+      "standby_per_node": 1,
+      "parallel": 2,
+      "queue_len": 100,
+      "queue_timeout": 30,
+      "scaleout_policy": {},
+      "scalein_timeout": 300,
+      "runtime_config": {"graph_sync": false}
+    }
+  },
+  "mountfiles": []
+}

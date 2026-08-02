@@ -59,3 +59,7 @@ path = "ixctl/main.rs"
 [[bin]]
 name = "svc"
 path = "svc/svc_main.rs"
+
+[[bin]]
+name = "ixtest"
+path = "ixtest/main.rs"

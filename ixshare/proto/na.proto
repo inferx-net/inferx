@@ -30,6 +30,8 @@ service NodeAgentService {
   rpc ResumePod(ResumePodReq) returns (ResumePodResp) {}
   rpc ReadPodLog(ReadPodLogReq) returns (ReadPodLogResp) {}
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
+  rpc CrSwapout(CrSwapoutReq) returns (CrSwapoutResp) {}
+  rpc CrSwapin(CrSwapinReq) returns (CrSwapinResp) {}
 }
 
 service IxProxyService {
@@ -246,6 +248,7 @@ enum CreatePodType {
   Normal = 0;
   Snapshot = 2;
   Restore = 3;
+  CRContainer = 4;
 }
 
 message CreateFuncPodReq {
@@ -460,4 +463,21 @@ message PodEvent {
   EventType eventType = 1;
   int64 revision = 2;
   string pod = 3; 
+}
+
+message CrSwapoutReq {
+  string container_name = 1;
+}
+
+message CrSwapoutResp {
+  string error = 1;
+}
+
+message CrSwapinReq {
+  string container_name = 1;
+  string gpu_map = 2;
+}
+
+message CrSwapinResp {
+  string error = 1;
 }

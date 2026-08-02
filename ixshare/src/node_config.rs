@@ -252,6 +252,14 @@ pub fn GetLocalIp(hostIpCidr: &str) -> Option<String> {
     return None;
 }
 
+pub fn GetNodeIp() -> Option<String> {
+    match std::env::var("POD_IP") {
+        Ok(s) => return Some(s),
+        Err(_) => (),
+    }
+    return GetLocalIp("10.42.0.0/16");
+}
+
 #[derive(Debug)]
 pub struct GatewayConfig {
     pub nodeName: String,
