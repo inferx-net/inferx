@@ -114,14 +114,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }).to_string()
             };
 
-            let gpu_id: i32 = {
+            let gpu_ids: Vec<i32> = {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&funcspec_str) {
                     v.get("gpu").and_then(|x| x.as_str())
-                        .and_then(|s| s.split(',').next())
-                        .and_then(|s| s.trim().parse::<i32>().ok())
-                        .unwrap_or(0)
-                } else { 0 }
+                        .map(|s| s.split(',')
+                            .filter_map(|s| s.trim().parse::<i32>().ok())
+                            .collect())
+                        .unwrap_or_else(|| {
+                            let count = v.get("resources")
+                                .and_then(|r| r.get("GPU"))
+                                .and_then(|g| g.get("Count"))
+                                .and_then(|x| x.as_u64())
+                                .map(|c| c as usize)
+                                .unwrap_or(1);
+                            (0..count as i32).collect()
+                        })
+                } else { vec![0] }
             };
+
+            let gpu_map: serde_json::Map<String, serde_json::Value> = gpu_ids.iter()
+                .map(|id| (id.to_string(), serde_json::json!({"contextCnt": 1, "slotCnt": 170, "ncclCnt": 1})))
+                .collect();
 
             let alloc_resources = serde_json::json!({
                 "nodename": "",
@@ -131,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "GPUType": "NVIDIA RTX A6000",
                 "GPUs": {
                     "totalSlotCnt": 170,
-                    "map": {gpu_id.to_string(): {"contextCnt": 1, "slotCnt": 170, "ncclCnt": 1}},
+                    "map": gpu_map.clone(),
                     "slotSize": 268435456
                 },
                 "MaxContextPerGPU": 1
@@ -145,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "GPUType": "NVIDIA RTX A6000",
                 "GPUs": {
                     "totalSlotCnt": 170,
-                    "map": {gpu_id.to_string(): {"contextCnt": 1, "slotCnt": 170, "ncclCnt": 1}},
+                    "map": gpu_map,
                     "slotSize": 268435456
                 },
                 "MaxContextPerGPU": 1
