@@ -62,6 +62,36 @@
                 <span id="token-usage-detail-loading" style="display: none; font-size: 12px; color: #888;">Loading...</span>
                 <button type="button" onclick="closeTokenUsageDrilldown()" style="margin-left: auto;">Close</button>
             </div>
+            <div id="token-usage-detail-controls" style="display: none; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
+                <label style="margin: 0;">Detail:</label>
+                <label style="margin: 0;">
+                    <input type="radio" name="token-usage-detail-view" value="hourly-total" onchange="onTokenUsageDetailViewChange()">
+                    Per Hour
+                </label>
+                <label style="margin: 0;">
+                    <input type="radio" name="token-usage-detail-view" value="hourly-tenant" onchange="onTokenUsageDetailViewChange()">
+                    Per Hour Per Tenant
+                </label>
+            </div>
+            <div id="token-usage-chart-series-controls" style="display: none; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px;">
+                <label style="margin: 0;">Chart:</label>
+                <label style="margin: 0;">
+                    <input type="checkbox" name="token-usage-chart-series" value="input_tokens" checked onchange="onTokenUsageChartSeriesChange()">
+                    Input
+                </label>
+                <label style="margin: 0;">
+                    <input type="checkbox" name="token-usage-chart-series" value="cached_tokens" checked onchange="onTokenUsageChartSeriesChange()">
+                    Cached
+                </label>
+                <label style="margin: 0;">
+                    <input type="checkbox" name="token-usage-chart-series" value="output_tokens" checked onchange="onTokenUsageChartSeriesChange()">
+                    Output
+                </label>
+                <label style="margin: 0;">
+                    <input type="checkbox" name="token-usage-chart-series" value="total_tokens" checked onchange="onTokenUsageChartSeriesChange()">
+                    Total
+                </label>
+            </div>
             <div id="token-usage-detail-message" style="display: none; color: #888; margin-bottom: 8px;"></div>
             <div id="token-usage-detail-content"></div>
         </div>
@@ -87,6 +117,8 @@
     let tokenUsageSortDirection = 'desc';
     let tokenUsageDetailKey = '';
     let tokenUsageDetailRows = [];
+    let tokenUsageDetailViewMode = 'hourly-tenant';
+    let tokenUsageChartSeries = ['input_tokens', 'cached_tokens', 'output_tokens', 'total_tokens'];
     let tokenUsageDetailSortColumn = 'hour';
     let tokenUsageDetailSortDirection = 'desc';
 
@@ -546,13 +578,17 @@
         const areaEl = document.getElementById('token-usage-detail-area');
         const titleEl = document.getElementById('token-usage-detail-title');
         const loadingEl = document.getElementById('token-usage-detail-loading');
+        const controlsEl = document.getElementById('token-usage-detail-controls');
+        const chartControlsEl = document.getElementById('token-usage-chart-series-controls');
         const messageEl = document.getElementById('token-usage-detail-message');
         const contentEl = document.getElementById('token-usage-detail-content');
-        if (!areaEl || !titleEl || !loadingEl || !messageEl || !contentEl) return null;
+        if (!areaEl || !titleEl || !loadingEl || !controlsEl || !chartControlsEl || !messageEl || !contentEl) return null;
 
         areaEl.style.display = 'block';
         titleEl.textContent = titleText;
         loadingEl.style.display = loading ? 'inline' : 'none';
+        controlsEl.style.display = tokenUsageViewMode === 'by-model' ? 'flex' : 'none';
+        chartControlsEl.style.display = tokenUsageViewMode === 'by-model' && tokenUsageDetailViewMode === 'hourly-total' ? 'flex' : 'none';
         messageEl.style.display = message ? 'block' : 'none';
         messageEl.textContent = message;
         messageEl.style.color = messageColor;
@@ -562,10 +598,14 @@
     function closeTokenUsageDrilldown() {
         const areaEl = document.getElementById('token-usage-detail-area');
         const loadingEl = document.getElementById('token-usage-detail-loading');
+        const controlsEl = document.getElementById('token-usage-detail-controls');
+        const chartControlsEl = document.getElementById('token-usage-chart-series-controls');
         const messageEl = document.getElementById('token-usage-detail-message');
         const contentEl = document.getElementById('token-usage-detail-content');
         if (areaEl) areaEl.style.display = 'none';
         if (loadingEl) loadingEl.style.display = 'none';
+        if (controlsEl) controlsEl.style.display = 'none';
+        if (chartControlsEl) chartControlsEl.style.display = 'none';
         if (messageEl) {
             messageEl.style.display = 'none';
             messageEl.textContent = '';
@@ -573,6 +613,8 @@
         if (contentEl) contentEl.innerHTML = '';
         tokenUsageDetailKey = '';
         tokenUsageDetailRows = [];
+        tokenUsageDetailViewMode = 'hourly-tenant';
+        tokenUsageChartSeries = ['input_tokens', 'cached_tokens', 'output_tokens', 'total_tokens'];
     }
 
     // Drill into a group: show its raw hourly rows for the selected range.
@@ -583,6 +625,7 @@
         tokenUsageDetailRows = tokenUsageRawRows.filter(
             (r) => String(r[groupKey] || '').trim() === keyValue
         );
+        tokenUsageDetailViewMode = tokenUsageViewMode === 'by-model' ? 'hourly-total' : 'hourly-tenant';
         tokenUsageDetailSortColumn = 'hour';
         tokenUsageDetailSortDirection = 'desc';
 
@@ -592,7 +635,197 @@
         renderTokenUsageDrilldown(label);
     }
 
+    function onTokenUsageDetailViewChange() {
+        const selected = document.querySelector('input[name="token-usage-detail-view"]:checked');
+        const mode = selected ? selected.value : 'hourly-tenant';
+        tokenUsageDetailViewMode = mode === 'hourly-total' ? 'hourly-total' : 'hourly-tenant';
+        tokenUsageDetailSortColumn = 'hour';
+        tokenUsageDetailSortDirection = 'desc';
+        const label = tokenUsageViewMode === 'by-tenant'
+            ? billingAnalyticsTenantLabel(tokenUsageDetailKey)
+            : (tokenUsageDetailKey === '' ? '(unspecified)' : tokenUsageDetailKey);
+        renderTokenUsageDrilldown(label);
+    }
+
+    function onTokenUsageChartSeriesChange() {
+        const checked = Array.from(document.querySelectorAll('input[name="token-usage-chart-series"]:checked'))
+            .map((el) => el.value);
+        tokenUsageChartSeries = checked.length > 0 ? checked : ['total_tokens'];
+        if (checked.length === 0) {
+            const fallback = document.querySelector('input[name="token-usage-chart-series"][value="total_tokens"]');
+            if (fallback) fallback.checked = true;
+            tokenUsageChartSeries = ['total_tokens'];
+        }
+        const label = tokenUsageViewMode === 'by-tenant'
+            ? billingAnalyticsTenantLabel(tokenUsageDetailKey)
+            : (tokenUsageDetailKey === '' ? '(unspecified)' : tokenUsageDetailKey);
+        renderTokenUsageDrilldown(label);
+    }
+
+    function syncTokenUsageDetailViewButtons() {
+        const selected = document.querySelector(`input[name="token-usage-detail-view"][value="${tokenUsageDetailViewMode}"]`);
+        if (selected) {
+            selected.checked = true;
+        }
+    }
+
+    function syncTokenUsageChartSeriesButtons() {
+        document.querySelectorAll('input[name="token-usage-chart-series"]').forEach((el) => {
+            el.checked = tokenUsageChartSeries.includes(el.value);
+        });
+    }
+
+    function aggregateTokenUsageDetailRows(rows) {
+        const buckets = new Map();
+        (Array.isArray(rows) ? rows : []).forEach((row) => {
+            const hour = String(row.hour || '').trim();
+            if (!buckets.has(hour)) {
+                buckets.set(hour, {
+                    hour: hour,
+                    request_count: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    output_tokens: 0,
+                    charge_cents: 0
+                });
+            }
+            const bucket = buckets.get(hour);
+            bucket.request_count += Number(row.request_count) || 0;
+            bucket.input_tokens += Number(row.input_tokens) || 0;
+            bucket.cached_tokens += Number(row.cached_tokens) || 0;
+            bucket.output_tokens += Number(row.output_tokens) || 0;
+            bucket.total_tokens = bucket.input_tokens + bucket.cached_tokens + bucket.output_tokens;
+            bucket.charge_cents += Number(row.charge_cents) || 0;
+        });
+        return Array.from(buckets.values());
+    }
+
+    function renderTokenUsageTrendChart(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return '<div style="color: #888; padding: 12px 0;">No trend data available</div>';
+        }
+
+        const sortedRows = rows.slice().sort((a, b) => {
+            const aTime = Date.parse(a.hour || '');
+            const bTime = Date.parse(b.hour || '');
+            return aTime - bTime;
+        });
+
+        const series = [
+            { key: 'input_tokens', pointKey: 'input', label: 'Input', color: '#2563eb' },
+            { key: 'cached_tokens', pointKey: 'cached', label: 'Cached', color: '#f59e0b' },
+            { key: 'output_tokens', pointKey: 'output', label: 'Output', color: '#16a34a' },
+            { key: 'total_tokens', pointKey: 'total', label: 'Total', color: '#7c3aed' }
+        ];
+        const activeSeries = series.filter((s) => tokenUsageChartSeries.includes(s.key));
+        if (activeSeries.length === 0) {
+            return '<div style="color: #888; padding: 12px 0;">Select at least one series</div>';
+        }
+
+        const maxTokens = Math.max(
+            ...sortedRows.flatMap((row) => activeSeries.map((s) => Number(row[s.key]) || 0)),
+            1
+        );
+        const labelEvery = Math.max(1, Math.ceil(sortedRows.length / 6));
+        const chartWidth = 960;
+        const chartHeight = 180;
+        const leftPad = 16;
+        const rightPad = 16;
+        const topPad = 10;
+        const bottomPad = 18;
+        const plotWidth = Math.max(1, chartWidth - leftPad - rightPad);
+        const plotHeight = Math.max(1, chartHeight - topPad - bottomPad);
+        const xStep = sortedRows.length > 1 ? plotWidth / (sortedRows.length - 1) : 0;
+
+        const pointMeta = sortedRows.map((row, index) => {
+            const hourLabel = formatLocalDateTime(row.hour);
+            const input = Number(row.input_tokens) || 0;
+            const cached = Number(row.cached_tokens) || 0;
+            const output = Number(row.output_tokens) || 0;
+            return {
+                x: leftPad + (index * xStep),
+                hourLabel,
+                input,
+                cached,
+                output,
+                total: input + cached + output
+            };
+        });
+
+        const linePaths = activeSeries.map((s) => {
+            const path = pointMeta.map((point, index) => {
+                const value = Number(point[s.pointKey]) || 0;
+                const y = topPad + plotHeight - ((value / maxTokens) * plotHeight);
+                return `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${y.toFixed(2)}`;
+            }).join(' ');
+            return `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></path>`;
+        }).join('');
+
+        const pointDots = pointMeta.map((point) => {
+            const tooltip = [
+                point.hourLabel,
+                `Input: ${formatCount(point.input)}`,
+                `Cached: ${formatCount(point.cached)}`,
+                `Output: ${formatCount(point.output)}`,
+                `Total: ${formatCount(point.total)}`
+            ].join(' | ');
+            return `
+                <g>
+                    <title>${tooltip}</title>
+                    ${activeSeries.map((s) => {
+                        const value = Number(point[s.pointKey]) || 0;
+                        const y = topPad + plotHeight - ((value / maxTokens) * plotHeight);
+                        return `<circle cx="${point.x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" fill="${s.color}"></circle>`;
+                    }).join('')}
+                </g>
+            `;
+        }).join('');
+
+        const labelsHtml = sortedRows.map((row, index) => {
+            const label = index % labelEvery === 0
+                ? new Date(row.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '';
+            return `<div style="flex: 1; min-width: 0; text-align: center;">${label}</div>`;
+        }).join('');
+
+        return `
+            <div style="margin-top: 14px;">
+                <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px;">Hourly Token Trend</div>
+                <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-bottom: 8px;">
+                    ${activeSeries.map((s) => `
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span style="display: inline-block; width: 10px; height: 10px; background: ${s.color}; border-radius: 2px;"></span>
+                            <span>${s.label}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div style="border-bottom: 1px solid #ccc; padding-bottom: 6px;">
+                    <svg viewBox="0 0 ${chartWidth} ${chartHeight}" style="display: block; width: 100%; height: 180px; overflow: visible;">
+                        <line x1="${leftPad}" y1="${topPad + plotHeight}" x2="${chartWidth - rightPad}" y2="${topPad + plotHeight}" stroke="#d1d5db" stroke-width="1"></line>
+                        ${linePaths}
+                        ${pointDots}
+                    </svg>
+                </div>
+                <div style="display: flex; gap: 6px; font-size: 10px; color: #666; margin-top: 4px;">
+                    ${labelsHtml}
+                </div>
+                <div style="text-align: right; font-size: 10px; color: #888; margin-top: 4px;">Hourly totals by token type (Local)</div>
+            </div>
+        `;
+    }
+
     function getTokenUsageDetailColumns() {
+        if (tokenUsageViewMode === 'by-model' && tokenUsageDetailViewMode === 'hourly-total') {
+            return [
+                { key: 'hour', label: 'Hour (Local)', type: 'datetime' },
+                { key: 'request_count', label: 'Requests', type: 'number' },
+                { key: 'input_tokens', label: 'Prompt Tokens', type: 'number' },
+                { key: 'cached_tokens', label: 'Cached Tokens', type: 'number' },
+                { key: 'output_tokens', label: 'Output Tokens', type: 'number' },
+                { key: 'charge_cents', label: 'Spend (USD)', type: 'number' }
+            ];
+        }
+
         // In by-tenant view, break the tenant down per model (and hour); in
         // by-model view, break the model down per tenant (and hour).
         const secondary = tokenUsageViewMode === 'by-tenant'
@@ -613,6 +846,8 @@
         const titlePrefix = tokenUsageViewMode === 'by-tenant' ? 'Breakdown: Tenant' : 'Breakdown: Model';
         const content = showTokenUsageDetailArea(`${titlePrefix} / ${label}`, { loading: false });
         if (!content) return;
+        syncTokenUsageDetailViewButtons();
+        syncTokenUsageChartSeriesButtons();
 
         if (!Array.isArray(tokenUsageDetailRows) || tokenUsageDetailRows.length === 0) {
             content.innerHTML = '<p style="color: #888; padding: 20px;">No token usage data for this selection in the period</p>';
@@ -620,8 +855,11 @@
         }
 
         const columns = getTokenUsageDetailColumns();
+        const detailRows = tokenUsageViewMode === 'by-model' && tokenUsageDetailViewMode === 'hourly-total'
+            ? aggregateTokenUsageDetailRows(tokenUsageDetailRows)
+            : tokenUsageDetailRows;
         const sortedRows = sortTokenUsageRows(
-            tokenUsageDetailRows,
+            detailRows,
             columns,
             tokenUsageDetailSortColumn,
             tokenUsageDetailSortDirection
@@ -653,13 +891,18 @@
             return `<tr>${cells}</tr>`;
         }).join('');
 
+        const trendChartHtml = tokenUsageViewMode === 'by-model' && tokenUsageDetailViewMode === 'hourly-total'
+            ? renderTokenUsageTrendChart(sortedRows)
+            : '';
+
         content.innerHTML = `
             <div style="overflow-x: auto;">
                 <table class="billing-analytics-table" style="width: 100%; min-width: 720px;">
                     <thead><tr>${headerHtml}</tr></thead>
                     <tbody>${rowsHtml}</tbody>
                 </table>
-            </div>`;
+            </div>
+            ${trendChartHtml}`;
     }
 
     function tokenUsageDetailSort(key) {
