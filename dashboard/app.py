@@ -1524,6 +1524,15 @@ def apikeys():
     )
 
 
+@prefix_bp.route('/billing')
+@require_login
+def billing():
+    tab = str(request.args.get("tab", "") or "").strip()
+    if tab != "Billing":
+        return redirect(url_for("prefix.billing", tab="Billing"))
+    return render_template("admin.html")
+
+
 def build_catalog_slug_conflict_message(entry_payload=None):
     payload = entry_payload if isinstance(entry_payload, dict) else {}
     slug = str(payload.get("slug", "") or "").strip()
@@ -6563,7 +6572,7 @@ def build_endpoint_list_entries(*, include_unpublished: bool, tenant: str = ""):
             )
         entry["token_rate"] = token_rate
 
-    return entries
+    return sort_endpoint_entries(entries)
 
 
 def build_admin_endpoint_list_entries():
@@ -6636,7 +6645,7 @@ def build_admin_endpoint_list_entries():
             )
         entry["token_rate"] = token_rate
 
-    return entries
+    return sort_endpoint_entries(entries)
 
 
 def external_endpoint_state(published: bool, metadata_entry):
@@ -6645,6 +6654,16 @@ def external_endpoint_state(published: bool, metadata_entry):
     if published:
         return {"code": "published", "label": "Published"}
     return {"code": "unpublished", "label": "Unpublished"}
+
+
+def sort_endpoint_entries(entries):
+    """Show external endpoints first, then alphabetize each group by slug."""
+    def sort_key(entry):
+        kind = str((entry or {}).get("kind", "") or "").strip().lower()
+        slug = str((entry or {}).get("slug", "") or "").strip().lower()
+        return (0 if kind == "external" else 1, slug)
+
+    return sorted(entries, key=sort_key)
 
 
 def resolve_case_insensitive_catalog_target_value(valid_values, requested_value: str):

@@ -659,6 +659,7 @@
     {% set nav_nodes_active = '/listnode' in request_path or '/node' in request_path %}
     {% set nav_help_active = '/help' in request_path %}
     {% set nav_admin_active = '/admin' in request_path and '/admin/endpoints' not in request_path %}
+    {% set nav_billing_active = request_path.startswith('/billing') %}
     <table class="brand-header">
         <tr>
             <td class="brand-logo-cell"><img class="brand-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="48" height="48"></td>
@@ -697,6 +698,7 @@
         {% endif %}
         {% if is_logged_in %}
         <a href="{{ hosturl }}admin" id="admin" class="{% if nav_admin_active %}active{% endif %}"> Admin </a>
+        <a href="{{ hosturl }}billing?tab=Billing" id="billing" class="{% if nav_billing_active %}active{% endif %}"> Billing </a>
         {% endif %}
         <a href="{{ hosturl }}help" class="{% if nav_help_active %}active{% endif %}"> Help </a>
         <a href="{{ slack_invite_url }}" class="nav-support-link" data-tooltip="Join InferX Slack community for support" aria-label="Get support on Slack" target="_blank" rel="noopener noreferrer">
