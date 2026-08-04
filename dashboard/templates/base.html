@@ -721,7 +721,7 @@
         const username = {{ session.get('username', '') | tojson }};
         const userDisplayName = {{ session.get('display_name', session.get('username', '')) | tojson }};
         const activeTenantName = {{ session.get('active_tenant_name', session.get('tenant_name', '')) | tojson }};
-        const developerPlanUrl = 'https://buy.stripe.com/3cIcMY8Qi5ftastaBu4Vy04';
+        const developerPlanUrl = 'https://buy.stripe.com/3cI00c6IagYbfMNaBu4Vy06';
         const addCreditsUrl = 'https://buy.stripe.com/5kQaEQ5E68rFbwxbFy4Vy05';
         const TENANT_CREDIT_BANNER_CACHE_TTL_MS = 1800000;
         const tenantDisplayMap = {};
@@ -1023,7 +1023,7 @@
             subscribeLink.href = developerPlanUrl;
             subscribeLink.target = '_blank';
             subscribeLink.rel = 'noopener noreferrer';
-            subscribeLink.textContent = 'Subscribe';
+            subscribeLink.textContent = 'Claim Now';
 
             const addCreditsLink = document.createElement('a');
             addCreditsLink.href = addCreditsUrl;
@@ -1033,19 +1033,19 @@
 
             if (quotaExceeded) {
                 text.replaceChildren(
-                    document.createTextNode('Your credit has run out. Developer Plan: $10/month includes $20 in usage credits and discounted pricing. '),
+                    document.createTextNode('Your credit has run out. Limited Time Offer: $5 Credits for $1 - '),
                     subscribeLink,
-                    document.createTextNode(' | Prefer pay as you go? '),
+                    document.createTextNode(' or Pay As You Go - '),
                     addCreditsLink,
-                    document.createTextNode(' ->'),
+                    document.createTextNode('\u00A0\u00A0\u00A0 Cancel Anytime | Zero Data Retention'),
                 );
             } else {
                 text.replaceChildren(
-                    document.createTextNode('Developer Plan: $10/month includes $20 in usage credits and discounted pricing. '),
+                    document.createTextNode('Limited Time Offer: $5 Credits for $1 - '),
                     subscribeLink,
-                    document.createTextNode(' | Prefer pay as you go? '),
+                    document.createTextNode(' or Pay As You Go - '),
                     addCreditsLink,
-                    document.createTextNode(' ->'),
+                    document.createTextNode('\u00A0\u00A0\u00A0 Cancel Anytime | Zero Data Retention'),
                 );
             }
 
@@ -1063,8 +1063,12 @@
 
         async function loadTenantCreditBanner() {
             const { banner } = getTenantCreditBannerElements();
-            if (!isLoggedIn || isGatewayAlignedAnonymousActive || !banner) {
-                hideTenantCreditBanner();
+            if (!banner) {
+                return;
+            }
+
+            if (!isLoggedIn || isGatewayAlignedAnonymousActive) {
+                applyTenantCreditBannerState(false);
                 return;
             }
 
