@@ -59,6 +59,12 @@ CREATE TABLE TenantCreditHistory (
 
 CREATE INDEX idx_credit_tenant ON TenantCreditHistory(tenant, created_at);
 
+-- Idempotency: prevent duplicate credits for the same payment reference.
+-- Partial unique index: rows without a payment_ref are exempt.
+CREATE UNIQUE INDEX idx_tenant_credit_payment_ref_uniq
+    ON TenantCreditHistory (tenant, payment_ref)
+    WHERE payment_ref IS NOT NULL;
+
 -- Per-function hourly aggregation
 CREATE TABLE UsageHourlyByFunc (
     id               SERIAL PRIMARY KEY,
