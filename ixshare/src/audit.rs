@@ -994,7 +994,9 @@ impl SqlAudit {
         return Ok(());
     }
 
-    /// Add credits to tenant in cents (insert into TenantCreditHistory)
+    /// Add credits to tenant in cents (insert into TenantCreditHistory).
+    /// Idempotent: if a row with the same (tenant, payment_ref) already exists,
+    /// returns Ok(None) without inserting a duplicate.
     pub async fn AddTenantCredit(
         &self,
         tenant: &str,
@@ -1003,22 +1005,24 @@ impl SqlAudit {
         note: Option<&str>,
         payment_ref: Option<&str>,
         added_by: Option<&str>,
-    ) -> Result<i64> {
+    ) -> Result<Option<i64>> {
         let query = r#"
             INSERT INTO TenantCreditHistory (tenant, amount_cents, currency, note, payment_ref, added_by)
             VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (tenant, payment_ref) WHERE payment_ref IS NOT NULL
+            DO NOTHING
             RETURNING id
         "#;
-        let row: (i32,) = sqlx::query_as(query)
+        let row: Option<(i32,)> = sqlx::query_as(query)
             .bind(tenant)
             .bind(amount_cents)
             .bind(currency)
             .bind(note)
             .bind(payment_ref)
             .bind(added_by)
-            .fetch_one(&self.pool)
+            .fetch_optional(&self.pool)
             .await?;
-        Ok(row.0 as i64)
+        Ok(row.map(|r| r.0 as i64))
     }
 
     /// Check whether a tenant credit record already exists for the given payment reference.

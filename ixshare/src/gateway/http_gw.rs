@@ -1400,6 +1400,10 @@ impl HttpGateway {
             )
             .await?;
 
+        // AddTenantCredit now returns Option<i64>: None means duplicate (already
+        // credited), Some(id) means new insert. Either way, the credit exists,
+        // so we proceed to recalculate quota.
+
         let quota_exceeded = self.sqlBilling.RecalculateTenantQuota(tenant_name).await?;
         let tenant_obj = self
             .client

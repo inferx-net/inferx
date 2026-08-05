@@ -1092,6 +1092,33 @@
             </div>
         </div>
 
+        <!-- Add Credits Panel -->
+        <div id="billing-add-credits-panel" style="margin-bottom: 20px; border: 1px solid #ccc; padding: 16px; border-radius: 6px;">
+            <h3 style="margin: 0 0 12px 0;">Add Credits</h3>
+
+            <!-- Promo: Pay $1 Get $5 (one-time) -->
+            <div id="promo-1usd-5usd-box" style="display: none; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px;">
+                <strong style="color: #1d4ed8;">🎁 Limited Time Offer</strong>
+                <p style="margin: 4px 0 8px 0; color: #1e40af;">Pay $1, Get $5 in Credits — One Time Only</p>
+                <button type="button" onclick="payPromo()" style="background: #1d4ed8; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                    Pay $1 → Get $5
+                </button>
+            </div>
+
+            <!-- Pay As You Go -->
+            <div>
+                <strong>Pay As You Go</strong>
+                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
+                    <button type="button" onclick="stripeAddCredits(100)">$1</button>
+                    <button type="button" onclick="stripeAddCredits(500)">$5</button>
+                    <button type="button" onclick="stripeAddCredits(1000)">$10</button>
+                    <span>or Custom: $</span>
+                    <input type="number" id="custom-credit-amount" min="1" step="1" placeholder="25" style="width: 80px;">
+                    <button type="button" onclick="stripeAddCredits(Math.round(parseFloat(document.getElementById('custom-credit-amount').value) * 100))">Add Credits</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Usage Chart -->
         <div id="usage-chart-container" style="margin-bottom: 20px;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
@@ -4178,7 +4205,8 @@
             loadBillingSummary(tenant),
             loadUsageChart(tenant),
             loadBillingTokenUsage(tenant),
-            loadCreditHistory(tenant, 0)
+            loadCreditHistory(tenant, 0),
+            checkPromoEligibility(tenant)
         ]);
 
         // Keep analytics panel in sync when tenant changes.
@@ -8817,6 +8845,71 @@
 
         }
     }
+
+    // ─── Stripe payment functions ───────────────────────────────────────
+
+    async function payPromo() {
+        try {
+            const resp = await fetch("/stripe/create-checkout-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ promo: "1usd-5usd" })
+            });
+            const data = await resp.json();
+            if (data.url) {
+                window.location.href = data.url;
+            } else {
+                alert(data.error || "Failed to create checkout session");
+            }
+        } catch (e) {
+            alert("Error: " + e.message);
+        }
+    }
+
+    async function stripeAddCredits(amountCents) {
+        if (!amountCents || amountCents < 100) {
+            alert("Please enter a valid amount (minimum $1)");
+            return;
+        }
+        try {
+            const resp = await fetch("/stripe/create-checkout-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ amount_cents: amountCents })
+            });
+            const data = await resp.json();
+            if (data.url) {
+                window.location.href = data.url;
+            } else {
+                alert(data.error || "Failed to create checkout session");
+            }
+        } catch (e) {
+            alert("Error: " + e.message);
+        }
+    }
+
+    async function checkPromoEligibility(tenant) {
+        if (!tenant) return;
+        try {
+            const resp = await fetchWithAuth(`/proxy1/tenant/${tenant}/credits/history`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const history = data.records || data.history || data.credits || [];
+            const used = Array.isArray(history) && history.some(
+                row => row.payment_ref === "stripe-promo:1usd-5usd-bonus"
+            );
+            const promoBox = document.getElementById("promo-1usd-5usd-box");
+            if (promoBox) {
+                promoBox.style.display = used ? "none" : "block";
+            }
+        } catch (e) {
+            // If we can't check, show the promo box (DB constraint is the real guard)
+            const promoBox = document.getElementById("promo-1usd-5usd-box");
+            if (promoBox) promoBox.style.display = "block";
+        }
+    }
+
+    // ─── End Stripe payment functions ───────────────────────────────────
 
 </script>
 

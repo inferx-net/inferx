@@ -52,6 +52,22 @@ spec:
               value: "false"
             - name: SECRDB_ADDR
               value: "postgresql://secret:123456@secret-db:5432/secretdb"
+            # Stripe payment integration
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stripe-secrets
+                  key: stripe-secret-key
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stripe-secrets
+                  key: stripe-webhook-secret
+            - name: INFERX_ADMIN_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: billing-secrets
+                  key: api-key
           volumeMounts:
             - name: cert-volume
               mountPath: /etc/letsencrypt/

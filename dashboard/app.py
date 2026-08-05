@@ -28,6 +28,7 @@ import pytz
 import requests
 import markdown
 import functools
+import stripe
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
@@ -274,6 +275,9 @@ keycloak = oauth.register(
 tls = False
 
 apihostaddr = os.getenv('INFERX_APIGW_ADDR', "http://localhost:4000")
+inferx_admin_apikey = os.getenv('INFERX_ADMIN_APIKEY', '')
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
+stripe_webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 PUBLIC_API_BASE_URL = os.getenv('INFERX_PUBLIC_API_BASE_URL', "").strip()
 ONBOARD_MAX_RETRIES = int(os.getenv('ONBOARD_MAX_RETRIES', '3'))
 ONBOARD_BACKOFF_BASE_SEC = float(os.getenv('ONBOARD_BACKOFF_BASE_SEC', '0.5'))
@@ -10839,6 +10843,166 @@ def proxy1(path):
 @app.route("/healthz")
 def healthz():
     return ("ok", 200)
+
+
+# ─── Stripe payment integration ───────────────────────────────────────────────
+
+PROMO_CATALOG = {
+    "1usd-5usd": {
+        "pay_cents": 100,
+        "bonus_cents": 400,
+        "bonus_ref": "stripe-promo:1usd-5usd-bonus",
+    },
+}
+
+
+@prefix_bp.route("/stripe/create-checkout-session", methods=["POST"])
+@require_login
+def stripe_create_checkout_session():
+    data = request.get_json(silent=True) or {}
+    tenant = session.get("tenant_name", "")
+    sub = session.get("sub", "")
+    if not tenant:
+        return jsonify({"error": "No tenant in session"}), 400
+
+    promo_code = data.get("promo")
+
+    if promo_code:
+        promo = PROMO_CATALOG.get(promo_code)
+        if promo is None:
+            return jsonify({"error": "Invalid promo code"}), 400
+        amount_cents = promo["pay_cents"]
+    else:
+        try:
+            amount_cents = int(data["amount_cents"])
+        except (KeyError, ValueError, TypeError):
+            return jsonify({"error": "amount_cents must be an integer"}), 400
+        if amount_cents < 100 or amount_cents > 1_000_000:
+            return jsonify({"error": "amount_cents out of range (100–1,000,000)"}), 400
+
+    metadata = {"tenant": tenant, "sub": sub}
+    if promo_code:
+        metadata["promo"] = promo_code
+
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": amount_cents,
+                    "product_data": {"name": "InferX Credits"},
+                },
+                "quantity": 1,
+            }],
+            client_reference_id=tenant,
+            metadata=metadata,
+            success_url=url_for("prefix.billing", tab="Billing", _external=True) + "&status=success",
+            cancel_url=url_for("prefix.billing", tab="Billing", _external=True) + "&status=cancel",
+        )
+    except Exception as e:
+        return jsonify({"error": f"Stripe error: {e}"}), 500
+
+    return jsonify({"url": checkout_session.url})
+
+
+def _call_gateway_add_credits(tenant, amount_cents, note, payment_ref):
+    try:
+        resp = requests.post(
+            f"{apihostaddr}/tenant/{tenant}/credits",
+            headers={
+                "Authorization": f"Bearer {inferx_admin_apikey}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "amount_cents": amount_cents,
+                "currency": "USD",
+                "note": note,
+                "payment_ref": payment_ref,
+            },
+            timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        return f"Gateway request failed: {e}"
+    if not resp.ok:
+        return f"Gateway returned {resp.status_code}: {resp.text}"
+    return None
+
+
+def _credit_tenant(session_obj):
+    tenant = session_obj.get("client_reference_id", "")
+    amount_cents = session_obj.get("amount_total", 0)
+    session_ref = f"stripe:{session_obj['id']}"
+    promo_code = session_obj.get("metadata", {}).get("promo")
+
+    if not tenant:
+        return "Missing client_reference_id"
+
+    if promo_code:
+        promo = PROMO_CATALOG.get(promo_code)
+        if promo is None or amount_cents != promo["pay_cents"]:
+            app.logger.error(
+                "Promo validation failed: session=%s, promo=%s, amount=%d, expected=%d",
+                session_obj.get("id", ""), promo_code, amount_cents,
+                promo["pay_cents"] if promo else -1,
+            )
+            return None
+
+    err = _call_gateway_add_credits(
+        tenant, amount_cents,
+        note="Stripe purchase",
+        payment_ref=session_ref,
+    )
+    if err:
+        return err
+
+    if promo_code:
+        err = _call_gateway_add_credits(
+            tenant, promo["bonus_cents"],
+            note="Promo bonus: $1 payment → $5 credit (one-time)",
+            payment_ref=promo["bonus_ref"],
+        )
+        if err:
+            return err
+
+    return None
+
+
+@app.route("/stripe/webhook", methods=["POST"])
+def stripe_webhook():
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get("Stripe-Signature", "")
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, stripe_webhook_secret
+        )
+    except stripe.error.SignatureVerificationError:
+        return "Invalid signature", 400
+    except Exception as e:
+        return f"Invalid payload: {e}", 400
+
+    if event["type"] == "checkout.session.completed":
+        session_obj = event["data"]["object"]
+        if session_obj.get("payment_status") != "paid":
+            return "", 200
+        err = _credit_tenant(session_obj)
+        if err:
+            app.logger.error("Webhook credit failed: %s", err)
+            return err, 500
+    elif event["type"] == "checkout.session.async_payment_succeeded":
+        session_obj = event["data"]["object"]
+        err = _credit_tenant(session_obj)
+        if err:
+            app.logger.error("Webhook credit failed: %s", err)
+            return err, 500
+    elif event["type"] == "checkout.session.async_payment_failed":
+        session_obj = event["data"]["object"]
+        app.logger.warning("Stripe async payment failed: %s", session_obj.get("id", ""))
+
+    return "", 200
+
+
+# ─── End Stripe payment integration ───────────────────────────────────────────
 
 
 @prefix_bp.route("/admin/usage/endpoints", methods=["GET"])

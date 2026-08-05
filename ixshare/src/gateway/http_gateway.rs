@@ -5856,7 +5856,7 @@ async fn AddTenantCredits(
         )
         .await
     {
-        Ok(id) => {
+        Ok(Some(id)) => {
             error!("AddTenantCredits: credit added with id={}", id);
             let quota_exceeded = match gw.sqlBilling.RecalculateTenantQuota(&tenant).await {
                 Ok(v) => v,
@@ -5945,6 +5945,33 @@ async fn AddTenantCredits(
             let resp_body = AddCreditsResponse {
                 success: true,
                 credit_id: id,
+                new_balance_cents: balance,
+            };
+            let data = serde_json::to_string(&resp_body).unwrap();
+            let body = Body::from(data);
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .body(body)
+                .unwrap();
+            return Ok(resp);
+        }
+        Ok(None) => {
+            // Duplicate payment_ref — idempotent no-op.
+            // Return 200 without recalculating quota or adding a second time.
+            error!(
+                "AddTenantCredits: duplicate payment_ref={:?} for tenant={}, skipping",
+                req.payment_ref, &tenant
+            );
+            let balance = match gw.sqlBilling.GetTenantCreditBalance(&tenant).await {
+                Ok(b) => b,
+                Err(e) => {
+                    error!("AddTenantCredits: GetTenantCreditBalance failed: {:?}", e);
+                    0
+                }
+            };
+            let resp_body = AddCreditsResponse {
+                success: true,
+                credit_id: 0,
                 new_balance_cents: balance,
             };
             let data = serde_json::to_string(&resp_body).unwrap();
