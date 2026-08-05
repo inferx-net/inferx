@@ -1113,7 +1113,7 @@
                     <button type="button" onclick="stripeAddCredits(500)">$5</button>
                     <button type="button" onclick="stripeAddCredits(1000)">$10</button>
                     <span>or Custom: $</span>
-                    <input type="number" id="custom-credit-amount" min="1" step="1" placeholder="25" style="width: 80px;">
+                    <input type="number" id="custom-credit-amount" min="1" step="1" placeholder="5" style="width: 80px;">
                     <button type="button" onclick="stripeAddCredits(Math.round(parseFloat(document.getElementById('custom-credit-amount').value) * 100))">Add Credits</button>
                 </div>
             </div>
