@@ -123,29 +123,48 @@ create_and_wait() {
 }
 
 # =============================================================================
-# STEP 0: Cleanup — remove any existing test containers
+# STEP 0: Check for existing containers (recovered after NA restart)
+#         If all 4 exist in Exited/SwappedOut state, skip creation.
+#         Otherwise, clean up and create from scratch.
 # =============================================================================
 echo "============================================================"
-echo "STEP 0: Cleanup"
+echo "STEP 0: Check existing containers"
 echo "============================================================"
-for c in swap swap2 swap-a swap-b; do
-  $IXT "$NA" terminate_pod public default "$c" 1 1 2>/dev/null || true
-done
-sudo docker exec "$NA_POD" bash -c 'podman rm -f swap swap2 swap-a swap-b 2>/dev/null; rm -rf /opt/inferx/podman/swap /opt/inferx/podman/swap2 /opt/inferx/podman/swap-a /opt/inferx/podman/swap-b 2>/dev/null; echo cleaned'
-echo ""
 container_status
 echo ""
 
-# =============================================================================
-# STEP 1: Create all four containers (sequentially)
-# =============================================================================
-echo "============================================================"
-echo "STEP 1: Create containers (sequential, auto-swapout after warmup)"
-echo "============================================================"
-create_and_wait "swap"   "$FUNC_DIR/funcspec_cr_tp2a.json"
-create_and_wait "swap2"  "$FUNC_DIR/funcspec_cr_tp2b.json"
-create_and_wait "swap-a" "$FUNC_DIR/funcspec_cr_tp1a.json"
-create_and_wait "swap-b" "$FUNC_DIR/funcspec_cr_tp1b.json"
+EXISTING=0
+for c in swap swap2 swap-a swap-b; do
+  EXITED=$(sudo docker exec "$NA_POD" podman ps -a --filter status=exited --format '{{.Names}}' 2>/dev/null | grep -cx "$c" || true)
+  if [[ "$EXITED" == "1" ]]; then
+    EXISTING=$((EXISTING + 1))
+  fi
+done
+
+if [[ "$EXISTING" -eq 4 ]]; then
+  echo "All 4 containers found in Exited state (recovered after NA restart)."
+  echo "Skipping creation — testing swap directly."
+  echo ""
+else
+  echo "Only ${EXISTING}/4 containers found. Cleaning up and creating from scratch."
+  echo ""
+  for c in swap swap2 swap-a swap-b; do
+    $IXT "$NA" terminate_pod public default "$c" 1 1 2>/dev/null || true
+  done
+  sudo docker exec "$NA_POD" bash -c 'podman rm -f swap swap2 swap-a swap-b 2>/dev/null; rm -rf /opt/inferx/podman/swap /opt/inferx/podman/swap2 /opt/inferx/podman/swap-a /opt/inferx/podman/swap-b 2>/dev/null; echo cleaned'
+  echo ""
+
+  # =============================================================================
+  # STEP 1: Create all four containers (sequentially)
+  # =============================================================================
+  echo "============================================================"
+  echo "STEP 1: Create containers (sequential, auto-swapout after warmup)"
+  echo "============================================================"
+  create_and_wait "swap"   "$FUNC_DIR/funcspec_cr_tp2a.json"
+  create_and_wait "swap2"  "$FUNC_DIR/funcspec_cr_tp2b.json"
+  create_and_wait "swap-a" "$FUNC_DIR/funcspec_cr_tp1a.json"
+  create_and_wait "swap-b" "$FUNC_DIR/funcspec_cr_tp1b.json"
+fi
 container_status
 echo ""
 
