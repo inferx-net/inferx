@@ -4,11 +4,20 @@
 #
 # Tests GPU scheduling with:
 #   - TP=2 container "swap"   (GPU 0+1, port 9010, model tp2-a)
+#   - TP=2 container "swap2"  (GPU 0+1, port 9013, model tp2-b)
 #   - TP=1 container "swap-a" (GPU 0,   port 9011, model tp1-a)
 #   - TP=1 container "swap-b" (GPU 1,   port 9012, model tp1-b)
 #
 # Constraint: TP=2 uses both GPUs; TP=1 containers use separate GPUs.
 # No two containers should share a GPU at the same time.
+#
+# NOTE: TP=1 containers cannot be swapped in simultaneously due to CRIU
+# UNIX socket conflicts in host network mode. They are tested sequentially.
+#
+# Swap combinations tested:
+#   Phase 1: TP=2 swap -> TP=2 swap2 -> TP=2 swap
+#   Phase 2: TP=2 swap -> TP=1 A -> TP=1 B -> TP=2 swap2
+#   Phase 3: TP=1 A -> TP=2 swap -> TP=1 B -> TP=2 swap2
 #
 # Prerequisites:
 #   - NA running at 10.42.0.37:1233
@@ -63,170 +72,154 @@ container_status() {
   sudo docker exec "$NA_POD" podman ps -a --format '    {{.Names}} {{.Status}}' 2>/dev/null
 }
 
+# Helper: swapin + wait + query + show GPU
+do_swapin_query() {
+  local name=$1 port=$2 model=$3 gpu_map=$4
+  echo "--- Swapin ${name} (GPU ${gpu_map}) ---"
+  $IXT "$NA" cr_swapin "$name" "$gpu_map"
+  echo ""
+  wait_health "$port" "$name"
+  echo ""
+  echo "--- Query ${name} (port ${port}, model ${model}) ---"
+  echo "  Result: $(query "$port" "$model")"
+  echo ""
+  gpu_status
+  echo ""
+  container_status
+  echo ""
+}
+
+# Helper: swapout + show status
+do_swapout() {
+  local name=$1
+  echo "--- Swapout ${name} ---"
+  $IXT "$NA" cr_swapout "$name"
+  echo ""
+  sleep 3
+  container_status
+  gpu_status
+  echo ""
+}
+
+# Helper: create one container and wait for auto-swapout
+create_and_wait() {
+  local name=$1 funcspec=$2
+  echo "--- Creating ${name} ---"
+  $IXT "$NA" create_func_pod public default "$name" 1 1 crcontainer "$funcspec"
+  echo "  Waiting for ${name} to auto-swapout..."
+  for i in $(seq 1 24); do
+    sleep 10
+    RUNNING=$(sudo docker exec "$NA_POD" podman ps --format '{{.Names}}' 2>/dev/null | grep -cx "$name" || true)
+    if [[ "$RUNNING" == "0" ]]; then
+      EXITED=$(sudo docker exec "$NA_POD" podman ps -a --filter status=exited --format '{{.Names}}' 2>/dev/null | grep -cx "$name" || true)
+      if [[ "$EXITED" == "1" ]]; then
+        echo "  ${name} swapped out after $((i*10))s"
+        break
+      fi
+    fi
+    echo "  [${i}0s] still running..."
+  done
+  echo ""
+}
+
 # =============================================================================
 # STEP 0: Cleanup — remove any existing test containers
 # =============================================================================
 echo "============================================================"
 echo "STEP 0: Cleanup"
 echo "============================================================"
-$IXT "$NA" terminate_pod public default swap   1 1 2>/dev/null || true
-$IXT "$NA" terminate_pod public default swap-a 1 1 2>/dev/null || true
-$IXT "$NA" terminate_pod public default swap-b 1 1 2>/dev/null || true
-sudo docker exec "$NA_POD" bash -c 'podman rm -f swap swap-a swap-b 2>/dev/null; rm -rf /opt/inferx/podman/swap /opt/inferx/podman/swap-a /opt/inferx/podman/swap-b 2>/dev/null; echo cleaned'
-echo ""
-container_status
-echo ""
-
-# =============================================================================
-# STEP 1: Create all three containers (they auto-swapout after warmup)
-# =============================================================================
-echo "============================================================"
-echo "STEP 1: Create containers (auto-swapout after warmup)"
-echo "============================================================"
-
-echo "--- Creating TP=2 container 'swap' (GPU 0+1, port 9010) ---"
-$IXT "$NA" create_func_pod public default swap   1 1 crcontainer "$FUNC_DIR/funcspec_cr_tp2a.json"
-
-echo "--- Creating TP=1 container 'swap-a' (GPU 0, port 9011) ---"
-$IXT "$NA" create_func_pod public default swap-a 1 1 crcontainer "$FUNC_DIR/funcspec_cr_tp1a.json"
-
-echo "--- Creating TP=1 container 'swap-b' (GPU 1, port 9012) ---"
-$IXT "$NA" create_func_pod public default swap-b 1 1 crcontainer "$FUNC_DIR/funcspec_cr_tp1b.json"
-
-echo ""
-echo "Waiting for all containers to auto-swapout (up to 3 min)..."
-for i in $(seq 1 18); do
-  sleep 10
-  RUNNING=$(sudo docker exec "$NA_POD" podman ps --format '{{.Names}}' 2>/dev/null | grep -cE 'swap' || true)
-  EXITED=$(sudo docker exec "$NA_POD" podman ps -a --filter status=exited --format '{{.Names}}' 2>/dev/null | grep -cE 'swap' || true)
-  echo "  [${i}0s] running=${RUNNING} exited=${EXITED}"
-  if [[ "$RUNNING" == "0" && "$EXITED" -ge 3 ]]; then
-    echo "  All containers swapped out!"
-    break
-  fi
+for c in swap swap2 swap-a swap-b; do
+  $IXT "$NA" terminate_pod public default "$c" 1 1 2>/dev/null || true
 done
-
+sudo docker exec "$NA_POD" bash -c 'podman rm -f swap swap2 swap-a swap-b 2>/dev/null; rm -rf /opt/inferx/podman/swap /opt/inferx/podman/swap2 /opt/inferx/podman/swap-a /opt/inferx/podman/swap-b 2>/dev/null; echo cleaned'
 echo ""
 container_status
 echo ""
 
 # =============================================================================
-# STEP 2: Swapin both TP=1 containers (GPU 0 + GPU 1 simultaneously)
+# STEP 1: Create all four containers (sequentially)
 # =============================================================================
 echo "============================================================"
-echo "STEP 2: Swapin both TP=1 containers"
+echo "STEP 1: Create containers (sequential, auto-swapout after warmup)"
 echo "============================================================"
-
-echo "--- Swapin swap-a (GPU 0) ---"
-$IXT "$NA" cr_swapin swap-a "[0]"
-
-echo "--- Swapin swap-b (GPU 1) ---"
-$IXT "$NA" cr_swapin swap-b "[1]"
-
-echo ""
-wait_health 9011 "swap-a"
-wait_health 9012 "swap-b"
-
-echo ""
-echo "--- Query TP=1 A (port 9011, model tp1-a) ---"
-echo "  Result: $(query 9011 tp1-a)"
-
-echo "--- Query TP=1 B (port 9012, model tp1-b) ---"
-echo "  Result: $(query 9012 tp1-b)"
-
-echo ""
-gpu_status
-echo ""
+create_and_wait "swap"   "$FUNC_DIR/funcspec_cr_tp2a.json"
+create_and_wait "swap2"  "$FUNC_DIR/funcspec_cr_tp2b.json"
+create_and_wait "swap-a" "$FUNC_DIR/funcspec_cr_tp1a.json"
+create_and_wait "swap-b" "$FUNC_DIR/funcspec_cr_tp1b.json"
 container_status
 echo ""
 
 # =============================================================================
-# STEP 3: Swapout both TP=1 containers
+# PHASE 1: TP=2 swap -> TP=2 swap2 -> TP=2 swap
+#   Tests: two different TP=2 containers swapping on same GPUs
 # =============================================================================
 echo "============================================================"
-echo "STEP 3: Swapout both TP=1 containers"
+echo "PHASE 1: TP=2 swap  ->  TP=2 swap2  ->  TP=2 swap"
 echo "============================================================"
-
-echo "--- Swapout swap-a ---"
-$IXT "$NA" cr_swapout swap-a
-
-echo "--- Swapout swap-b ---"
-$IXT "$NA" cr_swapout swap-b
-
 echo ""
-sleep 3
-container_status
-gpu_status
-echo ""
+echo "----- 1a: Swapin TP=2 swap -----"
+do_swapin_query "swap" 9010 "tp2-a" "[0,1]"
+echo "----- 1b: Swapout TP=2 swap -----"
+do_swapout "swap"
+echo "----- 1c: Swapin TP=2 swap2 -----"
+do_swapin_query "swap2" 9013 "tp2-b" "[0,1]"
+echo "----- 1d: Swapout TP=2 swap2 -----"
+do_swapout "swap2"
+echo "----- 1e: Swapin TP=2 swap again -----"
+do_swapin_query "swap" 9010 "tp2-a" "[0,1]"
+echo "----- 1f: Swapout TP=2 swap -----"
+do_swapout "swap"
 
 # =============================================================================
-# STEP 4: Swapin TP=2 container (both GPUs)
+# PHASE 2: TP=2 swap -> TP=1 A -> TP=1 B -> TP=2 swap2
+#   Tests: TP=2 to sequential TP=1 containers, then to different TP=2
+#   (TP=1 containers run one at a time due to CRIU host-network limitation)
 # =============================================================================
 echo "============================================================"
-echo "STEP 4: Swapin TP=2 container"
+echo "PHASE 2: TP=2 swap  ->  TP=1 A  ->  TP=1 B  ->  TP=2 swap2"
 echo "============================================================"
-
-echo "--- Swapin swap (GPU 0+1) ---"
-$IXT "$NA" cr_swapin swap "[0,1]"
-
 echo ""
-wait_health 9010 "swap"
-
-echo ""
-echo "--- Query TP=2 (port 9010, model tp2-a) ---"
-echo "  Result: $(query 9010 tp2-a)"
-
-echo ""
-gpu_status
-echo ""
-container_status
-echo ""
+echo "----- 2a: Swapin TP=2 swap -----"
+do_swapin_query "swap" 9010 "tp2-a" "[0,1]"
+echo "----- 2b: Swapout TP=2 swap -----"
+do_swapout "swap"
+echo "----- 2c: Swapin TP=1 A (GPU 0) -----"
+do_swapin_query "swap-a" 9011 "tp1-a" "[0]"
+echo "----- 2d: Swapout TP=1 A -----"
+do_swapout "swap-a"
+echo "----- 2e: Swapin TP=1 B (GPU 1) -----"
+do_swapin_query "swap-b" 9012 "tp1-b" "[1]"
+echo "----- 2f: Swapout TP=1 B -----"
+do_swapout "swap-b"
+echo "----- 2g: Swapin TP=2 swap2 -----"
+do_swapin_query "swap2" 9013 "tp2-b" "[0,1]"
+echo "----- 2h: Swapout TP=2 swap2 -----"
+do_swapout "swap2"
 
 # =============================================================================
-# STEP 5: Swapout TP=2
+# PHASE 3: TP=1 A -> TP=2 swap -> TP=1 B -> TP=2 swap2
+#   Tests: TP=1 to TP=2 to different TP=1 to different TP=2
 # =============================================================================
 echo "============================================================"
-echo "STEP 5: Swapout TP=2"
+echo "PHASE 3: TP=1 A  ->  TP=2 swap  ->  TP=1 B  ->  TP=2 swap2"
 echo "============================================================"
-
-echo "--- Swapout swap ---"
-$IXT "$NA" cr_swapout swap
-
 echo ""
-sleep 3
-container_status
-gpu_status
-echo ""
-
-# =============================================================================
-# STEP 6: Swapin both TP=1 again (verify round-trip works)
-# =============================================================================
-echo "============================================================"
-echo "STEP 6: Swapin both TP=1 again"
-echo "============================================================"
-
-echo "--- Swapin swap-a (GPU 0) ---"
-$IXT "$NA" cr_swapin swap-a "[0]"
-
-echo "--- Swapin swap-b (GPU 1) ---"
-$IXT "$NA" cr_swapin swap-b "[1]"
-
-echo ""
-wait_health 9011 "swap-a"
-wait_health 9012 "swap-b"
-
-echo ""
-echo "--- Query TP=1 A (port 9011, model tp1-a) ---"
-echo "  Result: $(query 9011 tp1-a)"
-
-echo "--- Query TP=1 B (port 9012, model tp1-b) ---"
-echo "  Result: $(query 9012 tp1-b)"
-
-echo ""
-gpu_status
-echo ""
-container_status
-echo ""
+echo "----- 3a: Swapin TP=1 A (GPU 0) -----"
+do_swapin_query "swap-a" 9011 "tp1-a" "[0]"
+echo "----- 3b: Swapout TP=1 A -----"
+do_swapout "swap-a"
+echo "----- 3c: Swapin TP=2 swap -----"
+do_swapin_query "swap" 9010 "tp2-a" "[0,1]"
+echo "----- 3d: Swapout TP=2 swap -----"
+do_swapout "swap"
+echo "----- 3e: Swapin TP=1 B (GPU 1) -----"
+do_swapin_query "swap-b" 9012 "tp1-b" "[1]"
+echo "----- 3f: Swapout TP=1 B -----"
+do_swapout "swap-b"
+echo "----- 3g: Swapin TP=2 swap2 -----"
+do_swapin_query "swap2" 9013 "tp2-b" "[0,1]"
+echo "----- 3h: Swapout TP=2 swap2 -----"
+do_swapout "swap2"
 
 # =============================================================================
 # STEP 7: Final cleanup — swapout all containers
@@ -234,12 +227,8 @@ echo ""
 echo "============================================================"
 echo "STEP 7: Final cleanup"
 echo "============================================================"
-
-echo "--- Swapout swap-a ---"
-$IXT "$NA" cr_swapout swap-a
-echo "--- Swapout swap-b ---"
-$IXT "$NA" cr_swapout swap-b
-
+echo "--- Swapout swap2 ---"
+$IXT "$NA" cr_swapout swap2 2>/dev/null || true
 echo ""
 sleep 3
 container_status
@@ -252,7 +241,8 @@ echo "============================================================"
 echo ""
 echo "Expected results:"
 echo "  - All queries returned correct fruit answers (cherry/apple)"
-echo "  - TP=1 containers ran on separate GPUs simultaneously"
-echo "  - TP=2 container used both GPUs exclusively"
+echo "  - TP=2 containers used both GPUs exclusively"
+echo "  - Two TP=2 containers swapped sequentially on same GPUs"
+echo "  - TP=1 containers ran one at a time (CRIU host-net limitation)"
 echo "  - No GPU was shared by two containers at the same time"
 echo "  - All swapin/swapout operations completed without errors"
