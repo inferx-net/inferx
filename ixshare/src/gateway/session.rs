@@ -682,6 +682,7 @@ async fn consume_content_stream(
         content: String::new(),
         prompt_tokens: 0,
     };
+    let mut buf = String::new();
 
     loop {
         let next_chunk = tokio::select! {
@@ -695,9 +696,16 @@ async fn consume_content_stream(
         };
         match result {
             Ok(chunk) => {
-                let chunk_str = String::from_utf8_lossy(chunk.as_ref());
-                for line in chunk_str.lines() {
-                    match parse_content_stream_line(line) {
+                buf.push_str(&String::from_utf8_lossy(chunk.as_ref()));
+                while let Some(pos) = buf.find('\n') {
+                    let mut line = buf.drain(..=pos).collect::<String>();
+                    if line.ends_with('\n') {
+                        line.pop();
+                    }
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    match parse_content_stream_line(&line) {
                         ParsedContentStreamLine::Ignore => {}
                         ParsedContentStreamLine::Done => break,
                         ParsedContentStreamLine::Usage { prompt_tokens } => {
@@ -707,7 +715,9 @@ async fn consume_content_stream(
                         }
                         ParsedContentStreamLine::ContentDelta(delta) => {
                             state.content.push_str(&delta);
-                            let _ = tx.send(Ok(Event::default().data(delta.to_string()))).await;
+                            let _ = tx
+                                .send(Ok(Event::default().data(delta.to_string())))
+                                .await;
                         }
                     }
                 }
@@ -717,6 +727,30 @@ async fn consume_content_stream(
                     state,
                     error: format!("{}", e),
                 };
+            }
+        }
+    }
+
+    // Flush any trailing partial line that never received a terminating \n.
+    if !buf.is_empty() {
+        let mut line = buf;
+        if line.ends_with('\n') {
+            line.pop();
+        }
+        if line.ends_with('\r') {
+            line.pop();
+        }
+        match parse_content_stream_line(&line) {
+            ParsedContentStreamLine::Ignore => {}
+            ParsedContentStreamLine::Done => {}
+            ParsedContentStreamLine::Usage { prompt_tokens } => {
+                if prompt_tokens > 0 {
+                    state.prompt_tokens = prompt_tokens;
+                }
+            }
+            ParsedContentStreamLine::ContentDelta(delta) => {
+                state.content.push_str(&delta);
+                let _ = tx.send(Ok(Event::default().data(delta.to_string()))).await;
             }
         }
     }
@@ -2116,6 +2150,7 @@ pub async fn HandlePromptStream(
         let mut prompt_tokens: u64 = 0;
         let mut finish_reason: Option<String> = None;
         let mut interrupted = false;
+        let mut buf = String::new();
 
         loop {
             let next_chunk = tokio::select! {
@@ -2130,9 +2165,16 @@ pub async fn HandlePromptStream(
             };
             match result {
                 Ok(chunk) => {
-                    let chunk_str = String::from_utf8_lossy(chunk.as_ref());
+                    buf.push_str(&String::from_utf8_lossy(chunk.as_ref()));
 
-                    for line in chunk_str.lines() {
+                    while let Some(pos) = buf.find('\n') {
+                        let mut line = buf.drain(..=pos).collect::<String>();
+                        if line.ends_with('\n') {
+                            line.pop();
+                        }
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
                         if !line.is_empty() {
                             debug!("[agent] model stream line: {}", line);
                         }
@@ -2267,6 +2309,51 @@ pub async fn HandlePromptStream(
                     error!("Stream error: {}", e);
                     stream_error = Some(format!("{}", e));
                     break;
+                }
+            }
+        }
+
+        // Flush any trailing partial line that never received a terminating \n.
+        if !buf.is_empty() {
+            let mut line = buf;
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            if line.ends_with('\r') {
+                line.pop();
+            }
+            if !line.is_empty() {
+                debug!("[agent] model stream line (trailing): {}", line);
+            }
+            if line.starts_with("data: ") {
+                let data = &line[6..];
+                if data != "[DONE]" {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(usage) = json.get("usage") {
+                            let p = usage
+                                .get("prompt_tokens")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            if p > 0 {
+                                prompt_tokens = p;
+                            }
+                        } else if let Some(choice) = json
+                            .get("choices")
+                            .and_then(|c| c.as_array())
+                            .and_then(|a| a.first())
+                        {
+                            if let Some(delta) = choice
+                                .get("delta")
+                                .and_then(|d| d.get("content"))
+                                .and_then(|c| c.as_str())
+                            {
+                                full_content.push_str(delta);
+                                let _ = tx
+                                    .send(Ok(Event::default().data(delta.to_string())))
+                                    .await;
+                            }
+                        }
+                    }
                 }
             }
         }

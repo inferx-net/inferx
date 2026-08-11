@@ -138,6 +138,10 @@ pub async fn process_usage_response(
             // normally. With stream_options.continuous_usage_stats, intermediate
             // chunks carry partial counts, so the FINAL one (last seen) is the total.
             let mut last_usage: Option<UsageInfo> = None;
+            // Carry-over buffer for lines split across frames. Without this, a long
+            // `data:` event split at a frame boundary gets a spurious `\n` injected
+            // at the boundary, corrupting the JSON for the client.
+            let mut buf = String::new();
 
             loop {
                 let frame = body.frame().await;
@@ -146,6 +150,10 @@ pub async fn process_usage_response(
                         // Stream completed: bill the final usage total.
                         if let Some(usage) = last_usage.as_ref() {
                             record_usage(&meter, usage, true);
+                        }
+                        // Flush any trailing partial line that never got a terminating \n.
+                        if !buf.is_empty() {
+                            let _ = tx.send(Ok(Bytes::from(buf))).await;
                         }
                         return;
                     }
@@ -161,20 +169,31 @@ pub async fn process_usage_response(
                 let bytes: Bytes = bytes.into_data().unwrap_or_default();
 
                 let outputBytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+                    buf.push_str(text);
                     let mut filteredLines = String::new();
 
-                    for line in text.lines() {
+                    while let Some(pos) = buf.find('\n') {
+                        let mut line = buf.drain(..=pos).collect::<String>();
+                        if line.ends_with('\n') {
+                            line.pop();
+                        }
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
+
                         if let Some(json_str) = line
                             .strip_prefix("data: ")
                             .or_else(|| line.strip_prefix("data:"))
                         {
                             if json_str.trim() == "[DONE]" {
-                                filteredLines.push_str(line);
+                                filteredLines.push_str(&line);
                                 filteredLines.push('\n');
                                 continue;
                             }
 
-                            if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(json_str) {
+                            if let Ok(Value::Object(obj)) =
+                                serde_json::from_str::<Value>(json_str)
+                            {
                                 if let Some(Value::Object(usage_obj)) = obj.get("usage") {
                                     last_usage = Some(parse_usage(usage_obj));
                                     if should_filter_usage {
@@ -183,7 +202,7 @@ pub async fn process_usage_response(
                                 }
                             }
                         }
-                        filteredLines.push_str(line);
+                        filteredLines.push_str(&line);
                         filteredLines.push('\n');
                     }
 
@@ -310,4 +329,80 @@ pub async fn FuncCallWithTokenTracking(
     // No meter context on the legacy /modelcall path: usage is logged only.
     // Legacy `/modelcall` path: no external limiter permit.
     Ok(process_usage_response(response, isStreaming, !usageEnabled, None, None).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_usage_response;
+    use axum::body::Body;
+    use axum::response::Response;
+    use http_body_util::BodyExt;
+    use hyper::body::Bytes;
+    use std::convert::Infallible;
+    use tokio::sync::mpsc;
+    use tokio_stream::wrappers::ReceiverStream;
+
+    fn streaming_response_from_chunks(chunks: Vec<Vec<u8>>) -> Response {
+        let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, Infallible>>(128);
+        for chunk in chunks {
+            tx.try_send(Ok(Bytes::from(chunk))).unwrap();
+        }
+        drop(tx);
+        let body = Body::from_stream(ReceiverStream::new(rx));
+        Response::new(body)
+    }
+
+    async fn collect_body(body: Body) -> String {
+        let bytes = body.collect().await.unwrap().to_bytes();
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+
+    #[tokio::test]
+    async fn short_data_event_in_single_frame_is_forwarded_intact() {
+        let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+        let resp = streaming_response_from_chunks(vec![sse.to_vec()]);
+        let result = process_usage_response(resp, true, false, None, None).await;
+        let output = collect_body(result.into_body()).await;
+        assert_eq!(output, String::from_utf8_lossy(sse));
+    }
+
+    #[tokio::test]
+    async fn long_data_event_in_single_frame_is_forwarded_intact() {
+        let big = "x".repeat(10_000);
+        let json = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{}"}}}}]}}"#,
+            big
+        );
+        let sse = format!("{}\n\n", json);
+        let resp = streaming_response_from_chunks(vec![sse.clone().into_bytes()]);
+        let result = process_usage_response(resp, true, false, None, None).await;
+        let output = collect_body(result.into_body()).await;
+        assert_eq!(output, sse);
+    }
+
+    #[tokio::test]
+    async fn long_data_event_split_at_frame_boundary_injects_spurious_newline() {
+        let big = "x".repeat(10_000);
+        let json = format!(
+            r#"data: {{"choices":[{{"delta":{{"content":"{}"}}}}]}}"#,
+            big
+        );
+        let sse = format!("{}\n\n", json);
+
+        let split = 4096;
+        let chunk1 = sse[..split].as_bytes().to_vec();
+        let chunk2 = sse[split..].as_bytes().to_vec();
+
+        let resp = streaming_response_from_chunks(vec![chunk1, chunk2]);
+        let result = process_usage_response(resp, true, false, None, None).await;
+        let output = collect_body(result.into_body()).await;
+
+        assert_eq!(
+            output, sse,
+            "long data event split across frames must be reassembled without injecting newlines\n\
+             expected {} bytes, got {} bytes",
+            sse.len(),
+            output.len()
+        );
+    }
 }
