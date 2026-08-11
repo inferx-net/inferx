@@ -48,6 +48,20 @@ const PLATFORM_TENANT: &str = "inferx";
 const PLATFORM_SHARED_NAMESPACE: &str = "endpoint";
 const KB_FILE_NAME: &str = "kb.data";
 
+fn blocked_onboard_email_domain(email: &str) -> Option<String> {
+    let normalized = email.trim().to_ascii_lowercase();
+    let (_, domain) = normalized.split_once('@')?;
+    let domain = domain.trim();
+    if domain.is_empty() {
+        return None;
+    }
+
+    GATEWAY_CONFIG
+        .onboardBlockedEmailDomains
+        .contains(domain)
+        .then(|| domain.to_owned())
+}
+
 fn kb_func_root_path(tenant: &str, namespace: &str, name: &str) -> PathBuf {
     Path::new(KB_DIR).join(format!("{}.{}.{}", tenant, namespace, name))
 }
@@ -1022,6 +1036,13 @@ impl HttpGateway {
     ) -> Result<(String, bool, String, String)> {
         if token.username == "anonymous" || token.sourceIsApikey || token.subject.is_empty() {
             return Err(Error::NoPermission);
+        }
+
+        if let Some(domain) = blocked_onboard_email_domain(&token.email) {
+            return Err(Error::CommonError(format!(
+                "tenant onboarding is blocked for email domain {}",
+                domain
+            )));
         }
 
         let sub = token.subject.clone();

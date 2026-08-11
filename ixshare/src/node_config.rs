@@ -155,6 +155,19 @@ fn resolve_provider_api_allowed_tenants(config: &NodeConfig) -> BTreeSet<String>
         .collect()
 }
 
+fn resolve_onboard_blocked_email_domains(config: &NodeConfig) -> BTreeSet<String> {
+    let values: Vec<String> = match std::env::var("ONBOARD_BLOCKED_EMAIL_DOMAINS") {
+        Ok(raw) => raw.split(',').map(str::to_owned).collect(),
+        Err(_) => config.onboard_blocked_email_domains.clone(),
+    };
+
+    values
+        .into_iter()
+        .map(|domain| domain.trim().trim_start_matches('@').to_ascii_lowercase())
+        .filter(|domain| !domain.is_empty())
+        .collect()
+}
+
 lazy_static::lazy_static! {
     #[derive(Debug)]
     pub static ref NODE_CONFIG: NodeConfig = {
@@ -296,6 +309,7 @@ pub struct GatewayConfig {
     pub keycloakconfig: KeycloadConfig,
     pub inferxAdminApikey: String,
     pub onboardInitialCreditCents: i64,
+    pub onboardBlockedEmailDomains: BTreeSet<String>,
     pub gatewayPort: u16,
     pub endpointsDefaultPolicy: EndpointGatewayPolicySpec,
     pub inferxTenantPolicy: InferxTenantPolicy,
@@ -474,6 +488,7 @@ impl GatewayConfig {
         let endpointsDefaultPolicy = resolve_endpoints_default_policy(config);
         let inferxTenantPolicy = resolve_inferx_tenant_policy(config);
         let providerApiAllowedTenants = resolve_provider_api_allowed_tenants(config);
+        let onboardBlockedEmailDomains = resolve_onboard_blocked_email_domains(config);
 
         let externalConnectTimeoutSecs = env_u64_or("EXTERNAL_CONNECT_TIMEOUT_SECS", 10);
         let externalResponseHeaderTimeoutSecs =
@@ -502,6 +517,7 @@ impl GatewayConfig {
             },
             inferxAdminApikey: inferxAdminApikey,
             onboardInitialCreditCents: onboardInitialCreditCents,
+            onboardBlockedEmailDomains,
             gatewayPort: gatewayPort,
             endpointsDefaultPolicy,
             inferxTenantPolicy,
@@ -1160,6 +1176,9 @@ pub struct NodeConfig {
     #[serde(default, rename = "providerApiAllowedTenants")]
     pub providerApiAllowedTenants: Vec<String>,
 
+    #[serde(default, rename = "onboardBlockedEmailDomains")]
+    pub onboard_blocked_email_domains: Vec<String>,
+
     /// Post-turn (reactive) compaction threshold, as a percentage of the model
     /// context window. Applied after a turn completes, against the provider's
     /// reported prompt_tokens — distinct from the preflight ratios, which run
@@ -1209,6 +1228,7 @@ mod tests {
     // set/remove calls. Hold this lock for the whole set→resolve→remove window.
     lazy_static::lazy_static! {
         static ref PROVIDER_API_ENV_LOCK: Mutex<()> = Mutex::new(());
+        static ref ONBOARD_BLOCKED_EMAIL_DOMAINS_ENV_LOCK: Mutex<()> = Mutex::new(());
     }
 
     fn test_node_config() -> NodeConfig {
@@ -1244,6 +1264,7 @@ mod tests {
             inferx_endpoint_func_default_policy: default_inferx_endpoint_func_default_policy(),
             inferx_tenant_policy: InferxTenantPolicy::default(),
             providerApiAllowedTenants: Vec::new(),
+            onboard_blocked_email_domains: Vec::new(),
             agent_postturn_compaction_ratio: default_agent_postturn_compaction_ratio(),
             agent_preflight_compaction_ratio: default_agent_preflight_compaction_ratio(),
             agent_first_call_compaction_ratio: default_agent_first_call_compaction_ratio(),
@@ -1368,6 +1389,69 @@ mod tests {
 
         let resolved = resolve_provider_api_allowed_tenants(&config);
         std::env::remove_var("PROVIDER_API_ALLOWED_TENANTS");
+
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn resolve_onboard_blocked_email_domains_uses_node_config() {
+        let _guard = ONBOARD_BLOCKED_EMAIL_DOMAINS_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("ONBOARD_BLOCKED_EMAIL_DOMAINS");
+
+        let mut config = test_node_config();
+        config.onboard_blocked_email_domains = vec![
+            " Geusil.com ".to_owned(),
+            "".to_owned(),
+            "@Example.org".to_owned(),
+        ];
+
+        let resolved = resolve_onboard_blocked_email_domains(&config);
+        assert_eq!(
+            resolved,
+            BTreeSet::from(["example.org".to_owned(), "geusil.com".to_owned(),])
+        );
+    }
+
+    #[test]
+    fn resolve_onboard_blocked_email_domains_uses_env_csv() {
+        let _guard = ONBOARD_BLOCKED_EMAIL_DOMAINS_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(
+            "ONBOARD_BLOCKED_EMAIL_DOMAINS",
+            " geusil.com , @example.org ,, Test.COM ",
+        );
+
+        let mut config = test_node_config();
+        config.onboard_blocked_email_domains = vec!["ignored.com".to_owned()];
+
+        let resolved = resolve_onboard_blocked_email_domains(&config);
+        std::env::remove_var("ONBOARD_BLOCKED_EMAIL_DOMAINS");
+
+        assert_eq!(
+            resolved,
+            BTreeSet::from([
+                "example.org".to_owned(),
+                "geusil.com".to_owned(),
+                "test.com".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn resolve_onboard_blocked_email_domains_empty_env_disables_blocklist() {
+        let _guard = ONBOARD_BLOCKED_EMAIL_DOMAINS_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("ONBOARD_BLOCKED_EMAIL_DOMAINS", "");
+
+        let mut config = test_node_config();
+        config.onboard_blocked_email_domains = vec!["geusil.com".to_owned()];
+
+        let resolved = resolve_onboard_blocked_email_domains(&config);
+        std::env::remove_var("ONBOARD_BLOCKED_EMAIL_DOMAINS");
 
         assert!(resolved.is_empty());
     }
