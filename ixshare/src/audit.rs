@@ -2605,12 +2605,14 @@ impl SqlAudit {
         fprevision: i64,
         id: &str,
     ) -> Result<Vec<PodAuditLog>> {
-        let query = format!(
-            "SELECT state, updatetime FROM podaudit where tenant = '{}' and namespace='{}' \
-         and fpname='{}' and fprevision='{}' and id='{}' order by updatetime;",
-            tenant, namespace, fpname, fprevision, id
-        );
-        let selectQuery = sqlx::query_as::<_, PodAuditLog>(&query);
+        let query = "SELECT state, updatetime FROM podaudit where tenant = $1 and namespace=$2 \
+         and fpname=$3 and fprevision=$4 and id=$5 order by updatetime;";
+        let selectQuery = sqlx::query_as::<_, PodAuditLog>(query)
+            .bind(tenant)
+            .bind(namespace)
+            .bind(fpname)
+            .bind(fprevision)
+            .bind(id);
         let logs: Vec<PodAuditLog> = selectQuery.fetch_all(&self.pool).await?;
         return Ok(logs);
     }
@@ -2622,10 +2624,13 @@ impl SqlAudit {
         fpname: &str,
         fprevision: i64,
     ) -> Result<Vec<PodFailLog>> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, createtime, nodename, '' as log, exit_info \
-         from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {}", 
-            tenant, namespace, fpname, fprevision);
-        let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
+        let query = "select tenant, namespace, fpname, fprevision, id, state, createtime, nodename, '' as log, exit_info \
+         from PodFailLog where tenant = $1 and namespace = $2 and fpname = $3 and fprevision = $4";
+        let selectQuery = sqlx::query_as::<_, PodFailLog>(query)
+            .bind(tenant)
+            .bind(namespace)
+            .bind(fpname)
+            .bind(fprevision);
         let logs: Vec<PodFailLog> = match selectQuery.fetch_all(&self.pool).await {
             Err(e) => {
                 return Err(e.into());
@@ -2643,9 +2648,13 @@ impl SqlAudit {
         fprevision: i64,
         id: &str,
     ) -> Result<PodFailLog> {
-        let query = format!("select tenant, namespace, fpname, fprevision, id, state, nodename, createtime, log, exit_info from PodFailLog where tenant = '{}' and namespace = '{}' and fpname = '{}' and fprevision = {} and id = '{}'", 
-            tenant, namespace, fpname, fprevision, id);
-        let selectQuery = sqlx::query_as::<_, PodFailLog>(&query);
+        let query = "select tenant, namespace, fpname, fprevision, id, state, nodename, createtime, log, exit_info from PodFailLog where tenant = $1 and namespace = $2 and fpname = $3 and fprevision = $4 and id = $5";
+        let selectQuery = sqlx::query_as::<_, PodFailLog>(query)
+            .bind(tenant)
+            .bind(namespace)
+            .bind(fpname)
+            .bind(fprevision)
+            .bind(id);
         let log: PodFailLog = match selectQuery.fetch_one(&self.pool).await {
             Ok(l) => l,
             Err(e) => {

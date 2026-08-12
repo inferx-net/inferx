@@ -685,12 +685,9 @@ impl SqlSecret {
     }
 
     pub async fn GetRoles(&self, username: &str) -> Result<Vec<String>> {
-        let query = format!(
-            "select rolename from UserRole where username = '{}'",
-            username
-        );
+        let query = "select rolename from UserRole where username = $1";
 
-        let selectQuery = sqlx::query_as::<_, Role>(&query);
+        let selectQuery = sqlx::query_as::<_, Role>(query).bind(username);
         let roles: Vec<Role> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
         for r in roles {
@@ -700,11 +697,12 @@ impl SqlSecret {
     }
 
     pub async fn DeleteRole(&self, username: &str, role: &str) -> Result<()> {
-        let query = format!(
-            "delete from UserRole where username = '{}' and rolename='{}'",
-            username, role
-        );
-        let result = sqlx::query(&query).execute(&self.pool).await;
+        let query = "delete from UserRole where username = $1 and rolename=$2";
+        let result = sqlx::query(query)
+            .bind(username)
+            .bind(role)
+            .execute(&self.pool)
+            .await;
 
         match result {
             Err(e) => {
@@ -717,8 +715,8 @@ impl SqlSecret {
     }
 
     pub async fn DeleteRolesByUsername(&self, username: &str) -> Result<()> {
-        let query = format!("delete from UserRole where username = '{}'", username);
-        let result = sqlx::query(&query).execute(&self.pool).await;
+        let query = "delete from UserRole where username = $1";
+        let result = sqlx::query(query).bind(username).execute(&self.pool).await;
 
         match result {
             Err(e) => {
@@ -731,12 +729,10 @@ impl SqlSecret {
     }
 
     pub async fn GetTenantAdmins(&self, tenant: &str) -> Result<Vec<String>> {
-        let query = format!(
-            "select username from UserRole where rolename = '/tenant/admin/{}'",
-            tenant
-        );
+        let query = "select username from UserRole where rolename = $1";
+        let rolename = format!("/tenant/admin/{}", tenant);
 
-        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let selectQuery = sqlx::query_as::<_, User>(query).bind(rolename);
         let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
         for r in roles {
@@ -746,12 +742,10 @@ impl SqlSecret {
     }
 
     pub async fn GetTenantUsers(&self, tenant: &str) -> Result<Vec<String>> {
-        let query = format!(
-            "select username from UserRole where rolename = '/tenant/user/{}'",
-            tenant
-        );
+        let query = "select username from UserRole where rolename = $1";
+        let rolename = format!("/tenant/user/{}", tenant);
 
-        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let selectQuery = sqlx::query_as::<_, User>(query).bind(rolename);
         let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
         for r in roles {
@@ -761,12 +755,10 @@ impl SqlSecret {
     }
 
     pub async fn GetNamespaceAdmins(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
-        let query = format!(
-            "select username from UserRole where rolename = '/namespace/admin/{}/{}'",
-            tenant, namespace
-        );
+        let query = "select username from UserRole where rolename = $1";
+        let rolename = format!("/namespace/admin/{}/{}", tenant, namespace);
 
-        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let selectQuery = sqlx::query_as::<_, User>(query).bind(rolename);
         let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
         for r in roles {
@@ -776,12 +768,10 @@ impl SqlSecret {
     }
 
     pub async fn GetNamespaceUsers(&self, tenant: &str, namespace: &str) -> Result<Vec<String>> {
-        let query = format!(
-            "select username from UserRole where rolename = '/namespace/user/{}/{}'",
-            tenant, namespace
-        );
+        let query = "select username from UserRole where rolename = $1";
+        let rolename = format!("/namespace/user/{}/{}", tenant, namespace);
 
-        let selectQuery = sqlx::query_as::<_, User>(&query);
+        let selectQuery = sqlx::query_as::<_, User>(query).bind(rolename);
         let roles: Vec<User> = selectQuery.fetch_all(&self.pool).await?;
         let mut v = Vec::new();
         for r in roles {
