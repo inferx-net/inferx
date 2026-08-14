@@ -32,6 +32,8 @@ service NodeAgentService {
   rpc RemoveSnapshot(RemoveSnapshotReq) returns (RemoveSnapshotResp) {}
   rpc CrSwapout(CrSwapoutReq) returns (CrSwapoutResp) {}
   rpc CrSwapin(CrSwapinReq) returns (CrSwapinResp) {}
+  rpc CrRestore(CrRestoreReq) returns (CrRestoreResp) {}
+  rpc CrStop(CrStopReq) returns (CrStopResp) {}
 }
 
 service IxProxyService {
@@ -479,5 +481,21 @@ message CrSwapinReq {
 }
 
 message CrSwapinResp {
+  string error = 1;
+}
+
+message CrRestoreReq {
+  string container_name = 1;
+}
+
+message CrRestoreResp {
+  string error = 1;
+}
+
+message CrStopReq {
+  string container_name = 1;
+}
+
+message CrStopResp {
   string error = 1;
 }

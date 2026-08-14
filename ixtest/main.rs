@@ -14,6 +14,8 @@ fn usage() {
     eprintln!("  ixtest <na_addr> cr_swapout [container_name]");
     eprintln!("  ixtest <na_addr> cr_swapin [container_name] [gpu_map]");
     eprintln!("  ixtest <na_addr> cr_swap_test [container_name] [port] [rounds] [gpu_map]");
+    eprintln!("  ixtest <na_addr> cr_restore [container_name]");
+    eprintln!("  ixtest <na_addr> cr_stop [container_name]");
     eprintln!("  ixtest <na_addr> list_pods [tenant] [namespace]");
     eprintln!("  ixtest <na_addr> get_pod [tenant] [namespace] [name]");
     eprintln!("  ixtest <na_addr> read_pod_log [tenant] [namespace] [funcname] [fprevision] [id]");
@@ -229,6 +231,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Sending CrSwapin to {} (container={}, gpu_map='{}') ...", na_addr, container_name, gpu_map);
             let response = client.cr_swapin(request).await?;
+            let resp = response.into_inner();
+
+            if resp.error.is_empty() {
+                println!("Success");
+            } else {
+                println!("Error: {}", resp.error);
+            }
+        }
+        "cr_restore" => {
+            let container_name = args.get(3).map(|s| s.as_str()).unwrap_or("swap");
+
+            let mut client =
+                na::node_agent_service_client::NodeAgentServiceClient::connect(na_addr.to_string())
+                    .await?;
+
+            let request = tonic::Request::new(na::CrRestoreReq {
+                container_name: container_name.to_string(),
+            });
+
+            println!("Sending CrRestore to {} (container={}) ...", na_addr, container_name);
+            let response = client.cr_restore(request).await?;
+            let resp = response.into_inner();
+
+            if resp.error.is_empty() {
+                println!("Success");
+            } else {
+                println!("Error: {}", resp.error);
+            }
+        }
+        "cr_stop" => {
+            let container_name = args.get(3).map(|s| s.as_str()).unwrap_or("swap");
+
+            let mut client =
+                na::node_agent_service_client::NodeAgentServiceClient::connect(na_addr.to_string())
+                    .await?;
+
+            let request = tonic::Request::new(na::CrStopReq {
+                container_name: container_name.to_string(),
+            });
+
+            println!("Sending CrStop to {} (container={}) ...", na_addr, container_name);
+            let response = client.cr_stop(request).await?;
             let resp = response.into_inner();
 
             if resp.error.is_empty() {
