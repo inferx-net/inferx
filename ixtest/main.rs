@@ -452,7 +452,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .and_then(|s| s.get("funcname"))
                         .and_then(|f| f.as_str())
                         .unwrap_or("?");
-                    println!("  {}/{}/{}  state={}  funcname={}", obj.tenant, obj.namespace, obj.name, state, funcname);
+                    let fprevision = data.get("spec")
+                        .and_then(|s| s.get("fprevision"))
+                        .and_then(|f| f.as_i64())
+                        .unwrap_or(0);
+                    let id = data.get("spec")
+                        .and_then(|s| s.get("id"))
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("?");
+                    let port = data.get("spec")
+                        .and_then(|s| s.get("host_port"))
+                        .and_then(|p| p.as_u64())
+                        .unwrap_or(0);
+                    println!("  {}/{}/{}  state={}  funcname={}  fprevision={}  id={}  port={}", obj.tenant, obj.namespace, obj.name, state, funcname, fprevision, id, port);
                 }
             }
         }
