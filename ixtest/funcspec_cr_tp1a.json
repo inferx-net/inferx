@@ -4,19 +4,18 @@
   "envs": [],
   "mounts": [],
   "endpoint": {
-    "port": 9011,
+    "port": 0,
     "probe": "/health",
     "schema": "Http",
     "probe_timeout": 1000,
     "probetype": "Prompt"
   },
-  "gpu": "0",
   "version": 1,
   "model_type": "Public",
   "entrypoint": [],
   "resources": {
-    "CPU": 2000,
-    "Mem": 16384,
+    "CPU": 4000,
+    "Mem": 32768,
     "ReadyMem": 0,
     "CacheMem": 0,
     "GPU": {
