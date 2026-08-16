@@ -10,8 +10,7 @@ use ixshare::ixmeta;
 
 fn usage() {
     eprintln!("Usage:");
-    eprintln!("  ixtest <na_addr> create_func_pod [tenant] [namespace] [funcname] [id] [fprevision] [create_type] [funcspec_json]");
-    eprintln!("  ixtest <na_addr> cr_swapout [container_name]");
+    eprintln!("  ixtest <na_addr> create_func_pod [tenant] [namespace] [funcname] [id] [fprevision] [create_type] [funcspec_json] [gpu_map]");    eprintln!("  ixtest <na_addr> cr_swapout [container_name]");
     eprintln!("  ixtest <na_addr> cr_swapin [container_name] [gpu_map]");
     eprintln!("  ixtest <na_addr> cr_swap_test [container_name] [port] [rounds] [gpu_map]");
     eprintln!("  ixtest <na_addr> cr_restore [container_name]");
@@ -23,6 +22,7 @@ fn usage() {
     eprintln!("  ixtest <na_addr> terminate_pod [tenant] [namespace] [funcname] [fprevision] [id]");
     eprintln!();
     eprintln!("  gpu_map: comma-separated vgpu->pgpu mapping, e.g. '1,0' to swap GPUs; empty for no migration");
+    eprintln!("  create_func_pod [id]: use 'rand' (or empty) to auto-generate a random pod id");
 }
 
 fn extract_host(addr: &str) -> String {
@@ -54,10 +54,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let tenant = args.get(3).map(|s| s.as_str()).unwrap_or("public");
             let namespace = args.get(4).map(|s| s.as_str()).unwrap_or("default");
             let funcname = args.get(5).map(|s| s.as_str()).unwrap_or("test-func");
-            let id = args.get(6).map(|s| s.as_str()).unwrap_or("1");
+            let id_arg = args.get(6).map(|s| s.as_str()).unwrap_or("1");
+            let id = if id_arg == "rand" || id_arg.is_empty() {
+                let n: u64 = rand::random();
+                format!("{}", n % 1000000)
+            } else {
+                id_arg.to_string()
+            };
             let fprevision: i64 = args.get(7).map(|s| s.parse().unwrap_or(1)).unwrap_or(1);
             let create_type_str = args.get(8).map(|s| s.as_str()).unwrap_or("normal");
             let funcspec_path = args.get(9).map(|s| s.as_str());
+            let cli_gpu_map = args.get(10).map(|s| s.as_str());
 
             let create_type = match create_type_str.to_lowercase().as_str() {
                 "snapshot" => na::CreatePodType::Snapshot,
@@ -117,8 +124,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let gpu_ids: Vec<i32> = {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&funcspec_str) {
-                    v.get("gpu").and_then(|x| x.as_str())
+                if let Some(gm) = cli_gpu_map {
+                    gm.split(',')
+                        .filter_map(|s| s.trim().parse::<i32>().ok())
+                        .collect()
+                } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(&funcspec_str) {
+                    v.get("gpumap").and_then(|x| x.as_str())
                         .map(|s| s.split(',')
                             .filter_map(|s| s.trim().parse::<i32>().ok())
                             .collect())
