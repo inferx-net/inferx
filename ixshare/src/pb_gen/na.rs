@@ -785,6 +785,64 @@ pub struct PodEvent {
     pub pod: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrSwapoutReq {
+    #[prost(string, tag = "1")]
+    pub container_name: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrSwapoutResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrSwapinReq {
+    #[prost(string, tag = "1")]
+    pub container_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub gpu_map: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrSwapinResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrRestoreReq {
+    #[prost(string, tag = "1")]
+    pub container_name: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrRestoreResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrStopReq {
+    #[prost(string, tag = "1")]
+    pub container_name: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CrStopResp {
+    #[prost(string, tag = "1")]
+    pub error: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum KillPodStatus {
@@ -824,6 +882,7 @@ pub enum CreatePodType {
     Normal = 0,
     Snapshot = 2,
     Restore = 3,
+    CrContainer = 4,
 }
 impl CreatePodType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -835,6 +894,7 @@ impl CreatePodType {
             CreatePodType::Normal => "Normal",
             CreatePodType::Snapshot => "Snapshot",
             CreatePodType::Restore => "Restore",
+            CreatePodType::CrContainer => "CRContainer",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -843,6 +903,7 @@ impl CreatePodType {
             "Normal" => Some(Self::Normal),
             "Snapshot" => Some(Self::Snapshot),
             "Restore" => Some(Self::Restore),
+            "CRContainer" => Some(Self::CrContainer),
             _ => None,
         }
     }
@@ -1204,6 +1265,82 @@ pub mod node_agent_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/na.NodeAgentService/RemoveSnapshot",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn cr_swapout(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CrSwapoutReq>,
+        ) -> Result<tonic::Response<super::CrSwapoutResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.NodeAgentService/CrSwapout",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn cr_swapin(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CrSwapinReq>,
+        ) -> Result<tonic::Response<super::CrSwapinResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.NodeAgentService/CrSwapin",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn cr_restore(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CrRestoreReq>,
+        ) -> Result<tonic::Response<super::CrRestoreResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.NodeAgentService/CrRestore",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn cr_stop(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CrStopReq>,
+        ) -> Result<tonic::Response<super::CrStopResp>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/na.NodeAgentService/CrStop",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
@@ -1759,6 +1896,22 @@ pub mod node_agent_service_server {
             &self,
             request: tonic::Request<super::RemoveSnapshotReq>,
         ) -> Result<tonic::Response<super::RemoveSnapshotResp>, tonic::Status>;
+        async fn cr_swapout(
+            &self,
+            request: tonic::Request<super::CrSwapoutReq>,
+        ) -> Result<tonic::Response<super::CrSwapoutResp>, tonic::Status>;
+        async fn cr_swapin(
+            &self,
+            request: tonic::Request<super::CrSwapinReq>,
+        ) -> Result<tonic::Response<super::CrSwapinResp>, tonic::Status>;
+        async fn cr_restore(
+            &self,
+            request: tonic::Request<super::CrRestoreReq>,
+        ) -> Result<tonic::Response<super::CrRestoreResp>, tonic::Status>;
+        async fn cr_stop(
+            &self,
+            request: tonic::Request<super::CrStopReq>,
+        ) -> Result<tonic::Response<super::CrStopResp>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct NodeAgentServiceServer<T: NodeAgentService> {
@@ -2006,6 +2159,157 @@ pub mod node_agent_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = RemoveSnapshotSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.NodeAgentService/CrSwapout" => {
+                    #[allow(non_camel_case_types)]
+                    struct CrSwapoutSvc<T: NodeAgentService>(pub Arc<T>);
+                    impl<
+                        T: NodeAgentService,
+                    > tonic::server::UnaryService<super::CrSwapoutReq>
+                    for CrSwapoutSvc<T> {
+                        type Response = super::CrSwapoutResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CrSwapoutReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).cr_swapout(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CrSwapoutSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.NodeAgentService/CrSwapin" => {
+                    #[allow(non_camel_case_types)]
+                    struct CrSwapinSvc<T: NodeAgentService>(pub Arc<T>);
+                    impl<
+                        T: NodeAgentService,
+                    > tonic::server::UnaryService<super::CrSwapinReq>
+                    for CrSwapinSvc<T> {
+                        type Response = super::CrSwapinResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CrSwapinReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).cr_swapin(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CrSwapinSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.NodeAgentService/CrRestore" => {
+                    #[allow(non_camel_case_types)]
+                    struct CrRestoreSvc<T: NodeAgentService>(pub Arc<T>);
+                    impl<
+                        T: NodeAgentService,
+                    > tonic::server::UnaryService<super::CrRestoreReq>
+                    for CrRestoreSvc<T> {
+                        type Response = super::CrRestoreResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CrRestoreReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).cr_restore(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CrRestoreSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/na.NodeAgentService/CrStop" => {
+                    #[allow(non_camel_case_types)]
+                    struct CrStopSvc<T: NodeAgentService>(pub Arc<T>);
+                    impl<
+                        T: NodeAgentService,
+                    > tonic::server::UnaryService<super::CrStopReq> for CrStopSvc<T> {
+                        type Response = super::CrStopResp;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CrStopReq>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).cr_stop(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CrStopSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

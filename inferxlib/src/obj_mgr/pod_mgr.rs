@@ -50,6 +50,7 @@ pub enum CreatePodType {
     Normal,
     Snapshot,
     Restore,
+    CRContainer,
 }
 
 impl Default for CreatePodType {
@@ -64,6 +65,7 @@ impl CreatePodType {
             Self::Normal => "Normal".to_owned(),
             Self::Snapshot => "Snapshot".to_owned(),
             Self::Restore => "Restore".to_owned(),
+            Self::CRContainer => "CRContainer".to_owned(),
         }
     }
 }
@@ -297,6 +299,11 @@ pub enum PodState {
 
     // Loading timeout, need rerun
     LoadingTimeout,
+
+    // CR container: GPU context saved, process sleeping, GPU memory freed
+    CrSwappedOut,
+    // CR container: checkpointed and stopped, container removed
+    CrCheckpointed,
 }
 
 impl Default for PodState {
