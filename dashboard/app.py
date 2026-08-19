@@ -2060,6 +2060,11 @@ DASHBOARD_LOCAL_TZ = pytz.timezone("America/Los_Angeles")
 MODEL_STATUS_READY = {"code": "ready", "label": "Ready"}
 MODEL_STATUS_RESUMING = {"code": "resuming", "label": "Resuming..."}
 MODEL_STATUS_STANDBY = {"code": "standby", "label": "Standby"}
+# CR-container pods: same "paused, resumable on request" contract as Standby
+# (Run button, canServeInference, and wake-polling all key off code=="standby"),
+# just with a label that reflects which CR pause state it actually is.
+MODEL_STATUS_CR_SWAPPED_OUT = {"code": "standby", "label": "Swapped Out"}
+MODEL_STATUS_CR_CHECKPOINTED = {"code": "standby", "label": "Checkpointed"}
 MODEL_STATUS_RESTORING = {"code": "restoring", "label": "Restoring"}
 MODEL_STATUS_PENDING = {"code": "pending", "label": "Pending"}
 MODEL_STATUS_SNAPSHOTTING = {"code": "snapshotting", "label": "Creating Snapshot..."}
@@ -2133,6 +2138,12 @@ def infer_model_status(pods, func_status_state, fails=None):
 
     if any(pod_state(pod) in {"Standby", "MemHibernated"} for pod in pod_list):
         return MODEL_STATUS_STANDBY
+
+    if any(pod_state(pod) == "CrSwappedOut" for pod in pod_list):
+        return MODEL_STATUS_CR_SWAPPED_OUT
+
+    if any(pod_state(pod) == "CrCheckpointed" for pod in pod_list):
+        return MODEL_STATUS_CR_CHECKPOINTED
 
     if any(
         pod_create_type(pod) == "Restore" and pod_state(pod) in RESTORE_ACTIVE_POD_STATES

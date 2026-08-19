@@ -28,6 +28,7 @@ use tokio_stream::StreamExt;
 use inferxlib::node::WorkerPodState;
 use inferxlib::obj_mgr::pod_mgr::FuncPod;
 use inferxlib::obj_mgr::pod_mgr::PodState;
+use inferxlib::obj_mgr::pod_mgr::Runtime;
 use std::ops::Deref;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -398,11 +399,31 @@ impl WorkerPod {
             ret.SetIdle(SetIdleSource::New);
         }
 
-        if ret.pod.object.status.state == PodState::Standby {
+        // CrSwappedOut/CrCheckpointed share Standby's WorkerPodState - see
+        // WorkerPodState::Standby's doc comment.
+        if ret.pod.object.status.state == PodState::Standby
+            || ret.pod.object.status.state == PodState::CrSwappedOut
+            || ret.pod.object.status.state == PodState::CrCheckpointed
+        {
             ret.SetState(WorkerPodState::Standby);
         }
 
-        if ret.pod.object.status.state == PodState::Resuming {
+        if ret.pod.object.status.state == PodState::Resuming
+            || ret.pod.object.status.state == PodState::SwappingIn
+        {
+            ret.SetState(WorkerPodState::Resuming);
+        }
+
+        // Mid swap-out: not leaseable yet, same as CrSwapoutPod's pre-RPC marker.
+        if ret.pod.object.status.state == PodState::SwappingOut {
+            ret.SetState(WorkerPodState::Standby);
+        }
+
+        // CR's CrCheckpointed->CrSwappedOut leg reuses Restoring; gated to CR only
+        // so old runtime's Restoring (new pod from snapshot) is unaffected.
+        if ret.pod.object.status.state == PodState::Restoring
+            && ret.pod.object.spec.runtime == Runtime::CrContainer
+        {
             ret.SetState(WorkerPodState::Resuming);
         }
 

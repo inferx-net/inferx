@@ -4,6 +4,9 @@ for i in {1..10000}; do
     echo "**************Iteration: $i**************" 
     date
 
+     test/ixtest/target/debug/ixtest concurrency=10 duration=37 alias="endpoint/func2" model="tp1-c" tenant="inferx" endpoint="$INFX_GATEWAY_URL" token="$IFERX_APIKEY"
+
+     test/ixtest/target/debug/ixtest concurrency=10 duration=67 alias="endpoint/func1" model="tp1-c" tenant="inferx" endpoint="$INFX_GATEWAY_URL" token="$IFERX_APIKEY"
     
     # test/ixtest/target/debug/ixtest 1000 20 "Qwen/Qwen2.5-Coder-1.5B-Instruct-1" "Qwen/Qwen2.5-Coder-1.5B-Instruct"
     # test/ixtest/target/debug/ixtest 5 30 "Qwen/Qwen2.5-Math-7B-Instruct" "Qwen/Qwen2.5-Math-7B-Instruct"
@@ -23,9 +26,9 @@ for i in {1..10000}; do
     # test/ixtest/target/debug/ixtest 700 10 "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8" "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8"
     # test/ixtest/target/debug/ixtest 10 40 "Qwen/Qwen2.5-Math-1.5B" "Qwen/Qwen2.5-Math-1.5B"
 
-    test/ixtest/target/debug/ixtest 50 31 "Qwen/Qwen2.5-Coder-1.5B-Instruct" "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    # test/ixtest/target/debug/ixtest 50 31 "Qwen/Qwen2.5-Coder-1.5B-Instruct" "Qwen/Qwen2.5-Coder-1.5B-Instruct"
 
-    test/ixtest/target/debug/ixtest 50 29 "Qwen/Qwen2.5-Coder-1.5B-Instruct-1" "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    # test/ixtest/target/debug/ixtest 50 29 "Qwen/Qwen2.5-Coder-1.5B-Instruct-1" "Qwen/Qwen2.5-Coder-1.5B-Instruct"
 
     # test/ixtest/target/debug/ixtest 100 20 "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8" "Qwen/Qwen2.5-Coder-14B-Instruct-GPTQ-Int8"
 

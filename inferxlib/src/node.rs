@@ -50,6 +50,12 @@ pub type ReturnId = u64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerPodState {
     Init,
+    // Not currently servable, but resumable via a defined RPC sequence. Shared by
+    // InferX snapshot-backed pods (PodState::Standby) and CR-container pods
+    // (PodState::CrSwappedOut/CrCheckpointed) - this enum only tracks scheduler-
+    // visible servability, not which mechanism produced the state, and every real
+    // WorkerPodState match site either already discriminates by PodState/Runtime
+    // first or wants identical behavior for both anyway.
     Standby,
     Resuming,
     Idle,         // no one leasing the worker

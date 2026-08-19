@@ -72,6 +72,7 @@ use inferxlib::obj_mgr::pod_mgr::CreatePodType;
 use inferxlib::obj_mgr::pod_mgr::FuncPod;
 use inferxlib::obj_mgr::pod_mgr::PodState;
 use inferxlib::obj_mgr::tenant_mgr::Tenant;
+use inferxlib::resource::GPUResourceMap;
 use inferxlib::resource::NodeResources;
 
 use crate::na;
@@ -183,6 +184,34 @@ impl PendingPod {
 
 pub type NodeName = String;
 
+/// How much of a CR pod's allocResources is actually reserved right now, given its
+/// current PodState. CrCheckpointed (process stopped, checkpoint on disk) reserves
+/// nothing; CrSwappedOut (process alive, GPU freed) reserves everything except the
+/// GPU portion; anything else (Ready, Loading, ...) reserves the full amount.
+/// Used everywhere a node's `available` gets derived from its pods' allocResources
+/// (initial registration, restart reconciliation, orphan pod discovery, and
+/// transition-based accounting in UpdatePod), so resource accounting stays correct
+/// regardless of *what* drove a CR pod into its current state - a scheduler-
+/// initiated CrSwapout RPC, a kick-out victim, or (as found live) NA autonomously
+/// auto-swapping out a pod during its own first-load warmup, which the scheduler
+/// never gets an RPC completion for at all.
+fn CrReservedResources(pod: &FuncPod) -> NodeResources {
+    let mut reserved = pod.object.spec.allocResources.clone();
+    match pod.object.status.state {
+        PodState::CrCheckpointed => {
+            reserved.cpu = 0;
+            reserved.memory = 0;
+            reserved.cacheMemory = 0;
+            reserved.gpus = GPUResourceMap::default();
+        }
+        PodState::CrSwappedOut => {
+            reserved.gpus = GPUResourceMap::default();
+        }
+        _ => {}
+    }
+    reserved
+}
+
 #[derive(Debug)]
 pub struct NodeStatus {
     pub node: Node,
@@ -209,7 +238,7 @@ impl NodeStatus {
     ) -> Result<Self> {
         let mut available = total.Copy();
         for (_, pod) in &pods {
-            available.Sub(&pod.pod.object.spec.allocResources)?;
+            available.Sub(&CrReservedResources(&pod.pod))?;
         }
 
         // error!("NodeStatus total {:#?}, availabe {:#?}", &total, &available);
@@ -246,7 +275,7 @@ impl NodeStatus {
                     &self.available,
                     &pod.pod.object.spec.allocResources
                 );
-                self.available.Sub(&pod.pod.object.spec.allocResources)?;
+                self.available.Sub(&CrReservedResources(&pod.pod))?;
             }
             Some(_) => (),
         }
@@ -530,7 +559,7 @@ impl FuncStatus {
                             keepalive: false,
                             hostipaddr: peer.hostIp,
                             hostport: peer.port as u32,
-                            hostnetwork: pod.pod.NvidiaRuntime(),
+                            hostnetwork: pod.pod.RequiresHostNetwork(),
                         };
 
                         match tx.send(resp) {
@@ -663,6 +692,19 @@ pub enum WorkerHandlerMsg {
     StopWorkerComplete {
         pod_key: String,
         result: Result<()>,
+    },
+    CrSwapoutComplete {
+        pod_key: String,
+        nodename: String,
+        result: Result<()>,
+        resources: NodeResources,
+    },
+    CrSwapinComplete {
+        pod_key: String,
+        nodename: String,
+        result: Result<()>,
+        resources: NodeResources,
+        needed_restore: bool,
     },
 }
 
@@ -1148,7 +1190,31 @@ impl SchedulerHandler {
             }
             Error::CommonError(msg) => {
                 // Keep existing connection refused check for wrapped errors
-                msg.contains("Connection refused") || msg.contains("ConnectionRefused")
+                msg.contains("Connection refused")
+                    || msg.contains("ConnectionRefused")
+                    // NA's synchronous "wrong node type" rejection (e.g.
+                    // "NA_TYPE=CR: only CRContainer pods are allowed on this NA") -
+                    // returned before touching any container, so it's safe to treat
+                    // as a clean scheduling/configuration failure rather than an
+                    // ambiguous one. A scheduler-side node-runtime filter should
+                    // normally prevent this from firing at all; this is defense in
+                    // depth so a stray occurrence degrades to a retriable error
+                    // instead of crashing the scheduler.
+                    || msg.contains("NA_TYPE=CR")
+                    // NA's synchronous "CR container already exists" rejection -
+                    // create_cr_container's very first check, against the
+                    // in-memory CR_AGENTS map, before any podman operation.
+                    // Confirmed live: fires when the scheduler mistakenly
+                    // attempts CrCreatePod (fresh creation) for a func that
+                    // already has a tracked pod, e.g. during a brief
+                    // CleanNode/node-restart churn window. The resume path
+                    // (CrRestore/CrSwapin) never hits this - it operates on
+                    // the existing container via `cr.restore()`, not fresh
+                    // creation. Matched narrowly (not just "already exists")
+                    // to avoid catching the unrelated DUPLICATE_SNAPSHOT
+                    // error, which already has its own CleanupDuplicateSnapshot
+                    // handling and isn't necessarily safe the same way.
+                    || (msg.contains("CR container") && msg.contains("already exists"))
             }
             _ => false,
         }
@@ -1795,7 +1861,21 @@ impl SchedulerHandler {
                 };
                 let podKey = worker.pod.PodKey();
                 let remove = self.idlePods.pop(&podKey).is_some();
-                assert!(remove);
+                if !remove {
+                    // Confirmed live: a pod can report Ready+Idle without an
+                    // idlePods entry - observed racing a node re-registration
+                    // churn cycle against a CR resume (CrRestore+CrSwapin)
+                    // completing within ~250ms of each other. The pod itself is
+                    // genuinely leasable here (PodState/WorkerPodState both say
+                    // so), so crash the whole scheduler over one LRU bookkeeping
+                    // mismatch is disproportionate - log and proceed, matching
+                    // TryFreeResources' missWorkers handling for the same class
+                    // of self.pods/idlePods inconsistency.
+                    error!(
+                        "ProcessLeaseWorkerReq: pod {} reported Ready+Idle but had no idlePods entry - leasing it anyway",
+                        podKey
+                    );
+                }
                 ctrace!(
                     crate::print::verbose_category::SCHEDULER,
                     "ProcessLeaseWorkerReq using idlepod work {:?}",
@@ -1811,7 +1891,7 @@ impl SchedulerHandler {
                         keepalive: true,
                         hostipaddr: ipaddr.0,
                         hostport: pod.object.spec.host_port as u32,
-                        hostnetwork: pod.NvidiaRuntime(),
+                        hostnetwork: pod.RequiresHostNetwork(),
                     };
                     tx.send(resp).unwrap();
                     return Ok(());
@@ -1865,7 +1945,7 @@ impl SchedulerHandler {
                     keepalive: true,
                     hostipaddr: peer.hostIp,
                     hostport: peer.port as u32,
-                    hostnetwork: pod.NvidiaRuntime(),
+                    hostnetwork: pod.RequiresHostNetwork(),
                 };
                 tx.send(resp).unwrap();
                 return Ok(());
@@ -1898,6 +1978,27 @@ impl SchedulerHandler {
                 policy.maxReplica,
                 readyCnt
             )));
+        }
+
+        if func.object.spec.runtime == Runtime::CrContainer {
+            match self.CrResumePod(&funcname).await {
+                Err(e) => {
+                    error!(
+                        "ProcessLeaseWorkerReq failed to CrResumePod for {}: {:?}",
+                        funcname, e
+                    );
+                    let resp = na::LeaseWorkerResp {
+                        error: format!("Failed to resume CR pod: {:?}", e),
+                        ..Default::default()
+                    };
+                    tx.send(resp).unwrap();
+                    return Ok(());
+                }
+                Ok(_) => {
+                    self.PushLeaseWorkerReq(&funcname, req, tx)?;
+                    return Ok(());
+                }
+            }
         }
 
         // Try to resume a pod - this may fail before spawning RPC (no standby, alloc failure, etc.)
@@ -2076,20 +2177,26 @@ impl SchedulerHandler {
                     }
                 }
             }
-            WorkerPodState::Standby | WorkerPodState::Working(_) => match self.StopWorker(&pod.pod)
-            {
-                Ok(()) => {
-                    self.mark_terminating(&pod);
-                    na::KillPodResp {
-                        error: String::new(),
-                        status: na::KillPodStatus::Ok.into(),
+            // Also covers CrSwappedOut/CrCheckpointed CR pods (they report
+            // WorkerPodState::Standby too) - Workflow §9 in the CR-container
+            // proposal confirms explicit KillPod is unchanged/correct for CR pods
+            // regardless of checkpoint state; NA's terminate_pod already
+            // special-cases CR containers via CR_AGENTS before reaching PodAgent.
+            WorkerPodState::Standby | WorkerPodState::Working(_) => {
+                match self.StopWorker(&pod.pod) {
+                    Ok(()) => {
+                        self.mark_terminating(&pod);
+                        na::KillPodResp {
+                            error: String::new(),
+                            status: na::KillPodStatus::Ok.into(),
+                        }
                     }
+                    Err(e) => na::KillPodResp {
+                        error: format!("{:?}", e),
+                        status: na::KillPodStatus::Internal.into(),
+                    },
                 }
-                Err(e) => na::KillPodResp {
-                    error: format!("{:?}", e),
-                    status: na::KillPodStatus::Internal.into(),
-                },
-            },
+            }
             WorkerPodState::Terminating => na::KillPodResp {
                 error: "pod is already terminating".to_string(),
                 status: na::KillPodStatus::InvalidState.into(),
@@ -3026,6 +3133,12 @@ impl SchedulerHandler {
                         WorkerHandlerMsg::StopWorkerComplete { pod_key, result } => {
                             self.ProcessStopWorkerComplete(&pod_key, result);
                         }
+                        WorkerHandlerMsg::CrSwapoutComplete { pod_key, nodename, result, resources } => {
+                            self.ProcessCrSwapoutComplete(&pod_key, &nodename, result, &resources);
+                        }
+                        WorkerHandlerMsg::CrSwapinComplete { pod_key, nodename, result, resources, needed_restore } => {
+                            self.ProcessCrSwapinComplete(&pod_key, &nodename, result, &resources, needed_restore);
+                        }
                         _ => ()
                     }
                 } else {
@@ -3157,15 +3270,48 @@ impl SchedulerHandler {
                                     let nodename = node.name.clone();
                                     let new_state = node.object.state;
 
-                                    // Check if this is a NodeAgentReady transition
-                                    let old_state = self.nodes.get(&nodename).map(|ns| ns.state);
+                                    // Detect an NA restart via nodeEpoch rather than the
+                                    // NodeAgentConnected->NodeAgentReady NAState transition:
+                                    // NA publishes state through a coalescing notify (see
+                                    // NodeRegister::Update in node_register.rs - it wakes the
+                                    // writer but carries no value, and the writer re-reads
+                                    // *current* live state when it wakes), so a fast local
+                                    // Connected->Ready flip can - and in practice always does,
+                                    // confirmed live: zero NodeAgentConnected occurrences across
+                                    // a full day of NA reconnects - collapse into a single
+                                    // observed Ready write, silently skipping Connected. That
+                                    // left ReconcileNodeAfterNodeAgentRestart's trigger
+                                    // permanently dead, so resource-accounting drift from before
+                                    // an NA restart was never corrected. nodeEpoch is stable for
+                                    // an NA process's whole lifetime (unlike NAState, it isn't
+                                    // subject to the same coalescing race), and is already this
+                                    // codebase's authoritative "new NA incarnation" signal (see
+                                    // CheckNodeEpoch), so use it here too.
+                                    let old_epoch = self.nodes.get(&nodename).map(|ns| ns.node.object.nodeEpoch);
 
                                     info!("Update node {:?}", &node);
                                     self.UpdateNode(node.clone())?;
 
-                                    // If NodeAgent just became ready, trigger reconciliation
-                                    if old_state == Some(NAState::NodeAgentConnected) && new_state == NAState::NodeAgentReady {
-                                        info!("Node {} transitioned to NodeAgentReady - triggering reconciliation", nodename);
+                                    // Keep self.nodeEpoch (CheckNodeEpoch's own tracker, driven off
+                                    // Added events for Node/FuncPod/ContainerSnapshot) in sync with
+                                    // what we just observed here on the Modified path. Without this,
+                                    // the two trackers can diverge: this block reconciles the node
+                                    // in place below, but if self.nodeEpoch still holds the pre-
+                                    // restart epoch, the next FuncPod/ContainerSnapshot Added event
+                                    // for this node (carrying the new epoch) makes CheckNodeEpoch see
+                                    // a "fresh" mismatch against its own stale map and calls
+                                    // CleanNode - a full node+pod wipe - right after we just cleanly
+                                    // reconciled it.
+                                    self.nodeEpoch.insert(nodename.clone(), node.object.nodeEpoch);
+
+                                    // If NodeAgent just became ready under a new epoch, trigger reconciliation
+                                    if new_state == NAState::NodeAgentReady
+                                        && old_epoch.is_some_and(|e| e != node.object.nodeEpoch)
+                                    {
+                                        info!(
+                                            "Node {} restarted (epoch {:?} -> {}) - triggering reconciliation",
+                                            nodename, old_epoch, node.object.nodeEpoch
+                                        );
                                         self.ReconcileNodeAfterNodeAgentRestart(&nodename, &node).await?;
                                     }
                                 }
@@ -3616,7 +3762,7 @@ impl SchedulerHandler {
         let mut nodes = BTreeSet::new();
 
         for (nodename, ns) in &self.nodes {
-            if ns.state == NAState::NodeAgentReady {
+            if ns.state == NAState::NodeAgentReady && ns.node.object.runtime != Runtime::CrContainer {
                 nodes.insert(nodename.to_owned());
             }
         }
@@ -3737,6 +3883,10 @@ impl SchedulerHandler {
             }
 
             if !self.IsNodeReady(&ns.node.name) {
+                continue;
+            }
+
+            if ns.node.object.runtime == Runtime::CrContainer {
                 continue;
             }
 
@@ -3876,6 +4026,18 @@ impl SchedulerHandler {
     }
 
     pub fn AddSnapshotTask(&mut self, nodename: &str, funcId: &str) {
+        // CR-only nodes never take snapshot/standby pods - GetSnapshotCandidateNodes
+        // already excludes them from normal scheduling, but this is the single choke
+        // point InitSnapshotTask/DelayedInitNode/SchedTask::AddFunc all funnel
+        // through when eagerly enqueueing snapshot work for every (func, node) pair,
+        // so it needs the same exclusion or a queued SnapshotTask reaches
+        // TryCreateSnapshotOnNode -> StartWorker against a CR node regardless.
+        if let Some(ns) = self.nodes.get(nodename) {
+            if ns.node.object.runtime == Runtime::CrContainer {
+                return;
+            }
+        }
+
         match self.funcs.get(funcId) {
             None => unreachable!(),
             Some(f) => {
@@ -4007,6 +4169,16 @@ impl SchedulerHandler {
 
                     if pod.pod.NvidiaRuntime() {
                         // we didn't free nvidia runtime pods
+                        continue;
+                    }
+
+                    if pod.pod.object.spec.runtime == Runtime::CrContainer {
+                        // CR pods must never be picked as generic idle-eviction
+                        // victims: full TerminatePodReq teardown destroys the
+                        // checkpoint, where a cheap CrSwapout would free the same
+                        // GPU slot for a fraction of the cost. The dedicated
+                        // node-local kick-out scan (CrSwapoutPod) replaces generic
+                        // eviction for CR pods.
                         continue;
                     }
 
@@ -4199,6 +4371,19 @@ impl SchedulerHandler {
     }
 
     pub async fn TryCreateSnapshotOnNode(&mut self, funcId: &str, nodename: &str) -> Result<()> {
+        // Defense in depth against AddSnapshotTask's exclusion: a SnapshotTask is
+        // queued with a 1s delay, so a node's runtime could in principle change (or
+        // this could be reached some other way) between enqueue and here.
+        if let Some(ns) = self.nodes.get(nodename) {
+            if ns.node.object.runtime == Runtime::CrContainer {
+                info!(
+                    "TryCreateSnapshotOnNode: skipping CR-only node {} for func {}",
+                    nodename, funcId
+                );
+                return Ok(());
+            }
+        }
+
         // Check if snapshot already exists
         match self.snapshots.get(funcId) {
             None => (),
@@ -4477,6 +4662,15 @@ impl SchedulerHandler {
             return Ok(());
         }
 
+        // CR-only nodes never take standby/snapshot pods (same exclusion as
+        // AddSnapshotTask) - deliberately don't re-queue AddStandbyTask below, this
+        // node will never need the recurring standby-adjustment tick.
+        if let Some(ns) = self.nodes.get(nodename) {
+            if ns.node.object.runtime == Runtime::CrContainer {
+                return Ok(());
+            }
+        }
+
         // add another StandbyTask for the node
         if self.nodes.contains_key(nodename) {
             self.AddStandbyTask(nodename);
@@ -4725,6 +4919,30 @@ impl SchedulerHandler {
             return false;
         }
 
+        if func.object.spec.runtime == Runtime::CrContainer {
+            // v1: exactly one pod per func, no min/max replica sizing (see the Key
+            // Constraint section - no shareable checkpoint, no standby pool).
+            let hasPod = match self.funcs.get(funcid) {
+                None => false,
+                Some(fpStatus) => !fpStatus.pods.is_empty() || fpStatus.HasPendingPod(),
+            };
+            if !hasPod {
+                match self.CrCreatePod(funcid).await {
+                    Err(e) => {
+                        error!(
+                            "ProcessAddFunc CrCreatePod fail for func {} error {:?}",
+                            funcid, e
+                        );
+                        return false;
+                    }
+                    Ok(_) => {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         let policy = self.FuncPolicy(
             &func.tenant,
             &func.namespace,
@@ -4962,6 +5180,608 @@ impl SchedulerHandler {
         // Result will be handled in ProcessResumeWorkerComplete
 
         return Ok(());
+    }
+
+    /// Pick a ready, CR-capable node with room for a CR-container func and reserve
+    /// its resources. CR pods are pinned 1:1 to the node/container that creates them
+    /// (no shareable checkpoint, no standby pool - see the Key Constraint section of
+    /// the CR-container scheduler proposal), so this is a plain linear scan, not the
+    /// eviction-aware FindNode4Pod machinery the InferX/Nvidia paths use.
+    ///
+    /// If no CR-capable node currently has room, falls back to kicking out one idle
+    /// CR pod (belonging to *any* func, not just this one) via CrKickOutVictim -
+    /// without this, a func stuck behind another func's merely-idle pod would never
+    /// get created at all: v1 has no proactive idle-tick swap-out (see the Key
+    /// Constraint section), so nothing else would ever reclaim that GPU slot, and
+    /// CrResumePod's own kick-out only helps a func compete against its own prior
+    /// pod, not against a different func entirely. Confirmed live: a second
+    /// CR-container func spun on "No CR-capable node with capacity" forever while
+    /// the first func's pod sat idle and Ready on the node's only GPU.
+    pub async fn GetBestCrContainerNode(
+        &mut self,
+        func: &Function,
+    ) -> Result<(String, NodeResources)> {
+        let reqResources = func.object.spec.RunningResource();
+
+        let mut candidate: Option<String> = None;
+        let mut crCapableNodes: Vec<String> = Vec::new();
+        for (nodename, ns) in &self.nodes {
+            if ns.state != NAState::NodeAgentReady {
+                continue;
+            }
+            if ns.node.object.runtime != Runtime::CrContainer {
+                continue;
+            }
+            crCapableNodes.push(nodename.clone());
+            if candidate.is_none() && ns.available.CanAlloc(&reqResources, false).Ok() {
+                candidate = Some(nodename.clone());
+            }
+        }
+
+        let nodename = match candidate {
+            Some(n) => n,
+            None => {
+                // No exclude_pod_key - this is a brand-new pod, not a resume, so
+                // there's no specific pod of this func to protect from eviction.
+                let mut kicked = false;
+                for candidateNode in &crCapableNodes {
+                    if self.CrKickOutVictim(candidateNode, "").await.is_ok() {
+                        kicked = true;
+                        break;
+                    }
+                }
+                if kicked {
+                    return Err(Error::SchedulerErr(format!(
+                        "No CR-capable node had capacity for func {} - kicked out an idle CR pod to free one, will retry",
+                        func.Id()
+                    )));
+                }
+                return Err(Error::SchedulerErr(format!(
+                    "No CR-capable node with capacity for func {}",
+                    func.Id()
+                )));
+            }
+        };
+
+        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        let resources = nodeStatus.AllocResource(&reqResources, "CrCreatePod", &func.Id(), false)?;
+
+        return Ok((nodename, resources));
+    }
+
+    /// v1: create exactly one CR-container pod for a func with none yet (see
+    /// ProcessAddFunc's CrContainer branch). No min/max replica sizing, no pool -
+    /// this mirrors CreateOneNividaPod's shape but targets a CR-only node and uses
+    /// CreatePodType::CRContainer.
+    pub async fn CrCreatePod(&mut self, funcId: &str) -> Result<()> {
+        let func = match self.funcs.get(funcId) {
+            None => {
+                return Err(Error::NotExist(format!(
+                    "CrCreatePod can't find func {}",
+                    funcId
+                )));
+            }
+            Some(fpStatus) => fpStatus.func.clone(),
+        };
+
+        let (nodename, resources) = self.GetBestCrContainerNode(&func).await?;
+        let naUrl = self.nodes.get(&nodename).unwrap().node.NodeAgentUrl();
+
+        let id = match self
+            .StartWorker(
+                &naUrl,
+                &func,
+                &resources,
+                &resources,
+                na::CreatePodType::CrContainer,
+                &Vec::new(),
+                &nodename,
+            )
+            .await
+        {
+            Err(e) => {
+                // StartWorker failed before spawning the RPC (e.g. UID generation) -
+                // GetBestCrContainerNode already reserved `resources` on this node,
+                // so free it back or it's stranded until the scheduler restarts.
+                error!(
+                    "CrCreatePod: StartWorker failed for func {} on node {}: {:?} - freeing reserved resources",
+                    funcId, nodename, e
+                );
+                if let Some(nodeStatus) = self.nodes.get_mut(&nodename) {
+                    if let Err(free_err) = nodeStatus.available.Add(&resources) {
+                        error!(
+                            "CrCreatePod: failed to free reserved resources for func {} on node {}: {:?}",
+                            funcId, nodename, free_err
+                        );
+                    }
+                }
+                return Err(e);
+            }
+            Ok(id) => id,
+        };
+
+        let podKey = FuncPod::FuncPodKey(
+            &func.tenant,
+            &func.namespace,
+            &func.name,
+            func.Version(),
+            &format!("{id}"),
+        );
+
+        // Track pending pod at both node and func level - the func-level entry is
+        // what ProcessAddFunc's CrContainer branch checks to avoid launching a
+        // second CR container for this func while this one hasn't synced back
+        // through the informer yet (mirrors TryAdjustStandbyPodsOnNode's pattern).
+        let pendingPod = PendingPod::New(&nodename, &podKey, funcId, &resources);
+        let nodeStatus = self.nodes.get_mut(&nodename).unwrap();
+        nodeStatus.AddPendingPod(&pendingPod)?;
+        if let Some(fpStatus) = self.funcs.get_mut(funcId) {
+            fpStatus.AddPendingPod(&pendingPod)?;
+        }
+
+        return Ok(());
+    }
+
+    /// Checkpoint (swap-out) one Ready CR-container pod in place - not analogous to
+    /// TryCreateSnapshotOnNode, which spins up a separate pod. No new pod object, no
+    /// snapshot-repository entry: just Ready -> CrSwappedOut on the same container.
+    pub fn CrSwapoutPod(&mut self, pod: &WorkerPod) -> Result<()> {
+        let nodename = pod.pod.object.spec.nodename.clone();
+        let naUrl = self
+            .nodes
+            .get(&nodename)
+            .ok_or_else(|| Error::NotExist(format!("CrSwapoutPod: node {} not found", nodename)))?
+            .node
+            .NodeAgentUrl();
+
+        // CrSwapout only frees GPU memory - the process stays alive (vLLM sleep
+        // mode), so CPU/host memory stays reserved in `available` for as long as
+        // the container exists. Only release the GPU portion of the allocation.
+        let resources = pod.pod.object.spec.allocResources.GPUResource();
+        let podKey = pod.pod.PodKey();
+
+        // Pull out of the idle-lease pool and mark checkpointing before spawning the
+        // RPC - the required regression-safety fix: CR pods must never be picked as
+        // generic idle-eviction victims, and while swapping out they're not leaseable.
+        self.idlePods.pop(&podKey);
+        pod.SetState(WorkerPodState::Standby);
+
+        let tenant = pod.pod.tenant.clone();
+        let namespace = pod.pod.namespace.clone();
+        let funcname = pod.pod.object.spec.funcname.clone();
+        let id = pod.pod.object.spec.id.clone();
+        let nodename_clone = nodename.clone();
+        let resources_clone = resources.clone();
+        let podKey_clone = podKey.clone();
+
+        self.spawn_rpc(
+            &nodename,
+            Duration::from_secs(30),
+            move || async move {
+                let mut client =
+                    na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl).await?;
+
+                let request = tonic::Request::new(na::CrSwapoutReq {
+                    container_name: String::new(),
+                    tenant,
+                    namespace,
+                    funcname,
+                    id,
+                });
+
+                let response = client.cr_swapout(request).await?;
+                let resp = response.into_inner();
+                if !resp.error.is_empty() {
+                    return Err(Error::CommonError(resp.error));
+                }
+
+                Ok(())
+            },
+            move |result| WorkerHandlerMsg::CrSwapoutComplete {
+                pod_key: podKey_clone,
+                nodename: nodename_clone,
+                result,
+                resources: resources_clone,
+            },
+        );
+
+        return Ok(());
+    }
+
+    /// Handle completion of an async CrSwapout RPC.
+    ///
+    /// On success: the node's GPU slot is released now (checkpoint completion is the
+    /// confirmed event that GPU memory was actually freed - mirrors
+    /// ProcessStopWorkerComplete's "only free on confirmed event" rule, not
+    /// ResumePod's pre-reservation rule, since this is releasing rather than
+    /// allocating a scarce resource).
+    /// On failure: pod goes back to Idle so it can be leased or retried.
+    pub fn ProcessCrSwapoutComplete(
+        &mut self,
+        pod_key: &str,
+        nodename: &str,
+        result: Result<()>,
+        _resources: &NodeResources,
+    ) {
+        match result {
+            Ok(()) => {
+                // Resources are freed by UpdatePod's transition-based accounting
+                // once the informer reports the pod's new PodState, not here -
+                // freeing it here too would double-free once that event arrives.
+                trace!(
+                    "CrSwapout RPC succeeded for pod {} on node {} - waiting for informer to report the state change",
+                    pod_key, nodename
+                );
+            }
+            Err(e) => {
+                error!(
+                    "CrSwapout RPC failed for pod {} on node {}: {:?} - reverting to Idle",
+                    pod_key, nodename, e
+                );
+                if let Some(worker) = self.pods.get(pod_key) {
+                    worker.SetState(WorkerPodState::Idle);
+                    self.idlePods.put(pod_key.to_string(), ());
+                }
+            }
+        }
+    }
+
+    /// Resume the specific CrSwappedOut/CrCheckpointed pod for a func - not
+    /// analogous to ResumePod/GetBestResumeWorker's pool selection. Resume is pinned
+    /// to the exact node+pod that was swapped out, so this addresses that pod
+    /// directly (see Key Constraint section). CrCheckpointed pods need a restore
+    /// leg first (CrRestore, same Restore/Resume split as the old runtime's
+    /// CreatePodType::Restore vs. ResumePodReq) since the container process was
+    /// stopped; CrSwappedOut pods just need CrSwapin.
+    pub async fn CrResumePod(&mut self, fpKey: &str) -> Result<()> {
+        let fpStatus = self
+            .funcs
+            .get(fpKey)
+            .ok_or_else(|| Error::NotExist(format!("CrResumePod: func {} not found", fpKey)))?;
+
+        let mut target: Option<WorkerPod> = None;
+        for (_, pod) in &fpStatus.pods {
+            let state = pod.pod.object.status.state;
+            if state != PodState::CrSwappedOut && state != PodState::CrCheckpointed {
+                continue;
+            }
+            // WorkerPodState, not PodState, is the authoritative "already resuming"
+            // signal here: ProcessCrSwapinComplete clears pendingPods on RPC success
+            // while still waiting for the informer to report Ready, so PodState alone
+            // would let a second lease arriving in that window re-select this same
+            // pod and fire a duplicate CrSwapin/CrRestore RPC. WorkerPodState flips
+            // to Resuming synchronously before the RPC is spawned, so it's safe to
+            // gate on immediately.
+            if pod.State() != WorkerPodState::Standby {
+                continue;
+            }
+            target = Some(pod.clone());
+            break;
+        }
+
+        let pod = target.ok_or_else(|| {
+            Error::NotExist(format!(
+                "CrResumePod: no resumable (not already resuming) CrSwappedOut/CrCheckpointed pod for func {}",
+                fpKey
+            ))
+        })?;
+
+        // CrCheckpointed -> needs a CrRestore before CrSwapin (same Restore/Resume
+        // split as the old runtime's CreatePodType::Restore vs. ResumePodReq).
+        let needsRestore = pod.pod.object.status.state == PodState::CrCheckpointed;
+        let nodename = pod.pod.object.spec.nodename.clone();
+        let podKey = pod.pod.PodKey();
+
+        // CrCheckpointed means the container process was stopped (not removed -
+        // CrContainerMeta and the checkpoint stay on disk so CrRestore can bring it
+        // back), so nothing is reserved for it right now: acquire the full
+        // footprint (memory + GPU). CrSwappedOut means the process is still alive
+        // and still holds the memory CrSwapoutPod never released - only the GPU
+        // slot needs to come back.
+        let reqResources = if needsRestore {
+            pod.pod.object.spec.reqResources.clone()
+        } else {
+            pod.pod.object.spec.reqResources.GPUResource()
+        };
+
+        let alloc = {
+            let nodeStatus = self.nodes.get_mut(&nodename).ok_or_else(|| {
+                Error::NotExist(format!("CrResumePod: node {} not found", nodename))
+            })?;
+            nodeStatus.AllocResource(&reqResources, "CrResumePod", &podKey, false)
+        };
+
+        let resources = match alloc {
+            Ok(resources) => resources,
+            Err(_) => {
+                // Workflow §6 "kick out": no free GPU slot on this node. Swap out one
+                // Ready, idle CR pod on the same node (LRU-first), synchronously -
+                // GPU memory is real hardware state, so the victim's swap-out must
+                // fully complete before this target's swap-in starts, they can't
+                // safely overlap.
+                self.CrKickOutVictim(&nodename, &podKey).await?;
+                let nodeStatus = self.nodes.get_mut(&nodename).ok_or_else(|| {
+                    Error::NotExist(format!("CrResumePod: node {} not found", nodename))
+                })?;
+                nodeStatus.AllocResource(&reqResources, "CrResumePod", &podKey, false)?
+            }
+        };
+
+        let naUrl = self.nodes.get(&nodename).unwrap().node.NodeAgentUrl();
+
+        // Bookkeeping before the RPC, same as ResumePod - prevents another scheduling
+        // decision from double-booking the slot we just reserved.
+        pod.SetState(WorkerPodState::Resuming);
+
+        let pendingPod = PendingPod::New(&nodename, &podKey, fpKey, &resources);
+        self.nodes
+            .get_mut(&nodename)
+            .unwrap()
+            .AddPendingPod(&pendingPod)?;
+        if let Some(fpStatus) = self.funcs.get_mut(fpKey) {
+            fpStatus.AddPendingPod(&pendingPod)?;
+        }
+
+        let gpu_map = resources
+            .gpus
+            .map
+            .keys()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        self.CrSwapinRpc(
+            &naUrl,
+            &pod.pod,
+            &resources,
+            &gpu_map,
+            &nodename,
+            needsRestore,
+        );
+
+        return Ok(());
+    }
+
+    /// Workflow §6: node-local "kick out" - scans only Ready, idle CR pods on the
+    /// same node, LRU-first, checking VerifyMinReplicaPolicy same as the generic
+    /// eviction loop, and swaps out one victim synchronously (CrSwapout, never
+    /// TerminatePodReq) so the caller can retry allocation immediately afterward.
+    async fn CrKickOutVictim(&mut self, nodename: &str, exclude_pod_key: &str) -> Result<()> {
+        let mut victim: Option<WorkerPod> = None;
+        let mut selected: Vec<WorkerPod> = Vec::new();
+
+        for (podKey, _) in self.idlePods.iter().rev() {
+            if podKey == exclude_pod_key {
+                continue;
+            }
+            let pod = match self.pods.get(podKey) {
+                None => continue,
+                Some(pod) => pod,
+            };
+            if &pod.pod.object.spec.nodename != nodename {
+                continue;
+            }
+            if pod.pod.object.spec.runtime != Runtime::CrContainer {
+                continue;
+            }
+            if pod.pod.object.status.state != PodState::Ready {
+                continue;
+            }
+            if !self.VerifyMinReplicaPolicy(pod, &selected) {
+                continue;
+            }
+            selected.push(pod.clone());
+            victim = Some(pod.clone());
+            break;
+        }
+
+        let victim = victim.ok_or_else(|| {
+            Error::SchedulerErr(format!(
+                "CrKickOutVictim: no evictable CR pod on node {} to free a GPU slot",
+                nodename
+            ))
+        })?;
+
+        let naUrl = self
+            .nodes
+            .get(nodename)
+            .ok_or_else(|| Error::NotExist(format!("CrKickOutVictim: node {} not found", nodename)))?
+            .node
+            .NodeAgentUrl();
+
+        let victimKey = victim.pod.PodKey();
+        self.idlePods.pop(&victimKey);
+        victim.SetState(WorkerPodState::Standby);
+
+        let mut client =
+            na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl).await?;
+        let request = tonic::Request::new(na::CrSwapoutReq {
+            container_name: String::new(),
+            tenant: victim.pod.tenant.clone(),
+            namespace: victim.pod.namespace.clone(),
+            funcname: victim.pod.object.spec.funcname.clone(),
+            id: victim.pod.object.spec.id.clone(),
+        });
+        let response = client.cr_swapout(request).await?;
+        let resp = response.into_inner();
+        if !resp.error.is_empty() {
+            // Revert - the victim is still Ready, put it back so it isn't stranded.
+            victim.SetState(WorkerPodState::Idle);
+            self.idlePods.put(victimKey.clone(), ());
+            return Err(Error::CommonError(format!(
+                "CrKickOutVictim: CrSwapout failed for victim {}: {}",
+                victimKey, resp.error
+            )));
+        }
+
+        // Resources are freed by UpdatePod's transition-based accounting once the
+        // informer reports the victim's new PodState, not here (see
+        // CrReservedResources) - freeing it here too would double-free once that
+        // event arrives. This means an immediate retry of the caller's allocation
+        // right after this returns may still fail until the informer catches up;
+        // the caller (CrResumePod) surfaces that as a normal error, and the
+        // lease request's retry succeeds once the transition lands.
+        info!(
+            "CrKickOutVictim: swapped out victim pod {} on node {} to free a GPU slot",
+            victimKey, nodename
+        );
+
+        return Ok(());
+    }
+
+    /// Dispatch CrSwapin, or CrRestore then CrSwapin sequenced inside one spawn_rpc
+    /// closure if the pod was CrCheckpointed (matches the manual ixtest recovery
+    /// sequence). A single CrSwapinComplete fires either way - no separate
+    /// CrRestoreComplete, since nothing else observes "restored but not yet swapped
+    /// in".
+    fn CrSwapinRpc(
+        &mut self,
+        naUrl: &str,
+        pod: &FuncPod,
+        resources: &NodeResources,
+        gpu_map: &str,
+        nodename: &str,
+        needsRestore: bool,
+    ) {
+        let naUrl = naUrl.to_owned();
+        let tenant = pod.tenant.clone();
+        let namespace = pod.namespace.clone();
+        let funcname = pod.object.spec.funcname.clone();
+        let id = pod.object.spec.id.clone();
+        let gpu_map = gpu_map.to_owned();
+        let pod_key = pod.PodKey();
+        let nodename_clone = nodename.to_owned();
+        let resources_clone = resources.clone();
+
+        self.spawn_rpc(
+            nodename,
+            Duration::from_secs(60),
+            move || async move {
+                let mut client =
+                    na::node_agent_service_client::NodeAgentServiceClient::connect(naUrl).await?;
+
+                if needsRestore {
+                    let restoreReq = tonic::Request::new(na::CrRestoreReq {
+                        container_name: String::new(),
+                        tenant: tenant.clone(),
+                        namespace: namespace.clone(),
+                        funcname: funcname.clone(),
+                        id: id.clone(),
+                    });
+                    let resp = client.cr_restore(restoreReq).await?.into_inner();
+                    if !resp.error.is_empty() {
+                        return Err(Error::CommonError(resp.error));
+                    }
+                }
+
+                let swapinReq = tonic::Request::new(na::CrSwapinReq {
+                    container_name: String::new(),
+                    gpu_map,
+                    tenant,
+                    namespace,
+                    funcname,
+                    id,
+                });
+                let resp = client.cr_swapin(swapinReq).await?.into_inner();
+                if !resp.error.is_empty() {
+                    return Err(Error::CommonError(resp.error));
+                }
+
+                Ok(())
+            },
+            move |result| WorkerHandlerMsg::CrSwapinComplete {
+                pod_key,
+                nodename: nodename_clone,
+                result,
+                resources: resources_clone,
+                needed_restore: needsRestore,
+            },
+        );
+    }
+
+    /// Handle completion of an async CrSwapin (or CrRestore+CrSwapin) RPC.
+    ///
+    /// On success: pod becomes Ready via the informer event, same as InferX resume;
+    /// just clear our own pending-pod bookkeeping here since CR pods don't pass
+    /// through PodState::Resuming the way InferX pods do (NodeStatus::UpdatePod's
+    /// Resuming->Ready pendingPods cleanup wouldn't fire for them).
+    /// On failure: only roll back if we're sure NA never got the request (mirrors
+    /// ProcessResumeWorkerComplete's is_safe_to_restore rule) - otherwise leave state
+    /// alone and let the next informer event or reconciliation resolve it.
+    pub fn ProcessCrSwapinComplete(
+        &mut self,
+        pod_key: &str,
+        nodename: &str,
+        result: Result<()>,
+        resources: &NodeResources,
+        needed_restore: bool,
+    ) {
+        let funcKey = self.pods.get(pod_key).map(|w| w.pod.FuncKey());
+
+        match result {
+            Ok(()) => {
+                if let Some(nodeStatus) = self.nodes.get_mut(nodename) {
+                    nodeStatus.pendingPods.remove(pod_key);
+                }
+                if let Some(funcKey) = &funcKey {
+                    if let Some(funcStatus) = self.funcs.get_mut(funcKey) {
+                        funcStatus.pendingPods.remove(pod_key);
+                    }
+                }
+                trace!(
+                    "CrSwapin RPC succeeded for pod {} - waiting for Ready event",
+                    pod_key
+                );
+            }
+            Err(e) => {
+                if !Self::is_safe_to_restore(&e) {
+                    error!(
+                        "CrSwapin RPC failed for pod {}: {:?} - not safe to restore, waiting for pod events",
+                        pod_key, e
+                    );
+                    return;
+                }
+
+                error!(
+                    "CrSwapin RPC failed (safe to restore) for pod {} (needed_restore={}): {:?} - restoring state",
+                    pod_key, needed_restore, e
+                );
+
+                if let Some(nodeStatus) = self.nodes.get_mut(nodename) {
+                    nodeStatus.pendingPods.remove(pod_key);
+                    if let Err(e) = nodeStatus.available.Add(resources) {
+                        error!(
+                            "CrSwapin: failed to restore resources for pod {} on node {}: {:?}",
+                            pod_key, nodename, e
+                        );
+                    }
+                }
+
+                if let Some(worker) = self.pods.get(pod_key) {
+                    // Both CrSwappedOut and CrCheckpointed report the shared
+                    // WorkerPodState::Standby "resumable, not ready" marker - the
+                    // underlying PodState (unaffected by this local RPC failure)
+                    // still reflects which one it actually is.
+                    worker.SetState(WorkerPodState::Standby);
+                }
+
+                if let Some(funcKey) = &funcKey {
+                    if let Some(funcStatus) = self.funcs.get_mut(funcKey) {
+                        funcStatus.pendingPods.remove(pod_key);
+                        if let Some((_lease_req, lease_tx)) = funcStatus.PopLeaseWorkerReq() {
+                            let resp = na::LeaseWorkerResp {
+                                error: format!(
+                                    "CrSwapin failed (safe to restore): {:?}. Gateway should retry.",
+                                    e
+                                ),
+                                ..Default::default()
+                            };
+                            lease_tx.send(resp).ok();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Create worker using spawn_rpc for proper concurrency control
@@ -5406,10 +6226,13 @@ impl SchedulerHandler {
         for (pod_key, pod) in &nodeStatus.pods {
             let state = pod.pod.object.status.state;
 
-            // Keep only Standby and Ready pods (stable states that survived)
+            // Keep Standby, Ready, and CR-checkpointed pods (stable states that
+            // survived). CrSwappedOut/CrCheckpointed must be kept, not treated as
+            // transient - discarding them here would silently orphan a resumable
+            // checkpointed container (see Workflow §8 in the CR-container proposal).
             // Remove: Creating, PullingImage, Resuming, Working, Terminating, Failed, etc.
             match state {
-                PodState::Standby | PodState::Ready => {
+                PodState::Standby | PodState::Ready | PodState::CrSwappedOut | PodState::CrCheckpointed => {
                     info!("Keeping stable pod {}: {:?}", pod_key, state);
                 }
                 _ => {
@@ -5487,8 +6310,10 @@ impl SchedulerHandler {
 
         // Subtract resources only for surviving stable pods
         for (_pod_key, pod) in &nodeStatus.pods {
-            // At this point, only Standby/Ready pods remain
-            available.Sub(&pod.pod.object.spec.allocResources)?;
+            // At this point, only Standby/Ready/CrSwappedOut/CrCheckpointed pods
+            // remain - CrReservedResources accounts for how much of allocResources
+            // a CR pod actually still holds in each of those states.
+            available.Sub(&CrReservedResources(&pod.pod))?;
         }
 
         nodeStatus.total = total;
@@ -5520,8 +6345,9 @@ impl SchedulerHandler {
                         }
                     }
                 }
-                PodState::Standby => {
-                    // Standby pods should be in Standby WorkerPodState
+                // CrSwappedOut/CrCheckpointed CR pods share Standby's WorkerPodState
+                // (see WorkerPodState::Standby's doc comment).
+                PodState::Standby | PodState::CrSwappedOut | PodState::CrCheckpointed => {
                     if worker_state != WorkerPodState::Standby {
                         pod.SetState(WorkerPodState::Standby);
                         info!(
@@ -5533,7 +6359,7 @@ impl SchedulerHandler {
                 _ => {
                     // Shouldn't reach here after pod filtering above
                     panic!(
-                        "Reconciliation: Unexpected pod state {:?} for pod {} (should only be Standby/Ready)",
+                        "Reconciliation: Unexpected pod state {:?} for pod {} (should only be Standby/Ready/CrSwappedOut/CrCheckpointed)",
                         pod_state,
                         pod.pod.PodKey()
                     );
@@ -5854,7 +6680,10 @@ impl SchedulerHandler {
                 // - ResumePod: Sub(ready resources) before RPC
                 // - Standby→Resuming: Add(standby resources) when resume accepted
                 // - RemovePod: Add(ready resources) when pod deleted
-                if oldPod.pod.object.status.state == PodState::Standby
+                //
+                // Explicit runtime guard: CR pods have their own accounting below.
+                if boxPod.pod.object.spec.runtime != Runtime::CrContainer
+                    && oldPod.pod.object.status.state == PodState::Standby
                     && boxPod.pod.object.status.state == PodState::Resuming
                 {
                     let standbyResource = oldPod.pod.object.spec.allocResources.clone();
@@ -5865,6 +6694,18 @@ impl SchedulerHandler {
                         podKey,
                         serde_json::to_string(&standbyResource).unwrap_or_default()
                     );
+                }
+
+                // Skip while a CrResumePod resume is in flight - already reserved.
+                // pendingPods, not WorkerPodState (see cr-resume-restore-gpu-leak-fix.md).
+                let resume_already_reserved = nodeStatus.pendingPods.contains_key(&podKey);
+                if boxPod.pod.object.spec.runtime == Runtime::CrContainer
+                    && !resume_already_reserved
+                {
+                    let oldReserved = CrReservedResources(&oldPod.pod);
+                    let newReserved = CrReservedResources(&boxPod.pod);
+                    nodeStatus.available.Add(&oldReserved)?;
+                    nodeStatus.available.Sub(&newReserved)?;
                 }
 
                 // When pod fails, let deletion events handle cleanup
@@ -6072,7 +6913,13 @@ impl SchedulerHandler {
         match self.nodes.get_mut(&nodeName) {
             None => (), // node information doesn't reach scheduler, will process when it arrives
             Some(nodeStatus) => {
-                nodeStatus.RemovePod(&pod.PodKey(), &pod.object.spec.allocResources)?;
+                // Free only what's actually still reserved given the pod's last
+                // known PodState (see CrReservedResources) - a CR pod that was
+                // CrSwappedOut/CrCheckpointed at deletion time already had part or
+                // all of allocResources freed by UpdatePod's transition-based
+                // accounting; freeing the full amount again here would over-credit
+                // `available` beyond what's truly free.
+                nodeStatus.RemovePod(&pod.PodKey(), &CrReservedResources(pod))?;
             }
         }
         match self.funcs.get_mut(&funcKey) {

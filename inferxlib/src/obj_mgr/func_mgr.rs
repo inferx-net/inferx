@@ -24,6 +24,7 @@ use crate::resource::*;
 
 use super::funcpolicy_mgr::FuncPolicy;
 use super::funcpolicy_mgr::FuncPolicySpec;
+use super::pod_mgr::Runtime;
 
 pub const FUNCPOD_TYPE: &str = "funcpod_type.inferx.io";
 pub const FUNCPOD_FUNCNAME: &str = "func_name.inferx.io";
@@ -285,6 +286,9 @@ pub struct FuncSpec {
 
     #[serde(default)]
     pub mountfiles: Vec<MountFile>,
+
+    #[serde(default, rename = "runtime")]
+    pub runtime: Runtime,
 }
 
 fn PromptDefault() -> String {
@@ -366,6 +370,7 @@ impl Default for FuncSpec {
             policy: Default::default(),
             catalogSource: None,
             mountfiles: Default::default(),
+            runtime: Default::default(),
         };
     }
 }

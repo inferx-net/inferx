@@ -74,6 +74,7 @@ impl CreatePodType {
 pub enum Runtime {
     InferX,
     Nvidia,
+    CrContainer,
 }
 
 impl Default for Runtime {
@@ -82,7 +83,7 @@ impl Default for Runtime {
     }
 }
 
-fn default_runtime() -> Runtime {
+pub(crate) fn default_runtime() -> Runtime {
     Runtime::InferX
 }
 
@@ -172,6 +173,13 @@ impl FuncPod {
 
     pub fn NvidiaRuntime(&self) -> bool {
         return self.object.spec.runtime == Runtime::Nvidia;
+    }
+
+    pub fn RequiresHostNetwork(&self) -> bool {
+        return matches!(
+            self.object.spec.runtime,
+            Runtime::Nvidia | Runtime::CrContainer
+        );
     }
 
     pub fn FuncPodKey(
@@ -304,6 +312,10 @@ pub enum PodState {
     CrSwappedOut,
     // CR container: checkpointed and stopped, container removed
     CrCheckpointed,
+    // CR container: transient, mid CrSwapin (CrSwappedOut/CrCheckpointed -> Ready)
+    SwappingIn,
+    // CR container: transient, mid CrSwapout (Ready -> CrSwappedOut)
+    SwappingOut,
 }
 
 impl Default for PodState {

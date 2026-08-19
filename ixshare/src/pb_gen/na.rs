@@ -790,6 +790,14 @@ pub struct PodEvent {
 pub struct CrSwapoutReq {
     #[prost(string, tag = "1")]
     pub container_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -806,6 +814,14 @@ pub struct CrSwapinReq {
     pub container_name: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub gpu_map: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -820,6 +836,14 @@ pub struct CrSwapinResp {
 pub struct CrRestoreReq {
     #[prost(string, tag = "1")]
     pub container_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -834,6 +858,14 @@ pub struct CrRestoreResp {
 pub struct CrStopReq {
     #[prost(string, tag = "1")]
     pub container_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub tenant: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub funcname: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

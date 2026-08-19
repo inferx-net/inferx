@@ -1826,7 +1826,7 @@ async fn DirectFuncCallProc(gw: &HttpGateway, mut req: Request) -> Result<Respon
     let tcpclient = IxTcpClient {
         hostIp: hostip.0,
         hostPort: hostport,
-        hostNetwork: pod.NvidiaRuntime(),
+        hostNetwork: pod.RequiresHostNetwork(),
         tenant: pod.tenant.clone(),
         namespace: pod.namespace.clone(),
         dstIp: dstIp,

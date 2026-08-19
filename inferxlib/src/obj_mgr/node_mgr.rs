@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::resource::NodeResources;
 
 use crate::data_obj::*;
+use crate::obj_mgr::pod_mgr::{default_runtime, Runtime};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NAState {
@@ -31,6 +32,8 @@ pub struct NodeSpec {
     pub blobStoreEnable: bool,
     pub CUDA_VISIBLE_DEVICES: String,
     pub state: NAState,
+    #[serde(default = "default_runtime")]
+    pub runtime: Runtime,
 }
 
 pub type Node = DataObject<NodeSpec>;
