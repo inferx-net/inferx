@@ -1,0 +1,49 @@
+{
+    "type": "function",
+    "tenant": "inferx",
+    "namespace": "endpoint",
+    "name": "func1",
+    "object": {
+        "spec": {
+            "image": "docker.io/vllm/vllm-openai:v0.20.0-cu129",
+            "commands": ["Qwen/Qwen3.5-2B","--served-model-name","tp1-c","--trust-remote-code","--max-model-len","50000","--gpu-memory-utilization","0.80","--tensor-parallel-size","1","--disable-custom-all-reduce","--max-num-seqs","8","--enable-sleep-mode"],
+            "envs": [],
+            "mounts": [],
+            "endpoint": {
+                "port": 0,
+                "probe": "/health",
+                "schema": "Http",
+                "probe_timeout": 1000,
+                "probetype": "Prompt"
+            },
+            "version": 1,
+            "runtime": "CrContainer",
+            "model_type": "Public",
+            "entrypoint": [],
+            "resources": {
+                "CPU": 4000,
+                "Mem": 10000,
+                "ReadyMem": 0,
+                "CacheMem": 0,
+                "GPU": {
+                "Count": 1,
+                "vRam": 30000,
+                "contextCount": 1
+                }
+            },
+            "standby": {
+                "gpu": "File",
+                "pageable": "File",
+                "pinned": "File"
+            },
+            "sample_query": {
+                "apiType": "text2text",
+                "path": "/v1/completions",
+                "prompt": "Hello",
+                "body": {}
+            },
+            "policy": {"Obj": {"min_replica": 0, "max_replica": 1, "standby_per_node": 1}},
+            "mountfiles": []
+        }
+    }
+}
